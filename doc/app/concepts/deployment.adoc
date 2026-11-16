@@ -14,7 +14,7 @@ follows API Sheriff.
 
 == What Runs Where
 
-image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint and services on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server, the KMS, the timestamp authority, the issue tracker and verinice, and the ticket system and chat, and passes log records to the SIEM",align=center]
+image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint and services on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server, the KMS, the timestamp authority, the issue tracker, and the ticket system and chat, and passes log records to the SIEM",align=center]
 
 [cols="1,3"]
 |===

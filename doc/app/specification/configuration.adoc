@@ -122,7 +122,7 @@ active)
 
 |`integrations`
 |no
-|`issue-tracker`, `ticket-system`, `chat`, `verinice`, each with `url` and `credential-ref`
+|`issue-tracker`, `ticket-system`, `chat`, each with `url` and `credential-ref`
 |===
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:

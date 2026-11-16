@@ -127,9 +127,8 @@ CISOs-Friend does not compete with an established ISMS product such as verinice 
 . *Core*: SAMM on Git. No tool known to this concept keeps SAMM assessments as versioned documents in Git.
 . *Extension*: a lean "ISMS as code" for development organisations: policies, statement-of-applicability extracts for
   secure development, risks from SAMM gaps, threat models and incident reports with their links.
-. *Bridge*: where an organisation already runs verinice, released SAMM assessments can be delivered as evidence
-  through the REST API of verinice.veo, a supplier to the main ISMS rather than a competitor. The bridge is disabled
-  by default until its shape is verified (see the open questions of link:category-isms.adoc#_open_questions[ISMS]).
+. *No bridge*: where an organisation runs an ISMS product, the product refers to a released SAMM assessment by its
+  release tag; CISOs-Friend delivers nothing into it.
 
 The comparison with verinice is in link:category-isms.adoc#_comparison_with_verinice[ISMS, Comparison with verinice].
 
@@ -145,7 +144,6 @@ counted in years, not weeks. SAMM alone takes weeks to months.
 . Clarify with Token Sheriff which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups reach the application,
   and how step-up for approvals is triggered
   (tracked in link:authentication-and-identity.adoc#_open_questions[Authentication and Identity]).
-. Whether the bridge to verinice.veo is in the first release or a later one.
 
 == Related
 

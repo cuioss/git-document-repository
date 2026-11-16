@@ -29,13 +29,13 @@ services with the same checks. Below the services sit the libraries of `git-docu
 (link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which
 reaches the Git server through JGit over HTTPS. The clients of the KMS or Vault (key source of the keyring) and of the
 timestamp authority live in the libraries, in `git-crypto` and `git-timestamp`; the application only supplies their
-configuration. The application's own outbound calls, to the Git host API and to verinice.veo, go through integration
-adapters on `cui-http`.
+configuration. The application's own outbound calls, to the Git host API, the issue tracker, the ticket system and
+the chat, go through integration adapters on `cui-http`.
 
 ----
  browser ──► static web app (resource JAR, same origin)
  browser ──► /api/v1 + SSE ──┐
-                             ├─► application services ──► adapters (cui-http) ──► Git host API, verinice.veo
+                             ├─► application services ──► adapters (cui-http) ──► Git host API, issue tracker
  AI agent ─► /mcp ───────────┘    │
                                   │ calls, configuration
                                   └─► ┌─ git-document-repository ───────────┐
@@ -101,7 +101,7 @@ A `benchmarks` module (k6, non-gating) follows once there is a performance quest
 
 |`cui-http`
 |Every outbound HTTP call of the application goes through `HttpHandler` and returns an `HttpResult`; resilient and
-ETag-aware adapters where a call is repeated (Git host API, veo). Inbound path, query and header values of the REST API,
+ETag-aware adapters where a call is repeated (Git host API). Inbound path, query and header values of the REST API,
 the MCP endpoint and the Git server's webhooks pass the `de.cuioss.http.security` validation pipelines before use.
 
 |`cui-java-tools`
@@ -187,8 +187,8 @@ anything else depends on it.
 
 * *Unit*: JUnit 5, `cui-test-generator` for all test data, EasyMock for test doubles, `cui-test-value-objects` for the
   contracts of value types, `cui-test-juli-logger` with `LogAsserts` for every `LogRecord`.
-* *Outbound HTTP*: `cui-test-mockwebserver-junit5` for the Git host API and verinice.veo, and as a stand-in for the TSA
-  and the KMS behind the library clients; HTTPS included.
+* *Outbound HTTP*: `cui-test-mockwebserver-junit5` for the Git host API and the other outbound systems, and as a
+  stand-in for the TSA and the KMS behind the library clients; HTTPS included.
 * *Inbound HTTP*: the adversarial generators of `cui-http-testing` (path, header, query attack databases) against the
   REST API and the MCP endpoint.
 * *Architecture*: ArchUnit for the layering.

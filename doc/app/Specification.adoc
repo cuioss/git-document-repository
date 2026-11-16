@@ -60,7 +60,7 @@ validation
 |CIFR-IR
 
 |link:specification/category-isms.adoc[ISMS]
-|Documents, registers, reporting dates, evidence, verinice bridge
+|Documents, registers, reporting dates, evidence
 |CIFR-ISMS
 
 |link:specification/data-protection.adoc[Data Protection]

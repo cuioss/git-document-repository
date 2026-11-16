@@ -85,7 +85,7 @@ interfaces it needs from outside systems (for example the deletion of a remote r
 |`config`, the `git-document-repository` modules
 
 |`integration`
-|Outbound adapters through `cui-http`: Git host API, ticket systems, chat, issue tracker, verinice.veo; each
+|Outbound adapters through `cui-http`: Git host API, ticket systems, chat, issue tracker; each
 implements a port interface of `service`, and CDI injects the implementation
 |`config`, `service` (port interfaces only)
 
