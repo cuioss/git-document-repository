@@ -1,0 +1,90 @@
+= CISOs-Friend: Category SAMM
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-SAMM-1[CIFR-SAMM-1: Assessment Layout]_
+
+Status: PLANNED
+
+The SAMM category as configuration (`categories/samm/`) plus the `ScoreCalculator` extension point. Reasoning:
+link:../concepts/category-samm.adoc[SAMM]. Repository: `samm-assessments`.
+
+== Layout
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-SAMM-1[CIFR-SAMM-1: Assessment Layout]_
+* _link:../Requirements.adoc#CIFR-SAMM-2[CIFR-SAMM-2: Scope]_
+* _link:../Requirements.adoc#CIFR-SAMM-7[CIFR-SAMM-7: Evidence as Links]_
+
+Status: PLANNED
+
+[cols="2,3"]
+|===
+|Path |Content
+
+|`samm.yaml`
+|`models`: list of pinned SAMM model versions with source and checksum
+
+|`scopes/<scope-id>/scope.yaml`
+|`id`, `title`, `subject` (one of `team:<id>`, `service:<id>`, `organisation`)
+
+|`scopes/<scope-id>/assessments/<assessment-id>/assessment.yaml`
+|`date`, `model-version`, `state` (`draft`, `in-review`, `released`), `assessors` (pseudonyms)
+
+|`…/answers/<practice-id>.yaml`
+|Per question: `answer` (model answer id), `comment` (AsciiDoc fragment, optional)
+
+|`…/evidence.yaml`
+|List of `{practice, question, title, url}`; `url` must match `^https://`
+
+|`scopes/<scope-id>/targets.yaml`
+|Per practice: `target` (0–3, in steps of the model), optional `due`
+|===
+
+Assessment ids: `<scope-id>-<yyyy>-q<n>` or a ULID when not unique. `subject` must resolve through the directory on every
+save; an unresolved subject is a field error.
+
+== Editing
+_See Requirement link:../Requirements.adoc#CIFR-SAMM-3[CIFR-SAMM-3: Joint Editing]_
+
+Status: PLANNED
+
+Workflow pattern: save often. Every save lands on `refs/heads/assessments/<assessment-id>` as one commit per changed
+practice file; conflicts are detected per practice file by blob id and resolved per question by the library's merge of
+YAML structures; a question changed on both sides is a `CONFLICT` naming the question.
+
+== Release
+_See Requirement link:../Requirements.adoc#CIFR-SAMM-4[CIFR-SAMM-4: Release]_
+
+Status: PLANNED
+
+Transition `samm.release`: `in-review` → `released`, default signature level 2. Effect: merge into `main`, tag
+`assessment/<assessment-id>/v1`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`. Optional
+`release.via-pull-request: true` opens a pull or merge request; the library records its approval as trailer, or as a signed note when the Git server
+creates the merge.
+
+== Comparison
+_See Requirement link:../Requirements.adoc#CIFR-SAMM-5[CIFR-SAMM-5: Comparison over Time]_
+
+Status: PLANNED
+
+`GET /api/v1/samm/{scope}/compare?from=<assessment>&to=<assessment>` returns per business function, practice and
+stream: score `from`, score `to`, difference. When the model versions differ, questions are mapped by id; a question
+present in one version only, or with changed text, is listed under `changed-questions`.
+
+`ScoreCalculator` computes practice and stream scores from the answers and the model; its result is cached in the index
+per released tag.
+
+== Targets
+_See Requirement link:../Requirements.adoc#CIFR-SAMM-6[CIFR-SAMM-6: Targets and Gaps]_
+
+Status: PLANNED
+
+Gap: practice score of the latest released assessment < `target`. Per gap the view offers "Create issue" (issue tracker
+integration) and "Create risk" (new draft in `isms-register` with a reference `samm:assessment/<id>#<practice>`).

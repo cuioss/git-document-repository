@@ -1,0 +1,209 @@
+= CISOs-Friend: Architecture and Modules
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-GEN-2[CIFR-GEN-2: One Rule Set for Both Interfaces]_
+
+Status: PLANNED
+
+The module layout, the layers inside the application, the run-time state and the cross-cutting technical rules.
+Reasoning: link:../concepts/application-architecture.adoc[Application Architecture].
+
+== Maven Modules
+_See Requirement link:../Requirements.adoc#CIFR-OPS-1[CIFR-OPS-1: Runtime]_
+
+Status: PLANNED
+
+Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:cui-quarkus-parent`. Root
+`dependencyManagement` imports, in this order: `io.quarkus:quarkus-bom`, the Token Sheriff BOM, the
+`git-document-repository` versions.
+
+[cols="1,1,3"]
+|===
+|Module |Packaging |Content
+
+|`categories`
+|jar (resources only)
+|`categories/<category>/schema.json`, `template.adoc`, `workflow.yaml` per category
+
+|`web-app`
+|jar
+|Svelte build output under `META-INF/resources`
+
+|`cisos-friend`
+|jar (Quarkus)
+|The application; profile `native`
+
+|`web-e2e`
+|pom
+|Playwright and axe-core suite; profile `e2e`
+
+|`integration-tests`
+|pom
+|Native image, distroless container, compose stack, failsafe `*IT`; profile `integration-tests`
+
+|`deployment`
+|pom
+|Compose sample; profile `compose-sample`
+|===
+
+Reactor order: `categories`, `web-app`, `cisos-friend`, `web-e2e`, `integration-tests`, `deployment`.
+
+== Layers
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-GEN-2[CIFR-GEN-2: One Rule Set for Both Interfaces]_
+* _link:../Requirements.adoc#CIFR-GEN-4[CIFR-GEN-4: Persistence Only Through the Libraries]_
+
+Status: PLANNED
+
+[cols="1,2,2"]
+|===
+|Package (below `de.cuioss.cisosfriend`) |Content |May depend on
+
+|`web`
+|REST resources `/api/v1`, event stream, session and CSRF handling
+|`service`, `security`
+
+|`mcp`
+|MCP endpoint, protected-resource metadata, tool adapters
+|`service`, `security`
+
+|`security`
+|Rights mapping, token and session context, inbound validation
+|`config`
+
+|`service`
+|Application services: documents, workflow transitions, deadlines, dashboards, directory flows; it declares the port
+interfaces it needs from outside systems (for example the deletion of a remote repository)
+|`config`, the `git-document-repository` modules
+
+|`integration`
+|Outbound adapters through `cui-http`: Git host API, ticket systems, issue tracker, verinice.veo, TSA, KMS; each
+implements a port interface of `service`, and CDI injects the implementation
+|`config`, `service` (port interfaces only)
+
+|`config`
+|Configuration model, boot validation rules
+|—
+|===
+
+ArchUnit rules, planned for the unit lane:
+
+* No class outside `service` and `integration` depends on a `git-document-repository` package.
+* No class depends on `org.eclipse.jgit`.
+* `web` and `mcp` do not depend on each other.
+* `service` does not depend on `integration`; it reaches outside systems only through its own port interfaces.
+
+Every MCP tool delegates to exactly one service method that a web resource also calls.
+
+== Categories
+_See Requirement link:../Requirements.adoc#CIFR-GEN-1[CIFR-GEN-1: Categories as Configuration]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|File |Content
+
+|`schema.json`
+|JSON Schema of the category's YAML documents; fields marked personal carry `"x-personal": true`
+
+|`template.adoc`
+|Template that generates the AsciiDoc output from YAML and fragments
+
+|`workflow.yaml`
+|States, transitions, signature level per transition, deadlines, repository alias
+|===
+
+Extension points for behaviour a schema cannot express, each a named CDI interface in `service`:
+
+[cols="1,2"]
+|===
+|Extension point |Used by
+
+|`ScoreCalculator`
+|SAMM scores
+
+|`OutdatedModelDetector`
+|Threat models
+
+|`DeadlineRule`
+|Incident notification deadlines
+
+|`TimelineImporter`
+|Incident timeline import
+|===
+
+The test category `categories/test-note/` exercises create, save, release and output generation without any extension
+point.
+
+== Run-Time State
+_See Requirement link:../Requirements.adoc#CIFR-GEN-3[CIFR-GEN-3: No Database of Its Own]_
+
+Status: PLANNED
+
+[cols="1,1,2"]
+|===
+|State |Built |Rebuild trigger
+
+|Index
+|At start, per repository
+|Save, webhook, periodic fetch
+
+|Keyring mapping
+|At start
+|KEK rotation commit
+
+|Pending approvals
+|From the index (open requests are documents)
+|As index
+
+|Reminders
+|From the index
+|Every minute
+
+|Web sessions
+|On login
+|Not rebuilt; lost on restart
+|===
+
+No `quarkus-datasource` or Hibernate extension is on the class path; an enforcer rule bans them.
+
+== Logging and Metrics
+_See Requirement link:../Requirements.adoc#CIFR-OPS-7[CIFR-OPS-7: Logging and Metrics]_
+
+Status: PLANNED
+
+* Logger: `de.cuioss.tools.logging.CuiLogger`; one `LogMessages` class per package root, DSL style, with `INFO`,
+  `WARN`, `ERROR` holders; identifiers `CISOS_FRIEND-<n>`.
+* `LogMessages.adoc` lists every record: identifier, level, template, parameters, trigger.
+* Metrics: `quarkus-micrometer-registry-prometheus` on the management port, path `/q/metrics`. Names below
+  `cisos_friend_`: `saves_total{repository,outcome}`, `conflicts_total{repository}`, `index_documents{repository}`,
+  `mcp_calls_total{tool,outcome}`, `rate_limited_total{surface}`.
+
+== Degraded Operation
+_See Requirement link:../Requirements.adoc#CIFR-NFR-5[CIFR-NFR-5: Degraded Git Server]_
+
+Status: PLANNED
+
+[cols="1,2"]
+|===
+|Condition |Behaviour
+
+|Fetch fails
+|Index serves the last fetched state; health check `git-remote` reports `DOWN` per repository; readiness stays `UP`
+after the first successful start
+
+|Push fails after save
+|The save result is `SAVED_LOCALLY`; the web app shows "not yet visible to others"; retry with backoff
+
+|Git server unreachable at start
+|Remote repositories with a local cache start from the cache; without cache readiness stays `DOWN`
+|===

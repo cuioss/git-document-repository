@@ -1,0 +1,94 @@
+= CISOs-Friend: Testing
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-NFR-4[CIFR-NFR-4: Inbound Input Security]_
+
+Status: PLANNED
+
+Test lanes, tools and the measurable checks behind the non-functional requirements. Reasoning:
+link:../concepts/application-architecture.adoc#_testing[Application Architecture, Testing].
+
+== Lanes
+_See Requirement link:../Requirements.adoc#CIFR-NFR-6[CIFR-NFR-6: Native Image Verification]_
+
+Status: PLANNED
+
+[cols="1,2,2"]
+|===
+|Lane |Runs |Tools
+
+|Unit
+|`./mvnw verify` (surefire)
+|JUnit 5, `cui-test-generator` (`@EnableGeneratorController`), EasyMock, `cui-test-value-objects`
+(`ShouldHandleObjectContracts`), `cui-test-juli-logger` (`@EnableTestLogger`, `LogAsserts`), ArchUnit, Quarkus tests
+
+|HTTP clients
+|Unit lane
+|`cui-test-mockwebserver-junit5` (`@EnableMockWebServer`, `@MockResponseConfig`, `@ModuleDispatcher`), HTTPS included
+
+|Web unit
+|`web-app` build
+|Vitest, jsdom, Testing Library
+
+|End-to-end
+|Profile `e2e`
+|Playwright, axe-core
+
+|Integration
+|Profile `integration-tests` (failsafe `*IT`)
+|Native image, distroless container, compose stack
+|===
+
+== Integration
+_See Requirement link:../Requirements.adoc#CIFR-NFR-6[CIFR-NFR-6: Native Image Verification]_
+
+Status: PLANNED
+
+Stack: `cisos-friend` (native image under test), Keycloak, Gitea, TSA stub. The first test class, `NativeGitRoundTripIT`,
+runs fetch, save, release and push against Gitea and verifies tag and signature; the failsafe configuration orders it
+first and the remaining suites are skipped when it fails. A second boot with an invalid configuration must fail
+(boot-validation smoke test).
+
+== Performance
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-NFR-1[CIFR-NFR-1: Index Size and Start Time]_
+* _link:../Requirements.adoc#CIFR-NFR-2[CIFR-NFR-2: Save Latency]_
+
+Status: PLANNED
+
+* Fixture: a generated `samm-assessments` repository with 1,000 assessments of 90 answers (`cui-test-generator`).
+* Index size: heap histogram after start, attributed to the index classes; must be < 100 MB.
+* Start: time from process start to readiness `UP` with local repositories present; must be ≤ 60 s.
+* Save latency: 1,000 sequential saves in local mode; p95 ≤ 500 ms.
+
+These run in a non-gating `benchmarks` lane until the targets are confirmed.
+
+== Concurrency
+_See Requirement link:../Requirements.adoc#CIFR-NFR-3[CIFR-NFR-3: Concurrent Workshop]_
+
+Status: PLANNED
+
+Twenty virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 200
+changes must be present on the working branch and no save result may be lost (every result is `SAVED` after the
+library's retries, or `CONFLICT` only for tests that deliberately share a question).
+
+== Security Tests
+_See Requirement link:../Requirements.adoc#CIFR-NFR-4[CIFR-NFR-4: Inbound Input Security]_
+
+Status: PLANNED
+
+* Inbound validation: every REST resource, the MCP endpoint and the webhook endpoint run the generator-driven attack
+  databases of `cui-http-testing` (path traversal, header injection, query manipulation); every attack must be rejected
+  before reaching a service.
+* MCP token tests: foreign audience, expired, wrong issuer, query-string token, missing scope, DPoP mismatch; each with
+  the specified status and `WWW-Authenticate`.
+* Credential leak scan: see link:mcp-server.adoc#_upstream_credentials[MCP Server, Upstream Credentials].
+* Web: CSRF header missing, wrong `Origin`, CSP present on every HTML response.

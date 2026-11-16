@@ -1,0 +1,75 @@
+= ADR-0005: The JGit foundation is extracted from `pm-provider-git` and shared with it
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The generic code of pm-provider-git moves into git-core, git-worktrees and git-testing of this repository; pm-provider-git keeps only a facade, the corpus adapter and the worktree digest.
+// tags: foundation, extraction, pm-mcp-core, jgit
+// affects: git-core, git-worktrees, git-testing
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+`pm-provider-git` of `pm-mcp-core` already holds hardened JGit code: a refusing file system, a remote policy,
+identity handling, results, transport and a cache repository. The document store needs the same code. The question
+is whether the store copies it or both share it.
+
+*The decision:* both share one foundation in this repository.
+
+* `git-core` takes the repository part, `git-worktrees` the linked working trees, `git-testing` the credential
+  generator and fixtures.
+* `pm-provider-git` keeps `JGitSourceRepository` (the corpus adapter), `WorktreeShaDigest` (a contract of PM-MCP) and
+  `GitOperations` as a facade.
+* The foundation is released with real versions to Maven Central.
+
+The inventory and the order are in xref:../concepts/module-structure.adoc#_a_shared_foundation_with_pm_provider_git[Module
+Structure, A Shared Foundation].
+
+== Alternatives rejected
+
+=== A copy in the document store
+
+*Rejected because* every security fix of the hardening would be needed twice, and the two copies would drift.
+
+=== The foundation inside `pm-mcp-core`
+
+*Rejected because* `pm-mcp-core` is proprietary, publishes only to the organisation's registry and deploys `SNAPSHOT`
+versions that are never released. Another project must not hang on that life cycle.
+
+=== Leave `git-worktrees` in `pm-provider-git`
+
+The document store does not need linked working trees.
+
+*Rejected because* `LinkedWorktrees` is generic Git functionality. Keeping it in `pm-provider-git` would split the
+foundation along a consumer's needs rather than along Git's terms.
+
+== Consequences
+
+=== Properties of the design
+
+* Hardening and transport exist once.
+* One test base runs against real local remotes.
+* `pm-provider-git` shrinks to a few hundred lines.
+
+=== Accepted costs
+
+* Two life cycles are coupled. A contract change wanted by PM-MCP is a release of this repository first.
+* The code taken over must be released under this repository's open-source licence.
+
+=== When this is revisited
+
+When the contracts needed by PM-MCP and by the document store diverge.
+
+== Links
+
+* xref:../concepts/module-structure.adoc[Module Structure]
+* xref:0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[ADR-0004]
+* xref:../specification/git-core.adoc[`git-core` specification]

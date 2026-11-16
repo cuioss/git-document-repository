@@ -1,0 +1,157 @@
+= CISOs-Friend: Deployment
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-OPS-2[CIFR-OPS-2: Container Image]_
+
+Status: PLANNED
+
+The shipped image, its ports and probes, how secrets reach it, and the compose sample. Reasoning:
+link:../concepts/deployment.adoc[Deployment].
+
+== Image
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-OPS-1[CIFR-OPS-1: Runtime]_
+* _link:../Requirements.adoc#CIFR-OPS-2[CIFR-OPS-2: Container Image]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|Property |Value
+
+|Builder
+|`quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25` (`quarkus.native.builder-image`)
+
+|Dockerfile
+|`cisos-friend/src/main/docker/Dockerfile.native`
+
+|Base image
+|`quay.io/quarkus/quarkus-distroless-image:2.0@sha256:<digest>`; the digest is updated by a dependency bot
+
+|User
+|`nonroot`
+
+|Binary
+|`/app/application`
+
+|Health check
+|`HEALTHCHECK CMD ["/app/application","--health-probe"]`; the binary probes its own management port and exits `0`
+or `1` before Quarkus boots
+
+|Labels
+|`org.opencontainers.image.{title,description,version,revision,vendor,licenses,source,base.name}`; version and
+revision from build arguments `APP_VERSION`, `APP_REVISION`
+
+|Platforms
+|`linux/amd64`, `linux/arm64`, each built natively on its own runner and joined into one index
+
+|Name
+|`ghcr.io/cuioss/cisos-friend:<version>`
+|===
+
+== Ports and Probes
+_See Requirement link:../Requirements.adoc#CIFR-OPS-3[CIFR-OPS-3: Ports and Readiness]_
+
+Status: PLANNED
+
+[cols="1,1,2"]
+|===
+|Port |Protocol |Serves
+
+|`8443`
+|HTTPS
+|Web app, `/api/v1`, `/mcp`, `/.well-known/oauth-protected-resource`
+
+|`8080`
+|HTTP
+|Redirect to `8443` only
+
+|`9000`
+|HTTP (management)
+|`/q/health/live`, `/q/health/ready`, `/q/metrics`
+|===
+
+Readiness checks, all required for `UP`:
+
+[cols="1,2"]
+|===
+|Check |`UP` when
+
+|`repositories`
+|Every configured repository has been opened and, in remote mode, fetched once in this process or found as a valid
+local repository from an earlier fetch (start from the cache, see the degraded operation of the architecture
+specification); a remote repository without any local copy keeps readiness `DOWN`
+
+|`keyring`
+|The keyring was decrypted with the current KEK
+
+|`index`
+|The index was built for every repository
+|===
+
+Volume: `/app/data` holds the local repositories. It is mounted from a persistent volume; the image declares no
+volume.
+
+== Secrets
+_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+
+Status: PLANNED
+
+[cols="1,2"]
+|===
+|Secret |Mount or reference
+
+|TLS key and certificate
+|`/run/secrets/tls/{tls.key,tls.crt}`
+
+|OIDC client credential
+|`/run/secrets/oidc/client-secret` or a `private_key_jwt` key
+
+|Git push credential
+|`credential-ref` per repository
+
+|Commit-signing key
+|`signing.key-ref` (KMS key id recommended)
+
+|KEK
+|`keyring.kek-ref`
+
+|Webhook secrets
+|`webhook-secret-ref` per repository
+|===
+
+== Compose Sample
+_See Requirement link:../Requirements.adoc#CIFR-OPS-6[CIFR-OPS-6: Compose Sample]_
+
+Status: PLANNED
+
+Location: `deployment/compose-sample/`. Never builds an image; the image is `${CISOS_FRIEND_IMAGE}`.
+
+[cols="1,3"]
+|===
+|Service |Role
+
+|`cisos-friend`
+|The application, named volume `cisos-friend-data`, configuration from `docker/cisos-friend-config/`
+
+|`keycloak`
+|Realm `cisos-friend` with users of each group, a confidential client for the web login and a client for an MCP
+agent
+
+|`gitea`
+|Git server with the repositories of the default cut and push webhooks to the application
+
+|`tsa-stub`
+|RFC 3161 timestamp authority for tests
+|===
+
+Scripts in `scripts/`: `start-sample.sh`, `stop-sample.sh`, `check-sample.sh` (logs in as a test user, saves a SAMM
+draft, saves it, releases it with step-up, and verifies the tag in Gitea).

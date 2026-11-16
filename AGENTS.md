@@ -7,9 +7,14 @@ Claude Code specifics.
 
 `git-document-repository` holds base libraries for _Git as the Persistence of Versioned Documents_: a
 server-side Git repository (reached through JGit, in memory, without working trees) as the persistence of an
-application in which users maintain versioned documents. The design is in the study
-[`doc/git-document-persistence/README.adoc`](doc/git-document-persistence/README.adoc); read it before
-changing the architecture. Statements marked _(unverified)_ in the study are not checked against a source.
+application in which users maintain versioned documents. The documentation index is
+[`doc/README.adoc`](doc/README.adoc): concepts in `doc/concepts/`, decisions in `doc/adr/`, requirements in
+`doc/Requirements.adoc` (prefix `GDR`) and the specification in `doc/Specification.adoc` and `doc/specification/`.
+Read the concepts before changing the architecture. Statements marked _(unverified)_ are not checked against a source.
+
+`doc/app/` documents the application built on these libraries, CISOs-Friend (prefix `CIFR`). It moves to its own
+repository later: keep it self-contained, and link from it into the library documentation only to concepts and
+requirements, never the other way round except from the index.
 
 The repository is a multi-module Maven reactor (group `de.cuioss`, parent `cui-java-parent`): the modules are
 released together and consumed separately.
@@ -21,8 +26,7 @@ released together and consumed separately.
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 
 Planned but not yet created: `git-store`, `git-forms`, `git-crypto`, `git-signing`, `git-timestamp`,
-`git-directory` (see `doc/git-document-persistence/extraction-from-pm-mcp-core.adoc` for the order and the
-dependency graph).
+`git-directory` (see `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** the modules are scaffolds. Each has a `pom.xml`, a `module-info.java` and a `@NullMarked`
 package, and no classes yet. The `exports` directive is missing on purpose: javac rejects exporting a package

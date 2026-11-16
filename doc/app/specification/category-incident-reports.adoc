@@ -1,0 +1,125 @@
+= CISOs-Friend: Category Incident Reports
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-IR-1[CIFR-IR-1: Report Layout and Generated Output]_
+
+Status: PLANNED
+
+The incident-report category as configuration (`categories/incident-reports/`) plus the extension points
+`DeadlineRule` and `TimelineImporter`. Reasoning: link:../concepts/category-incident-reports.adoc[Incident Reports].
+Repository: `isms-incidents-<year>` of the year of awareness.
+
+== Layout
+_See Requirement link:../Requirements.adoc#CIFR-IR-1[CIFR-IR-1: Report Layout and Generated Output]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|Path |Content
+
+|`incidents/<id>/incident.yaml`
+|`aware-at`, `detected-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`, `nis2-applicable`,
+`affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
+
+|`incidents/<id>/narrative/*.adoc`
+|`course.adoc`, `root-cause-analysis.adoc`, `lessons.adoc`
+
+|`incidents/<id>/report.adoc`
+|Generated; never edited
+|===
+
+`<id>`: ULID file name; readable number `INC-<year>-<n>` assigned on save. CI check: `report.adoc` regenerated and
+compared byte for byte.
+
+== Deadlines
+_See Requirement link:../Requirements.adoc#CIFR-IR-2[CIFR-IR-2: Notification Deadlines]_
+
+Status: PLANNED
+
+`DeadlineRule` implementations shipped:
+
+[cols="1,1,1,2"]
+|===
+|Rule |Condition |Due |Notification field
+
+|`gdpr-art33`
+|`personal-data-affected: true`
+|`aware-at` + `PT72H`
+|`notifications.supervisory-authority`
+
+|`nis2-early-warning`
+|`nis2-applicable: true`
+|`aware-at` + `PT24H`
+|`notifications.nis2-early-warning`
+
+|`nis2-notification`
+|`nis2-applicable: true`
+|`aware-at` + `PT72H`
+|`notifications.nis2-notification`
+
+|`nis2-final-report`
+|`nis2-applicable: true` and `resolved-at` ≤ notification `sent-at` + `P1M`
+|`notifications.nis2-notification.sent-at` + `P1M`
+|`notifications.nis2-final-report`
+
+|`nis2-progress-report`
+|`nis2-applicable: true`, still being handled at notification `sent-at` + `P1M`
+|`notifications.nis2-notification.sent-at` + `P1M`
+|`notifications.nis2-progress-report`
+
+|`nis2-final-report-after-handling`
+|`nis2-applicable: true`, a progress report was due
+|`resolved-at` + `P1M`
+|`notifications.nis2-final-report`
+|===
+
+The final-report rules start only when the notification `sent-at` is recorded; before that only the early-warning and
+notification deadlines are shown. Source of the three NIS2 report deadlines: Directive (EU) 2022/2555, Art. 23(4)
+_(unverified against the national transposition)_.
+
+A deadline is `MET` when its notification field holds `sent-at` ≤ due, `MISSED` otherwise after due, `OPEN` before.
+The NIS2 deadlines are configuration and are verified before the first release _(unverified)_.
+
+== Workflow
+_See Requirement link:../Requirements.adoc#CIFR-IR-3[CIFR-IR-3: Mandatory Fields]_
+
+Status: PLANNED
+
+States: `draft` → `in-review` → `released`; default signature level of `incident.release`: 3. Draft saves validate
+types only; the transition to `in-review` and `released` validates `required`; a failure returns
+`MANDATORY_FIELDS_MISSING` with the JSON Pointers of the missing fields.
+
+== Classification
+_See Requirement link:../Requirements.adoc#CIFR-IR-4[CIFR-IR-4: Affected Services]_
+
+Status: PLANNED
+
+`affected-services`: list of `service:` ids. Proposed additions: the transitive closure over `dependsOn` from the picked
+services, shown for confirmation. `protection-needs` of the incident: per dimension (confidentiality, integrity,
+availability) the maximum over the confirmed services.
+
+== Import
+_See Requirement link:../Requirements.adoc#CIFR-IR-5[CIFR-IR-5: Timeline Import]_
+
+Status: PLANNED
+
+`TimelineImporter`: input a ticket id; output a list of `{at, author-role, text}` appended to `timeline` of the draft;
+the ticket id is added to `tickets`. The first shipped adapter is chosen with the first adopting organisation (open
+question of the concept). The application writes nothing into the ticket system.
+
+== Evaluation
+_See Requirement link:../Requirements.adoc#CIFR-IR-6[CIFR-IR-6: Evaluation across Incidents]_
+
+Status: PLANNED
+
+`GET /api/v1/reports/incidents?year=<y>`: per `category` the count, median of `detected-at − aware-at` (time to
+detection, from the first timeline entry when earlier), median of `resolved-at − detected-at`, and every
+`root-causes` value occurring in more than one released report of the year.

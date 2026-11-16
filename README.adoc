@@ -19,7 +19,8 @@ of an application in which users maintain versioned documents (OWASP SAMM assess
 response reports, ISMS). Git is the persistence only, not a user-facing tool; the libraries build on JGit and work
 in memory, without working trees.
 
-The study behind the design is in link:doc/git-document-persistence/README.adoc[doc/git-document-persistence].
+The documentation starts at link:doc/README.adoc[doc/README.adoc]: concepts, architecture decisions, requirements
+and specification.
 The repository is a multi-module Maven reactor whose modules are released together but consumed separately.
 
 [cols="1,3"]
@@ -36,8 +37,8 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |Generators and fixtures: local and in-memory repositories, a local remote.
 |===
 
-The modules are scaffolded; the code is taken over from `pm-provider-git` in a later step (see the study,
-`extraction-from-pm-mcp-core.adoc`). The aspect modules (`git-store`, `git-forms`, `git-crypto`, `git-signing`,
+The modules are scaffolded; the code is taken over from `pm-provider-git` in a later step (see
+link:doc/concepts/module-structure.adoc[Module Structure]). The aspect modules (`git-store`, `git-forms`, `git-crypto`, `git-signing`,
 `git-timestamp`, `git-directory`) follow as the document store needs them.
 
 === Maven Coordinates

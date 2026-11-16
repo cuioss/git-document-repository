@@ -1,0 +1,160 @@
+= MCP Server
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../README.adoc[CISOs-Friend documentation] » Concepts
+
+An AI agent that fills in a threat model from a recipe or drafts an incident report from a ticket timeline is useful
+exactly as long as it can be held to the same rules as the person it works for. The usual first version of such an
+integration hands the agent a long-lived API key with the rights of a service account, and the audit trail then says
+"the bot did it". CISOs-Friend's MCP server is built the other way round: token handling is designed in from the first
+line, every call acts for a named user with no more than that user's rights, and the steps that need a human stay with
+the human.
+
+== The Server as a Protected Resource
+
+The MCP server is an OAuth 2.1 resource server, as the MCP authorization specification requires for HTTP transports.
+The statements below were checked against the specification revisions 2025-11-25 and 2026-07-28 (`basic/authorization`
+and `basic/transports/streamable-http` in the `modelcontextprotocol` repository); the decision is recorded in
+link:../adr/0003-The_MCP_server_is_an_OAuth_2.1_protected_resource_and_never_passes_tokens_through.adoc[ADR-0003].
+
+* *Protected Resource Metadata* (RFC 9728) is served at `/.well-known/oauth-protected-resource` and names the
+  organisation's authorization server in `authorization_servers` and the scopes in `scopes_supported` (without
+  `offline_access`, which is no resource requirement).
+* *Discovery*: a request without a valid token gets `401` with `WWW-Authenticate: Bearer resource_metadata="…",
+  scope="…"`.
+* *Tokens* arrive in the `Authorization` header of every request, never in the query string.
+* *Validation*: the server validates every token as OAuth 2.1 §5.2 requires, through `token-sheriff-validation-quarkus`:
+  signature against the issuer's JWKS, expiry, issuer, and *audience*. The audience must be the server's canonical
+  URI, the value MCP clients send as `resource` parameter (RFC 8707). A token issued for any other resource is
+  rejected with `401`, however valid it is otherwise.
+* *Insufficient scope*: a call whose token lacks a scope gets `403` with `error="insufficient_scope"`, the scopes the
+  operation needs and the `resource_metadata` URI, so the client can run a step-up authorization for exactly those
+  scopes.
+* *No token passthrough*: the server never forwards the token it received to another service. Upstream calls use
+  their own credentials (see <<_git_credentials_never_reach_the_agent>>).
+
+The client side of the flow (discovery, PKCE `S256`, `resource` parameter, Client ID Metadata Documents or dynamic
+registration) is the agent's and the authorization server's duty; the application documents what it expects of both
+in its configuration guide.
+
+image::../resources/diagrams/mcp-token-flow.svg["Sequence: the agent calls the MCP server without a token and gets 401 with the resource metadata; it reads the metadata, authorises at the identity provider with the resource parameter, calls again with the bearer token; the server validates audience and scope through Token Sheriff, runs the tool as the user and saves through the technical user with signed trailers",align=center]
+
+== Transport
+
+The server speaks Streamable HTTP at `/mcp`, in the shape of revision 2026-07-28: no protocol-level sessions, so every
+request carries and is checked against its own token, and nothing an agent did earlier widens what it may do now. The
+server validates the `Origin` header of every request and answers an invalid origin with `403`. A STDIO transport is not
+offered: the specification does not apply its authorization to STDIO, and a local process could not prove a user.
+
+== Scopes and Rights
+
+A scope says what kind of operation an agent may attempt; the user's rights say on which repositories. The effective
+permission of a call is the intersection: the agent never exceeds the user it acts for.
+
+[cols="1,3"]
+|===
+|Scope |Operations
+
+|`cisos-friend:read`
+|List, read and search documents, catalogs and the index; diffs; due items.
+
+|`cisos-friend:draft`
+|Write the user's drafts; nothing becomes visible to others.
+
+|`cisos-friend:save`
+|Save drafts to the working branch (signature level 1).
+
+|`cisos-friend:request-release`
+|Open a release or approval request that a human completes.
+|===
+
+The user's rights come from the identity-provider groups, mapped per repository, exactly as for the web app
+(link:authentication-and-identity.adoc#_rights[Authentication and Identity, Rights]). There is no agent-specific
+service account.
+
+== What an Agent Can and Cannot Do
+
+[cols="1,1"]
+|===
+|Can |Cannot
+
+|Read what the user may read
+|Read what the user may not read
+
+|Fill in drafts from recipes, timelines, tickets
+|Release, approve or sign above level 1
+
+|Save at signature level 1, attributed to user and agent
+|Change catalogs, rights or configuration
+
+|Request a release; the human approves in the web app
+|Perform step-up MFA or a passkey approval
+
+|Receive validation errors and conflicts per field
+|Obtain Git, KMS or timestamp-authority credentials
+|===
+
+An approval at signature level 2 or 3 is bound to a human act: step-up authentication or a passkey on the user's
+device. The MCP server therefore stops at the request; the request appears in the user's *Due* lens of the web app.
+
+[#_git_credentials_never_reach_the_agent]
+== Git Credentials Never Reach the Agent
+
+The application pushes with the technical user, or with the user's Git token that Token Sheriff keeps
+(link:authentication-and-identity.adoc#_push_credentials[Push Credentials]). Neither credential is ever part of a tool
+result, an error message or a log line, and the agent's access token is never used against the Git server. A
+compromised agent therefore holds at most a short-lived, audience-bound token for this one server.
+
+[#_attribution_of_agent_actions]
+== Attribution of Agent Actions
+
+Every commit an agent causes carries the identity of the user, exactly as a commit from the web app does (pseudonym,
+issuer, authentication time, session HMAC; the trailer schema is the library's, see
+link:../../concepts/identity-and-signing.adoc[Identity and Signing]). In addition it carries the agent client: the
+`client_id` (or `azp`) of the token. The application's signature covers both, so the history states "this change came
+from agent X acting for user Y, whom identity provider Z authenticated at T". The library's trailer schema carries the
+client as `Actor-Client`.
+
+== Sender Constraint
+
+Where the authorization server issues DPoP-bound tokens (RFC 9449), the server validates the proof through Token
+Sheriff's per-issuer DPoP support and can require it. The MCP specification does not require DPoP; the application
+offers it as configuration and recommends it once the agent clients support it _(client support unverified)_.
+
+== Limits and Audit
+
+* *Rate limits* per user and client: reads generously, writes tightly; a client that exceeds them gets `429`.
+* *Size limits* on tool inputs, derived from the category schemas.
+* *Audit*: every tool call is logged with a `LogRecord`: pseudonym, client id, tool, repository, outcome. Token
+  material, session ids and document content are never logged. The records reach the SIEM.
+* *Content is data*: document text returned to an agent may contain instructions written by anyone with write access.
+  The server treats every write the agent sends as untrusted input: schema validation, rights check, signature level,
+  exactly as for a human.
+
+[CAUTION]
+====
+The design binds an agent to its user's rights; it does not make the agent's judgement better. An agent with
+`cisos-friend:save` can still save a wrong answer at level 1. That is why nothing an agent saves is released without a
+human.
+====
+
+== Open Questions
+
+. Which protocol revisions the server supports besides 2026-07-28 (the 2025-11-25 shape had protocol sessions).
+. Whether the organisation's authorization server supports Client ID Metadata Documents, or agents are pre-registered.
+. The exact tool list per category, and whether recipes are offered as MCP prompts.
+. DPoP support in the agent clients in use.
+
+== Related
+
+* link:authentication-and-identity.adoc[Authentication and Identity]
+* link:web-app.adoc[Web App] — where humans complete what agents request
+* Sources: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization[MCP Authorization 2025-11-25],
+  https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/docs/specification/2026-07-28/basic[MCP specification 2026-07-28 (repository)],
+  https://www.rfc-editor.org/rfc/rfc9728[RFC 9728], https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
+  https://www.rfc-editor.org/rfc/rfc6750#section-3.1[RFC 6750 §3.1], https://www.rfc-editor.org/rfc/rfc9449[RFC 9449];
+  Token Sheriff `doc/validation` (VALIDATION-8.7) and `doc/client` (CLIENT-12)

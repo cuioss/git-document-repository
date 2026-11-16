@@ -1,0 +1,78 @@
+= ADR-0009: RFC 3161 timestamps anchor the history as `git notes`, written by a post-commit outbox
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: After every reference update, successful push or branch-moving fetch an outbox walks the new commits idempotently by hash, with its progress per consumer and branch in a reference; git-timestamp obtains an RFC 3161 token for each new state of main and stores it under refs/notes/timestamps.
+// tags: evidence, timestamp, rfc3161, outbox, notes
+// affects: git-store, git-timestamp
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Proposed
+
+== Decision
+
+Git's hash chain is only as trustworthy as the people who can force-push. Index, journal and timestamps must follow
+every save without a second transaction. The question is how the store anchors the history externally and stays
+consistent with what it derives.
+
+*The decision:*
+
+* An *outbox* walks the new commits of every branch a consumer subscribes to. It runs after a reference update the
+  store performs (local mode), after a successful push (remote mode), and after a fetch that moves a subscribed branch.
+  The last trigger covers a merge the Git server performs into protected `main`; a webhook or the periodic fetch
+  brings it. The walk is idempotent by commit hash and keeps its progress per consumer and branch in a reference
+  (`refs/meta/outbox/<consumer>/<branch>`), so it resumes after a failure.
+* `git-timestamp` is one consumer of the outbox, subscribed to `main`. It obtains an RFC 3161 timestamp for every new
+  state of `main` and stores the token as a note under `refs/notes/timestamps`. In remote mode it pushes the note
+  right after writing it; a failed push keeps the commit pending, and the retry pushes the stored token instead of
+  requesting a new one.
+* A mirror to a second Git server is an optional further consumer.
+
+See xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
+
+== Alternatives rejected
+
+=== A copy of all commits in a second store
+
+*Rejected because* Git already is an append-only, hash-chained store. A copy adds no independent proof.
+
+=== Public transparency logs (Sigstore/Rekor)
+
+*Rejected because* the entries are public. Internal compliance data must not leave the organisation.
+
+=== WORM storage as the default
+
+*Rejected as the default because* it requires infrastructure many operators lack. It stays an option where it exists.
+
+=== Timestamps in a database
+
+*Rejected because* the proof would not travel with the repository.
+
+== Consequences
+
+=== Properties of the design
+
+* The proof travels with the repository and is verifiable without the application.
+* A later compromise of the signing key devalues only commits without a token issued before the compromise. A commit
+  whose token was delayed past the compromise, for example by an unreachable authority, is as suspect as a new one.
+
+=== Accepted costs
+
+* A timestamp authority is a dependency at run time; the outbox retries when it is unreachable.
+* A timestamp proves existence; it cannot restore a removed state.
+
+=== When this is revisited
+
+When a qualified timestamp service becomes mandatory or when the authority's availability blocks saves.
+
+== Links
+
+* xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+* xref:../Requirements.adoc#requirements-git-timestamp[`git-timestamp` requirements]

@@ -1,0 +1,63 @@
+= ADR-0008: Incident handling stays in the ticket system and the chat; only the report lives in Git
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The live phase of an incident (alerting, coordination, escalation) stays in chat, ticket system and on-call service; CISOs-Friend holds the structured report with deadlines, review and approval, and imports the timeline.
+// tags: incidents, scope, integration
+// affects: categories, cisos-friend
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Incident reports are written in Confluence today. An incident has two parts. The handling happens in real time. The
+report is a document with structure, review and approval.
+
+*The decision:* CISOs-Friend holds the report only.
+
+* Alerting, coordination and escalation stay in chat, ticket system and on-call service.
+* The report is a schema-driven document with notification deadlines, review and approval.
+* The timeline is imported from the ticket system or the chat.
+* The report refers to tickets by id. No Git content is written into the ticket system.
+
+The details are in link:../concepts/category-incident-reports.adoc[Incident Response Reports].
+
+== Alternatives rejected
+
+=== Live incident handling in CISOs-Friend
+
+*Rejected because* Git is no real-time medium. Commits per chat message would bury the report. Commercial tools are
+strong in the live phase.
+
+=== Keep the reports in Confluence
+
+*Rejected because* Confluence cannot enforce mandatory fields or deadlines. Free text allows no evaluation across
+incidents.
+
+== Consequences
+
+=== Properties of the design
+
+* The report is evidence: approved, immutable, timestamped.
+* Responders keep their tools during the incident.
+
+=== Accepted costs
+
+* An import per ticket system is needed for the timeline.
+* Joint live editing of the report is weaker than in Confluence.
+
+=== When this is revisited
+
+* When an organisation wants the report started automatically from the ticket.
+
+== Links
+
+* link:../concepts/category-incident-reports.adoc[Incident Response Reports]

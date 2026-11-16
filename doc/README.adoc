@@ -1,0 +1,142 @@
+= git-document-repository -- Documentation Index
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+`git-document-repository` holds the base libraries for _Git as the Persistence of Versioned Documents_: a server-side
+Git repository, reached through JGit in memory and without working trees, as the persistence of an application in
+which users maintain versioned documents. The modules are released together and consumed separately.
+
+This directory holds the design documentation of the libraries. Statements marked _(unverified)_ come from general
+knowledge and were not checked against a current source.
+
+[NOTE]
+====
+`doc/app/` documents xref:app/README.adoc[CISOs-Friend], the application built on these libraries. It moves to its own
+repository later and is not part of the library documentation.
+====
+
+== Where to Start
+
+[cols="1,3"]
+|===
+|Reader |Entry point
+
+|Newcomer
+|xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents] -- the problem, the
+assumptions, the primitives and the limits.
+
+|Contributor changing the module structure
+|xref:concepts/module-structure.adoc[Module Structure] and the <<_architecture_decisions,decision records>>.
+
+|Implementer
+|xref:Requirements.adoc[Requirements] (what must hold) and xref:Specification.adoc[Specification] (how it is
+realised).
+|===
+
+== Concepts
+
+[cols="1,3"]
+|===
+|Concept |Content
+
+|xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]
+|Problem, assumptions, existing solutions, scope of the libraries, risks and limits
+
+|xref:concepts/module-structure.adoc[Module Structure]
+|The reactor, module dependencies, the foundation shared with `pm-provider-git`, the order of work
+
+|xref:concepts/storage-engine.adoc[The Storage Engine on Git]
+|Local and remote mode, no working trees, compare-and-swap, drafts and saving, visibility, the in-memory index
+
+|xref:concepts/identity-and-signing.adoc[Identity and Signing]
+|Technical user and user token, the application signature, trailers, graded traceability, passkey approvals
+
+|xref:concepts/data-protection.adoc[Data Protection]
+|Pseudonymous history, the encrypted keyring, erasure by key rotation, repositories per class
+
+|xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+|Derived, complementary and assuring stores, RFC 3161 timestamps, the post-commit outbox
+
+|xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
+|Schema, data and generated output, workflow, deadlines, links, running numbers
+
+|xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
+|Catalogs of roles, teams and services, the encrypted directory of persons, Backstage alignment
+|===
+
+[[_architecture_decisions]]
+== Architecture Decisions
+
+[cols="1,3,1"]
+|===
+|ADR |Decision |Status
+
+|xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[0001]
+|Documents are written in core without working trees, and references move by compare-and-swap
+|Accepted
+
+|xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[0002]
+|Local and remote mode share one API; the local bare clone is a disposable cache in remote mode
+|Accepted
+
+|xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[0003]
+|Drafts are per-user references that are never pushed
+|Accepted
+
+|xref:adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[0004]
+|The libraries are one reactor of separately consumed modules, with optional aspect modules
+|Accepted
+
+|xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[0005]
+|The JGit foundation is extracted from `pm-provider-git` and shared with it
+|Accepted
+
+|xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[0006]
+|The application signs every commit and records the user's claims as signed trailers
+|Proposed
+
+|xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[0007]
+|Passkey approvals are stored as `git notes` on the approved commit
+|Proposed
+
+|xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[0008]
+|The pseudonym mapping lies in an encrypted keyring in Git; erasure rotates the key-encryption key
+|Proposed
+
+|xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[0009]
+|RFC 3161 timestamps anchor the history as `git notes`, written by a post-commit outbox
+|Proposed
+
+|xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[0010]
+|No database; the in-memory index is derived from Git
+|Accepted
+
+|xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[0011]
+|Documents are schema-driven YAML data with AsciiDoc fragments and generated output
+|Proposed
+
+|xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[0012]
+|Directory roles are names only in the first iteration
+|Proposed
+|===
+
+== Requirements and Specification
+
+* xref:Requirements.adoc[Requirements] -- prefix `GDR`, grouped by module, with a closing traceability table.
+* xref:Specification.adoc[Specification] -- one document per module plus the error model and testing; every section
+  links back to its requirement and carries its implementation status.
+
+== Reading Order
+
+. xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]
+. xref:concepts/storage-engine.adoc[The Storage Engine on Git]
+. xref:concepts/identity-and-signing.adoc[Identity and Signing]
+. xref:concepts/data-protection.adoc[Data Protection]
+. xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+. xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
+. xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
+. xref:concepts/module-structure.adoc[Module Structure]
+. xref:Requirements.adoc[Requirements], then xref:Specification.adoc[Specification]

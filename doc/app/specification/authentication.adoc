@@ -1,0 +1,215 @@
+= CISOs-Friend: Authentication
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
+
+Status: PLANNED
+
+Login, rights, the identity values written into commits, signature levels, step-up, passkeys, push credentials, the
+first login and the directory flows. Reasoning:
+link:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library contract for trailers,
+signatures and approval notes is in link:../../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1],
+link:../../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2], link:../../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4] and
+link:../../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5].
+
+== Web Login
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|Item |Value
+
+|Engine
+|`token-sheriff-client-quarkus`, confidential client
+
+|Flow
+|Authorization code, PKCE `S256`, session-bound `state` and `nonce`, issuer check; PAR when the provider supports it
+
+|Endpoints
+|`GET /api/v1/auth/login?return=<address>`, `GET /api/v1/auth/callback`, `POST /api/v1/auth/logout`
+
+|Transaction cookie
+|`__Host-cisos-friend-login`; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=600`; carries only an opaque
+reference to the server-side login transaction (`state`, `nonce`, PKCE verifier); deleted by the callback
+
+|Session cookie
+|`__Host-cisos-friend-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
+
+|Callback response
+|A small same-origin page that navigates to `return`, not a `302`: after the cross-site redirect from the identity
+provider the browser would withhold the `Strict` session cookie on a redirect chain _(unverified for every browser)_
+
+|Idle timeout
+|`web.session.idle-timeout`, default `PT30M`
+
+|Absolute lifetime
+|`web.session.max-lifetime`, default `PT8H`
+
+|Logout
+|RP-initiated at the provider's `end_session_endpoint`; held tokens revoked first
+
+|`401` from `/api/v1`
+|Response body names the login address; the web app follows it and returns to `return`
+|===
+
+== Rights
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-2[CIFR-AUTH-2: Rights]_
+
+Status: PLANNED
+
+Input: the `groups` claim (or the claim configured as group source) of the session or bearer token. Mapping:
+`cisos-friend.yaml` → `rights`.
+
+[cols="1,3"]
+|===
+|Action |Permits
+
+|`read`
+|Reading documents, index views and diffs of the repository
+
+|`edit`
+|Drafts and saves (signature level 1)
+
+|`approve`
+|Transitions requiring level 2 or 3
+
+|`administer-catalogs`
+|Changes of the role, team and service catalogs; deletion of expired repositories
+|===
+
+A request is permitted only if one of the user's groups maps the action on the target repository. No other source
+(directory role, token scope alone) grants a right.
+
+== Trailer Values
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-3[CIFR-AUTH-3: Identity in the Commit]_
+
+Status: PLANNED
+
+The application supplies these values to the library's trailer schema:
+
+[cols="1,2"]
+|===
+|Value |Source
+
+|Pseudonym
+|Keyring lookup of the pair (`iss`, `sub`); created on first login
+
+|Issuer
+|`iss`
+
+|Authentication time
+|`auth_time`
+
+|Authentication context
+|`acr`, else `amr` joined by `+`
+
+|Session HMAC
+|HMAC-SHA-256 of `sid` with the application's session-HMAC key
+
+|Agent client (MCP only)
+|`client_id`, else `azp`
+|===
+
+== Signature Levels
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-4[CIFR-AUTH-4: Signature Levels per Transition]_
+
+Status: PLANNED
+
+Defaults in `categories/<category>/workflow.yaml`; overrides in `cisos-friend.yaml` → `categories`.
+
+[cols="2,1"]
+|===
+|Transition |Default level
+
+|`save` (all categories), `directory-entry`
+|1
+
+|`samm.release`, `threat-model.release`
+|2
+
+|`incident.release`, `isms.policy.approve`, `isms.soa.approve`
+|3
+|===
+
+A transition whose required level is not reached returns the result `SIGNATURE_LEVEL_REQUIRED` with the level; nothing
+is written.
+
+== Step-Up
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-5[CIFR-AUTH-5: Step-Up]_
+
+Status: PLANNED
+
+Configuration per category: `step-up.acr` (required `acr` value) and `step-up.max-age` (default `PT5M`).
+
+. The approval request checks the session's `acr` and `auth_time`.
+. Not met: the response is `STEP_UP_REQUIRED` with a step-up address; the web app redirects there.
+. The client re-drives authorization with `acr_values` and `max_age` (RFC 9470) and verifies the returned `acr` and
+  `auth_time`.
+. The approval is written with the renewed values in the trailers.
+
+== Passkey Approval
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-6[CIFR-AUTH-6: Passkey Approval]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|Step |Contract
+
+|Registration
+|`POST /api/v1/passkeys/options` → creation options (`userVerification: required`); `POST /api/v1/passkeys` with the
+attestation; the public key is stored through the library's registered-keys list
+
+|Approval options
+|`POST /api/v1/approvals/{id}/passkey-options` → request options with the fresh, single-use challenge the library
+issues for the commit being approved (hash over commit id and nonce), `userVerification: required`
+
+|Approval
+|`POST /api/v1/approvals/{id}/passkey` with the assertion; verified (ceremony type `webauthn.get`, origin, challenge
+and its single use, signature, UP and UV flags, sign count) against the registered credential; then handed to the
+library as approval note
+|===
+
+== Push Credentials
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-7[CIFR-AUTH-7: Push Credentials]_
+
+Status: PLANNED
+
+Per repository: `push-credential` = `technical-user` (default) or `user-token`. With `user-token` the application asks
+Token Sheriff for the user's Git-host token at push time; a missing or expired token returns `CREDENTIALS_EXPIRED` and
+the draft stays. Release to a protected branch with `user-token` opens a pull or merge request through the Git host API.
+
+== First Login
+_See Requirement link:../Requirements.adoc#CIFR-DIR-1[CIFR-DIR-1: First Login]_
+
+Status: PLANNED
+
+. After login the server asks the library for the person of (`iss`, `sub`). The outcome entry-required (no pseudonym
+  yet, which the library then creates, or a pseudonym without a saved entry from an interrupted first login) makes it
+  answer every `/api/v1` request except `/api/v1/directory/me` with `FIRST_LOGIN_REQUIRED`, until the entry is saved.
+. `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
+. The form shows the text referenced by `web.information-text-ref`.
+. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves at level 1.
+
+== Directory Flows
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-DIR-2[CIFR-DIR-2: Keeping the Entry Current]_
+* _link:../Requirements.adoc#CIFR-DIR-3[CIFR-DIR-3: Catalog Maintenance]_
+
+Status: PLANNED
+
+* Own entry: `PUT /api/v1/directory/me` at any time.
+* Confirmation: when the entry's last confirmation is older than `web.directory.confirm-interval` (default `P12M`), the
+  next login shows the form with "Is this still right?"; confirming writes the confirmation date.
+* Catalogs: `PUT /api/v1/catalogs/{catalog}/{id}` requires `administer-catalogs`; `DELETE` is not offered; retiring sets
+  `retired: true`.

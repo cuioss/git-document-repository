@@ -1,0 +1,778 @@
+= CISOs-Friend Requirements
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+== Overview
+
+This document states the requirements for CISOs-Friend, the server application in which a development organisation
+maintains its OWASP SAMM assessments, threat models, incident response reports and ISMS documents as versioned
+documents in its own Git server. It has two user interfaces: a web app for people and an MCP server for AI agents.
+
+Project prefix: `CIFR-`. IDs are grouped by aspect (`CIFR-<GROUP>-<n>`); they are stable identifiers, sequential within
+a group, and never reused. A requirement names the behaviour; the design is in the
+link:Specification.adoc[Specification], the reasoning in the concepts.
+
+All requirements are `PLANNED`: no code exists yet.
+
+=== Not Owned Here
+
+The application builds on the libraries of `git-document-repository` and on Token Sheriff. Their behaviour is
+referenced, never restated:
+
+[cols="1,2"]
+|===
+|Behaviour |Owner
+
+|Drafts, saving, compare-and-swap, release by merge and tag, in-memory index, outbox
+|link:../Requirements.adoc#requirements-git-store[`git-store` requirements]
+
+|Schemas, templates, workflows, deterministic serialisation, running numbers, generated output
+|link:../Requirements.adoc#requirements-git-forms[`git-forms` requirements]
+
+|Keyring, pseudonyms, erasure by KEK rotation, crypto-shredding
+|link:../Requirements.adoc#requirements-git-crypto[`git-crypto` requirements]
+
+|Commit signature, trailer schema, graded traceability, passkey approval notes, signature check
+|link:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
+
+|RFC 3161 timestamps as notes
+|link:../Requirements.adoc#requirements-git-timestamp[`git-timestamp` requirements]
+
+|Directory of persons, catalogs, stable ids, Backstage import
+|link:../Requirements.adoc#requirements-git-directory[`git-directory` requirements]
+
+|Repositories, remote policy, transport, local and remote mode
+|link:../Requirements.adoc#requirements-git-core[`git-core` requirements]
+
+|OIDC confidential client, step-up (RFC 9470), logout, token validation, DPoP
+|Token Sheriff (`doc/client`, `doc/validation`)
+|===
+
+== General Requirements
+
+[#CIFR-GEN-1]
+=== CIFR-GEN-1: Categories as Configuration
+
+* Each category (SAMM, threat models, incident reports, ISMS) must be defined by a JSON Schema, an AsciiDoc template,
+  a workflow and a target repository, and by nothing else.
+* Adding a category must require no Java source change: a test category supplied as resources only must pass create,
+  save, release and generated output in the integration tests.
+* Concept: link:concepts/cisos-friend-overview.adoc[Overview];
+  link:adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005].
+* Specification: link:specification/architecture-and-modules.adoc#_categories[Architecture and Modules, Categories].
+
+[#CIFR-GEN-2]
+=== CIFR-GEN-2: One Rule Set for Both Interfaces
+
+* Every operation offered by the MCP server must be executed by the same application service as the web app's
+  equivalent operation, with the same rights check, schema validation and signature-level check.
+* For every MCP tool, a test must show that the web-app request and the tool call with the same user and input
+  produce the same outcome (success, validation error, conflict, forbidden).
+* Specification: link:specification/architecture-and-modules.adoc#_layers[Architecture and Modules, Layers].
+
+[#CIFR-GEN-3]
+=== CIFR-GEN-3: No Database of Its Own
+
+* The application must persist durable state only in Git repositories (remote, or local in local mode).
+* The in-memory index, the keyring mapping and computed reminders must be rebuilt from Git at start; a restart test
+  must show identical dashboard results before and after restart.
+* The application must not configure a datasource.
+* Concept: link:concepts/application-architecture.adoc[Application Architecture].
+* Specification: link:specification/architecture-and-modules.adoc#_run_time_state[Architecture and Modules, Run-Time State].
+
+[#CIFR-GEN-4]
+=== CIFR-GEN-4: Persistence Only Through the Libraries
+
+* Application packages must reach Git only through the `git-document-repository` modules; an ArchUnit rule must fail
+  the build when an application package imports `org.eclipse.jgit`.
+* Specification: link:specification/architecture-and-modules.adoc#_layers[Architecture and Modules, Layers].
+
+== Functional Requirements: Categories
+
+[#CIFR-SAMM-1]
+=== CIFR-SAMM-1: Assessment Layout
+
+* An assessment must be stored under `scopes/<scope-id>/assessments/<assessment-id>/` with `assessment.yaml`, one
+  `answers/<practice-id>.yaml` per practice and `evidence.yaml`.
+* Each assessment must record the SAMM model version it was taken with; `samm.yaml` must pin the available model
+  versions.
+* Concept: link:concepts/category-samm.adoc[SAMM].
+* Specification: link:specification/category-samm.adoc#_layout[SAMM, Layout].
+
+[#CIFR-SAMM-2]
+=== CIFR-SAMM-2: Scope
+
+* A scope must refer to exactly one `team:`, `service:` or the organisation by stable catalog id.
+* A save whose scope reference does not resolve in the directory must be rejected with a validation error naming the
+  reference.
+* Specification: link:specification/category-samm.adoc#_layout[SAMM, Layout].
+
+[#CIFR-SAMM-3]
+=== CIFR-SAMM-3: Joint Editing
+
+* Saves by different users to different practices of one assessment must all succeed without a conflict.
+* Concurrent saves to the same question must yield a conflict for the later save that names the question and both
+  values; the later user's draft must be kept.
+* Every explicit save must be visible to the other editors of the assessment (save-often pattern).
+* Specification: link:specification/category-samm.adoc#_editing[SAMM, Editing].
+
+[#CIFR-SAMM-4]
+=== CIFR-SAMM-4: Release
+
+* Release must produce the tag `assessment/<id>/v1` on the released state and require signature level 2 by default;
+  an assessment is released once.
+* After release, any save to the released assessment must be rejected; a new assessment is created instead.
+* Specification: link:specification/category-samm.adoc#_release[SAMM, Release].
+
+[#CIFR-SAMM-5]
+=== CIFR-SAMM-5: Comparison over Time
+
+* The application must compare any two released assessments of one scope and show the score difference per business
+  function, practice and stream.
+* A comparison across SAMM model versions must map practices by id and mark every question whose text or presence
+  differs between the versions.
+* Specification: link:specification/category-samm.adoc#_comparison[SAMM, Comparison].
+
+[#CIFR-SAMM-6]
+=== CIFR-SAMM-6: Targets and Gaps
+
+* A scope must hold target maturity per practice in `targets.yaml`.
+* For a released assessment the application must list every practice whose score is below its target, and must offer
+  to create an issue in the configured issue tracker and a risk in the ISMS register for each gap.
+* Specification: link:specification/category-samm.adoc#_targets[SAMM, Targets].
+
+[#CIFR-SAMM-7]
+=== CIFR-SAMM-7: Evidence as Links
+
+* Evidence must be stored as absolute HTTPS URLs with a title; file upload of evidence must not be offered.
+* Specification: link:specification/category-samm.adoc#_layout[SAMM, Layout].
+
+[#CIFR-TM-1]
+=== CIFR-TM-1: Place of a Threat Model
+
+* The place of a threat model must be configurable per service: in the service's own repository (variant A, path
+  `threat-model/`) or in the central repository `threat-models` (variant B).
+* In variant A the application must write through a pull or merge request and never push to the protected default
+  branch of the service repository.
+* Concept: link:concepts/category-threat-models.adoc[Threat Models].
+* Specification: link:specification/category-threat-models.adoc#_place[Threat Models, Place].
+
+[#CIFR-TM-2]
+=== CIFR-TM-2: Open Format
+
+* A threat model must be stored in an open format that OWASP Threat Dragon opens without conversion (Open Threat Model
+  or Threat Dragon JSON; the choice is an open decision).
+* Diagrams must be stored as data; images must be generated.
+* Specification: link:specification/category-threat-models.adoc#_format[Threat Models, Format].
+
+[#CIFR-TM-3]
+=== CIFR-TM-3: Outdated-Model Detection
+
+* A threat model must be marked due for review when, since the reviewed head recorded for each of the service's
+  repositories, a path matching the configured path set changed there, or the protection needs of the service changed.
+* A review must record the current head of each of the service's repositories as the new reviewed head.
+* The review due date must follow the review interval configured for the service's highest protection need.
+* Specification: link:specification/category-threat-models.adoc#_detection[Threat Models, Detection].
+
+[#CIFR-TM-4]
+=== CIFR-TM-4: Links and Evaluation
+
+* Every threat model must refer to exactly one `service:` entry.
+* An accepted or untreated threat must be transferable into an ISMS risk entry, and a countermeasure into an issue.
+* The application must show per service: open threats, untreated risks and the age of the model.
+* Specification: link:specification/category-threat-models.adoc#_links[Threat Models, Links].
+
+[#CIFR-TM-5]
+=== CIFR-TM-5: Recipes
+
+* The application must guide the filling-in of a threat model by a recipe: an ordered list of steps, each naming the
+  part of the model it fills.
+* Specification: link:specification/category-threat-models.adoc#_recipes[Threat Models, Recipes].
+
+[#CIFR-IR-1]
+=== CIFR-IR-1: Report Layout and Generated Output
+
+* An incident report must be stored as `incidents/<id>/incident.yaml`, `narrative/*.adoc` and a generated
+  `report.adoc`.
+* `report.adoc` must be generated reproducibly from the YAML and the fragments; a CI check must fail when the
+  committed `report.adoc` differs from a fresh generation.
+* Concept: link:concepts/category-incident-reports.adoc[Incident Reports].
+* Specification: link:specification/category-incident-reports.adoc#_layout[Incident Reports, Layout].
+
+[#CIFR-IR-2]
+=== CIFR-IR-2: Notification Deadlines
+
+* The report must record the time the organisation became aware of the incident.
+* When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
+  plus 72 hours.
+* When the report is marked NIS2-applicable, the application must compute an early-warning due time (awareness +24
+  hours) and a notification due time (awareness +72 hours).
+* The final report must be due one month after the incident notification was sent; when the incident is still being
+  handled at that point, a progress report must be due then instead, and the final report one month after the
+  incident was resolved. The report must record the time the notification was sent and the time of resolution.
+* Due times must be shown in the form and in the *Due* lens; a missed due time must stay visible in the released
+  report.
+* Specification: link:specification/category-incident-reports.adoc#_deadlines[Incident Reports, Deadlines].
+
+[#CIFR-IR-3]
+=== CIFR-IR-3: Mandatory Fields
+
+* Saving a draft must be possible with mandatory fields missing; release must be rejected while any mandatory field of
+  the schema is missing, with a list of the missing fields.
+* Specification: link:specification/category-incident-reports.adoc#_workflow[Incident Reports, Workflow].
+
+[#CIFR-IR-4]
+=== CIFR-IR-4: Affected Services
+
+* Affected services must be picked from the service catalog.
+* The application must propose the services reachable over `dependsOn` from the picked services and derive the
+  protection needs of the incident as the maximum over the affected services.
+* Specification: link:specification/category-incident-reports.adoc#_classification[Incident Reports, Classification].
+
+[#CIFR-IR-5]
+=== CIFR-IR-5: Timeline Import
+
+* The application must import a timeline (time, author role, text) from a ticket system through a configured adapter;
+  at least one adapter must ship with the first release.
+* The report must refer to the source ticket by id; the application must not write Git content into the ticket system.
+* Specification: link:specification/category-incident-reports.adoc#_import[Incident Reports, Import].
+
+[#CIFR-IR-6]
+=== CIFR-IR-6: Evaluation across Incidents
+
+* The application must show per year and category: the number of incidents, the median time to detection, the median
+  time to resolution and the root causes that recur in more than one report.
+* Specification: link:specification/category-incident-reports.adoc#_evaluation[Incident Reports, Evaluation].
+
+[#CIFR-ISMS-1]
+=== CIFR-ISMS-1: Documents
+
+* Policies, scope, statement of applicability, internal audit reports and management review reports must be
+  schema-driven documents in `isms-core`, released at signature level 3 by default.
+* Concept: link:concepts/category-isms.adoc[ISMS].
+* Specification: link:specification/category-isms.adoc#_documents[ISMS, Documents].
+
+[#CIFR-ISMS-2]
+=== CIFR-ISMS-2: Registers
+
+* Risks, controls, suppliers, nonconformities and non-application assets must be registers with one file per entry.
+* Every entry must receive a readable running number unique within its register, also when two users create entries
+  concurrently.
+* Specification: link:specification/category-isms.adoc#_registers[ISMS, Registers].
+
+[#CIFR-ISMS-3]
+=== CIFR-ISMS-3: Reporting Dates
+
+* The application must show any register and the statement of applicability as of a given tag or date.
+* Specification: link:specification/category-isms.adoc#_reporting_dates[ISMS, Reporting Dates].
+
+[#CIFR-ISMS-4]
+=== CIFR-ISMS-4: Evidence from SAMM
+
+* A control must be able to reference a released SAMM assessment by its release tag as evidence.
+* Specification: link:specification/category-isms.adoc#_evidence[ISMS, Evidence].
+
+[#CIFR-ISMS-5]
+=== CIFR-ISMS-5: Operational Data by Reference
+
+* Tasks and measures must be referenced by issue-tracker id; the application must not store task state in Git.
+* Specification: link:specification/category-isms.adoc#_registers[ISMS, Registers].
+
+[#CIFR-ISMS-6]
+=== CIFR-ISMS-6: verinice.veo Bridge
+
+* When configured, the application must deliver a released SAMM assessment to verinice.veo through its REST API and
+  record the target object id in a bridge record outside the released assessment, which stays immutable.
+* Delivery must be idempotent per released assessment: a repeated delivery must update or find the existing veo
+  object, never create a second one.
+* Concept: link:adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
+* Specification: link:specification/category-isms.adoc#_verinice_bridge[ISMS, verinice Bridge].
+
+== Functional Requirements: Directory
+
+[#CIFR-DIR-1]
+=== CIFR-DIR-1: First Login
+
+* A user without a saved directory entry (no pseudonym yet, or a pseudonym from an interrupted first login) must be
+  shown the first-login form before any other view; the restriction must hold until the entry is saved.
+* The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
+  role must be picked from the catalogs.
+* The form must show the configured information text (GDPR Art. 13) before the save button.
+* The saved entry must be valid immediately and signed at signature level 1.
+* Concept: link:concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login].
+* Specification: link:specification/authentication.adoc#_first_login[Authentication, First Login].
+
+[#CIFR-DIR-2]
+=== CIFR-DIR-2: Keeping the Entry Current
+
+* A user must be able to change the own entry at any time.
+* The application must ask for confirmation of the entry after a configurable interval, default 12 months.
+* Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
+
+[#CIFR-DIR-3]
+=== CIFR-DIR-3: Catalog Maintenance
+
+* Entries of the role, team and service catalogs must be created or changed only by users with the right *administer
+  catalogs*, or by a reviewed pull request.
+* A catalog entry must be retired, never deleted; documents referring to a retired entry must show it as retired.
+* Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
+
+[#CIFR-DIR-4]
+=== CIFR-DIR-4: Former Members
+
+* After the erasure of a person, documents must show the pseudonym as "former member".
+* Specification: link:specification/data-protection.adoc#_erasure[Data Protection, Erasure].
+
+== Functional Requirements: Authentication and Identity
+
+[#CIFR-AUTH-1]
+=== CIFR-AUTH-1: Web Login
+
+* The web login must use the authorization code flow with PKCE `S256` as a confidential client through Token Sheriff.
+* No access, refresh or ID token may be sent to the browser.
+* The session cookie must be `HttpOnly`, `Secure` and `SameSite=Strict`; the session must end after a configurable
+  idle time (default 30 minutes) and absolute lifetime (default 8 hours).
+* The login transaction (`state`, `nonce`, PKCE verifier) must be kept server-side and referenced by a separate
+  short-lived `HttpOnly`, `Secure`, `SameSite=Lax` cookie, because the browser does not send a `SameSite=Strict` cookie
+  on the cross-site redirect back from the identity provider; the cookie must be deleted when the callback completes.
+* Logout must be RP-initiated and revoke the held tokens.
+* Concept: link:concepts/authentication-and-identity.adoc[Authentication and Identity];
+  link:adr/0004-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0004].
+* Specification: link:specification/authentication.adoc#_web_login[Authentication, Web Login].
+
+[#CIFR-AUTH-2]
+=== CIFR-AUTH-2: Rights
+
+* Rights must be derived from identity-provider groups through a configured mapping to repositories and the actions
+  *read*, *edit*, *approve* and *administer catalogs*.
+* Every request must be checked; a request without a mapped right must be refused (deny by default).
+* No right may be derived from a directory role.
+* Specification: link:specification/authentication.adoc#_rights[Authentication, Rights].
+
+[#CIFR-AUTH-3]
+=== CIFR-AUTH-3: Identity in the Commit
+
+* Every commit the application writes must carry the user's pseudonym, never the `sub`, and the values for issuer,
+  authentication time, authentication context and session HMAC that the library's trailer schema defines
+  (link:../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2: Identity Trailers]).
+* Specification: link:specification/authentication.adoc#_trailer_values[Authentication, Trailer Values].
+
+[#CIFR-AUTH-4]
+=== CIFR-AUTH-4: Signature Levels per Transition
+
+* The signature level must be configurable per category and transition, with the defaults: saves and directory
+  entries level 1; release of SAMM assessments and threat models level 2; release of incident reports, policies and the
+  statement of applicability level 3.
+* A transition must be refused when the required level is not reached.
+* Specification: link:specification/authentication.adoc#_signature_levels[Authentication, Signature Levels].
+
+[#CIFR-AUTH-5]
+=== CIFR-AUTH-5: Step-Up
+
+* Before a level-2 approval the application must check `acr` and `auth_time` against the configured assurance and
+  maximum age, and re-drive authorization with `acr_values` and `max_age` (RFC 9470) when they are not met.
+* The approval must be written only after the renewed `acr` and `auth_time` were verified.
+* Specification: link:specification/authentication.adoc#_step_up[Authentication, Step-Up].
+
+[#CIFR-AUTH-6]
+=== CIFR-AUTH-6: Passkey Approval
+
+* A user must be able to register one or more WebAuthn credentials.
+* A level-3 approval must require a WebAuthn assertion with user verification over a fresh, single-use challenge
+  bound to the commit id being approved (link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5]); the application must
+  verify the assertion against a registered credential before handing it to the library.
+* Specification: link:specification/authentication.adoc#_passkey_approval[Authentication, Passkey Approval].
+
+[#CIFR-AUTH-7]
+=== CIFR-AUTH-7: Push Credentials
+
+* The push credential must be configurable per repository: the technical user (default) or the user's Git-host token
+  provided by Token Sheriff.
+* With the user's token, release to a protected branch must run as a pull or merge request.
+* Specification: link:specification/authentication.adoc#_push_credentials[Authentication, Push Credentials].
+
+== Functional Requirements: MCP Server
+
+[#CIFR-MCP-1]
+=== CIFR-MCP-1: Transport
+
+* The MCP server must offer Streamable HTTP at `/mcp` in the shape of MCP revision 2026-07-28 and no STDIO transport.
+* A request with an invalid `Origin` header must be answered with `403`.
+* Concept: link:concepts/mcp-server.adoc[MCP Server];
+  link:adr/0003-The_MCP_server_is_an_OAuth_2.1_protected_resource_and_never_passes_tokens_through.adoc[ADR-0003].
+* Specification: link:specification/mcp-server.adoc#_transport[MCP Server, Transport].
+
+[#CIFR-MCP-2]
+=== CIFR-MCP-2: Protected Resource Metadata
+
+* The server must serve RFC 9728 metadata at `/.well-known/oauth-protected-resource` with `resource`,
+  `authorization_servers` (at least one) and `scopes_supported`; `offline_access` must not be listed.
+* A request without a token must be answered with `401` and `WWW-Authenticate: Bearer` carrying `resource_metadata`
+  and `scope`.
+* Specification: link:specification/mcp-server.adoc#_metadata[MCP Server, Metadata].
+
+[#CIFR-MCP-3]
+=== CIFR-MCP-3: Token Validation
+
+* Every request must be authenticated by a bearer token in the `Authorization` header; a token in the query string
+  must be refused.
+* The server must validate signature, expiry, issuer and audience; the audience must equal the server's configured
+  canonical URI.
+* An invalid, expired or foreign-audience token must be answered with `401`.
+* A token that carries neither `client_id` nor `azp` must be answered with `401`, because its commits could not be
+  attributed (CIFR-MCP-7).
+* Specification: link:specification/mcp-server.adoc#_token_validation[MCP Server, Token Validation].
+
+[#CIFR-MCP-4]
+=== CIFR-MCP-4: Scopes and Rights
+
+* Each tool must require one scope of `cisos-friend:read`, `cisos-friend:draft`, `cisos-friend:save`,
+  `cisos-friend:request-release`.
+* A call lacking the scope must be answered with `403`, `error="insufficient_scope"`, the required `scope` and
+  `resource_metadata`.
+* The effective permission must be the intersection of the token's scopes and the user's rights (CIFR-AUTH-2).
+* Specification: link:specification/mcp-server.adoc#_scopes[MCP Server, Scopes].
+
+[#CIFR-MCP-5]
+=== CIFR-MCP-5: No Passthrough, No Credentials to the Agent
+
+* The server must never forward a received token to another service.
+* No Git, KMS or timestamp-authority credential may appear in a tool result, an error or a log record; a test must scan
+  responses and logs of the integration suite for the configured credential values.
+* Specification: link:specification/mcp-server.adoc#_upstream_credentials[MCP Server, Upstream Credentials].
+
+[#CIFR-MCP-6]
+=== CIFR-MCP-6: Human-Bound Approvals
+
+* An agent must not complete a transition requiring signature level 2 or higher.
+* `request-release` must create a pending approval that appears in the requesting user's *Due* lens.
+* Specification: link:specification/mcp-server.adoc#_tools[MCP Server, Tools].
+
+[#CIFR-MCP-7]
+=== CIFR-MCP-7: Attribution
+
+* Every commit caused through the MCP server must carry, in addition to CIFR-AUTH-3, the `client_id` (or `azp`) of the
+  token, covered by the application's signature.
+* Specification: link:specification/mcp-server.adoc#_attribution[MCP Server, Attribution].
+
+[#CIFR-MCP-8]
+=== CIFR-MCP-8: Rate Limits
+
+* Calls must be limited per user and client with configurable limits, default 120 read calls and 20 write calls per
+  minute; an exceeding call must be answered with `429` and `Retry-After`.
+* Specification: link:specification/mcp-server.adoc#_limits[MCP Server, Limits].
+
+[#CIFR-MCP-9]
+=== CIFR-MCP-9: Audit
+
+* Every tool call must produce one log record with pseudonym, client id, tool, repository and outcome; token material,
+  session ids and document content must not be logged.
+* Specification: link:specification/mcp-server.adoc#_audit[MCP Server, Audit].
+
+[#CIFR-MCP-10]
+=== CIFR-MCP-10: Optional Sender Constraint
+
+* DPoP proof validation (RFC 9449) must be configurable per issuer as off, accepted or required.
+* A DPoP-bound token must be accepted in the `Authorization: DPoP <token>` scheme together with a valid `DPoP` proof
+  header; with `required`, a token in the `Bearer` scheme must be refused with `401`.
+* Specification: link:specification/mcp-server.adoc#_token_validation[MCP Server, Token Validation].
+
+== Functional Requirements: Web App
+
+[#CIFR-WEB-1]
+=== CIFR-WEB-1: Single-Page Application Served Same-Origin
+
+* The web app must be a Svelte single-page application served by the application on its own origin.
+* The built app must load no resource from a third-party origin.
+* Concept: link:concepts/web-app.adoc[Web App];
+  link:adr/0002-The_web_UI_is_a_Svelte_static_single-page_application_served_same-origin.adoc[ADR-0002].
+* Specification: link:specification/web-app.adoc#_stack_and_packaging[Web App, Stack and Packaging].
+
+[#CIFR-WEB-2]
+=== CIFR-WEB-2: Visual Language and Accessibility
+
+* The app must use the design-token contract of `pm-web-app` with a light and a dark theme; no raw colour literal may
+  appear in a view or a component (stylelint).
+* Text contrast must meet WCAG 2.1 AA in both themes, verified automatically; the axe-core audit must report no
+  violation of impact `serious` or `critical`.
+* Specification: link:specification/web-app.adoc#_visual_language[Web App, Visual Language].
+
+[#CIFR-WEB-3]
+=== CIFR-WEB-3: Navigation
+
+* The app must offer the lenses Due, SAMM, Threat models, Incidents, ISMS, Catalogs, Reports and Settings.
+* Every object kind must have exactly one canonical address; reloading an address must restore the same view.
+* Specification: link:specification/web-app.adoc#_navigation[Web App, Navigation].
+
+[#CIFR-WEB-4]
+=== CIFR-WEB-4: Generated Forms
+
+* Every document must be edited in a form generated from its category's JSON Schema; no category may have a
+  hand-written view.
+* The browser must validate against the same schema as the server; the server's verdict must be shown when they
+  differ.
+* Specification: link:specification/web-app.adoc#_forms[Web App, Forms].
+
+[#CIFR-WEB-5]
+=== CIFR-WEB-5: Drafts, Saving and Conflicts
+
+* A form must save a draft no later than 5 seconds after the last change.
+* A conflict must be shown per field with the own and the other value; the draft must be kept.
+* A save by another user to an open document must be visible within 5 seconds through the event stream.
+* Specification: link:specification/web-app.adoc#_editing[Web App, Editing].
+
+[#CIFR-WEB-6]
+=== CIFR-WEB-6: Review and Approval
+
+* Release must show the diff of the structured data against the last released state.
+* The approve control must name the signature level it requires and start step-up or the passkey ceremony
+  accordingly.
+* Specification: link:specification/web-app.adoc#_review_and_approval[Web App, Review and Approval].
+
+[#CIFR-WEB-7]
+=== CIFR-WEB-7: Texts
+
+* All user-facing text must come from the server's message catalogue in English and German.
+* Specification: link:specification/web-app.adoc#_texts[Web App, Texts].
+
+[#CIFR-WEB-8]
+=== CIFR-WEB-8: Page Security
+
+* The app must be served with a Content Security Policy that allows no `unsafe-inline` script.
+* Every state-changing request must carry the anti-CSRF header; the server must refuse one without it.
+* Generated AsciiDoc output must be rendered and sanitised by the server.
+* Specification: link:specification/web-app.adoc#_page_security[Web App, Page Security].
+
+== Functional Requirements: Data Protection
+
+[#CIFR-DP-1]
+=== CIFR-DP-1: Repository Cut
+
+* The repository cut must be configurable; every configured repository must declare exactly one confidentiality class
+  and one retention class, and boot validation must refuse a configuration that maps two retention classes to one
+  repository.
+* The default configuration must contain `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`,
+  `threat-models` and `directory`.
+* Concept: link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout];
+  link:adr/0007-Repositories_are_cut_by_confidentiality_and_retention_class.adoc[ADR-0007].
+* Specification: link:specification/data-protection.adoc#_repository_cut[Data Protection, Repository Cut].
+
+[#CIFR-DP-2]
+=== CIFR-DP-2: Cross-Repository References
+
+* A save containing a reference to another repository's entry must be rejected when the target does not exist.
+* Specification: link:specification/data-protection.adoc#_references[Data Protection, References].
+
+[#CIFR-DP-3]
+=== CIFR-DP-3: Erasure Batching
+
+* Erasure requests must be collected and executed by KEK rotation at a configurable interval, default daily; boot
+  validation must refuse an interval longer than 30 days.
+* Specification: link:specification/data-protection.adoc#_erasure[Data Protection, Erasure].
+
+[#CIFR-DP-4]
+=== CIFR-DP-4: Retention
+
+* The application must list repositories whose retention period has ended and offer their deletion to a user with the
+  right *administer catalogs*; it must not rewrite history.
+* The deletion must remove the remote repository and the application's local repository on the volume; backup copies
+  are outside the application and must be named in the operator's duties with an expiry that matches the period.
+* Specification: link:specification/data-protection.adoc#_retention[Data Protection, Retention].
+
+[#CIFR-DP-5]
+=== CIFR-DP-5: Personal Fields
+
+* Fields marked personal in a schema must be stored encrypted with the data subject's key.
+* Free-text fields must show a hint that personal interview notes do not belong there.
+* Specification: link:specification/data-protection.adoc#_personal_fields[Data Protection, Personal Fields].
+
+[#CIFR-DP-6]
+=== CIFR-DP-6: Read-Access Events
+
+* Every read of a document in a repository of class *restricted* or *strongly restricted* must produce a log record
+  with pseudonym, repository and document id for the SIEM.
+* Specification: link:specification/data-protection.adoc#_read_access_events[Data Protection, Read-Access Events].
+
+[#CIFR-DP-7]
+=== CIFR-DP-7: Key Source
+
+* The KEK source must be configurable as KMS, Vault transit or mounted file; with a mounted file the application must
+  log a warning at every start.
+* Specification: link:specification/data-protection.adoc#_key_source[Data Protection, Key Source].
+
+== Operational Requirements
+
+[#CIFR-OPS-1]
+=== CIFR-OPS-1: Runtime
+
+* The application must compile with `release` 25 and ship as a Quarkus native image.
+* Concept: link:concepts/application-architecture.adoc[Application Architecture];
+  link:adr/0001-CISOs-Friend_runs_as_a_Java_25_Quarkus_native_image_in_a_distroless_container.adoc[ADR-0001].
+* Specification: link:specification/deployment.adoc#_image[Deployment, Image].
+
+[#CIFR-OPS-2]
+=== CIFR-OPS-2: Container Image
+
+* The image must be based on a digest-pinned distroless image, run as `nonroot`, carry OCI labels for version,
+  revision, source and licence, and answer its health check through the binary.
+* The image must be published as one index for `linux/amd64` and `linux/arm64` at `ghcr.io/cuioss/cisos-friend`.
+* Concept: link:concepts/deployment.adoc[Deployment].
+* Specification: link:specification/deployment.adoc#_image[Deployment, Image].
+
+[#CIFR-OPS-3]
+=== CIFR-OPS-3: Ports and Readiness
+
+* The application must serve HTTPS on 8443 and the management interface (readiness, liveness, metrics) on 9000.
+* Readiness must report `UP` only after every configured repository was fetched, the keyring decrypted and the index
+  built.
+* Specification: link:specification/deployment.adoc#_ports_and_probes[Deployment, Ports and Probes].
+
+[#CIFR-OPS-4]
+=== CIFR-OPS-4: Configuration
+
+* Policy configuration must be one YAML document validated against a bundled JSON Schema; `${NAME:-default}`
+  placeholders must be resolved from the environment.
+* An invalid configuration must stop the boot with one log record per violation.
+* `--validate-config <dir>` must validate offline and exit with `0` for a valid and non-zero for an invalid
+  configuration.
+* Secret values must not be representable in the YAML; the schema must accept only references (file path or KMS key
+  id).
+* Specification: link:specification/configuration.adoc[Configuration].
+
+[#CIFR-OPS-5]
+=== CIFR-OPS-5: Repository Modes and Refresh
+
+* Each repository must be configurable as local or remote.
+* The application must accept the Git server's push webhook, authenticate it by the mechanism of the Git server (an
+  HMAC signature for GitHub and Gitea, a constant-time comparison of the secret token for GitLab), and refresh the
+  index of the named repository; a periodic fetch must run as fallback, default every 5 minutes.
+* Specification: link:specification/configuration.adoc#_repositories[Configuration, Repositories].
+
+[#CIFR-OPS-6]
+=== CIFR-OPS-6: Compose Sample
+
+* The deployment module must provide a compose sample that runs the published image with Keycloak, Gitea and a
+  timestamp-authority stub, and a check script that logs in, saves and releases a document.
+* Specification: link:specification/deployment.adoc#_compose_sample[Deployment, Compose Sample].
+
+[#CIFR-OPS-7]
+=== CIFR-OPS-7: Logging and Metrics
+
+* Every message at INFO and above must use a `LogRecord` documented in `LogMessages.adoc`.
+* The application must expose Prometheus metrics on the management port.
+* Specification: link:specification/architecture-and-modules.adoc#_logging_and_metrics[Architecture and Modules, Logging and Metrics].
+
+== Non-Functional Requirements
+
+[#CIFR-NFR-1]
+=== CIFR-NFR-1: Index Size and Start Time
+
+* With 1,000 SAMM assessments of 90 answers each, the in-memory index must stay below 100 MB of heap, and the native
+  application must become ready within 60 seconds after the repositories are present locally (targets to be confirmed
+  by the prototype measurement).
+* Specification: link:specification/testing.adoc#_performance[Testing, Performance].
+
+[#CIFR-NFR-2]
+=== CIFR-NFR-2: Save Latency
+
+* A save in local mode must complete within 500 ms at the 95th percentile; in remote mode the application's share
+  (excluding Git server round trips) must stay within the same bound.
+* Specification: link:specification/testing.adoc#_performance[Testing, Performance].
+
+[#CIFR-NFR-3]
+=== CIFR-NFR-3: Concurrent Workshop
+
+* Twenty users saving different practices of one assessment concurrently, ten saves each, must lose no save.
+* Specification: link:specification/testing.adoc#_concurrency[Testing, Concurrency].
+
+[#CIFR-NFR-4]
+=== CIFR-NFR-4: Inbound Input Security
+
+* Every path segment, query parameter and header read by the REST API, the MCP endpoint and the webhook endpoint must
+  pass a `de.cuioss.http.security` validation pipeline before use; the adversarial attack-database tests must pass.
+* Specification: link:specification/testing.adoc#_security_tests[Testing, Security Tests].
+
+[#CIFR-NFR-5]
+=== CIFR-NFR-5: Degraded Git Server
+
+* When the Git server is unreachable, reads must be served from the local repositories, saves must be kept as drafts,
+  and the web app must show the degraded state; no save may be reported as visible to others before its push
+  succeeded.
+* Specification: link:specification/architecture-and-modules.adoc#_degraded_operation[Architecture and Modules, Degraded Operation].
+
+[#CIFR-NFR-6]
+=== CIFR-NFR-6: Native Image Verification
+
+* The integration suite must run a fetch, a save, a release and a push against a local Git server with the native
+  image before any other integration test.
+* Specification: link:specification/testing.adoc#_integration[Testing, Integration].
+
+== Traceability
+
+[cols="1,2,2,2"]
+|===
+|Requirements |Concept |Decision |Specification
+
+|CIFR-GEN-1–4
+|link:concepts/cisos-friend-overview.adoc[Overview], link:concepts/application-architecture.adoc[Application Architecture]
+|ADR-0005
+|link:specification/architecture-and-modules.adoc[Architecture and Modules]
+
+|CIFR-SAMM-1–7
+|link:concepts/category-samm.adoc[SAMM]
+|ADR-0005
+|link:specification/category-samm.adoc[SAMM]
+
+|CIFR-TM-1–5
+|link:concepts/category-threat-models.adoc[Threat Models]
+|ADR-0005
+|link:specification/category-threat-models.adoc[Threat Models]
+
+|CIFR-IR-1–6
+|link:concepts/category-incident-reports.adoc[Incident Reports]
+|ADR-0005, ADR-0008
+|link:specification/category-incident-reports.adoc[Incident Reports]
+
+|CIFR-ISMS-1–6
+|link:concepts/category-isms.adoc[ISMS]
+|ADR-0005, ADR-0006
+|link:specification/category-isms.adoc[ISMS]
+
+|CIFR-DIR-1–4
+|link:concepts/authentication-and-identity.adoc[Authentication and Identity]
+|ADR-0004
+|link:specification/authentication.adoc[Authentication], link:specification/data-protection.adoc[Data Protection]
+
+|CIFR-AUTH-1–7
+|link:concepts/authentication-and-identity.adoc[Authentication and Identity]
+|ADR-0004
+|link:specification/authentication.adoc[Authentication]
+
+|CIFR-MCP-1–10
+|link:concepts/mcp-server.adoc[MCP Server]
+|ADR-0003
+|link:specification/mcp-server.adoc[MCP Server]
+
+|CIFR-WEB-1–8
+|link:concepts/web-app.adoc[Web App]
+|ADR-0002
+|link:specification/web-app.adoc[Web App]
+
+|CIFR-DP-1–7
+|link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
+|ADR-0007
+|link:specification/data-protection.adoc[Data Protection]
+
+|CIFR-OPS-1–7
+|link:concepts/application-architecture.adoc[Application Architecture], link:concepts/deployment.adoc[Deployment]
+|ADR-0001
+|link:specification/deployment.adoc[Deployment], link:specification/configuration.adoc[Configuration]
+
+|CIFR-NFR-1–6
+|link:concepts/application-architecture.adoc[Application Architecture]
+|ADR-0001
+|link:specification/testing.adoc[Testing]
+|===

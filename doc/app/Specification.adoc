@@ -1,0 +1,75 @@
+= CISOs-Friend Specification
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+== Overview
+_See Requirement link:Requirements.adoc#CIFR-GEN-1[CIFR-GEN-1: Categories as Configuration]_
+
+This document is the entry point of the technical specification of CISOs-Friend. The requirements are in
+link:Requirements.adoc[Requirements], the reasoning in the link:README.adoc#_concepts[concepts]. Every section of every
+specification document carries a backtracking link to the requirements it realises and an implementation status.
+
+All sections are `PLANNED`: no code exists yet. The status moves to `IN PROGRESS` and `IMPLEMENTED` with links to the
+implementing classes and tests as the application is built.
+
+== Document Structure
+
+[cols="1,3,2"]
+|===
+|Document |Content |Requirements
+
+|link:specification/architecture-and-modules.adoc[Architecture and Modules]
+|Maven modules, layers, run-time state, categories module, logging and metrics, degraded operation
+|CIFR-GEN, CIFR-OPS-7, CIFR-NFR-5
+
+|link:specification/configuration.adoc[Configuration]
+|`application.properties`, `cisos-friend.yaml`, placeholders, boot validation, repositories and refresh
+|CIFR-OPS-4, CIFR-OPS-5
+
+|link:specification/deployment.adoc[Deployment]
+|Image, ports and probes, secrets, compose sample
+|CIFR-OPS-1–3, CIFR-OPS-6
+
+|link:specification/authentication.adoc[Authentication]
+|Web login, rights, trailer values, signature levels, step-up, passkeys, push credentials, first login, directory flows
+|CIFR-AUTH, CIFR-DIR-1–3
+
+|link:specification/mcp-server.adoc[MCP Server]
+|Transport, metadata, token validation, scopes, tools, attribution, limits, audit
+|CIFR-MCP
+
+|link:specification/web-app.adoc[Web App]
+|Stack, visual language, navigation, forms, editing, review, texts, page security
+|CIFR-WEB
+
+|link:specification/category-samm.adoc[SAMM]
+|Layout, editing, release, comparison, targets
+|CIFR-SAMM
+
+|link:specification/category-threat-models.adoc[Threat Models]
+|Place, format, detection, links, recipes
+|CIFR-TM
+
+|link:specification/category-incident-reports.adoc[Incident Reports]
+|Layout, deadlines, workflow, classification, import, evaluation
+|CIFR-IR
+
+|link:specification/category-isms.adoc[ISMS]
+|Documents, registers, reporting dates, evidence, verinice bridge
+|CIFR-ISMS
+
+|link:specification/data-protection.adoc[Data Protection]
+|Repository cut, references, erasure, retention, personal fields, read-access events, key source
+|CIFR-DP, CIFR-DIR-4
+
+|link:specification/testing.adoc[Testing]
+|Test lanes, performance, concurrency, security tests, integration
+|CIFR-NFR
+|===
+
+Additional documentation, created with the code:
+
+* `LogMessages.adoc` — the catalogue of `LogRecord` messages (CIFR-OPS-7).

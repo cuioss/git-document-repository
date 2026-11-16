@@ -1,0 +1,84 @@
+= ADR-0001: Documents are written in core without working trees, and references move by compare-and-swap
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The store writes blobs, trees and commits directly into the object database and moves references by compare-and-swap; it keeps no working tree per user or document.
+// tags: storage, jgit, concurrency, working-tree
+// affects: git-core, git-store
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+A server holds documents for many users at once. Each user edits a draft of a document, and several users edit the
+same document. The question is how the server turns an edit into a commit.
+
+*The decision:* the store keeps no working tree. It writes blobs, trees and commits directly into the object database
+through an in-core index. It then moves the reference with a compare-and-swap: the reference moves only if it still
+points to the commit the change was built on. A writer that loses the race reloads and applies its operation again
+on the new state.
+
+The mechanism is described in xref:../concepts/storage-engine.adoc#_no_working_trees[Storage Engine, No Working
+Trees].
+
+== Alternatives rejected
+
+=== One working tree per user and document
+
+Git allows one working tree per branch. A working tree per user and document multiplies disk use and file-system
+work. It also forces a checkout before every read.
+
+*Rejected because* the content is already in memory. Writing it to disk only to read it back into a commit adds cost
+and failure modes and gains nothing.
+
+=== Linked working trees as in `pm-provider-git`
+
+`pm-provider-git` uses linked working trees, because agents and build tools work on files.
+
+*Rejected because* no tool of the document store works on files. JGit also supports linked working trees only for
+reading _(unverified for later versions)_. `git-worktrees` stays available for consumers that need files.
+
+=== A lock per document instead of compare-and-swap
+
+A lock serialises writers before they build a commit.
+
+*Rejected because* a lock must be held across a remote fetch and push and must be released after a crash. The
+compare-and-swap needs no lock state. It needs only the expected old commit, which the writer already has.
+
+=== Textual merge of concurrent writers
+
+The losing writer could merge its commit textually into the winner's commit.
+
+*Rejected because* a textual merge of YAML produces conflicts where none exist in the data. Re-applying the operation
+("set file X to content Y") on the new state is exact. A real conflict is still reported per path.
+
+== Consequences
+
+=== Properties of the design
+
+* Any number of users and drafts exist at the same time without any disk state per user.
+* Concurrent writers are safe without locks.
+* Local and remote repositories use the same write path.
+
+=== Accepted costs
+
+* Many writers on one branch cause retries.
+* The JGit API used for in-core writing must be verified against the JGit version in use.
+
+=== When this is revisited
+
+When a consumer needs files on disk for a tool, or when retries dominate the write latency in measurement.
+
+== Links
+
+* xref:../concepts/storage-engine.adoc[Storage Engine]
+* xref:../Requirements.adoc#requirements-git-core[`git-core` requirements]
+* xref:../specification/git-core.adoc[`git-core` specification]

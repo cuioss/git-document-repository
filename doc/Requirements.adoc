@@ -1,0 +1,825 @@
+= git-document-repository Requirements
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+== Overview
+
+This document states the requirements for `git-document-repository`, the base libraries for _Git as the Persistence
+of Versioned Documents_: a server-side Git repository, reached through JGit in memory and without working trees, as
+the persistence of an application in which users maintain versioned documents.
+
+Project prefix: `GDR-`. Requirement IDs are hierarchical by module (`GDR-CORE-n`, `GDR-STORE-n`, …) and numbered
+sequentially within each group. IDs are stable: a removed requirement is marked deprecated, and its ID is never
+reused.
+
+Every requirement links to the concept that motivates it and to the specification that realises it. The concepts
+carry the rationale and are not restated here; the decisions are in the xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADRs].
+The module cut is described in xref:concepts/module-structure.adoc[Module Structure]. All requirements are in the
+pre-implementation phase: the modules `git-core`, `git-worktrees` and `git-testing` are scaffolds, the others are not
+yet created.
+
+Out of scope for these libraries: the user interface, domain schemas, the OAuth flows and the identity provider, and
+integrations with issue trackers (see xref:concepts/git-as-document-persistence.adoc#_not_in_scope[Not in Scope]).
+
+[#requirements-general]
+== General Requirements
+
+[#GDR-GEN-1]
+=== GDR-GEN-1: Module Layering and Dependency Isolation
+
+* The reactor must consist of the modules `git-core`, `git-worktrees`, `git-testing`, `git-store`, `git-forms`,
+  `git-crypto`, `git-signing`, `git-timestamp` and `git-directory`, released together under one version.
+* A module must depend only on the modules the dependency graph of the module structure allows; the build must fail
+  when a module declares another dependency on a module of the reactor.
+* A consumer that depends on `git-core` alone must receive no third-party dependency of `git-forms`, `git-crypto`,
+  `git-signing`, `git-timestamp` or `git-directory` (verifiable with `mvn dependency:tree`).
+* No public type of any module may carry a term of a domain (assessment, threat model, incident, risk register).
+
+_Concept: xref:concepts/module-structure.adoc[Module Structure] · Specification:
+xref:specification/testing.adoc[Testing]_
+
+[#GDR-GEN-2]
+=== GDR-GEN-2: Java Platform Modules and Null Safety
+
+* Every module must declare a `module-info.java`; the automatic module name in the POM must be
+  `de.cuioss.git.document.<suffix>`.
+* Every package must be annotated `@NullMarked` (JSpecify); a value that may be absent must be typed `@Nullable`.
+* The modules must compile with target Java 21 and their tests must pass on Java 21 and Java 25.
+
+_Concept: xref:concepts/module-structure.adoc[Module Structure] · Specification:
+xref:specification/error-model.adoc[Error Model]_
+
+[#GDR-GEN-3]
+=== GDR-GEN-3: Results Instead of Exceptions
+
+* Every operation whose expected outcomes include a non-success (conflict, rejected by the remote, credentials expired,
+  not found, refused by policy, entry required) must return a result carrying one value of a closed list of outcomes.
+* An expected non-success must not be signalled by an exception.
+* A result must carry a detail text for every non-success outcome; the detail must not contain credentials, keys or
+  personal identifiers in clear text.
+
+_Concept: xref:concepts/git-as-document-persistence.adoc#_scope[Scope] · Specification:
+xref:specification/error-model.adoc[Error Model]_
+
+[#GDR-GEN-4]
+=== GDR-GEN-4: Logging
+
+* Every module must log through `CuiLogger` with a `LogRecord` holder per module.
+* Every message at level INFO, WARN or ERROR must carry a stable identifier that is documented with the module.
+* No log message may contain an access token, a password, key material, a KEK, an OIDC `sub` or `sid`, or the name of
+  a person.
+
+_Concept: xref:concepts/data-protection.adoc[Data Protection] · Specification:
+xref:specification/error-model.adoc[Error Model]_
+
+[#requirements-git-core]
+== `git-core` Requirements
+
+[#GDR-CORE-1]
+=== GDR-CORE-1: Hardened Repository Access
+
+* Every repository opened or created by the library must refuse the execution of Git hooks and the start of external
+  processes.
+* All operations must run in process; no `git` installation may be required.
+* A refused capability must be reported as an outcome, not executed.
+
+_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-2]
+=== GDR-CORE-2: Remote Policy
+
+* The policy must have one of two values: an HTTPS origin, which admits only `https` URLs of that host and port, or
+  local only, which admits only remotes without a host (a local path or a `file:` URL) and refuses every network
+  remote.
+* The policy must be checked before every fetch and every push; a remote that violates it must be refused without any
+  network contact.
+
+_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-3]
+=== GDR-CORE-3: Local and Remote Mode Behind One API
+
+* The same interface must serve a local repository without remote and a repository synchronised with a remote.
+* The mode must be selected by configuration only (`remote: none` or a remote URL).
+* A local repository must become a remote one by one push of all references the push refspec carries.
+* In remote mode the local bare clone must be deletable; a new clone must restore every pushed state.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_modes_one_api[Two Modes, One API] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-4]
+=== GDR-CORE-4: In-Core Writing
+
+* The library must create blobs, trees and commits from in-memory content without a working tree.
+* Writing a commit must not create or change any file outside the object database and the references.
+* Author, committer, message and parents of a commit must be set by the caller.
+
+_Concept: xref:concepts/storage-engine.adoc#_no_working_trees[No Working Trees] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-5]
+=== GDR-CORE-5: Compare-and-Swap Reference Update
+
+* A reference update must succeed only when the reference still points to the expected old commit.
+* When the reference moved, the library must re-apply the caller's operation on the new state and retry, up to a
+  configured number of attempts.
+* After the last failed attempt the result must report a conflict outcome; the reference must be unchanged.
+
+_Concept: xref:concepts/storage-engine.adoc#_compare_and_swap[Compare-and-Swap] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-6]
+=== GDR-CORE-6: In-Core Merge
+
+* The library must merge two commits without a working tree.
+* A merge with conflicts must report the conflicting paths and must not create a commit.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-7]
+=== GDR-CORE-7: Fetch and Push with Credentials and Lease
+
+* Credentials must be supplied per fetch or push by the caller; the library must not store them.
+* A push must support a lease: it must be refused by the library when the remote reference differs from the expected
+  value.
+* A rejected push, a refused lease and expired or invalid credentials must each be reported as a distinct outcome.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_pushing_technical_user_or_the_logged_in_user[Pushing] ·
+Specification: xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-8]
+=== GDR-CORE-8: Cache Repository
+
+* The library must fetch exactly one commit into a bare cache repository under the remote policy.
+* It must read the content of one file at a given commit of the cache.
+* A commit the remote does not serve must be reported as an outcome.
+
+_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-9]
+=== GDR-CORE-9: Reading
+
+* The library must read a snapshot of the tree of a reference, a tag or a commit.
+* It must list the commits that changed a given path, newest first.
+* It must compute the changed paths between two commits.
+
+_Concept: xref:concepts/storage-engine.adoc#_reading_and_queries[Reading and Queries] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-10]
+=== GDR-CORE-10: Git Notes
+
+* The library must read and write notes on a commit under a caller-named notes reference (for example
+  `refs/notes/timestamps`, `refs/notes/approvals`).
+* Writing a note must use the compare-and-swap of GDR-CORE-5 on the notes reference.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] ·
+Specification: xref:specification/git-core.adoc[git-core]_
+
+[#GDR-CORE-11]
+=== GDR-CORE-11: Identity of Commits and References
+
+* The library must provide full and abbreviated commit ids and resolve branch, tag and remote-branch names.
+* A name that resolves to more than one object must be reported as ambiguous, not resolved to one of them.
+
+_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+xref:specification/git-core.adoc[git-core]_
+
+[#requirements-git-worktrees]
+== `git-worktrees` Requirements
+
+[#GDR-WT-1]
+=== GDR-WT-1: Linked Working Trees
+
+* The library must add, list and remove linked working trees.
+* The administration files must follow git's own layout, so that `git worktree list` of a git installation lists the
+  working trees the library created.
+
+_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+xref:specification/git-worktrees.adoc[git-worktrees]_
+
+[#GDR-WT-2]
+=== GDR-WT-2: Commit from a Working Tree
+
+* The library must stage every change of a working tree (changed, new and deleted files) and commit it in one
+  operation.
+
+_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+xref:specification/git-worktrees.adoc[git-worktrees]_
+
+[#GDR-WT-3]
+=== GDR-WT-3: Working-Tree Status
+
+* The library must report the status of a working tree as three path sets: changed, untracked and deleted.
+* The status must not prescribe a digest format; a consumer builds its own digest on the path sets.
+
+_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+xref:specification/git-worktrees.adoc[git-worktrees]_
+
+[#requirements-git-testing]
+== `git-testing` Requirements
+
+[#GDR-TEST-1]
+=== GDR-TEST-1: Repository Fixtures
+
+* The module must provide JUnit 5 fixtures for a local repository, an in-memory repository and a local remote for
+  fetch and push tests.
+* The fixtures must work without network access and must clean up every directory they create.
+
+_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+xref:specification/git-testing.adoc[git-testing]_
+
+[#GDR-TEST-2]
+=== GDR-TEST-2: Credential Generator
+
+* The module must provide a `cui-test-generator` generator for transport credentials.
+
+_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+xref:specification/git-testing.adoc[git-testing]_
+
+[#requirements-git-store]
+== `git-store` Requirements
+
+[#GDR-STORE-1]
+=== GDR-STORE-1: Repository Registry
+
+* The store must manage several repositories, each with a stable alias, a confidentiality class and an optional
+  retention period.
+* Every operation of the store must address a repository by its alias.
+
+_Concept: xref:concepts/data-protection.adoc#_repositories_per_confidentiality_and_retention_class[Repositories per
+Class] · Specification: xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-2]
+=== GDR-STORE-2: Drafts per User and Document
+
+* An intermediate save must be a commit on `refs/drafts/<user>/<document>`.
+* The push refspec must carry `refs/heads/*`, the tags and `refs/notes/*`, and must never carry `refs/drafts/*`.
+* The store must list the drafts of a user.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-3]
+=== GDR-STORE-3: Explicit Save
+
+* An explicit save must merge the draft in core into the document's working branch as one commit whose only parent is
+  the working-branch tip, and move the branch by compare-and-swap; no draft commit may become reachable from a pushed
+  reference.
+* In remote mode the save must fetch, merge onto the remote state, push, and retry on rejection up to a configured
+  number of attempts.
+* After a successful save the draft reference must be deleted only if it still points to the draft commit that was
+  merged; a newer draft commit must be kept for the next save.
+* The result must report one of: saved, conflict, rejected, credentials expired.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-4]
+=== GDR-STORE-4: Conflict Handling
+
+* On a real conflict nothing must be pushed and the draft must be kept unchanged.
+* The conflict result must name every conflicting path.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-5]
+=== GDR-STORE-5: Concurrent Change Detection
+
+* A save of a file must accept the blob id the caller loaded as expected value.
+* When the file's current blob id differs, the save of that file must report a conflict instead of overwriting it.
+* In remote mode the check must also run against the fetched remote state before the save merges onto it.
+
+_Concept: xref:concepts/storage-engine.adoc#_when_others_see_a_change[When Others See a Change] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-6]
+=== GDR-STORE-6: Release
+
+* A release must merge the working branch into `main` and create the tag `<collection>/<id>/v<n>` in one
+  compare-and-swap sequence; `n` counts the releases of that document from 1.
+* An existing release tag must never be moved or deleted.
+* When the remote refuses a direct push to `main`, the store must report that outcome and must support pushing the
+  working branch alone, so the merge runs as a pull or merge request of the Git server.
+
+_Concept: xref:concepts/storage-engine.adoc#_when_others_see_a_change[When Others See a Change] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-7]
+=== GDR-STORE-7: Draft Expiry
+
+* Drafts not changed for a configured period must be deleted.
+* A garbage collection must remove objects reachable only from deleted drafts.
+
+_Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-8]
+=== GDR-STORE-8: Identity per Save
+
+* Every commit of a save must carry the caller's pseudonym as author and the technical user as committer.
+* The credentials of a push must come from a credentials strategy chosen per push: technical user or the user's token.
+* One push must carry the commits of exactly one user.
+
+_Concept: xref:concepts/identity-and-signing.adoc[Identity and Signing] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-9]
+=== GDR-STORE-9: In-Memory Index
+
+* The store must build an index from `main` and the open working branches at start, after every fetch, and after every
+  save or release the store itself performs, in local and in remote mode.
+* The content of the index must be supplied by the consumer through an index interface.
+* A refresh must be triggerable by a periodic fetch and by an external call (for a webhook).
+* The store must build an index from a tag or a commit for a reporting date, without changing the current index.
+
+_Concept: xref:concepts/storage-engine.adoc#_reading_and_queries[Reading and Queries] · Specification:
+xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-10]
+=== GDR-STORE-10: Post-Commit Outbox
+
+* Every new tip of a branch a consumer subscribes to must reach that consumer: after a reference update the store
+  performs (local mode), after a successful push (remote mode), and after a fetch that moves the branch (for example a
+  merge the Git server performed).
+* The store must hand every new commit of the branch to the consumer, oldest first.
+* Processing must be idempotent by commit hash; the last processed commit must be kept per consumer and per branch in a
+  reference.
+* After a failure or a restart processing must resume after the last processed commit of that branch.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_git_and_the_other_systems[Consistency]
+· Specification: xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-11]
+=== GDR-STORE-11: Deterministic Content through Codecs
+
+* File content must be produced by a codec interface.
+* Encoding an unchanged value must produce byte-identical content, so that saving unchanged data creates no change.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_data_free_text_and_generated_output[Data and Output] ·
+Specification: xref:specification/git-store.adoc[git-store]_
+
+[#requirements-git-forms]
+== `git-forms` Requirements
+
+[#GDR-FORMS-1]
+=== GDR-FORMS-1: Kinds of Documents as Configuration
+
+* A kind of document must be defined by configuration only: a JSON Schema, a template, a workflow and a repository
+  alias.
+* Adding a kind of document must require no code change in any module.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_the_shape[The Shape] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-2]
+=== GDR-FORMS-2: Schema Validation
+
+* Data must be validated against the JSON Schema of its kind before every save.
+* A validation failure must be reported per field path and must prevent the save.
+* The schema file must be usable unchanged by a CI validation outside the library.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_schema[Schema] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-3]
+=== GDR-FORMS-3: Data Layout and Serialisation
+
+* Structured data must be stored as YAML; free text as AsciiDoc fragments in separate files.
+* YAML must be written with a fixed key order and stable formatting (GDR-STORE-11).
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_data_free_text_and_generated_output[Data and Output] ·
+Specification: xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-4]
+=== GDR-FORMS-4: Generated Output
+
+* The template must join data and fragments into one AsciiDoc output file.
+* Generation must be reproducible: equal input must produce byte-identical output.
+* The output must be committed in the same commit as the data it was generated from.
+* A check operation must report whether a committed output matches its data, for use in CI.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_data_free_text_and_generated_output[Data and Output] ·
+Specification: xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-5]
+=== GDR-FORMS-5: Workflow
+
+* A workflow must declare states (at least draft, review, approved, superseded) and the allowed transitions.
+* Every transition must map onto a mechanism of the store (intermediate save, save, release, tag).
+* A transition the workflow does not allow must be refused with an outcome.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_workflow[Workflow] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-6]
+=== GDR-FORMS-6: Deadlines
+
+* A workflow must declare deadlines per state (relative to entering the state or to a date field of the data).
+* The library must list the documents whose deadline is due or overdue at a given instant, computed from the index.
+* Deadlines must not be stored as separate data.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_workflow[Workflow] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-7]
+=== GDR-FORMS-7: Signature Level per State
+
+* A workflow must declare the required signature level (0 to 4) per transition.
+* A transition must be refused when the caller cannot supply the evidence of the required level.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_the_level_is_configuration[The Level Is Configuration] ·
+Specification: xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-8]
+=== GDR-FORMS-8: Typed Links
+
+* A link must have the form `<alias>:<kind>/<id>` or `<catalog>:<id>`.
+* On save the library must check that every link target exists; a missing target must prevent the save.
+* A retired target must remain resolvable.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_links[Links] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
+
+[#GDR-FORMS-9]
+=== GDR-FORMS-9: Running Numbers
+
+* A new document must be stored under a ULID.
+* A readable running number must be assigned on save from a counter file changed in the same commit.
+* Two documents created concurrently must never receive the same running number.
+
+_Concept: xref:concepts/schema-driven-documents.adoc#_running_numbers_and_reporting_dates[Running Numbers] ·
+Specification: xref:specification/git-forms.adoc[git-forms]_
+
+[#requirements-git-crypto]
+== `git-crypto` Requirements
+
+[#GDR-CRYPTO-1]
+=== GDR-CRYPTO-1: Envelope Encryption
+
+* Every pseudonym must have its own data key (DEK).
+* The keyring (DEK, issuer and `sub` per pseudonym) must be encrypted with a versioned key-encryption key (KEK).
+* The KEK must come from an exchangeable key source and must never be written to a repository or a log.
+
+_Concept: xref:concepts/data-protection.adoc#_an_encrypted_keyring_in_git[Encrypted Keyring] · Specification:
+xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-2]
+=== GDR-CRYPTO-2: Cryptographic Primitives
+
+* Encryption must use AES-256-GCM.
+* The repository path and the key version must be bound as associated data; a ciphertext moved to another path must
+  fail to decrypt.
+* Every encryption must use a fresh random nonce.
+
+_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
+xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-3]
+=== GDR-CRYPTO-3: Pseudonyms
+
+* The identity of a person in the keyring must be the pair of issuer and `sub`; a `sub` alone must never select an
+  entry.
+* For an issuer and `sub` without an entry the library must create a random pseudonym not derived from either.
+* The library must resolve a pseudonym to its issuer and `sub`, and an issuer and `sub` to its pseudonym.
+
+_Concept: xref:concepts/data-protection.adoc#_keeping_personal_data_out_of_the_history[Keeping Personal Data out] ·
+Specification: xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-4]
+=== GDR-CRYPTO-4: Erasure by Key Rotation
+
+* Erasure must remove the entries of the given pseudonyms from the keyring, encrypt the keyring with KEK version n+1,
+  record version n as pending destruction, and commit it; in remote mode it must push the commit.
+* Only after the commit, and in remote mode the push, succeeded may the library ask the key source to destroy version n.
+* When the commit or the push fails, the erasure must report incomplete, and no KEK version may be destroyed.
+* A version recorded as pending destruction must be destroyed by the next erasure run or the next start, until the
+  destruction succeeds.
+* One rotation must erase any number of pseudonyms (batching).
+* After the rotation no earlier version of the keyring may be decryptable with the keys the key source still holds.
+
+_Concept: xref:concepts/data-protection.adoc#_erasing_a_person[Erasing a Person] · Specification:
+xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-5]
+=== GDR-CRYPTO-5: Evidence of Erasure
+
+* The rotation commit must name the erased pseudonyms and the KEK version pending destruction.
+* After the destruction succeeded, a further commit must record the destroyed version.
+* No commit may contain key material, and no commit may record a destruction that has not succeeded.
+
+_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
+xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-6]
+=== GDR-CRYPTO-6: Personal Fields in Documents
+
+* A personal field of a document must be encryptable with the DEK of its data subject.
+* After the data subject's erasure the field must be undecryptable.
+
+_Concept: xref:concepts/data-protection.adoc#_keeping_personal_data_out_of_the_history[Keeping Personal Data out] ·
+Specification: xref:specification/git-crypto.adoc[git-crypto]_
+
+[#GDR-CRYPTO-7]
+=== GDR-CRYPTO-7: Keyring at Run Time
+
+* The keyring must be decrypted at start with the current KEK and held in memory.
+* A missing or wrong KEK must stop the start with an outcome naming the KEK version expected.
+* When a fetch or a reference update brings a new version of the keyring, the instance must reload it and drop the DEKs
+  of removed pseudonyms before it serves the next decryption.
+* With several instances an erasure takes effect in each instance at the latest at its next fetch; the operator's
+  erasure delay must include the fetch interval.
+
+_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
+xref:specification/git-crypto.adoc[git-crypto]_
+
+[#requirements-git-signing]
+== `git-signing` Requirements
+
+[#GDR-SIGN-1]
+=== GDR-SIGN-1: Commit Signature
+
+* Every commit written through the store must be signed by the application through an exchangeable signer (KMS, HSM or
+  key file).
+* The signature format must be selectable: SSH or GPG.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_what_a_signature_of_the_application_shows[Application
+Signature] · Specification: xref:specification/git-signing.adoc[git-signing]_
+
+[#GDR-SIGN-2]
+=== GDR-SIGN-2: Identity Trailers
+
+* Every commit of a save must carry the trailers `Actor` (pseudonym), `Actor-Issuer`, `Auth-Time` (ISO 8601, UTC),
+  `Auth-Context` and `Session` (`hmac:` followed by an HMAC of the session id).
+* A save that a delegated client performs on the user's behalf (for example an AI agent through the application's
+  MCP server) must additionally carry the trailer `Actor-Client` with the OAuth client id of that client; a save the
+  user performs directly must not carry it.
+* No trailer may contain an OIDC `sub` or `sid` in clear text.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_which_identifier_goes_into_the_trailer[Which Identifier] ·
+Specification: xref:specification/git-signing.adoc[git-signing]_
+
+[#GDR-SIGN-3]
+=== GDR-SIGN-3: Portable Approvals
+
+* A release commit the application creates must carry one `Approved-by: <pseudonym> (<role>)` trailer per approval
+  and a `Review: <url>` trailer when the release came through a pull or merge request.
+* When the Git server creates the release merge (protected `main`), the library must record the same approvals as a
+  note on that merge commit under `refs/notes/approvals`, in a notes commit signed by the application, once a fetch
+  shows the new tip of `main`.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_what_a_signature_of_the_application_shows[Application
+Signature] · Specification: xref:specification/git-signing.adoc[git-signing]_
+
+[#GDR-SIGN-4]
+=== GDR-SIGN-4: Step-Up Evidence (Level 2)
+
+* An approval at level 2 must be refused unless the caller's `Auth-Context` states multi-factor authentication and its
+  `Auth-Time` is not older than a configured maximum age.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_graded_traceability[Graded Traceability] · Specification:
+xref:specification/git-signing.adoc[git-signing]_
+
+[#GDR-SIGN-5]
+=== GDR-SIGN-5: Passkey Approvals (Level 3)
+
+* The library must register WebAuthn public keys per pseudonym in a versioned, signed file of the repository.
+* The approval challenge must be fresh, single-use and bound to the approved commit: the SHA-256 over the commit id
+  and a random nonce of at least 128 bits, issued for one approval and valid for a configured time.
+* An assertion must be accepted only when its client data has the type `webauthn.get`, an allowed origin and the
+  expected challenge, its signature verifies with a registered key, and the user-presence and user-verification flags
+  are set.
+* An accepted assertion must be stored as a note on the commit under `refs/notes/approvals`.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Level 3] · Specification:
+xref:specification/git-signing.adoc[git-signing]_
+
+[#GDR-SIGN-6]
+=== GDR-SIGN-6: Signature Verification
+
+* The library must verify commit signatures against an `allowed_signers` file in the repository that carries a
+  validity period per key.
+* The verifier must take its trust root (the application's signing keys) from its own configuration, not from the
+  repository; a change of `allowed_signers` must be accepted only when it is signed by a key the previous version
+  trusts, and the chain must start at the configured trust root.
+* A verification of a reference must list every commit without a valid signature; it must be runnable from CI without
+  the application.
+
+_Concept: xref:concepts/identity-and-signing.adoc#_what_has_to_be_done_right[What Has to Be Done Right] ·
+Specification: xref:specification/git-signing.adoc[git-signing]_
+
+[#requirements-git-timestamp]
+== `git-timestamp` Requirements
+
+[#GDR-TSA-1]
+=== GDR-TSA-1: Timestamp per State of `main`
+
+* For every new state of `main` the module must obtain an RFC 3161 timestamp token over the commit id, as a consumer
+  of the outbox (GDR-STORE-10); this includes states created by a merge on the Git server, which reach the module
+  through the fetch trigger of the outbox.
+* The token must be stored as a note on the commit under `refs/notes/timestamps`.
+* In remote mode the module must push the note right after writing it; a failed push must leave the commit pending,
+  and the retry must push the stored token instead of requesting a new one.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] · Specification:
+xref:specification/git-timestamp.adoc[git-timestamp]_
+
+[#GDR-TSA-2]
+=== GDR-TSA-2: Timestamp Verification
+
+* The module must verify a stored token against the commit id and the certificate of the timestamp authority.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] · Specification:
+xref:specification/git-timestamp.adoc[git-timestamp]_
+
+[#GDR-TSA-3]
+=== GDR-TSA-3: Unavailable Timestamp Authority
+
+* An unreachable timestamp authority must not block or fail a save.
+* The outbox must retry the missing timestamps; the states still without a token must be listable.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_git_and_the_other_systems[Consistency]
+· Specification: xref:specification/git-timestamp.adoc[git-timestamp]_
+
+[#requirements-git-directory]
+== `git-directory` Requirements
+
+[#GDR-DIR-1]
+=== GDR-DIR-1: Catalogs
+
+* The module must keep catalogs of roles, teams and services with stable ids (`role:`, `team:`, `service:`); further
+  catalogs must be addable by configuration.
+* An entry must be retired (`retired: true`), never deleted.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_catalogs_of_roles_and_teams[Catalogs] · Specification:
+xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-2]
+=== GDR-DIR-2: Service Catalog
+
+* A service entry must support the fields `id`, `name`, `description`, `system`, `lifecycle`, `owner` (team and role),
+  `repositories`, `dependsOn`, `protection-needs` and `data-classes`.
+* The library must compute the effective protection needs of a service as the maximum over the services it depends on.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_catalog_of_applications_and_services[Service Catalog] ·
+Specification: xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-3]
+=== GDR-DIR-3: Person Entries
+
+* A person entry must hold name and memberships (pairs of team and role) and nothing else by default.
+* The whole entry must be encrypted with the DEK of the person (GDR-CRYPTO-1).
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_the_directory_of_persons[Directory of Persons] · Specification:
+xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-4]
+=== GDR-DIR-4: First Login
+
+* For an issuer and `sub` without a pseudonym the module must create one and report that an entry is required.
+* For a known pseudonym without a saved entry (an interrupted first login) the module must report again that an entry
+  is required.
+* Saving the entry must be a signed level-1 commit; the entry must be valid at once.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_first_login[First Login] · Specification:
+xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-5]
+=== GDR-DIR-5: Reference Resolution
+
+* The module must resolve `role:`, `team:` and `service:` references to their entries, and a role in a team to the
+  persons holding it.
+* A pseudonym whose person was erased must resolve to a "former member" marker.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_what_it_means_for_the_architecture[Architecture] ·
+Specification: xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-6]
+=== GDR-DIR-6: Import from Backstage
+
+* The module must import Backstage components and systems into the service catalog and groups into the team catalog.
+* A repeated import must update changed entries and must not duplicate entries.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_alignment_with_backstage_and_import[Backstage] ·
+Specification: xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-7]
+=== GDR-DIR-7: Periodic Confirmation
+
+* A confirmation interval must be configurable.
+* The module must list the person entries whose last confirmation is older than the interval.
+
+_Concept: xref:concepts/directory-and-catalogs.adoc#_staying_current[Staying Current] · Specification:
+xref:specification/git-directory.adoc[git-directory]_
+
+[#requirements-non-functional]
+== Non-Functional Requirements
+
+[#GDR-NFR-1]
+=== GDR-NFR-1: Index Footprint
+
+* The in-memory index of 500 documents with 90 fields each must retain less than 16 MB of heap.
+
+_Concept: xref:concepts/storage-engine.adoc#_reading_and_queries[Reading and Queries] · Specification:
+xref:specification/testing.adoc[Testing]_
+
+[#GDR-NFR-2]
+=== GDR-NFR-2: Concurrent Writers
+
+* Ten writers saving different files of one working branch concurrently must all succeed, with retries only.
+* Two writers saving the same file must yield exactly one saved result and one conflict result.
+
+_Concept: xref:concepts/storage-engine.adoc#_compare_and_swap[Compare-and-Swap] · Specification:
+xref:specification/testing.adoc[Testing]_
+
+[#GDR-NFR-3]
+=== GDR-NFR-3: Secrets
+
+* No token, password, key, KEK or session id may appear in a result detail, an exception message, a log message or a
+  commit.
+
+_Concept: xref:concepts/identity-and-signing.adoc[Identity and Signing] · Specification:
+xref:specification/error-model.adoc[Error Model]_
+
+[#GDR-NFR-4]
+=== GDR-NFR-4: Native Image
+
+* Every module must work in a GraalVM native image; reflection and resource metadata the module needs must ship in
+  `META-INF/native-image`.
+
+_Concept: xref:concepts/module-structure.adoc#_what_changes_in_pm_mcp_core[What Changes in `pm-mcp-core`] ·
+Specification: xref:specification/testing.adoc[Testing]_
+
+== Traceability
+
+[cols="2,2,2,2"]
+|===
+|Requirements |Concept |ADR |Specification
+
+|GDR-GEN-1 – GDR-GEN-4
+|xref:concepts/module-structure.adoc[Module Structure]
+|xref:adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[ADR-0004]
+|xref:specification/error-model.adoc[Error Model], xref:specification/testing.adoc[Testing]
+
+|GDR-CORE-1 – GDR-CORE-11
+|xref:concepts/storage-engine.adoc[Storage Engine], xref:concepts/module-structure.adoc[Module Structure]
+|xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
+xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
+xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005]
+|xref:specification/git-core.adoc[git-core]
+
+|GDR-WT-1 – GDR-WT-3
+|xref:concepts/module-structure.adoc[Module Structure]
+|xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005]
+|xref:specification/git-worktrees.adoc[git-worktrees]
+
+|GDR-TEST-1 – GDR-TEST-2
+|xref:concepts/module-structure.adoc[Module Structure]
+|xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005]
+|xref:specification/git-testing.adoc[git-testing]
+
+|GDR-STORE-1 – GDR-STORE-11
+|xref:concepts/storage-engine.adoc[Storage Engine], xref:concepts/evidence-and-companion-stores.adoc[Evidence]
+|xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003],
+xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
+|xref:specification/git-store.adoc[git-store]
+
+|GDR-FORMS-1 – GDR-FORMS-9
+|xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
+|xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011]
+|xref:specification/git-forms.adoc[git-forms]
+
+|GDR-CRYPTO-1 – GDR-CRYPTO-7
+|xref:concepts/data-protection.adoc[Data Protection]
+|xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[ADR-0008]
+|xref:specification/git-crypto.adoc[git-crypto]
+
+|GDR-SIGN-1 – GDR-SIGN-6
+|xref:concepts/identity-and-signing.adoc[Identity and Signing]
+|xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006],
+xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007]
+|xref:specification/git-signing.adoc[git-signing]
+
+|GDR-TSA-1 – GDR-TSA-3
+|xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+|xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009]
+|xref:specification/git-timestamp.adoc[git-timestamp]
+
+|GDR-DIR-1 – GDR-DIR-7
+|xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
+|xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[ADR-0012]
+|xref:specification/git-directory.adoc[git-directory]
+
+|GDR-NFR-1 – GDR-NFR-4
+|xref:concepts/storage-engine.adoc[Storage Engine]
+|xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
+|xref:specification/testing.adoc[Testing], xref:specification/error-model.adoc[Error Model]
+|===
