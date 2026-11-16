@@ -15,8 +15,9 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 
 `git-core` is the JGit level of the reactor: module `de.cuioss.git.document.core`, package
 `de.cuioss.git.document.core`. It depends on no other module of the reactor; its only third-party dependency is JGit
-(not yet added; needs the owner's approval). Statements about JGit APIs are marked _(unverified)_ until checked
-against the JGit version in use.
+(planned, not yet added; needs the owner's approval). The JGit APIs named here are checked against the sources of JGit
+7.8.0 (tag `v7.8.0.202609011348-r` of https://github.com/eclipse-jgit/jgit); the JGit version to adopt is chosen with
+the approval of the dependency. Statements still marked _(unverified)_ are not checked.
 
 === Types Taken Over from `pm-provider-git`
 
@@ -41,7 +42,7 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-1[GDR-CORE-1: Hardened Repos
 
 * Every repository is built with `RefusingFS` as its file system abstraction.
 * Hook execution and process starts throw `CapabilityRefusedException` inside JGit; `RepositoryOperations` maps it to
-  a refused outcome.
+  the refused-by-policy outcome (see xref:error-model.adoc[Error Model]).
 * No operation shells out; no `git` binary is looked up.
 
 == Remote Policy
@@ -75,8 +76,9 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-3[GDR-CORE-3: Local and Remo
 |`remote: <https-url>` |remote |the remote repository; the local bare clone is a cache
 |===
 
-* Switching from local to remote: configure the remote, then push every reference matched by the push refspec
-  (`refs/heads/*`, `refs/tags/*`, `refs/notes/*`).
+* Switching from local to remote: configure the remote, then push every reference matched by the push refspec.
+  `git-core` defines no refspec of its own; the push refspec is configuration supplied by the module above (for
+  `git-store`: `refs/heads/*`, `refs/tags/*`, `refs/notes/*`, see xref:git-store.adoc[git-store]).
 * A missing local clone in remote mode is re-created by a clone on open.
 
 == In-Core Writing
@@ -86,11 +88,18 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-4[GDR-CORE-4: In-Core Writin
 *Status:* PLANNED
 
 The write path builds the new tree from the parent's tree in an in-core `DirCache` and inserts blob, tree and commit
-through one `ObjectInserter` _(unverified)_:
+through one `ObjectInserter` (`DirCache.read(ObjectReader, AnyObjectId)`, `DirCache.writeTree(ObjectInserter)`,
+`ObjectInserter.insert(CommitBuilder)`). The listing is a sketch of the JGit calls, not the API of `git-core`; it
+writes one file and leaves out the error handling:
 
 [source,java]
 ----
-Ref ref = repo.exactRef("refs/heads/documents/" + id);
+// Inputs: repo (Repository), refName (full name of the branch to write), path (repository path of the file),
+// content (byte[]), author and committer (PersonIdent), message (String, trailers included).
+Ref ref = repo.exactRef(refName);
+if (ref == null) {
+    return notFound(refName);  // no such branch: the not-found outcome
+}
 try (ObjectInserter ins = repo.newObjectInserter();
      ObjectReader reader = repo.newObjectReader();
      RevWalk walk = new RevWalk(reader)) {
@@ -108,8 +117,8 @@ try (ObjectInserter ins = repo.newObjectInserter();
     CommitBuilder cb = new CommitBuilder();
     cb.setTreeId(index.writeTree(ins));
     cb.setParentId(parent);
-    cb.setAuthor(userIdent);
-    cb.setCommitter(serviceIdent);
+    cb.setAuthor(author);
+    cb.setCommitter(committer);
     cb.setMessage(message);
     ObjectId commit = ins.insert(cb);
     ins.flush();
@@ -128,20 +137,36 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-5[GDR-CORE-5: Compare-and-Sw
 *Status:* PLANNED
 
 * The update sets the expected old object id to the parent the change was built on
-  (`RefUpdate.setExpectedOldObjectId`) _(unverified)_.
+  (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference that must not exist yet). The ordinary
+  update never sets the force flag; only the guarded reset below does.
 * The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit.
 * On a lost race the operation is re-applied to the new tip and the commit rebuilt.
+* *Guarded reset*: a reference update to a commit that does not descend from the current one, allowed only when the
+  reference still points to the expected old id (`RefUpdate.setExpectedOldObjectId` together with
+  `setForceUpdate(true)`). JGit checks the expected old id before it considers the force flag, so a reference that
+  moved meanwhile returns `LOCK_FAILURE` and is not reset. `git-store` uses it where a save moves the local working
+  branch back to a fetched remote tip, with or without pending commits replayed onto it (see
+  xref:git-store.adoc#_save[git-store, Save]).
 
 [cols="1,2"]
 |===
-|`RefUpdate.Result` _(unverified)_ |Handling
+|`RefUpdate.Result` |Handling
 
 |`NEW`, `FAST_FORWARD` |success
-|`LOCK_FAILURE` |retry with the new tip
-|any other value |conflict outcome after the last attempt; detail names the result
+|`FORCED` |guarded reset: success; ordinary compare-and-swap: rejected, as below
+|`LOCK_FAILURE` |the reference is locked by a concurrent update or no longer points to the expected old id (JGit
+returns `LOCK_FAILURE` for both): re-apply the operation to the new tip and retry; after the last attempt the
+conflict outcome, the reference unchanged
+|`IO_FAILURE` |an unexpected I/O failure: no retry; an exception, as the
+xref:error-model.adoc[Error Model] prescribes
+|`REJECTED`, `REJECTED_MISSING_OBJECT`, `REJECTED_OTHER_REASON`, `REJECTED_CURRENT_BRANCH`, `NOT_ATTEMPTED`,
+`NO_CHANGE`, `RENAMED`; `FORCED` of an ordinary compare-and-swap |no retry; returned at once as the rejected outcome,
+the detail names the result (`FORCED` and `RENAMED` do not occur for an ordinary compare-and-swap, because it neither
+forces nor renames)
 |===
 
-Configuration: `max-attempts` -- required, no default in the specification; the store sets it.
+Configuration: the maximum number of attempts is a required parameter of the call; `git-core` has no default and no
+configuration key of its own. `git-store` passes its `save.max-attempts`.
 
 == In-Core Merge
 
@@ -149,7 +174,7 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-6[GDR-CORE-6: In-Core Merge]
 
 *Status:* PLANNED
 
-* Merge runs on a merger created in core (no working tree) _(unverified: `MergeStrategy.RECURSIVE.newMerger(repo, true)`)_.
+* Merge runs on a merger created in core, without a working tree (`MergeStrategy.RECURSIVE.newMerger(repo, true)`).
 * Success: a tree id; the caller builds the merge commit.
 * Conflict: the conflict outcome with the list of conflicting paths; no commit is written.
 
@@ -204,9 +229,11 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-10[GDR-CORE-10: Git Notes]_
 
 *Status:* PLANNED
 
-* Read and write the note of one commit under a named notes reference, through JGit's `NoteMap` _(unverified)_.
+* Read and write the note of one commit under a named notes reference, through JGit's `NoteMap`
+  (`NoteMap.read(ObjectReader, RevCommit)`, `NoteMap.set`, `NoteMap.writeTree(ObjectInserter)`).
 * A write builds a new notes commit and moves the notes reference with the compare-and-swap above.
-* Reserved notes references: `refs/notes/timestamps` (`git-timestamp`), `refs/notes/approvals` (`git-signing`).
+* `git-core` reserves no notes reference itself; the names are configuration supplied by the modules above
+  (`refs/notes/timestamps` by `git-timestamp`, `refs/notes/approvals` by `git-signing`).
 
 == Identity of Commits and References
 

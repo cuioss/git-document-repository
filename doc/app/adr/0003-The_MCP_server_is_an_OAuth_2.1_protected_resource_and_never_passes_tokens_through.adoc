@@ -18,18 +18,22 @@ Accepted
 
 == Decision
 
-AI agents shall work with the documents through the Model Context Protocol. The owner required token handling from
-the ground up. An agent acts for a user and must be held to that user's rights.
+AI agents shall work with the documents through the Model Context Protocol. An agent acts for a user and must be held
+to that user's rights, so token handling is part of the design, not an addition. The MCP authorization specification
+makes authorization optional and says that HTTP transports which use it should conform to it. The normative protocol
+revision is 2026-07-28.
 
-*The decision:* the MCP endpoint is an OAuth 2.1 protected resource.
+*The decision:* CISOs-Friend uses authorization and follows the MCP authorization specification for HTTP transports;
+the MCP endpoint is an OAuth 2.1 protected resource.
 
 * It serves Protected Resource Metadata (RFC 9728) and answers a missing token with `401` and `resource_metadata`.
-* `token-sheriff-validation-quarkus` validates every token: signature, expiry, issuer and audience. The audience is the
-  server's canonical URI (RFC 8707).
+* `token-sheriff-validation-quarkus` validates every token: signature, expiry, issuer and audience. The token's `aud`
+  must contain the server's canonical URI (RFC 8707).
 * Scopes name operation kinds. The effective permission is the intersection of the scopes and the user's rights.
 * An insufficient scope is answered with `403` and `insufficient_scope`.
 * The token is never forwarded. Git, KMS and timestamp authority use the application's own credentials.
-* Only Streamable HTTP is offered, without protocol sessions. Every request carries its token.
+* Only Streamable HTTP in the shape of revision 2026-07-28 is offered, without protocol sessions. Every request
+  carries its token. `GET` and `DELETE` on `/mcp` are answered with `405`.
 * An agent saves at signature level 1 at most. Higher levels need the human in the web app.
 
 The details are in link:../concepts/mcp-server.adoc[MCP Server].
@@ -44,7 +48,8 @@ A leaked key would stay valid until someone notices.
 === Token passthrough to the Git server
 
 The agent could obtain a Git host token and the server could forward it. *Rejected because* the MCP specification
-forbids passthrough. The agent would also gain Git rights beyond the application's checks.
+forbids a server to accept or pass on tokens not issued for it. The agent would also gain Git rights beyond the
+application's checks.
 
 === A STDIO server on the user's machine
 
@@ -61,7 +66,8 @@ statement true.
 === Properties of the design
 
 * Every agent action is attributed to a user and a client and signed.
-* A stolen token is short-lived and useless against any other resource.
+* A stolen token is valid only for the lifetime its authorization server sets and useless against any other
+  resource.
 
 === Accepted costs
 
@@ -71,10 +77,12 @@ statement true.
 === When this is revisited
 
 * When the MCP authorization specification changes its requirements for resource servers.
-* When agent clients support sender-constrained tokens widely; then DPoP becomes required.
+* When agent clients support sender-constrained tokens widely; DPoP is offered as configuration and recommended, and
+  making it the default is then reconsidered.
 
 == Links
 
 * link:../concepts/mcp-server.adoc[MCP Server]
 * link:../concepts/authentication-and-identity.adoc[Authentication and Identity]
-* https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization[MCP Authorization]
+* https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[MCP Authorization 2026-07-28]
+* https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[MCP Transports 2026-07-28]

@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- theme-handling: A (theme-neutral); diagram type: block (layout panels) -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520"
+<!-- theme-handling: A (theme-neutral); diagram type: block (layout panels).
+     Deviation recorded: this is a UI wireframe. No type standard covers wireframes, so it is drawn
+     with the block conventions (rounded panels, 1.2 px borders, header and item typography).
+     Dashed 0.6 px boxes are form input fields; the dashed rail line is a divider. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 524"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">The web app shell with rail, top bar and a triage page of three columns</title>
@@ -14,7 +17,7 @@
       .sub       { font-size: 11px; fill: #6e7681; font-style: italic; }
       .item      { font-size: 12px; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
       .item-bold { font-size: 12px; font-weight: 700; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-      .caption   { font-size: 12px; fill: #6e7681; text-anchor: middle; font-style: italic; }
+      .caption   { font-size: 11px; fill: #6e7681; text-anchor: middle; font-style: italic; }
     </style>
   </defs>
 

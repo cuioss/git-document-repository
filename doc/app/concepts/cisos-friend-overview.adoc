@@ -89,7 +89,7 @@ link:web-app.adoc[Web App].
 
 |*MCP server*
 |A Model Context Protocol server for AI agents. The same operations as the web app, as tools, under OAuth 2.1 with
-audience-bound tokens; token handling is designed in from the first line. See link:mcp-server.adoc[MCP Server].
+audience-bound tokens that the server validates and never passes on. See link:mcp-server.adoc[MCP Server].
 |===
 
 Both interfaces call the same application services. Neither carries a rule of its own: what a user may do, which
@@ -121,13 +121,15 @@ authority. The application adds no store of its own.
 
 == Positioning
 
-CISOs-Friend does not compete with an established ISMS product such as verinice as a complete ISMS; it complements it.
+CISOs-Friend does not compete with an established ISMS product such as verinice as a complete ISMS; it complements it
+(link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]).
 
-. *Core*: SAMM on Git. No established tool follows this approach.
+. *Core*: SAMM on Git. No tool known to this concept keeps SAMM assessments as versioned documents in Git.
 . *Extension*: a lean "ISMS as code" for development organisations: policies, statement-of-applicability extracts for
   secure development, risks from SAMM gaps, threat models and incident reports with their links.
-. *Bridge*: where an organisation already runs verinice, the application delivers released SAMM assessments as evidence
-  through the REST API of verinice.veo; a supplier to the main ISMS rather than a competitor.
+. *Bridge*: where an organisation already runs verinice, released SAMM assessments can be delivered as evidence
+  through the REST API of verinice.veo, a supplier to the main ISMS rather than a competitor. The bridge is disabled
+  by default until its shape is verified (see the open questions of link:category-isms.adoc#_open_questions[ISMS]).
 
 The comparison with verinice is in link:category-isms.adoc#_comparison_with_verinice[ISMS, Comparison with verinice].
 
@@ -141,7 +143,8 @@ counted in years, not weeks. SAMM alone takes weeks to months.
 == Open Questions
 
 . Clarify with Token Sheriff which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups reach the application,
-  and how step-up for approvals is triggered (tracked in link:authentication-and-identity.adoc#_open_questions[Authentication and Identity]).
+  and how step-up for approvals is triggered
+  (tracked in link:authentication-and-identity.adoc#_open_questions[Authentication and Identity]).
 . Whether the bridge to verinice.veo is in the first release or a later one.
 
 == Related

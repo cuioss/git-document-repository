@@ -8,10 +8,12 @@
 link:../README.adoc[CISOs-Friend documentation] » Concepts
 
 An application that stores its data in someone else's Git server has a pleasant property: it owns no database, so it
-has no schema migration, no backup job and no connection pool to tune. It also has an unpleasant one: everything it
-knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend is the arrangement
-that keeps the pleasant property and contains the unpleasant one. Its build, runtime and test structure follow API
-Sheriff, so a contributor who knows one knows the other.
+has no schema migration, no database backup and no connection pool to tune; the Git server's backup covers the pushed
+states. Commits saved locally while the Git server was unreachable (`SAVED_LOCALLY`, not yet pushed) and the drafts
+are covered only by the backup of the volume, which therefore needs one of its own. It also has an unpleasant one:
+everything it knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend is the
+arrangement that keeps the pleasant property and contains the unpleasant one. Its build, runtime and test structure
+follow API Sheriff, so a contributor who knows one knows the other.
 
 == Shape
 
@@ -24,14 +26,25 @@ One Quarkus application, compiled to a native image on Java 25, serves three sur
 Behind the surfaces sits one layer of *application services*: categories, rights, signature levels, deadlines, the
 first login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same
 services with the same checks. Below the services sit the libraries of `git-document-repository`
-(link:../../concepts/module-structure.adoc[Module Structure]) and, under them, JGit.
+(link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which
+reaches the Git server through JGit over HTTPS. The clients of the KMS or Vault (key source of the keyring) and of the
+timestamp authority live in the libraries, in `git-crypto` and `git-timestamp`; the application only supplies their
+configuration. The application's own outbound calls, to the Git host API and to verinice.veo, go through integration
+adapters on `cui-http`.
 
 ----
- web app (SPA) ──► /api/v1 + SSE ─┐
-                                  ├─► application services ──► git-store, git-forms, git-signing, git-crypto,
- AI agent ──────► /mcp ───────────┘        │                    git-timestamp, git-directory ──► JGit
-                                           │
-                                           └─► outbound (cui-http): TSA, KMS/Vault, Git host API, verinice.veo
+ browser ──► static web app (resource JAR, same origin)
+ browser ──► /api/v1 + SSE ──┐
+                             ├─► application services ──► adapters (cui-http) ──► Git host API, verinice.veo
+ AI agent ─► /mcp ───────────┘    │
+                                  │ calls, configuration
+                                  └─► ┌─ git-document-repository ───────────┐
+                                      │ git-store, git-forms, git-directory │
+                                      │ git-signing                         │
+                                      │ git-crypto                          │ ──► KMS or Vault
+                                      │ git-timestamp                       │ ──► timestamp authority
+                                      │ git-core ──► JGit                   │ ──► Git server (HTTPS)
+                                      └─────────────────────────────────────┘
 ----
 
 The layering is planned to be enforced by ArchUnit rules in the test suite: no surface package reaches a library
@@ -52,8 +65,8 @@ imported in the root `dependencyManagement`, `maven.compiler-plugin.release` = `
 
 |`categories`
 |The category definitions as resources: per category a JSON Schema, a template and a workflow. Tested on its own
-against the library's form engine; no Java code of a category
-(link:../adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005]).
+against the library's form engine; no Java code. Behaviour a schema cannot express sits behind named extension points
+in `cisos-friend` (link:../adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005]).
 
 |`web-app`
 |The Svelte single-page application, built by `frontend-maven-plugin` into a resource JAR
@@ -87,9 +100,9 @@ A `benchmarks` module (k6, non-gating) follows once there is a performance quest
 |Bearer-token validation for the MCP endpoint (audience, scopes, optional DPoP).
 
 |`cui-http`
-|Every outbound HTTP call goes through `HttpHandler` and returns an `HttpResult`; resilient and ETag-aware adapters
-where a call is repeated (Git host API, TSA, KMS, veo). Inbound path, query and header values of the REST API, the MCP
-endpoint and the Git server's webhooks pass the `de.cuioss.http.security` validation pipelines before use.
+|Every outbound HTTP call of the application goes through `HttpHandler` and returns an `HttpResult`; resilient and
+ETag-aware adapters where a call is repeated (Git host API, veo). Inbound path, query and header values of the REST API,
+the MCP endpoint and the Git server's webhooks pass the `de.cuioss.http.security` validation pipelines before use.
 
 |`cui-java-tools`
 |`CuiLogger` with `LogRecord` constants for every message at INFO and above; the catalogue is documented in
@@ -98,6 +111,11 @@ endpoint and the Git server's webhooks pass the `de.cuioss.http.security` valida
 |Quarkus extensions
 |`quarkus-arc`, `quarkus-rest` with Jackson, `quarkus-smallrye-health`, `quarkus-micrometer-registry-prometheus`,
 `quarkus-smallrye-fault-tolerance`.
+
+|Test only
+|JUnit 5, `cui-test-generator`, EasyMock, `cui-test-value-objects`, `cui-test-juli-logger`,
+`cui-test-mockwebserver-junit5`, `cui-http-testing`, ArchUnit; for the web app Vitest with jsdom and Testing Library,
+Playwright and axe-core; k6 for the `benchmarks` module (see <<_testing>>).
 |===
 
 Every further dependency is a decision of the owner.
@@ -169,7 +187,8 @@ anything else depends on it.
 
 * *Unit*: JUnit 5, `cui-test-generator` for all test data, EasyMock for test doubles, `cui-test-value-objects` for the
   contracts of value types, `cui-test-juli-logger` with `LogAsserts` for every `LogRecord`.
-* *Outbound HTTP*: `cui-test-mockwebserver-junit5` for the Git host API, the TSA and the KMS; HTTPS included.
+* *Outbound HTTP*: `cui-test-mockwebserver-junit5` for the Git host API and verinice.veo, and as a stand-in for the TSA
+  and the KMS behind the library clients; HTTPS included.
 * *Inbound HTTP*: the adversarial generators of `cui-http-testing` (path, header, query attack databases) against the
   REST API and the MCP endpoint.
 * *Architecture*: ArchUnit for the layering.

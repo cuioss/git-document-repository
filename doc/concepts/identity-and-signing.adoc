@@ -32,13 +32,14 @@ release runs as a pull or merge request.
 
 |c) Commits signed by the user's own Git key
 |Not feasible server-side through a JGit push, because it would need the user's signing key. Commits created through
-the Git server's API are signed by the server itself, at the price of binding to one vendor. The graded signature
-below replaces this level.
+the Git server's API can be signed by the server itself, depending on the vendor _(unverified)_, at the price of
+binding to one vendor. The graded signature below replaces this level.
 |===
 
-*One push per save* keeps every push to the commits of exactly one user. Who may read and write a repository is
-decided by the application from the identity provider; in the first iteration no right is derived from the roles of
-the directory (see xref:directory-and-catalogs.adoc[Directory and Catalogs]).
+*One push per save* keeps every push to the commits of exactly one user; the only exception are commits saved locally
+while the remote could not be reached, which the next successful push carries along. Who may read and write a
+repository is decided by the application from the identity provider; in the first iteration no right is derived from
+the roles of the directory (see xref:directory-and-catalogs.adoc[Directory and Catalogs]).
 
 == What a Signature of the Application Shows
 
@@ -58,11 +59,13 @@ Actor-Client: agent-client-42         ← only when a delegated client (an AI ag
 ----
 
 A release commit additionally carries the approvals, so the evidence survives a change of Git server:
-`Approved-by: p-91c2d0 (role:ciso)` and `Review: <url of the pull request>`. Approvals given in a pull request live in
-the Git server's database; on merge the application writes them as trailers. When protected `main` makes the Git
-server create the merge, that commit is the server's and the application cannot sign it; the application then writes
-the approvals as a note on the merge commit, in a notes commit it signs, as soon as a fetch shows the new tip. These
-*portable approvals* make the repository itself the evidence.
+`Approved-by: p-91c2d0 (role:ciso)` and `Review: <url of the pull request>`. The role in parentheses only records in
+which role the user approved; in the first iteration it grants and checks nothing (see
+<<_the_level_is_configuration>>). Approvals given in a pull request live in the Git server's database; on merge the
+application writes them as trailers. When protected `main` makes the Git server create the merge, that commit is the
+server's and the application cannot sign it; the application then appends the approvals as an entry of kind `merge`
+to the note of the merge commit under `refs/notes/approvals`, in a notes commit it signs, as soon as a fetch shows the
+new tip. These *portable approvals* make the repository itself the evidence.
 
 What the signature shows:
 
@@ -92,7 +95,7 @@ pseudonymous, hence personal identifiers, and they would stay in the history for
 
 == Graded Traceability
 
-image::../resources/diagrams/graded-traceability-levels.svg[Five levels of traceability from the author field only up to a qualified electronic signature, align=center]
+image::../resources/diagrams/graded-traceability-levels.svg["Five signature levels from the author field only up to a qualified electronic signature",align=center]
 
 [cols="1,3,3,2"]
 |===
@@ -114,40 +117,47 @@ image::../resources/diagrams/graded-traceability-levels.svg[Five levels of trace
 |one MFA confirmation per approval
 
 |3
-|Level 2 and an approval with a passkey (WebAuthn): the browser signs the commit id with the user's passkey; stored as
-`git notes`
-|"A key held only by the user's device approved exactly this state"
+|Level 2 and an approval with a passkey (WebAuthn): the browser signs a single-use challenge bound to the commit id
+with the user's passkey; stored as `git notes`
+|"A key the server does not hold approved exactly this state"
 |fingerprint or Windows Hello per approval
 
 |4
 |Qualified electronic signature under eIDAS through a remote signing service
-|Legally equal to a handwritten signature
-|High; only where the law demands it
+|The equivalent legal effect of a handwritten signature (eIDAS, Art. 25(2))
+|high; only where the law demands it
 |===
 
 === Level 3: Approval with a Passkey
 
-Users shy away from own Git accounts or GPG keys, but many already have *passkeys* (Windows Hello, Touch ID, security
-keys). The flow:
+Users without a Git account or an OpenPGP key can approve with a *passkey* (Windows Hello, Touch ID, security keys)
+where their device supports one. The flow:
 
 . On approval the application issues a fresh, single-use challenge: the hash over the commit id and a random nonce.
 . The device signs it after the user confirms (flag _user verification_).
-. The application checks the client data (ceremony type, origin, challenge), the signature with the registered public
-  key and the nonce's single use, and stores the assertion with the nonce as a note on the commit under
-  `refs/notes/approvals`.
+. The application checks the client data (ceremony type `webauthn.get`, origin, challenge), the authenticator data
+  (the hash of the relying party id, the _user verified_ flag, and the signature counter where the authenticator keeps
+  one), the signature with the registered public key and the nonce's single use. It appends the assertion with the
+  nonce as an entry of kind `passkey` to the commit's note under `refs/notes/approvals`.
 
 The challenge covers the commit id, and the commit id covers content and history, so the approval binds to exactly
 this state, with a key the server does not hold. The nonce keeps a captured assertion from being replayed; the commit
-id alone is predictable and the same for every attempt. The approval cannot sign the commit itself, because the commit id presupposes the commit; hence a note.
+id alone is predictable and the same for every attempt. The approval cannot sign the commit itself, because the
+commit id presupposes the commit; hence a note.
+
+The note of a commit is one YAML document with a list `approvals`; each entry has a `kind` (`merge` or `passkey`) and
+its fields. A writer reads the note, appends its entry and writes it back by compare-and-swap of the notes reference,
+so a second approval never replaces the first.
 
 Limits: it is no qualified signature; the list of registered public keys has to be kept trustworthy itself, versioned
-and signed; with synchronised passkeys (iCloud, Google) the key is bound to the account, not to one device. This kind
-of transaction signing through the challenge is used in practice to the study's knowledge _(unverified)_; it has to
+and signed; with synchronised passkeys (iCloud, Google) the key is bound to the user's account, not to one device.
+Whether this kind of transaction signing through the challenge is established practice is _(unverified)_; it has to
 be tried first.
 
 === The Level Is Configuration
 
-The required level is part of the workflow of a schema-driven document, per kind of document and per state (see
+The required signature level is part of the workflow of a schema-driven document, per kind of document and per
+transition (see
 xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). A typical setting: level 1 for intermediate
 saves, level 2 for a release, level 3 for the approval of a high-impact document. Which kind of document requires
 which level is the decision of the application. In the first iteration an approval needs no particular role of the
@@ -164,15 +174,16 @@ directory; who may approve is a matter of access, not of the catalog of roles.
    their own into `allowed_signers`. The verifier therefore takes the application's keys from its own configuration,
    and accepts a new version of the file only when a key of the previous trusted version signed it.
 ** The application and a CI job check that every commit on `main` carries a valid signature.
-** The Git server can additionally require signed commits; for it to show "Verified", the key has to be registered
-   with the bot account.
+** The Git server can additionally require signed commits. Under which conditions it marks a commit as verified, for
+   example a key registered with the account of the technical user, depends on the vendor _(unverified)_.
 . *Combine with RFC 3161 timestamps.* The external timestamp proves that a signed commit existed before a point in
   time. If the signing key is compromised or expires later, older commits stay credible; only commits after the time
   of compromise are suspect (see xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]).
 . *Separate responsibilities.* When the Git administration and the operation of the application (or of the KMS) lie
-  with different people, a forgery needs both; a good argument towards auditors.
-. *JGit.* Signing runs through an own implementation of JGit's signer interface, so that the KMS or HSM signs; SSH or
-  GPG format by choice. Which JGit version writes SSH signatures is to verify _(unverified)_.
+  with different people, a forgery needs both, and auditors can be shown that separation.
+. *JGit.* Signing runs through an own implementation of JGit's signer interface `org.eclipse.jgit.lib.Signer`
+  (since JGit 7.0), so that the KMS or HSM signs; SSH or OpenPGP format by choice (`signing.format`: `ssh` or
+  `openpgp`).
 
 == Relation to Pushing in the User's Name
 
@@ -197,14 +208,16 @@ directory; who may approve is a matter of access, not of the catalog of roles.
 |levels 1 to 3, up to a key on the user's device
 |===
 
-Both complement each other, but the signature is the more viable basis: *level 1 by default for every commit*, level 2
-or 3 for approvals, and *pushing in the user's name optional* for organisations whose users have Git accounts anyway.
+Both complement each other. The libraries take the signature as the basis because it needs no Git account per user:
+*level 1 by default for every commit*, level 2 or 3 for approvals, and *pushing in the user's name optional* for
+organisations whose users have Git accounts anyway.
 
 [CAUTION]
 ====
-Every level up to 3 rests on the application. Whoever controls the running application and its signing key can sign
-in anyone's name until the next timestamp shows otherwise. The levels raise the cost of a forgery; they do not make
-the application a neutral notary.
+Levels 1 and 2 rest entirely on the application: whoever controls the running application and its signing key can
+sign in anyone's name. Level 3 adds a key the server does not hold, but the application still keeps the list of
+registered public keys. A timestamp does not expose such a forgery; it only keeps the commits timestamped before a
+compromise credible. The levels raise the cost of a forgery; they do not make the application a neutral notary.
 ====
 
 == Open Questions
@@ -221,3 +234,7 @@ the application a neutral notary.
   and xref:../adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007].
 * xref:../Requirements.adoc#requirements-git-signing[`git-signing` requirements] and
   xref:../specification/git-signing.adoc[`git-signing` specification].
+
+== Sources
+
+* eIDAS: https://eur-lex.europa.eu/eli/reg/2014/910/oj[Regulation (EU) No 910/2014], Art. 25(2)

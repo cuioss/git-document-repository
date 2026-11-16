@@ -26,20 +26,25 @@ is whether the store copies it or both share it.
 
 * `git-core` takes the repository part, `git-worktrees` the linked working trees, `git-testing` the credential
   generator and fixtures.
-* `pm-provider-git` keeps `JGitSourceRepository` (the corpus adapter), `WorktreeShaDigest` (a contract of PM-MCP) and
-  `GitOperations` as a facade.
+* `pm-provider-git` keeps `JGitSourceRepository` (the corpus adapter), `WorktreeShaDigest` (a contract of
+  `pm-mcp-core`) and `GitOperations` as a facade.
 * The foundation is released with real versions to Maven Central.
 
-The inventory and the order are in xref:../concepts/module-structure.adoc#_a_shared_foundation_with_pm_provider_git[Module
-Structure, A Shared Foundation].
+The inventory and the order are in
+xref:../concepts/module-structure.adoc#_a_shared_foundation_with_pm_provider_git[Module Structure, A Shared
+Foundation].
 
 == Alternatives rejected
 
 === A copy in the document store
 
+The document store copies the hardened code and maintains its copy independently.
+
 *Rejected because* every security fix of the hardening would be needed twice, and the two copies would drift.
 
 === The foundation inside `pm-mcp-core`
+
+The foundation stays in `pm-mcp-core`, and the document store depends on it there.
 
 *Rejected because* `pm-mcp-core` is proprietary, publishes only to the organisation's registry and deploys `SNAPSHOT`
 versions that are never released. Another project must not hang on that life cycle.
@@ -57,16 +62,16 @@ foundation along a consumer's needs rather than along Git's terms.
 
 * Hardening and transport exist once.
 * One test base runs against real local remotes.
-* `pm-provider-git` shrinks to a few hundred lines.
+* `pm-provider-git` keeps only the facade, the corpus adapter and the worktree digest.
 
 === Accepted costs
 
-* Two life cycles are coupled. A contract change wanted by PM-MCP is a release of this repository first.
+* Two life cycles are coupled. A contract change wanted by `pm-mcp-core` is a release of this repository first.
 * The code taken over must be released under this repository's open-source licence.
 
 === When this is revisited
 
-When the contracts needed by PM-MCP and by the document store diverge.
+When the contracts needed by `pm-mcp-core` and by the document store diverge.
 
 == Links
 

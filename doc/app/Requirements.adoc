@@ -35,7 +35,7 @@ referenced, never restated:
 |Keyring, pseudonyms, erasure by KEK rotation, crypto-shredding
 |link:../Requirements.adoc#requirements-git-crypto[`git-crypto` requirements]
 
-|Commit signature, trailer schema, graded traceability, passkey approval notes, signature check
+|Commit signature, trailer schema, signature levels, passkey approval notes, signature check
 |link:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
 
 |RFC 3161 timestamps as notes
@@ -48,7 +48,8 @@ referenced, never restated:
 |link:../Requirements.adoc#requirements-git-core[`git-core` requirements]
 
 |OIDC confidential client, step-up (RFC 9470), logout, token validation, DPoP
-|Token Sheriff (`doc/client`, `doc/validation`)
+|Token Sheriff (link:https://github.com/cuioss/TokenSheriff/tree/main/doc/client[client],
+link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation])
 |===
 
 == General Requirements
@@ -81,7 +82,8 @@ referenced, never restated:
   must show identical dashboard results before and after restart.
 * The application must not configure a datasource.
 * Concept: link:concepts/application-architecture.adoc[Application Architecture].
-* Specification: link:specification/architecture-and-modules.adoc#_run_time_state[Architecture and Modules, Run-Time State].
+* Specification: link:specification/architecture-and-modules.adoc#_run_time_state[Architecture and Modules,
+  Run-Time State].
 
 [#CIFR-GEN-4]
 === CIFR-GEN-4: Persistence Only Through the Libraries
@@ -116,13 +118,15 @@ referenced, never restated:
 * Saves by different users to different practices of one assessment must all succeed without a conflict.
 * Concurrent saves to the same question must yield a conflict for the later save that names the question and both
   values; the later user's draft must be kept.
-* Every explicit save must be visible to the other editors of the assessment (save-often pattern).
+* Every explicit save pushed to the Git server must be visible to the other editors of the assessment within 5
+  seconds (save-often pattern; CIFR-WEB-5); for editors on the same instance this holds for every save. A save that is
+  only saved locally (`SAVED_LOCALLY`) must become visible to editors on other instances after its push.
 * Specification: link:specification/category-samm.adoc#_editing[SAMM, Editing].
 
 [#CIFR-SAMM-4]
 === CIFR-SAMM-4: Release
 
-* Release must produce the tag `assessment/<id>/v1` on the released state and require signature level 2 by default;
+* Release must produce the tag `assessments/<id>/v1` on the released state and require signature level 2 by default;
   an assessment is released once.
 * After release, any save to the released assessment must be rejected; a new assessment is created instead.
 * Specification: link:specification/category-samm.adoc#_release[SAMM, Release].
@@ -163,8 +167,8 @@ referenced, never restated:
 [#CIFR-TM-2]
 === CIFR-TM-2: Open Format
 
-* A threat model must be stored in an open format that OWASP Threat Dragon opens without conversion (Open Threat Model
-  or Threat Dragon JSON; the choice is an open decision).
+* A threat model must be stored in an open format that OWASP Threat Dragon can open: Threat Dragon JSON, or Open
+  Threat Model, which Threat Dragon converts on import (since v2.2.0); the choice is an open decision.
 * Diagrams must be stored as data; images must be generated.
 * Specification: link:specification/category-threat-models.adoc#_format[Threat Models, Format].
 
@@ -182,7 +186,7 @@ referenced, never restated:
 
 * Every threat model must refer to exactly one `service:` entry.
 * An accepted or untreated threat must be transferable into an ISMS risk entry, and a countermeasure into an issue.
-* The application must show per service: open threats, untreated risks and the age of the model.
+* The application must show per service: open threats, untreated threats and the age of the model.
 * Specification: link:specification/category-threat-models.adoc#_links[Threat Models, Links].
 
 [#CIFR-TM-5]
@@ -205,7 +209,8 @@ referenced, never restated:
 [#CIFR-IR-2]
 === CIFR-IR-2: Notification Deadlines
 
-* The report must record the time the organisation became aware of the incident.
+* The report must record the time the organisation became aware of the incident and, when known, the time the
+  incident began.
 * When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
   plus 72 hours.
 * When the report is marked NIS2-applicable, the application must compute an early-warning due time (awareness +24
@@ -235,23 +240,25 @@ referenced, never restated:
 [#CIFR-IR-5]
 === CIFR-IR-5: Timeline Import
 
-* The application must import a timeline (time, author role, text) from a ticket system through a configured adapter;
-  at least one adapter must ship with the first release.
-* The report must refer to the source ticket by id; the application must not write Git content into the ticket system.
+* The application must import a timeline (time, author role, text) from the ticket system or the chat through a
+  configured adapter; at least one adapter must ship with the first release.
+* The report must refer to the source ticket by id; the application must not write Git content into the ticket system
+  or the chat. Measures are created as issues in the issue tracker and referenced by id.
 * Specification: link:specification/category-incident-reports.adoc#_import[Incident Reports, Import].
 
 [#CIFR-IR-6]
 === CIFR-IR-6: Evaluation across Incidents
 
-* The application must show per year and category: the number of incidents, the median time to detection, the median
-  time to resolution and the root causes that recur in more than one report.
+* The application must show per year and category: the number of incidents, the median time to detection (from the
+  beginning of the incident to its detection), the median time to resolution and the root causes that recur in more
+  than one report.
 * Specification: link:specification/category-incident-reports.adoc#_evaluation[Incident Reports, Evaluation].
 
 [#CIFR-ISMS-1]
 === CIFR-ISMS-1: Documents
 
 * Policies, scope, statement of applicability, internal audit reports and management review reports must be
-  schema-driven documents in `isms-core`, released at signature level 3 by default.
+  schema-driven documents in `isms-core`, released at signature level 3 by default (CIFR-AUTH-4).
 * Concept: link:concepts/category-isms.adoc[ISMS].
 * Specification: link:specification/category-isms.adoc#_documents[ISMS, Documents].
 
@@ -260,7 +267,7 @@ referenced, never restated:
 
 * Risks, controls, suppliers, nonconformities and non-application assets must be registers with one file per entry.
 * Every entry must receive a readable running number unique within its register, also when two users create entries
-  concurrently.
+  concurrently; the number names the entry and is the target of references.
 * Specification: link:specification/category-isms.adoc#_registers[ISMS, Registers].
 
 [#CIFR-ISMS-3]
@@ -316,7 +323,8 @@ referenced, never restated:
 === CIFR-DIR-3: Catalog Maintenance
 
 * Entries of the role, team and service catalogs must be created or changed only by users with the right *administer
-  catalogs*, or by a reviewed pull request.
+  catalogs*, or by a pull or merge request merged by the Git server after the review its branch protection requires;
+  the application must validate entries arriving this way and show invalid ones to the catalog administrators.
 * A catalog entry must be retired, never deleted; documents referring to a retired entry must show it as retired.
 * Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
 
@@ -333,11 +341,14 @@ referenced, never restated:
 
 * The web login must use the authorization code flow with PKCE `S256` as a confidential client through Token Sheriff.
 * No access, refresh or ID token may be sent to the browser.
-* The session cookie must be `HttpOnly`, `Secure` and `SameSite=Strict`; the session must end after a configurable
-  idle time (default 30 minutes) and absolute lifetime (default 8 hours).
-* The login transaction (`state`, `nonce`, PKCE verifier) must be kept server-side and referenced by a separate
-  short-lived `HttpOnly`, `Secure`, `SameSite=Lax` cookie, because the browser does not send a `SameSite=Strict` cookie
-  on the cross-site redirect back from the identity provider; the cookie must be deleted when the callback completes.
+* During login the browser must hold only a short-lived `HttpOnly`, `Secure`, `SameSite=Lax` login-transaction
+  cookie, which references the server-side login transaction (`state`, `nonce`, PKCE verifier) across the identity
+  provider's callback; `Lax`, because the browser does not send a `SameSite=Strict` cookie on the cross-site redirect
+  back from the identity provider. The callback must delete it.
+* Afterwards the browser must hold only the `HttpOnly`, `Secure`, `SameSite=Strict` session cookie; the session must
+  end after a configurable idle time (default 30 minutes) and absolute lifetime (default 8 hours).
+* The `return` address of the login must be accepted only as a same-origin relative path that matches a canonical
+  address (CIFR-WEB-3); any other value must be replaced by `/`.
 * Logout must be RP-initiated and revoke the held tokens.
 * Concept: link:concepts/authentication-and-identity.adoc[Authentication and Identity];
   link:adr/0004-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0004].
@@ -364,9 +375,11 @@ referenced, never restated:
 === CIFR-AUTH-4: Signature Levels per Transition
 
 * The signature level must be configurable per category and transition, with the defaults: saves and directory
-  entries level 1; release of SAMM assessments and threat models level 2; release of incident reports, policies and the
-  statement of applicability level 3.
-* A transition must be refused when the required level is not reached.
+  entries level 1; release of SAMM assessments and threat models level 2; release of incident reports and of the ISMS
+  documents of CIFR-ISMS-1 (policies, scope, statement of applicability, internal audit reports, management reviews)
+  level 3.
+* A transition must be refused when the required level is not reached
+  (link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Signature Level per Transition]).
 * Specification: link:specification/authentication.adoc#_signature_levels[Authentication, Signature Levels].
 
 [#CIFR-AUTH-5]
@@ -408,8 +421,9 @@ referenced, never restated:
 [#CIFR-MCP-2]
 === CIFR-MCP-2: Protected Resource Metadata
 
-* The server must serve RFC 9728 metadata at `/.well-known/oauth-protected-resource` with `resource`,
-  `authorization_servers` (at least one) and `scopes_supported`; `offline_access` must not be listed.
+* The server must serve RFC 9728 metadata at `/.well-known/oauth-protected-resource/mcp` (the URL RFC 9728 derives
+  from the resource identifier `<origin>/mcp`), and the same document at `/.well-known/oauth-protected-resource`, with
+  `resource`, `authorization_servers` (at least one) and `scopes_supported`; `offline_access` must not be listed.
 * A request without a token must be answered with `401` and `WWW-Authenticate: Bearer` carrying `resource_metadata`
   and `scope`.
 * Specification: link:specification/mcp-server.adoc#_metadata[MCP Server, Metadata].
@@ -419,8 +433,8 @@ referenced, never restated:
 
 * Every request must be authenticated by a bearer token in the `Authorization` header; a token in the query string
   must be refused.
-* The server must validate signature, expiry, issuer and audience; the audience must equal the server's configured
-  canonical URI.
+* The server must validate signature, expiry, issuer and audience; the token's `aud` must contain the server's
+  configured canonical URI.
 * An invalid, expired or foreign-audience token must be answered with `401`.
 * A token that carries neither `client_id` nor `azp` must be answered with `401`, because its commits could not be
   attributed (CIFR-MCP-7).
@@ -448,7 +462,7 @@ referenced, never restated:
 === CIFR-MCP-6: Human-Bound Approvals
 
 * An agent must not complete a transition requiring signature level 2 or higher.
-* `request-release` must create a pending approval that appears in the requesting user's *Due* lens.
+* The tool `request_release` must create a pending approval that appears in the requesting user's *Due* lens.
 * Specification: link:specification/mcp-server.adoc#_tools[MCP Server, Tools].
 
 [#CIFR-MCP-7]
@@ -521,7 +535,9 @@ referenced, never restated:
 
 * A form must save a draft no later than 5 seconds after the last change.
 * A conflict must be shown per field with the own and the other value; the draft must be kept.
-* A save by another user to an open document must be visible within 5 seconds through the event stream.
+* A save by another user to an open document must be visible within 5 seconds through the event stream: on the same
+  instance for every save, on other instances for a save pushed to the Git server; a save only saved locally
+  (`SAVED_LOCALLY`) becomes visible there after its push.
 * Specification: link:specification/web-app.adoc#_editing[Web App, Editing].
 
 [#CIFR-WEB-6]
@@ -552,8 +568,9 @@ referenced, never restated:
 === CIFR-DP-1: Repository Cut
 
 * The repository cut must be configurable; every configured repository must declare exactly one confidentiality class
-  and one retention class, and boot validation must refuse a configuration that maps two retention classes to one
-  repository.
+  and one retention class, and every category (or document kind) must declare its retention class.
+* Boot validation must refuse a configuration in which the categories and kinds stored in one repository carry two
+  retention classes, or a class other than the repository's.
 * The default configuration must contain `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`,
   `threat-models` and `directory`.
 * Concept: link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout];
@@ -586,7 +603,7 @@ referenced, never restated:
 === CIFR-DP-5: Personal Fields
 
 * Fields marked personal in a schema must be stored encrypted with the data subject's key.
-* Free-text fields must show a hint that personal interview notes do not belong there.
+* Fields marked free text in a schema must show a hint that personal interview notes do not belong there.
 * Specification: link:specification/data-protection.adoc#_personal_fields[Data Protection, Personal Fields].
 
 [#CIFR-DP-6]
@@ -626,8 +643,10 @@ referenced, never restated:
 === CIFR-OPS-3: Ports and Readiness
 
 * The application must serve HTTPS on 8443 and the management interface (readiness, liveness, metrics) on 9000.
-* Readiness must report `UP` only after every configured repository was fetched, the keyring decrypted and the index
-  built.
+* Readiness must report `UP` only when every configured repository is either fetched in this process or present as a
+  valid local repository from an earlier fetch, the keyring is decrypted and the index built; a local-mode repository
+  (`remote: none`) must count once its local repository opens and its index is built; a remote repository without a
+  local copy must keep readiness `DOWN`, and a later fetch failure must not drop readiness.
 * Specification: link:specification/deployment.adoc#_ports_and_probes[Deployment, Ports and Probes].
 
 [#CIFR-OPS-4]
@@ -638,8 +657,8 @@ referenced, never restated:
 * An invalid configuration must stop the boot with one log record per violation.
 * `--validate-config <dir>` must validate offline and exit with `0` for a valid and non-zero for an invalid
   configuration.
-* Secret values must not be representable in the YAML; the schema must accept only references (file path or KMS key
-  id).
+* Secret values must not be representable in the YAML; the schema must accept only references (mounted file, KMS key
+  id or Vault path).
 * Specification: link:specification/configuration.adoc[Configuration].
 
 [#CIFR-OPS-5]
@@ -649,6 +668,7 @@ referenced, never restated:
 * The application must accept the Git server's push webhook, authenticate it by the mechanism of the Git server (an
   HMAC signature for GitHub and Gitea, a constant-time comparison of the secret token for GitLab), and refresh the
   index of the named repository; a periodic fetch must run as fallback, default every 5 minutes.
+* For a repository without a configured webhook secret the webhook endpoint must refuse every call with `401`.
 * Specification: link:specification/configuration.adoc#_repositories[Configuration, Repositories].
 
 [#CIFR-OPS-6]
@@ -663,7 +683,8 @@ referenced, never restated:
 
 * Every message at INFO and above must use a `LogRecord` documented in `LogMessages.adoc`.
 * The application must expose Prometheus metrics on the management port.
-* Specification: link:specification/architecture-and-modules.adoc#_logging_and_metrics[Architecture and Modules, Logging and Metrics].
+* Specification: link:specification/architecture-and-modules.adoc#_logging_and_metrics[Architecture and Modules,
+  Logging and Metrics].
 
 == Non-Functional Requirements
 
@@ -671,15 +692,16 @@ referenced, never restated:
 === CIFR-NFR-1: Index Size and Start Time
 
 * With 1,000 SAMM assessments of 90 answers each, the in-memory index must stay below 100 MB of heap, and the native
-  application must become ready within 60 seconds after the repositories are present locally (targets to be confirmed
-  by the prototype measurement).
+  application must become ready within 60 seconds after the repositories are present locally.
+* Provisional: targets confirmed by the prototype measurement; until then the checks are reported, not gating.
 * Specification: link:specification/testing.adoc#_performance[Testing, Performance].
 
 [#CIFR-NFR-2]
 === CIFR-NFR-2: Save Latency
 
 * A save in local mode must complete within 500 ms at the 95th percentile; in remote mode the application's share
-  (excluding Git server round trips) must stay within the same bound.
+  (the save duration minus the measured fetch and push time) must stay within the same bound.
+* Provisional: targets confirmed by the prototype measurement; until then the checks are reported, not gating.
 * Specification: link:specification/testing.adoc#_performance[Testing, Performance].
 
 [#CIFR-NFR-3]
@@ -698,10 +720,14 @@ referenced, never restated:
 [#CIFR-NFR-5]
 === CIFR-NFR-5: Degraded Git Server
 
-* When the Git server is unreachable, reads must be served from the local repositories, saves must be kept as drafts,
-  and the web app must show the degraded state; no save may be reported as visible to others before its push
-  succeeded.
-* Specification: link:specification/architecture-and-modules.adoc#_degraded_operation[Architecture and Modules, Degraded Operation].
+* When the Git server is unreachable, reads must be served from the local repositories, saves must be committed
+  locally and reported as `SAVED_LOCALLY`, and the web app must show the degraded state; no save may be reported as
+  visible to others before its push succeeded.
+* A locally saved change must be pushed by the next successful push of its working branch. When the Git server's
+  state moved meanwhile and the change conflicts with it on reconciliation, the change must be kept for its user to
+  resolve; it must never be dropped.
+* Specification: link:specification/architecture-and-modules.adoc#_degraded_operation[Architecture and Modules,
+  Degraded Operation].
 
 [#CIFR-NFR-6]
 === CIFR-NFR-6: Native Image Verification
@@ -717,7 +743,8 @@ referenced, never restated:
 |Requirements |Concept |Decision |Specification
 
 |CIFR-GEN-1–4
-|link:concepts/cisos-friend-overview.adoc[Overview], link:concepts/application-architecture.adoc[Application Architecture]
+|link:concepts/cisos-friend-overview.adoc[Overview],
+link:concepts/application-architecture.adoc[Application Architecture]
 |ADR-0005
 |link:specification/architecture-and-modules.adoc[Architecture and Modules]
 

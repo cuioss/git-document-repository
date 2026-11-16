@@ -85,7 +85,7 @@ interfaces it needs from outside systems (for example the deletion of a remote r
 |`config`, the `git-document-repository` modules
 
 |`integration`
-|Outbound adapters through `cui-http`: Git host API, ticket systems, issue tracker, verinice.veo, TSA, KMS; each
+|Outbound adapters through `cui-http`: Git host API, ticket systems, chat, issue tracker, verinice.veo; each
 implements a port interface of `service`, and CDI injects the implementation
 |`config`, `service` (port interfaces only)
 
@@ -94,9 +94,13 @@ implements a port interface of `service`, and CDI injects the implementation
 |—
 |===
 
+The clients of the timestamp authority and of the key sources (KMS, Vault transit) belong to the libraries
+(`git-timestamp`, `git-crypto`); `service` configures them from `cisos-friend.yaml` and the application has no adapter
+of its own for them.
+
 ArchUnit rules, planned for the unit lane:
 
-* No class outside `service` and `integration` depends on a `git-document-repository` package.
+* No class outside `service` depends on a `git-document-repository` package.
 * No class depends on `org.eclipse.jgit`.
 * `web` and `mcp` do not depend on each other.
 * `service` does not depend on `integration`; it reaches outside systems only through its own port interfaces.
@@ -202,8 +206,14 @@ Status: PLANNED
 after the first successful start
 
 |Push fails after save
-|The save result is `SAVED_LOCALLY`; the web app shows "not yet visible to others"; retry with backoff
+|The commit stays on the local working branch and the save result is `SAVED_LOCALLY`; the web app shows "not yet
+visible to others". The next successful push of the working branch carries it (the next save or release, or the retry
+with backoff); when the Git server's state moved meanwhile, the library replays the change onto the fetched tip. A
+change that conflicts on this reconciliation is kept for its user to resolve and shown as a conflict on the next load
+of the document; it is never dropped
 
 |Git server unreachable at start
-|Remote repositories with a local cache start from the cache; without cache readiness stays `DOWN`
+|Remote repositories with a valid local repository start from it; a remote repository without a local copy keeps
+readiness `DOWN`; a local-mode repository (`remote: none`) needs no Git server and counts once its local repository
+opens and its index is built
 |===

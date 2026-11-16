@@ -32,10 +32,14 @@ First Iteration].
 
 === Rights derived from roles from the start
 
+A role in the directory grants rights, for example the right to approve.
+
 *Rejected because* a self-chosen role would grant rights. Preventing that needs a confirmation workflow, which the
 first iteration does not need.
 
 === Roles only from the identity provider
+
+Roles and teams come only from the groups the identity provider delivers.
 
 *Rejected because* many identity providers deliver no usable groups. Where they do, the groups prefill the form.
 

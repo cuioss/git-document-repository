@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: One code path serves a local-only repository and a remote Git server; in remote mode the remote is the source of truth and the local bare clone may be deleted and re-cloned.
+// summary: One code path serves a local-only repository and a remote Git server; in remote mode the remote is the source of truth and the local bare clone is a cache that restores every pushed state when cloned again, while drafts, outbox progress and unpushed notes live only in it.
 // tags: storage, remote, configuration, cache
 // affects: git-core, git-store
 // supersedes:
@@ -26,8 +26,14 @@ remote.
 
 * In *local mode* the bare repository on the server's disk is the source of truth. The operator backs up the
   directory.
-* In *remote mode* the remote repository is the source of truth. The local bare clone is a cache. It may be deleted
-  and cloned again. Saving adds a fetch and a push.
+* In *remote mode* the remote repository is the source of truth. The local bare clone is a cache: a new clone
+  restores every pushed state. Saving adds a fetch and a push.
+* The local bare clone also holds what is never or not yet pushed: the drafts
+  (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]), the outbox progress references,
+  and the commits saved locally and notes whose push is pending. Deleting the clone loses them. The outbox then walks
+  the subscribed branches again; its idempotency by commit hash
+  (xref:0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009])
+  skips commits whose result is already pushed.
 
 A local repository becomes a remote one with one push. See
 xref:../concepts/storage-engine.adoc#_two_modes_one_api[Storage Engine, Two Modes, One API].
@@ -43,13 +49,13 @@ server.
 
 === Separate implementations for local and remote
 
-A file-based store for local mode and a Git client for remote mode.
+A file-based store serves local mode and a Git client serves remote mode.
 
 *Rejected because* two implementations diverge. The local mode would then test nothing about the remote mode.
 
 === The local clone as a second source of truth
 
-The local clone could keep unpushed saves.
+The local clone keeps saves that are not yet pushed and pushes them later.
 
 *Rejected because* a second source of truth needs a backup of its own. Only drafts stay local, and they are
 explicitly unsecured (see xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]).
@@ -64,7 +70,8 @@ explicitly unsecured (see xref:0003-Drafts_are_per-user_references_that_are_neve
 === Accepted costs
 
 * In remote mode every save pays a fetch and a push.
-* The local directory needs persistent storage for drafts even in remote mode.
+* The local directory needs persistent storage for drafts, outbox progress, pending commits and pending notes even in
+  remote mode.
 
 === When this is revisited
 

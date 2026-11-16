@@ -13,7 +13,10 @@ _See Requirement link:../Requirements.adoc#CIFR-WEB-1[CIFR-WEB-1: Single-Page Ap
 Status: PLANNED
 
 The browser interface. Reasoning: link:../concepts/web-app.adoc[Web App]. Reference implementation for structure and
-visuals: `pm-mcp-clients/pm-web-app`; design rules: `pm-mcp-clients/doc/design/web-app/`.
+visuals: link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/pm-web-app[`pm-web-app`]; design rules:
+link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/doc/design/web-app[`doc/design/web-app`] of the same
+repository. `pm-web-app` has no release; the adopted state is pinned by the commit id of `pm-mcp-clients` recorded in
+the header of `src/styles/tokens.css`, and a change of the token contract is taken over deliberately.
 
 == Stack and Packaging
 _See Requirement link:../Requirements.adoc#CIFR-WEB-1[CIFR-WEB-1: Single-Page Application Served Same-Origin]_
@@ -76,7 +79,7 @@ Templates (`src/lib/templates`): `DashboardPage`, `TriagePage`, `ObjectPage`, `W
 |SAMM |`/samm/<scope>/<assessment>/<practice>` |`TriagePage`
 |Threat models |`/threat-models/<service>/<model>` |`TriagePage`
 |Incidents |`/incidents/<year>/<incident>` |`TriagePage`
-|ISMS |`/isms/<register>/<entry>`, `/isms/documents/<id>` |`TriagePage`
+|ISMS |`/isms/registers/<register>/<entry>`, `/isms/documents/<id>` |`TriagePage`
 |Catalogs |`/catalogs/<catalog>/<id>` |`TriagePage`
 |Reports |`/reports/<report>` |`DashboardPage`
 |Settings |`/settings/<section>` |`WizardPage`
@@ -104,7 +107,9 @@ Status: PLANNED
 |`array` of objects |`DataTable` with row editor
 |`$ref` to a catalog (`x-catalog: service`) |`CatalogPicker`
 |`x-asciidoc: true` |`AsciiDocField` with server-rendered preview
-|`x-personal: true` |Field marked personal; hint shown
+|`x-personal: true` |Field marked personal; stored encrypted with the data subject's data encryption key (DEK)
+(link:data-protection.adoc#_personal_fields[Data Protection, Personal Fields])
+|`x-free-text: true` |Hint `form.hint.no-personal-notes` shown with the field
 |===
 
 Validation: the same schema runs in the browser (Ajv) and in the server; the server's field errors replace the
@@ -130,7 +135,8 @@ Status: PLANNED
   view groups it by schema section.
 * Approve: `POST /api/v1/approvals/{id}`; responses `APPROVED`, `STEP_UP_REQUIRED` (follow the address),
   `PASSKEY_REQUIRED` (run `navigator.credentials.get` with the options of
-  link:authentication.adoc#_passkey_approval[Passkey Approval]).
+  link:authentication.adoc#_passkey_approval[Passkey Approval]). These are the REST mapping of the service result
+  `SIGNATURE_LEVEL_REQUIRED` (link:authentication.adoc#_signature_levels[Authentication, Signature Levels]).
 * The approve button text names the level: "Approve (level 2: confirm with MFA)".
 
 == Texts

@@ -10,27 +10,29 @@ link:../README.adoc[CISOs-Friend documentation] » Concepts
 An AI agent that fills in a threat model from a recipe or drafts an incident report from a ticket timeline is useful
 exactly as long as it can be held to the same rules as the person it works for. The usual first version of such an
 integration hands the agent a long-lived API key with the rights of a service account, and the audit trail then says
-"the bot did it". CISOs-Friend's MCP server is built the other way round: token handling is designed in from the first
-line, every call acts for a named user with no more than that user's rights, and the steps that need a human stay with
-the human.
+"the bot did it". CISOs-Friend's MCP server works the other way round: every call carries an audience-bound token of a
+named user and acts with no more than that user's rights, and the steps that need a human stay with the human.
 
 == The Server as a Protected Resource
 
-The MCP server is an OAuth 2.1 resource server, as the MCP authorization specification requires for HTTP transports.
-The statements below were checked against the specification revisions 2025-11-25 and 2026-07-28 (`basic/authorization`
-and `basic/transports/streamable-http` in the `modelcontextprotocol` repository); the decision is recorded in
+The MCP authorization specification makes authorization optional and says that HTTP transports which use it should
+conform to it. CISOs-Friend uses authorization and follows the MCP authorization specification for HTTP transports:
+the MCP server is an OAuth 2.1 resource server. The normative revision is 2026-07-28 (its published pages
+`basic/authorization`, `basic/transports` and `basic/transports/streamable-http`, linked under <<_related>>); the
+decision is recorded in
 link:../adr/0003-The_MCP_server_is_an_OAuth_2.1_protected_resource_and_never_passes_tokens_through.adoc[ADR-0003].
 
-* *Protected Resource Metadata* (RFC 9728) is served at `/.well-known/oauth-protected-resource` and names the
+* *Protected Resource Metadata* (RFC 9728) is served at `/.well-known/oauth-protected-resource/mcp` (the URL RFC 9728
+  derives from the resource `…/mcp`; also at the root path for clients that ask there) and names the
   organisation's authorization server in `authorization_servers` and the scopes in `scopes_supported` (without
   `offline_access`, which is no resource requirement).
 * *Discovery*: a request without a valid token gets `401` with `WWW-Authenticate: Bearer resource_metadata="…",
   scope="…"`.
 * *Tokens* arrive in the `Authorization` header of every request, never in the query string.
-* *Validation*: the server validates every token as OAuth 2.1 §5.2 requires, through `token-sheriff-validation-quarkus`:
-  signature against the issuer's JWKS, expiry, issuer, and *audience*. The audience must be the server's canonical
-  URI, the value MCP clients send as `resource` parameter (RFC 8707). A token issued for any other resource is
-  rejected with `401`, however valid it is otherwise.
+* *Validation*: the server validates every token as OAuth 2.1 §5.2 requires, through
+  `token-sheriff-validation-quarkus`: signature against the issuer's JWKS, expiry, issuer, and *audience*. The token's
+  `aud` must contain the server's canonical URI, the value MCP clients send as `resource` parameter (RFC 8707). A
+  token issued for any other resource is rejected with `401`, however valid it is otherwise.
 * *Insufficient scope*: a call whose token lacks a scope gets `403` with `error="insufficient_scope"`, the scopes the
   operation needs and the `resource_metadata` URI, so the client can run a step-up authorization for exactly those
   scopes.
@@ -46,7 +48,8 @@ image::../resources/diagrams/mcp-token-flow.svg["Sequence: the agent calls the M
 == Transport
 
 The server speaks Streamable HTTP at `/mcp`, in the shape of revision 2026-07-28: no protocol-level sessions, so every
-request carries and is checked against its own token, and nothing an agent did earlier widens what it may do now. The
+request carries and is checked against its own token, and nothing an agent did earlier widens what it may do now.
+`GET` and `DELETE` on `/mcp`, which earlier revisions used for streams and sessions, are answered with `405`. The
 server validates the `Origin` header of every request and answers an invalid origin with `403`. A STDIO transport is not
 offered: the specification does not apply its authorization to STDIO, and a local process could not prove a user.
 
@@ -94,7 +97,7 @@ service account.
 |Request a release; the human approves in the web app
 |Perform step-up MFA or a passkey approval
 
-|Receive validation errors and conflicts per field
+|Receive validation errors per field and conflicts per file
 |Obtain Git, KMS or timestamp-authority credentials
 |===
 
@@ -107,7 +110,8 @@ device. The MCP server therefore stops at the request; the request appears in th
 The application pushes with the technical user, or with the user's Git token that Token Sheriff keeps
 (link:authentication-and-identity.adoc#_push_credentials[Push Credentials]). Neither credential is ever part of a tool
 result, an error message or a log line, and the agent's access token is never used against the Git server. A
-compromised agent therefore holds at most a short-lived, audience-bound token for this one server.
+compromised agent therefore holds at most an audience-bound token for this one server, valid for the lifetime its
+authorization server sets.
 
 [#_attribution_of_agent_actions]
 == Attribution of Agent Actions
@@ -127,7 +131,8 @@ offers it as configuration and recommends it once the agent clients support it _
 
 == Limits and Audit
 
-* *Rate limits* per user and client: reads generously, writes tightly; a client that exceeds them gets `429`.
+* *Rate limits* per user and client, with a higher limit for reads than for writes; a client that exceeds them gets
+  `429`.
 * *Size limits* on tool inputs, derived from the category schemas.
 * *Audit*: every tool call is logged with a `LogRecord`: pseudonym, client id, tool, repository, outcome. Token
   material, session ids and document content are never logged. The records reach the SIEM.
@@ -144,17 +149,20 @@ human.
 
 == Open Questions
 
-. Which protocol revisions the server supports besides 2026-07-28 (the 2025-11-25 shape had protocol sessions).
+. Which protocol revisions the server supports besides 2026-07-28 (in revision 2025-11-25 protocol sessions are
+  optional).
 . Whether the organisation's authorization server supports Client ID Metadata Documents, or agents are pre-registered.
 . The exact tool list per category, and whether recipes are offered as MCP prompts.
 . DPoP support in the agent clients in use.
 
+[#_related]
 == Related
 
 * link:authentication-and-identity.adoc[Authentication and Identity]
 * link:web-app.adoc[Web App] — where humans complete what agents request
-* Sources: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization[MCP Authorization 2025-11-25],
-  https://github.com/modelcontextprotocol/modelcontextprotocol/tree/main/docs/specification/2026-07-28/basic[MCP specification 2026-07-28 (repository)],
+* Sources: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[MCP Authorization 2026-07-28],
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[MCP Transports 2026-07-28],
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http[Streamable HTTP 2026-07-28],
   https://www.rfc-editor.org/rfc/rfc9728[RFC 9728], https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
   https://www.rfc-editor.org/rfc/rfc6750#section-3.1[RFC 6750 §3.1], https://www.rfc-editor.org/rfc/rfc9449[RFC 9449];
   Token Sheriff `doc/validation` (VALIDATION-8.7) and `doc/client` (CLIENT-12)

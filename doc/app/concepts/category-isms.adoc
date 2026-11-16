@@ -29,8 +29,8 @@ The ISMS artefacts sort into three groups:
 . *Documents, very well suited*: policies, scope, risk methodology, statement of applicability, internal audit and
   management review reports. Rarely changed, approval-centred, diffable.
 . *Registers, well suited*, with the pattern of link:category-samm.adoc[SAMM] (one file per entry, in-memory index,
-  compare-and-swap): risks, controls, suppliers, nonconformities, and the assets that are no applications. Even a
-  mid-sized ISMS holds a few thousand entries.
+  compare-and-swap): risks, controls, suppliers, nonconformities, and the assets that are no applications. A
+  mid-sized ISMS is expected to hold at most a few thousand entries _(estimate, unverified)_.
 . *Operational data, referenced instead of stored*: tasks and deadlines (issue tracker of the Git server or Jira), the
   live handling of incidents (ticket system; the report on an incident is a schema-driven document, see
   link:category-incident-reports.adoc[Incident Response Reports]), training records per employee (learning platform or
@@ -44,7 +44,8 @@ All of these are library mechanisms; the ISMS category uses them and adds no mec
 * *Portable approvals*: approvals of a pull request live in the Git server's database. On merge the application
   writes them as commit trailers, so the evidence survives a change of Git server
   (link:../../concepts/identity-and-signing.adoc[Identity and Signing]).
-* *Running numbers* (R-042) under concurrent creation: a ULID as file name; the readable number is assigned on save
+* *Running numbers* (R-042) under concurrent creation: a ULID identifies a new entry until its first save, which
+  assigns the readable number that then names the entry file
   (link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
 * *Reporting dates*: "statement of applicability and risk register as of the audit on 1 March" is a tag or the commit
   of that date; the index is built from it.
@@ -83,7 +84,7 @@ shipped, only own wording and numbers
 
 |Reports (statement of applicability, Grundschutz check, risk report)
 |Built by the project
-|Available, widely used in audits
+|Available in the product
 
 |Operation
 |Application and existing Git server; backup, rights and reviews exist
@@ -124,19 +125,15 @@ user's name
 
 |Time to use
 |SAMM: weeks to months; a complete ISMS at verinice level: rather years
-|Introduction in weeks
+|Product available; introduction effort not assessed
 |===
 
 === Positioning
 
-Do not compete with verinice as a complete ISMS; complement it
-(link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]).
-
-. *Core*: the SAMM tool on Git; no established competitor follows this approach.
-. *Extension*: a lean "ISMS as code" for development organisations: policies, statement-of-applicability extracts for
-  secure development, risks from SAMM gaps.
-. *Bridge*: where an organisation already runs verinice, the application delivers released SAMM assessments as evidence
-  through the REST API of veo, a supplier to the main ISMS rather than a competitor.
+From this comparison follows the positioning: CISOs-Friend complements verinice and does not compete with it as a
+complete ISMS. Core, extension and bridge are listed in
+link:cisos-friend-overview.adoc#_positioning[Overview, Positioning]; the decision is
+link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
 
 == Open Questions
 
@@ -154,5 +151,6 @@ Do not compete with verinice as a complete ISMS; complement it
   `isms-register`, `isms-incidents-<year>`
 * Sources: https://verinice.com/en/ressources/learn/technical-background[verinice technical details],
   https://verinice.com/en/ressources/learn/interfaces-apis[Interfaces and APIs],
-  https://verinice.com/en/veo[verinice.veo],
+  https://verinice.com/en/veo[verinice.veo] (offered as verinice.cloud and verinice.onprem),
+  https://github.com/SerNet/verinice-veo[verinice-veo on GitHub] (PostgreSQL, Keycloak and RabbitMQ in its README),
   https://github.com/SerNet/verinice-veo-web[verinice-veo-web on GitHub]

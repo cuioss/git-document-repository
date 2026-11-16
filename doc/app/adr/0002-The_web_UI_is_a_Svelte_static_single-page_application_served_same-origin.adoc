@@ -18,12 +18,12 @@ Accepted
 
 == Decision
 
-People need a browser interface for forms, dashboards, review and approval. The organisation already has a web app
+People need a browser interface for forms, dashboards, review and approval. The cuioss project already has a web app
 with a worked-out visual language and UI structure: `pm-web-app` of `pm-mcp-clients`.
 
 *The decision:* the web UI is a Svelte single-page application.
 
-* Svelte 5 with runes and SvelteKit with `adapter-static`; no server-side rendering.
+* Svelte 5 with runes and SvelteKit with `adapter-static` and a `fallback` page; no server-side rendering.
 * The design tokens, the shell, the page templates, the component vocabulary, the address model, the `ApiClient` with
   one event stream, the i18n catalogue and the test setup are taken from `pm-web-app`.
 * `frontend-maven-plugin` builds it into a resource JAR. The Quarkus application serves it on its own origin.
@@ -41,7 +41,8 @@ state. It would also share nothing with `pm-web-app`.
 === A separate frontend server
 
 A Node server could host the app. *Rejected because* it adds a second process, a second origin and CORS. Same-origin
-serving keeps the session cookie `SameSite=Strict`.
+serving lets the session cookie be `SameSite=Strict`; only the short-lived login-transaction cookie, which has to
+survive the identity provider's redirect back, is `SameSite=Lax`.
 
 === A component library (Material, Tailwind UI)
 

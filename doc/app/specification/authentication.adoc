@@ -37,6 +37,11 @@ Status: PLANNED
 |Endpoints
 |`GET /api/v1/auth/login?return=<address>`, `GET /api/v1/auth/callback`, `POST /api/v1/auth/logout`
 
+|`return`
+|Accepted only as a same-origin relative path: it starts with a single `/` (not `//`, no `\`, no scheme, no
+authority) and matches one of the canonical addresses of link:web-app.adoc#_navigation[Web App, Navigation]; any
+other value is replaced by `/`. The checked value is kept in the server-side login transaction, not in the browser
+
 |Transaction cookie
 |`__Host-cisos-friend-login`; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=600`; carries only an opaque
 reference to the server-side login transaction (`state`, `nonce`, PKCE verifier); deleted by the callback
@@ -45,8 +50,9 @@ reference to the server-side login transaction (`state`, `nonce`, PKCE verifier)
 |`__Host-cisos-friend-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
 
 |Callback response
-|A small same-origin page that navigates to `return`, not a `302`: after the cross-site redirect from the identity
-provider the browser would withhold the `Strict` session cookie on a redirect chain _(unverified for every browser)_
+|A small same-origin page that navigates to the checked `return`, not a `302`: after the cross-site redirect from
+the identity provider the browser would withhold the `Strict` session cookie on a redirect chain _(unverified for
+every browser)_
 
 |Idle timeout
 |`web.session.idle-timeout`, default `PT30M`
@@ -58,7 +64,7 @@ provider the browser would withhold the `Strict` session cookie on a redirect ch
 |RP-initiated at the provider's `end_session_endpoint`; held tokens revoked first
 
 |`401` from `/api/v1`
-|Response body names the login address; the web app follows it and returns to `return`
+|Response body names the login address; the web app follows it with the current canonical address as `return`
 |===
 
 == Rights
@@ -113,7 +119,8 @@ The application supplies these values to the library's trailer schema:
 |`acr`, else `amr` joined by `+`
 
 |Session HMAC
-|HMAC-SHA-256 of `sid` with the application's session-HMAC key
+|HMAC-SHA-256 with the key of `signing.session-hmac-key-ref` over the session id: the `sid` of the login (web app);
+for an MCP bearer token its `sid`, else its `jti`, else the SHA-256 of the token
 
 |Agent client (MCP only)
 |`client_id`, else `azp`
@@ -136,22 +143,39 @@ Defaults in `categories/<category>/workflow.yaml`; overrides in `cisos-friend.ya
 |`samm.release`, `threat-model.release`
 |2
 
-|`incident.release`, `isms.policy.approve`, `isms.soa.approve`
+|`incident.release`; `isms.policy.approve`, `isms.scope.approve`, `isms.soa.approve`, `isms.audit-report.approve`,
+`isms.management-review.approve`
 |3
 |===
 
-A transition whose required level is not reached returns the result `SIGNATURE_LEVEL_REQUIRED` with the level; nothing
-is written.
+A transition whose required level is not reached returns the service result `SIGNATURE_LEVEL_REQUIRED` with the
+required level and the missing evidence; nothing is written. The interfaces map it as follows:
+
+[cols="1,3"]
+|===
+|Interface |Mapping
+
+|REST (`/api/v1`)
+|`STEP_UP_REQUIRED` with the step-up address while the level-2 evidence (renewed `acr` and `auth_time`) is missing;
+`PASSKEY_REQUIRED` with the passkey-options address of <<_passkey_approval>> while only the
+level-3 assertion is missing; `SIGNATURE_LEVEL_REQUIRED` for a level the web app cannot supply (4)
+
+|MCP
+|Tool error `SIGNATURE_LEVEL_REQUIRED` with the level; an agent never completes a transition above level 1
+(link:mcp-server.adoc#_tools[MCP Server, Tools])
+|===
 
 == Step-Up
 _See Requirement link:../Requirements.adoc#CIFR-AUTH-5[CIFR-AUTH-5: Step-Up]_
 
 Status: PLANNED
 
-Configuration per category: `step-up.acr` (required `acr` value) and `step-up.max-age` (default `PT5M`).
+Configuration per category in `cisos-friend.yaml` → `categories.<category>.step-up`: `acr` (required `acr` value)
+and `max-age` (default `PT5M`) (link:configuration.adoc#_categories[Configuration, Categories]).
 
 . The approval request checks the session's `acr` and `auth_time`.
-. Not met: the response is `STEP_UP_REQUIRED` with a step-up address; the web app redirects there.
+. Not met: the service result is `SIGNATURE_LEVEL_REQUIRED`, which the REST API returns as `STEP_UP_REQUIRED` with a
+  step-up address (<<_signature_levels>>); the web app redirects there.
 . The client re-drives authorization with `acr_values` and `max_age` (RFC 9470) and verifies the returned `acr` and
   `auth_time`.
 . The approval is written with the renewed values in the trailers.
@@ -195,10 +219,19 @@ Status: PLANNED
 
 . After login the server asks the library for the person of (`iss`, `sub`). The outcome entry-required (no pseudonym
   yet, which the library then creates, or a pseudonym without a saved entry from an interrupted first login) makes it
-  answer every `/api/v1` request except `/api/v1/directory/me` with `FIRST_LOGIN_REQUIRED`, until the entry is saved.
+  answer every `/api/v1` request outside the allow-list below with `FIRST_LOGIN_REQUIRED`, until the entry is saved.
 . `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
 . The form shows the text referenced by `web.information-text-ref`.
 . `PUT /api/v1/directory/me` validates team and role against the catalogs and saves at level 1.
+
+Allow-list during the first login, exactly the requests the form and the shell need:
+
+* `GET` and `PUT /api/v1/directory/me`;
+* `GET /api/v1/catalogs/team` and `GET /api/v1/catalogs/role` (the pickers of the form);
+* `GET /api/v1/session` (the anti-CSRF token) and `GET /api/v1/messages` (the texts);
+* `POST /api/v1/auth/logout` and the login endpoints `/api/v1/auth/login` and `/api/v1/auth/callback`.
+
+The MCP endpoint answers a tool call of such a user with the tool error `FIRST_LOGIN_REQUIRED`.
 
 == Directory Flows
 _See Requirements:_
@@ -213,3 +246,8 @@ Status: PLANNED
   next login shows the form with "Is this still right?"; confirming writes the confirmation date.
 * Catalogs: `PUT /api/v1/catalogs/{catalog}/{id}` requires `administer-catalogs`; `DELETE` is not offered; retiring sets
   `retired: true`.
+* Catalogs through a pull request: a change to the catalog files of the `directory` repository may also come as a
+  pull or merge request of the Git server. The operator protects `main` of `directory` with a required review; the
+  application does not merge such a request. After the Git server merged it, the next fetch (webhook or periodic)
+  brings the change; the index validates every changed entry against the catalog schema, and an invalid entry is
+  shown to the users with `administer-catalogs` in the *Due* lens and not offered in pickers.

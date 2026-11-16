@@ -45,31 +45,50 @@ Status: PLANNED
 |===
 |Register |Path in `isms-register` |Readable number
 
-|Risks |`risks/<ulid>.yaml` |`R-<n>`
-|Controls |`controls/<ulid>.yaml` |`C-<n>`
-|Suppliers |`suppliers/<ulid>.yaml` |`S-<n>`
-|Nonconformities |`nonconformities/<ulid>.yaml` |`NC-<n>`
-|Assets (non-application) |`assets/<ulid>.yaml` |`A-<n>`
+|Risks |`risks/R-<n>.yaml` |`R-<n>`
+|Controls |`controls/C-<n>.yaml` |`C-<n>`
+|Suppliers |`suppliers/S-<n>.yaml` |`S-<n>`
+|Nonconformities |`nonconformities/NC-<n>.yaml` |`NC-<n>`
+|Assets (non-application) |`assets/A-<n>.yaml` |`A-<n>`
 |===
 
-The readable number is assigned on save by the library's running-number mechanism. Measures and tasks are fields
-`issues: [<tracker-id>]`; no task state is stored.
+Each register is a numbered collection: its entries live on one collection branch (`refs/heads/risks` and so on), with
+no branch per entry. The readable number is assigned on the first save by the library's running-number mechanism; it
+names the entry file, a release tag of the entry and the link target (`isms-register:risk/R-042`). Measures and tasks
+are fields `issues: [<tracker-id>]`; no task state is stored.
 
 == Reporting Dates
 _See Requirement link:../Requirements.adoc#CIFR-ISMS-3[CIFR-ISMS-3: Reporting Dates]_
 
 Status: PLANNED
 
-`GET /api/v1/isms/{register}?as-of=<tag|date>`: the index is built from the tagged commit, or from the last commit on
-`main` at or before the date. Audit tags: `audit/<yyyy-mm-dd>`.
+Register entries reach `main` only by release: the library's release of a numbered entry merges that entry's path
+from the collection branch into `main` (path-level merge). The as-of views, by tag or by date, read `main` and
+therefore show released entries only; an entry that is saved but not released is not part of a reporting state.
+
+As-of views, both answered from an index the library builds for the given tag or commit without changing the current
+index:
+
+* Register: `GET /api/v1/isms/registers/{register}?as-of=<tag|date>` on `isms-register`.
+* Statement of applicability: `GET /api/v1/isms/soa?as-of=<tag|date>` on `isms-core`, built from the released
+  statement of applicability reachable from that commit.
+
+A tag selects the tagged commit; a date selects the last commit on `main` at or before the end of that day (UTC).
+
+Audit tags `audit/<yyyy-mm-dd>` mark a reporting date. The application creates them on the action "Mark reporting
+date" (`POST /api/v1/isms/reporting-dates`) of a user with `approve` on both repositories: it tags the current tip of
+`main` of `isms-core` and of `isms-register` with today's date (UTC) as name, signed by the application and pushed
+like a release tag. A past date is not tagged; an as-of query by date covers it. An existing audit tag is never moved.
+A second mark on the same day is refused per repository: when only one of the two repositories carries the day's tag
+(a failure between the two), a retry creates only the missing tag in the repository that lacks it.
 
 == Evidence
 _See Requirement link:../Requirements.adoc#CIFR-ISMS-4[CIFR-ISMS-4: Evidence from SAMM]_
 
 Status: PLANNED
 
-A control's `evidence` list accepts `samm:assessment/<id>` references; the reference must name a released assessment
-(release tag `assessment/<id>/v1` exists).
+A control's `evidence` list accepts `samm-assessments:assessment/<id>` references; the reference must name a released
+assessment (release tag `assessments/<id>/v1` exists).
 
 == verinice Bridge
 _See Requirement link:../Requirements.adoc#CIFR-ISMS-6[CIFR-ISMS-6: verinice.veo Bridge]_

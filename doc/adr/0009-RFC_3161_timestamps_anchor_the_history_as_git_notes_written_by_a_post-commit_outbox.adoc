@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: After every reference update, successful push or branch-moving fetch an outbox walks the new commits idempotently by hash, with its progress per consumer and branch in a reference; git-timestamp obtains an RFC 3161 token for each new state of main and stores it under refs/notes/timestamps.
+// summary: After every reference update, successful push or branch-moving fetch an outbox walks the new commits idempotently by hash, with its progress per consumer and branch in a reference; git-timestamp obtains an RFC 3161 token for each new commit of main and stores it under refs/notes/timestamps.
 // tags: evidence, timestamp, rfc3161, outbox, notes
 // affects: git-store, git-timestamp
 // supersedes:
@@ -18,8 +18,8 @@ Proposed
 
 == Decision
 
-Git's hash chain is only as trustworthy as the people who can force-push. Index, journal and timestamps must follow
-every save without a second transaction. The question is how the store anchors the history externally and stays
+Git's hash chain is only as trustworthy as the people who can force-push. The index, the timestamps and a mirror must
+follow every save without a second transaction. The question is how the store anchors the history externally and stays
 consistent with what it derives.
 
 *The decision:*
@@ -28,9 +28,10 @@ consistent with what it derives.
   store performs (local mode), after a successful push (remote mode), and after a fetch that moves a subscribed branch.
   The last trigger covers a merge the Git server performs into protected `main`; a webhook or the periodic fetch
   brings it. The walk is idempotent by commit hash and keeps its progress per consumer and branch in a reference
-  (`refs/meta/outbox/<consumer>/<branch>`), so it resumes after a failure.
+  (`refs/meta/outbox/<consumer>/<branch>`, the branch name escaped: first every `%` as `%25`, then every `/` as
+  `%2F`), so it resumes after a failure. The progress references are never pushed.
 * `git-timestamp` is one consumer of the outbox, subscribed to `main`. It obtains an RFC 3161 timestamp for every new
-  state of `main` and stores the token as a note under `refs/notes/timestamps`. In remote mode it pushes the note
+  commit of `main` and stores the token as a note under `refs/notes/timestamps`. In remote mode it pushes the note
   right after writing it; a failed push keeps the commit pending, and the retry pushes the stored token instead of
   requesting a new one.
 * A mirror to a second Git server is an optional further consumer.
@@ -41,17 +42,28 @@ See xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion S
 
 === A copy of all commits in a second store
 
-*Rejected because* Git already is an append-only, hash-chained store. A copy adds no independent proof.
+The store copies every commit into a second store as evidence beside the repository.
+
+*Rejected because* a copy under the control of the same operator adds no independent proof: whoever can force-push can
+also rewrite the copy. An independent anchor needs a third party, which the timestamp authority is.
 
 === Public transparency logs (Sigstore/Rekor)
 
-*Rejected because* the entries are public. Internal compliance data must not leave the organisation.
+Every new commit is recorded in a transparency log such as the public Rekor instance of Sigstore.
+
+*Rejected because* the entries of a public log are public, and internal compliance data must not leave the
+organisation. A self-hosted log keeps the entries internal, but its operator is then no third party independent of
+the repository's operator.
 
 === WORM storage as the default
+
+The history is written to write-once storage that refuses any later change.
 
 *Rejected as the default because* it requires infrastructure many operators lack. It stays an option where it exists.
 
 === Timestamps in a database
+
+The timestamp tokens are kept in a database beside the repository.
 
 *Rejected because* the proof would not travel with the repository.
 

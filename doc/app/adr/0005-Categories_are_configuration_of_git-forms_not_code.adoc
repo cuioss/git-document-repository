@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: Each category (SAMM, threat models, incident reports, ISMS) is a JSON Schema, a template and a workflow for the library's schema-driven documents; the application holds no category-specific Java code or view.
+// summary: Each category (SAMM, threat models, incident reports, ISMS) is a JSON Schema, a template and a workflow for the library's schema-driven documents; no category has a hand-written view, and category-specific Java code exists only behind named extension points of the application.
 // tags: categories, forms, schema, configuration
 // affects: categories, cisos-friend, web-app
 // supersedes:
@@ -19,7 +19,8 @@ Accepted
 == Decision
 
 The four categories share one shape: schema, YAML data with AsciiDoc free text, generated output, review and approval,
-deadlines and links. The study behind the libraries concluded that the shape belongs in one generic layer.
+deadlines and links. The library's
+link:../../concepts/schema-driven-documents.adoc[schema-driven documents] provide that shape as one generic layer.
 
 *The decision:* a category is configuration of the library's schema-driven documents.
 
@@ -27,7 +28,8 @@ deadlines and links. The study behind the libraries concluded that the shape bel
   levels, and the repository it lives in.
 * The definitions live in the `categories` module as resources.
 * The web app generates its forms from the schemas. The MCP server derives its tool inputs from them.
-* No category has Java code or a hand-written view.
+* No category has a hand-written view. Category-specific Java code exists only behind named extension points of the
+  application, for behaviour a schema cannot express (see _Accepted costs_).
 
 The shape is described in link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 

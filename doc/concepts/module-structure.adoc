@@ -23,24 +23,24 @@ Three forces would split a single module later, at a higher price:
 * *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries make it checkable;
   the build check that enforces it is planned (see xref:../specification/testing.adoc[Testing]).
 
-An earlier version of the study recommended one module to start. The owner decided for the cut below, which removes
-all three forces at once.
+One module to start would be simpler at first, but it leaves all three forces to a later split, when consumers
+already depend on its shape. The cut below removes all three at once.
 
 == The Repository and Its Modules
 
-The repository `git-document-repository` (study working title `git-foundation`) is a multi-module Maven reactor under
+The repository `git-document-repository` is a multi-module Maven reactor under
 the group `de.cuioss` with the parent `cui-java-parent`. Its modules are released together and consumed separately,
 so every consumer takes only what it needs. The code is licensed under the Apache License 2.0.
 
-image::../resources/diagrams/module-dependency-graph.svg[Module dependency graph of git-document-repository, align=center]
+image::../resources/diagrams/module-dependency-graph.svg["Module dependency graph of git-document-repository: existing modules solid, planned modules dashed",align=center]
 
 [cols="1,3,1"]
 |===
 |Module |Content |State
 
 |`git-core`
-|Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing,
-compare-and-swap, in-core merge, notes
+|Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository,
+in-core writing, compare-and-swap, in-core merge, notes
 |scaffold
 
 |`git-worktrees`
@@ -52,7 +52,7 @@ compare-and-swap, in-core merge, notes
 |scaffold
 
 |`git-store`
-|Drafts, saving, identity per save, index, outbox (xref:storage-engine.adoc[Storage Engine])
+|Drafts, saving, author and committer per save, index, outbox (xref:storage-engine.adoc[Storage Engine])
 |planned
 
 |`git-forms`
@@ -74,8 +74,8 @@ Signing])
 |planned
 
 |`git-directory` (optional)
-|Directory of persons, catalogs of roles, teams and services (xref:directory-and-catalogs.adoc[Directory and
-Catalogs])
+|Directory of persons, catalogs of roles, teams, systems, services and external parties
+(xref:directory-and-catalogs.adoc[Directory and Catalogs])
 |planned
 |===
 
@@ -87,11 +87,28 @@ repository; its kinds of documents are configuration of `git-forms`.
 
 `git-worktrees` depends on `git-core` alone. `git-store` builds on `git-core`; `git-forms`, `git-crypto`,
 `git-signing` and `git-timestamp` build on `git-store`; `git-directory` builds on `git-forms` and `git-crypto`.
-`git-testing` depends on no other module of the reactor.
+`git-testing` depends on no other module of the reactor; it declares JGit directly (planned), since its fixtures
+create JGit repositories.
 
-No module knows a term of a domain. The modules above `git-core` carry their own third-party dependencies (YAML and a
-template engine in `git-forms`, an envelope-encryption library in `git-crypto`, a timestamp client in
-`git-timestamp`), so a consumer of `git-core` alone pulls none of them. Every one of these dependencies, JGit
+The optional modules plug into the modules below them through service interfaces that `git-store` defines and
+`ServiceLoader` finds (JPMS `uses` and `provides`), so no module calls a module it does not depend on. These
+interfaces are planned:
+
+* `SignatureLevelVerifier` (the evidence of a signature level for a transition) and `CommitTrailerContributor` (the
+  actor and approval trailers) are provided by `git-signing`. Without a provider only signature level 0 is accepted.
+* `FieldEncryptor` (encrypting and decrypting a personal field with the data encryption key of the data subject) is
+  provided by `git-crypto`; `git-forms` interprets the schema marker `x-personal` and calls it.
+* `PseudonymResolver` (issuer and `sub` to pseudonym) is provided by `git-crypto`. Without `git-crypto` the
+  application provides one, so `git-signing` and `git-store` get the pseudonym of the author in either case.
+* `git-directory` saves at signature level 1 and therefore needs a `SignatureLevelVerifier` provider, that is
+  `git-signing`, at run time. The static dependency graph above stays unchanged.
+* `git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules
+  above it instead of hard-coding them.
+
+No module knows a term of a domain. The modules above `git-core` carry their own third-party dependencies (a YAML
+library, a JSON Schema validator and a template engine in `git-forms`, an envelope-encryption library in `git-crypto`,
+a WebAuthn verification library in `git-signing`, a timestamp client in `git-timestamp`), so a consumer of `git-core`
+alone pulls none of them. Every one of these dependencies, JGit
 included, needs the owner's approval before it is added.
 
 == A Shared Foundation with `pm-provider-git`
@@ -117,7 +134,8 @@ Constraints:
 === Inventory of `pm-provider-git`
 
 The inventory was taken from the sources on 2026-11-12. The module holds about 2,000 lines of production code and
-3,800 lines of tests. Its only dependency on another module of the product is a single class.
+3,800 lines of tests. Its only dependency on another module of the product lies in a single class,
+`JGitSourceRepository`, which uses three types of `pm-core`.
 
 [cols="2,3,2"]
 |===
@@ -149,8 +167,8 @@ cache repository (`initCache`, `fetchCommit`, `readFile`), and its records
 |none
 
 |`LinkedWorktrees`
-|The administration files of git's linked working trees, read and written natively, because JGit has no
-`git worktree` command
+|The administration files of git's linked working trees, read and written natively, because JGit has no command
+that adds or removes a linked working tree (JGit 7.0 added read support only; checked in JGit 7.8.0)
 |none
 
 |`WorktreeShaDigest`
@@ -194,8 +212,8 @@ source repository down to these paths, so authorship and blame survive.
 |Module |Test classes
 
 |`git-core`
-|`RefusingFSTest`, `RemotePolicyTest`, `GitIdentityTest`, `JGitCacheRepositoryTest`, `UnservedWantTest`, the
-repository part of the split classes
+|`RefusingFSTest`, `RemotePolicyTest`, `GitIdentityTest`, `JGitCacheRepositoryTest` and `UnservedWantTest` (both test
+the cache repository part of `JGitOperations`), the repository part of the split classes
 
 |`git-worktrees`
 |`LinkedWorktreesTest`, the worktree part of the split classes
@@ -246,9 +264,6 @@ this repository first. The foundation stays small precisely so that this price s
 . The exact split of the test classes that cover both repository and worktree operations.
 . The release of the code taken over from `pm-provider-git` under the Apache License 2.0.
 . Whether JGit still works in the native image of `pm-mcpd` against the first `SNAPSHOT`.
-
-The study's open decisions on name, group and parent are settled by the repository itself: `git-document-repository`,
-`de.cuioss`, `cui-java-parent`.
 
 == Related
 

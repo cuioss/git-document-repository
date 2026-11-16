@@ -9,7 +9,7 @@ link:../README.adoc[CISOs-Friend documentation] » Concepts
 
 An OWASP SAMM assessment usually ends its life as a spreadsheet named `samm-final-v3-reviewed.xlsx`, and the
 comparison with last year's assessment is done by eye. That loses the one thing an assessment is for: the trend.
-SAMM is the core category of CISOs-Friend because it fits Git almost too well.
+SAMM is the core category of CISOs-Friend because its model and its assessments map directly onto files in Git.
 
 == What an Assessment Is
 
@@ -56,18 +56,19 @@ The repository is `samm-assessments`, readable by development and security
 SAMM is mostly filled in jointly in workshops. The application therefore uses the storage engine's _save often_
 pattern: every explicit save lands on the assessment's working branch at once, as a small commit; the draft holds only
 what is not yet saved. The UI remembers the blob id it loaded, like an ETag, and detects a concurrent change of the
-same practice file. Two assessors on different practices never conflict; two on the same question see the conflict
-in the form, per question, and decide.
+same practice file. Two assessors on different practices never conflict. Two on the same practice get a conflict for
+that practice file; the form shows the differing questions with both values, and they decide.
 
 The alternative pattern, _private until submitted_, is available for single assessors who want to work longer before
 others see the changes. The pattern is a property of the category's workflow, not of the user.
 
 == Release, Comparison and Targets
 
-* *Release* merges the assessment branch into `main` and tags `assessment/<id>/v1` (an assessment is released once). Protected branches and tags of the Git
-  server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes approval.
-  The signature level of the release is configured per category (level 2 by default, see
-  link:authentication-and-identity.adoc#_signature_levels_per_category_and_state[Signature Levels]).
+* *Release* merges the assessment branch into `main` and creates the library's release tag `<collection>/<id>/v<n>`,
+  here `assessments/<id>/v1`: an assessment is released once, so `n` is always 1. Protected branches and tags of the
+  Git server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes
+  approval. The signature level is configured per transition of the category's workflow (level 2 for the release
+  by default, see link:authentication-and-identity.adoc#_signature_levels_per_transition[Signature Levels]).
 * *Comparison* reads two released tags from the in-memory index and shows the score difference per practice and
   stream. Dashboards, trends and heat maps over hundreds of assessments come from the same index.
 * *Targets* in `targets.yaml` name the target maturity per practice. A gap between the released score and the target
@@ -83,7 +84,8 @@ others see the changes. The pattern is a property of the category's workflow, no
   (link:category-threat-models.adoc[Threat Models]).
 * A released assessment is evidence for the secure-development controls of ISO 27001 (Annex A 8.25 ff.) by a reference
   to its tag.
-* Where an organisation runs verinice, a released assessment is delivered as evidence through the veo REST API.
+* Where an organisation runs verinice, a released assessment can be delivered as evidence through the veo REST API
+  (disabled by default, link:category-isms.adoc#_open_questions[ISMS, Open Questions]).
 
 == Open Questions
 
@@ -98,5 +100,5 @@ others see the changes. The pattern is a property of the category's workflow, no
 * link:category-threat-models.adoc[Threat Models], link:category-isms.adoc[ISMS]
 * Sources: https://owasp.org/2020/02/11/SAMM-v2.html[SAMM v2.0 released],
   https://owaspsamm.org/release-notes-v2/[Key changes in SAMM v2],
-  https://owaspsamm.org/blog/2020/01/31/samm2-release[SAMM v2 release (YAML model)],
+  https://github.com/owaspsamm/core[SAMM core model (YAML files on GitHub)],
   https://owaspsamm.org/model/[SAMM model]

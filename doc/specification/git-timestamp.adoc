@@ -19,19 +19,30 @@ Rationale: xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Comp
 
 == Timestamp per State of `main`
 
-_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per State of main]_
+_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per State of `main`]_
 
 *Status:* PLANNED
 
 * Registered as outbox consumer `timestamp` of `git-store`, subscribed to `main`; it handles every commit of `main`
   the outbox walk reaches, including merges the Git server performed, which the outbox sees through its fetch trigger.
-* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the ASCII hex commit id, `certReq = true`, a random
-  nonce.
-* Storage: the DER-encoded `TimeStampToken`, base64, as the note of the commit under `refs/notes/timestamps`.
-* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note. Only a successful push counts
-  as a successful call; a failed push leaves the outbox reference before the commit.
+* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the commit id as lowercase ASCII hex (the same form as
+  the passkey challenge of `git-signing`), `certReq = true`, a random nonce.
+* Storage: the DER-encoded `TimeStampToken`, base64, as the note of the commit under `refs/notes/timestamps`; one
+  token per line. A note normally holds one token; it holds more when instances obtained tokens for the same commit
+  and their notes were merged (see Push).
+* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note, on its own and with the
+  technical user's credentials (a system commit, see xref:git-store.adoc#_identity_per_save[git-store, Identity per
+  Save]). Only a successful push counts as a successful call; a failed push leaves the outbox reference before the
+  commit.
 * Retry: when the note already exists locally, the consumer pushes it and requests no new token, so the time the token
   proves never moves later.
+* Push: before every push of `refs/notes/timestamps` the consumer fetches the remote notes reference and merges the
+  local notes into it, with JGit's `NoteMapMerger` (`org.eclipse.jgit.notes`; base: the merge base of the two notes
+  commits) and a note merger of this module: for a commit with a note on both sides the merged note keeps every
+  distinct token, duplicates removed. It commits the merged notes (parents: the local and the fetched notes commit),
+  moves the local reference by compare-and-swap and pushes with lease, the expected remote id being the fetched one.
+  On a rejection it repeats from the fetch, up to the configured number of attempts (`save.max-attempts` of
+  `git-store`).
 
 [cols="1,2"]
 |===
@@ -48,8 +59,9 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-2[GDR-TSA-2: Timestamp Verifi
 
 *Status:* PLANNED
 
-`verify(commit)` reads the note, checks the token signature against `timestamp.trust`, and compares the message
-imprint with the commit id. Outcomes: valid (with the time), no token, imprint mismatch, signature invalid.
+`verify(commit)` reads the note and checks every token in it: the token signature against `timestamp.trust`, and the
+message imprint against the SHA-256 over the commit id as lowercase ASCII hex. Outcomes: success with the earliest time
+a valid token proves, no token, imprint mismatch, signature invalid (see xref:error-model.adoc[Error Model]).
 
 == Unavailable Timestamp Authority
 

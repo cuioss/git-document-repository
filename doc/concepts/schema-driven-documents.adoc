@@ -14,7 +14,7 @@ Statements marked _(unverified)_ come from general knowledge and were not checke
 
 == The Shape
 
-image::../resources/diagrams/document-shape-pipeline.svg[A schema drives the form; data in YAML and free text in AsciiDoc are joined by a template into the generated output, then reviewed, approved and frozen in Git, align=center]
+image::../resources/diagrams/document-shape-pipeline.svg["A schema drives the form; data in YAML and free text in AsciiDoc are joined by a template into the generated output, then reviewed, approved and frozen in Git",align=center]
 
 A schema produces the form. The form produces data in YAML and free text in AsciiDoc. A template joins them into the
 output. Review and approval freeze the result in Git. Deadlines, links and evaluations run across all of it.
@@ -22,11 +22,13 @@ output. Review and approval freeze the result in Git. Deadlines, links and evalu
 A *kind of document* is then four pieces of configuration:
 
 * a *schema*,
-* a *template*,
+* a *template* (optional for a numbered kind, a register),
 * a *workflow*,
-* a *repository* (from the registry, see xref:data-protection.adoc#_repositories_per_confidentiality_and_retention_class[Data Protection]).
+* a *repository* (from the registry, see
+  xref:data-protection.adoc#_repositories_per_confidentiality_and_retention_class[Data Protection]).
 
-Further kinds become cheap: exception approvals, supplier assessments and access reviews need no new code.
+Further kinds need configuration only: exception approvals, supplier assessments and access reviews need no new
+code.
 
 == Schema
 
@@ -40,16 +42,19 @@ When a form produces AsciiDoc and someone edits that AsciiDoc by hand, the form 
 layer therefore separates truth from output:
 
 ----
-<document>/
+<collection>/<id>/
   document.yaml        ← structured fields (schema)
   narrative/*.adoc     ← free-text sections as AsciiDoc fragments
   report.adoc          ← generated: a template joins the YAML and the fragments
 ----
 
+The single `document.yaml` is the default. A kind whose schema declares a split stores its structured fields in one
+YAML file per independently edited part instead (see below).
+
 * *The structured data stay in YAML.* Free text may be AsciiDoc with tables and images.
 * *AsciiDoc is the output, not the truth.* `report.adoc` is generated reproducibly and committed as readable evidence.
-  A CI check that makes sure it matches the YAML is planned; no workflow implements it yet. PDF for external readers
-  is generated from it as well.
+  The design includes a CI check that regenerates it and compares the result with the committed file; like the
+  rest of `git-forms`, it is not implemented. PDF for external readers is generated from it as well.
 * *Deterministic serialisation.* Fixed key order and stable formatting make diffs show real changes only.
 * *One file per independently edited part.* A document that several people edit at once (one file per section,
   practice or entry) keeps concurrent saves free of conflicts (see xref:storage-engine.adoc[Storage Engine]).
@@ -57,11 +62,13 @@ layer therefore separates truth from output:
 
 == Template
 
-A template per kind of document produces the AsciiDoc output. The template engine is not chosen yet.
+A template per kind of document produces the AsciiDoc output. A numbered kind (a register) may do without one; then
+it has no generated output. With a template, each entry's output lies next to its entry file. The template engine is
+not chosen yet.
 
 == Workflow
 
-image::../resources/diagrams/document-workflow-states.svg[Document states draft, review, approved and superseded with their transitions, align=center]
+image::../resources/diagrams/document-workflow-states.svg["Document states draft, review, approved and superseded with their transitions",align=center]
 
 A workflow names the *states* of a document -- draft, review, approved, superseded -- and maps the transitions onto
 the mechanisms of the store:
@@ -74,34 +81,48 @@ the mechanisms of the store:
 |intermediate saves on the user's draft reference
 
 |submit for review
-|save onto the working branch; optionally open a pull or merge request
+|save onto the working branch; when the Git server's review path is used, open the pull or merge request
 
-|approve
-|merge into `main` and tag; approvals written as signed trailers, a passkey approval as a note
+|approve (release)
+|merge into `main` and tag, or, on the review path, merge the pull or merge request; approvals written as signed
+trailers, a passkey approval as a note
 
 |supersede
 |a later approved version of the same document; the old tag stays
 |===
 
-Per state the workflow declares:
+The workflow further declares:
 
-* *deadlines* -- notification duties and review intervals, computed from the in-memory index;
-* *the signature level* -- see xref:identity-and-signing.adoc#_graded_traceability[Identity and Signing].
+* *deadlines* per state -- notification duties and review intervals, computed from the in-memory index;
+* *the signature level* per transition -- see xref:identity-and-signing.adoc#_graded_traceability[Identity and
+  Signing].
 
 Deadlines and reminders are computed, never stored: notifications are runtime state of the application, not
 persistence.
 
 == Links
 
-Documents refer to each other by *typed references* across kinds and repositories: `service:payment-api`,
-`register:risk/R-042`. The store checks on save that the target exists. A retired target stays resolvable, so old
+Documents refer to each other by *typed references* across kinds and repositories. A reference has one of two forms:
+
+* `<alias>:<kind>/<id>` names a document: the repository alias from the registry, the kind of document and its id,
+  for example `register:risk/R-042`;
+* `<catalog>:<id>` names an entry of a directory catalog, for example `service:payment-api` or `role:ciso` (see
+  xref:directory-and-catalogs.adoc[Directory and Catalogs]).
+
+The store checks on save that the target exists. A retired target stays resolvable, so old
 documents keep their meaning.
 
 == Running Numbers and Reporting Dates
 
-* *Running numbers under concurrent creation.* A readable number such as `R-042` cannot be assigned by two creators
-  at once. The file name is a ULID; the readable number is assigned on save through a counter file in the same commit,
-  and the compare-and-swap makes it unique.
+* *Two kinds of collections.* A per-document collection gives every document a ULID, which names its working
+  branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link target. A numbered
+  collection (a register) keeps all entries on one collection branch `refs/heads/<collection>`, without a branch per
+  entry; its readable number names the entry file, the tag and the link target. A collection is one or the other,
+  never both, because Git refuses a reference and a reference nested below it.
+* *Running numbers under concurrent creation.* A readable number such as `R-042` (`prefix` and counter) cannot be
+  assigned by two creators at once. It is assigned on the first save through a counter file on the collection branch,
+  changed in the same commit, and the compare-and-swap makes it unique: the loser re-reads the counter and takes the
+  next number.
 * *Reporting dates.* "The register as of the audit on 1 March" is a tag or the commit of that date; the index is built
   from that snapshot.
 
@@ -121,6 +142,6 @@ modelled.
 
 * xref:../adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011]
   -- the decision for this shape.
-* xref:directory-and-catalogs.adoc[Directory and Catalogs] -- the directory is a schema-driven document itself.
+* xref:directory-and-catalogs.adoc[Directory and Catalogs] -- the catalogs are schema-driven documents themselves.
 * xref:../Requirements.adoc#requirements-git-forms[`git-forms` requirements] and
   xref:../specification/git-forms.adoc[`git-forms` specification].

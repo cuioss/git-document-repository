@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: The live phase of an incident (alerting, coordination, escalation) stays in chat, ticket system and on-call service; CISOs-Friend holds the structured report with deadlines, review and approval, and imports the timeline.
+// summary: The live phase of an incident (alerting, coordination, escalation) stays in chat, ticket system, on-call service and Confluence; CISOs-Friend holds the structured report with deadlines, review and approval, imports the timeline and creates measures as issues.
 // tags: incidents, scope, integration
 // affects: categories, cisos-friend
 // supersedes:
@@ -23,10 +23,11 @@ report is a document with structure, review and approval.
 
 *The decision:* CISOs-Friend holds the report only.
 
-* Alerting, coordination and escalation stay in chat, ticket system and on-call service.
+* Alerting, coordination and escalation stay in chat, ticket system, on-call service and Confluence.
 * The report is a schema-driven document with notification deadlines, review and approval.
-* The timeline is imported from the ticket system or the chat.
-* The report refers to tickets by id. No Git content is written into the ticket system.
+* The ticket system and the chat are read: the timeline is imported from them into the report.
+* The report refers to tickets by id. No Git content is written into the ticket system or the chat.
+* Measures are created as issues in the issue tracker and referenced from the report by id.
 
 The details are in link:../concepts/category-incident-reports.adoc[Incident Response Reports].
 

@@ -14,8 +14,10 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, identity per save, the in-memory index and the post-commit outbox. It depends on `git-core` only.
-Rationale: xref:../concepts/storage-engine.adoc[Storage Engine].
+saving, release, identity per save, the in-memory index and the post-commit outbox. It depends on `git-core` only and
+defines the service provider interfaces through which the optional modules contribute without a dependency of
+`git-store` on them (see Service Provider Interfaces). Rationale: xref:../concepts/storage-engine.adoc[Storage
+Engine].
 
 == Repository Registry
 
@@ -53,15 +55,31 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 |Reference |Content |Pushed
 
 |`refs/heads/main` |released state |yes
-|`refs/heads/<collection>/<id>` |working branch of one document |yes
-|`refs/tags/<collection>/<id>/v<n>` |release `n` of one document, never moved |yes
-|`refs/drafts/<user>/<document>` |intermediate saves of one user |*never*
+|`refs/heads/<collection>/<id>` |working branch of one document of a per-document collection |yes
+|`refs/heads/<collection>` |collection branch of a numbered collection: every entry and the counter file |yes
+|`refs/heads/review/<collection>/<id>` |review branch of one numbered entry for a pull or merge request: `main` with
+only that entry's path applied (see Release) |yes
+|`refs/tags/<collection>/<id>/v<n>` |release `n` of one document or numbered entry, never moved |yes
+|`refs/drafts/<user>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
 |`refs/notes/*` |timestamps, approvals |yes
-|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch |no
+|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch; the branch name is
+escaped, first every `%` as `%25`, then every `/` as `%2F` |*never*
+|`refs/meta/pending/<user>/<collection>/<id>/<commit-id>` |a pending commit that conflicted when it was replayed onto
+the fetched remote tip, kept until its user resolves it (see Conflict Handling) |*never*
 |===
 
-`<user>` is the pseudonym. Push refspec: `refs/heads/*:refs/heads/*`, `refs/tags/*:refs/tags/*`,
-`refs/notes/*:refs/notes/*`.
+* A collection is either per-document (one working branch per document) or numbered (one collection branch, no
+  branch per entry), never both: Git refuses a reference and a reference nested below it, so `refs/heads/risks` and
+  `refs/heads/risks/<id>` cannot exist side by side. For the same reason the outbox references escape the branch name.
+* A collection must not be named `main` or `review`.
+* `<id>` of a per-document collection is the document's ULID; it names the working branch, the release tag, the data
+  directory and the link target. `<id>` of a numbered collection is the readable number (`prefix` + counter, for
+  example `R-042`); it names the entry file, the release tag and the link target. Until its first save a new numbered
+  entry has no number; its draft reference uses a ULID until then (see
+  xref:git-forms.adoc#_running_numbers[git-forms, Running Numbers]).
+* `<user>` is the pseudonym.
+* Push refspec: `refs/heads/*:refs/heads/*`, `refs/tags/*:refs/tags/*`, `refs/notes/*:refs/notes/*`. `git-store`
+  passes it, and the names of the reserved notes references, to `git-core` as configuration.
 
 == Save
 
@@ -69,28 +87,59 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-3[GDR-STORE-3: Explicit Sav
 
 *Status:* PLANNED
 
-image::../resources/diagrams/save-sequence.svg[Sequence of an explicit save, align=center]
+image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",align=center]
 
-. Merge the draft into the working branch in core (`git-core` merge). The save commit has the working-branch tip as its
-  only parent; no draft commit becomes a parent, so no draft commit is reachable from a pushed reference.
-. Move the working branch by compare-and-swap.
-. Remote mode: fetch the working branch; for every edit with `expectedBlobId`, report conflict when the fetched blob
-  differs; on a moved remote, merge onto the remote state and repeat; push with lease.
-. On push rejection repeat from 3, up to `save.max-attempts`.
-. Delete the draft reference by compare-and-delete: only if it still points to the draft commit merged in step 1. A
-  newer draft commit stays for the next save.
+In remote mode the local working branch may be ahead of the remote by *pending* commits: commits of earlier saves that
+reported saved locally. The save observes the local working-branch tip when it starts; every later move of the local
+working branch is a compare-and-swap from that observed tip.
+
+. Remote mode: fetch the working branch. When the remote cannot be reached (a transport failure, not a refusal), the
+  save continues locally, and its outcome is saved locally instead of saved.
+. Determine the base:
+  * Local mode, or the remote could not be reached: the local working-branch tip, pending commits included.
+  * The fetched remote tip is the local tip or an ancestor of it: the local tip; the push in step 6 carries the pending
+    commits and the new one.
+  * Both moved: replay the pending commits in order, oldest first, onto the fetched remote tip, each as the path
+    changes of that commit, with the blob ids of its parent as expected blob ids, so a concurrent change to the same
+    path is a conflict. A replayed commit keeps the author, message and trailers of the pending commit. The base is the
+    last replayed commit, or the fetched remote tip when no pending commit is left.
+  * A pending commit that conflicts is never dropped: it is kept under
+    `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` (`<user>`: the pseudonym of its `Actor` trailer), its
+    paths are conflicts of this save, and the next load of the document reports the kept commit like a draft
+    conflict, so the user resolves it.
+. Squash merge in core: apply the draft's changes onto the base as one commit whose only parent is the base
+  (path-level, `git-core` In-Core Merge; no textual three-way merge of file content). No draft commit becomes a parent,
+  so no draft commit is reachable from a pushed reference.
+. For every edit with `expectedBlobId`, compare it with the path's blob on the base; a difference is a conflict for that
+  path (Concurrent Change Detection). Conflicts are detected per path, never per field.
+. Move the local working branch by compare-and-swap from the observed tip to the new commit. When the new commit does
+  not descend from the observed tip (after a replay, or after a refused push in step 6), the move is a guarded reset
+  (`git-core` Compare-and-Swap). When the compare-and-swap fails because another local save moved the branch, re-read
+  the local tip as the new observed tip and re-apply the operation from step 2. Saves on one branch are thus
+  serialised by the compare-and-swap.
+. Remote mode: push with lease, the expected remote id being the fetched tip. On a lease refusal or a push rejection
+  fetch again and re-apply the operation from step 2 onto the newly fetched state, up to `save.max-attempts`. This
+  save's own commit is no pending commit: the pending commits are those up to its parent, the observed tip is this
+  save's commit, and the move back to the fetched remote tip, with the pending commits replayed onto it, is a guarded
+  reset. When the remote cannot be reached, the commit stays on the local working branch and the outcome is saved
+  locally; the next push of that branch (the next save or release of the document) carries it.
+. On saved or saved locally, delete the draft reference by compare-and-delete: only if it still points to the draft
+  commit applied in step 3. A newer draft commit stays for the next save.
 
 [cols="1,2"]
 |===
 |Outcome |Meaning
 
-|saved |the working branch (and in remote mode the remote) holds the change
-|conflict |a real conflict; see Conflict Handling
-|rejected |the remote refused after the last attempt
-|credentials expired |the push credentials were refused
+|saved |the working branch (and in remote mode the remote) holds the change and every pending commit before it
+|saved locally |remote mode only: the local working branch holds the change, the remote could not be reached; the
+change is a pending commit until the next successful push
+|conflict |a real conflict of the draft or of a pending commit; see Conflict Handling
+|rejected |the remote refused the push or the lease after the last attempt
+|credentials expired or invalid |the fetch or push credentials were refused
 |===
 
-Configuration: `save.max-attempts` (required).
+Configuration: `save.max-attempts` (required); `git-store` passes it to the compare-and-swap of `git-core` as the
+maximum number of attempts.
 
 == Conflict Handling
 
@@ -98,8 +147,14 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-4[GDR-STORE-4: Conflict Han
 
 *Status:* PLANNED
 
-On conflict nothing is pushed and the draft reference is unchanged. The result lists every conflicting path. Field-level
-resolution inside a YAML file is the consumer's task (`git-forms`).
+On conflict nothing is pushed, the draft reference is unchanged and no commit of this save stays on the local working
+branch: the branch ends on the base of Save, step 2. When it points elsewhere (the base came from a replay, or a
+refused push left this save's commit on it), it is moved to the base by guarded reset; the branch then holds the
+fetched remote tip and the pending commits that replayed without conflict. A pending commit that conflicts is kept
+under `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` before the branch moves, so it is never dropped;
+the kept reference is deleted once its user has saved or discarded the resolution. The result lists every conflicting
+path, those of kept pending commits included. Field-level resolution inside a YAML file is the consumer's task
+(`git-forms`).
 
 == Concurrent Change Detection
 
@@ -108,8 +163,9 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-5[GDR-STORE-5: Concurrent C
 *Status:* PLANNED
 
 A save edit may carry `expectedBlobId`. When the path's current blob id on the working branch differs, the edit fails
-with conflict for that path. In remote mode the comparison is repeated against the fetched remote state (Save, step 3)
-before the save merges onto it. Without `expectedBlobId` the edit overwrites (mode B, private until submitted).
+with conflict for that path. In remote mode the comparison runs against the fetched remote state with the pending
+commits on top (Save, steps 2 and 4), before the save applies the draft onto it. Without `expectedBlobId` an edit
+overwrites a concurrent change to the same file.
 
 == Release
 
@@ -117,14 +173,25 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
 
 *Status:* PLANNED
 
-* Direct release: merge the working branch into `main`, create `refs/tags/<collection>/<id>/v<n>` with `n` one more
-  than the highest existing release of the document, push both with lease. An existing release tag is never moved or
-  deleted.
-* Protected `main`: the push of `main` returns rejected; the store then supports a push of the working branch alone,
-  and the release completes as a pull or merge request on the Git server. The fetch that shows the new tip of `main`
-  hands it to the outbox (Post-Commit Outbox); the tag is created then.
-* Release commits the store creates receive the approval trailers of `git-signing` when that module is present; a
-  merge commit the Git server created receives them as a note (see `git-signing`, Portable Approvals).
+* Direct release, in this order: move `main` by compare-and-swap to the merge of the working branch; then create
+  `refs/tags/<collection>/<id>/v<n>` on that merge commit, with `n` one more than the highest existing release of the
+  document (the first release is `v1`). In remote mode `main` and the tag are pushed together with lease.
+* Release of a numbered entry: the merge takes only that entry's path from the collection branch into `main`
+  (path-level merge in core); the tag follows as above.
+* When `main` moved but the tag is missing (a failure between the two steps), the release returns the incomplete
+  outcome. A repeated release of the same document creates the missing tag on the merged commit and does not merge
+  again.
+* An existing release tag is never moved or deleted.
+* Protected `main`: the push of `main` returns rejected; the store then supports a push of the release source alone,
+  and the release completes as a pull or merge request on the Git server: "submit for review" opens it and the
+  transition "approve (release)" merges it. The fetch that shows the new tip of `main` hands it to the outbox
+  (Post-Commit Outbox); the tag is created on the merged commit then.
+* The source of the pull or merge request: for a per-document kind its working branch. For a numbered entry a review
+  branch `refs/heads/review/<collection>/<id>`, created from `main` with only that entry's path applied (path-level
+  merge in core, as for a direct release); the counter file and the other entries are not part of it.
+* Release commits the store creates carry the trailers of the registered `CommitTrailerContributor` (provided by
+  `git-signing`; see Service Provider Interfaces); a merge commit the Git server created receives the approvals as a
+  note (see xref:git-signing.adoc#_portable_approvals[git-signing, Portable Approvals]).
 
 == Draft Expiry
 
@@ -145,12 +212,15 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per
 |===
 |Element |Value
 
-|author |the caller's pseudonym (`p-<random>`), e-mail field empty or a fixed placeholder
+|author |the caller's pseudonym (`p-<random>`), e-mail field empty
 |committer |the technical user configured per repository
 |credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
 |===
 
-A push carries only commits of the save that triggered it; commits of different users are never combined in one push.
+A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that
+reported saved locally, see Save); apart from these, commits of different users are never combined in one push.
+Commits the store writes without a user's save (notes, keyring rotations) are never combined with the commits of a save
+and are pushed separately with the technical user's credentials.
 
 == In-Memory Index
 
@@ -171,7 +241,7 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-10[GDR-STORE-10: Post-Commi
 
 *Status:* PLANNED
 
-image::../resources/diagrams/store-classes-and-outbox.svg[Git as the source of truth with derived, complementary and assuring stores fed by the outbox, align=center]
+image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of truth: the outbox feeds the derived and assuring stores; complementary systems are referenced by id, not fed by the outbox",align=center]
 
 * Consumers register by name with the branches they subscribe to (for example `timestamp` on `main`, `mirror` on
   every branch).
@@ -179,11 +249,17 @@ image::../resources/diagrams/store-classes-and-outbox.svg[Git as the source of t
   moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
   fetch).
 * On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
-  the branch's new tip, oldest first, and calls the consumer per commit.
+  the branch's new tip, oldest first, and calls the consumer per commit. The branch name is escaped injectively:
+  first every `%` as `%25`, then every `/` as `%2F` (`refs/meta/outbox/timestamp/risks%2F01J…`). So the references of
+  `risks` and `risks/<id>` never nest, and two branch names never map to one reference. These references are never
+  pushed.
 * After each successful call that branch's reference moves to that commit. A failing call stops the walk for that
   consumer and branch only; the next trigger or a periodic retry resumes it. Progress on one branch never moves the
   reference of another.
 * Consumers must be idempotent per commit hash.
+* When a progress reference is missing (for example in a new clone), the walk for that consumer and branch starts again
+  at the first commit of the branch; the consumer recognises the commits it already processed by their hash and skips
+  them.
 
 == Codecs
 
@@ -191,5 +267,28 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-11[GDR-STORE-11: Determinis
 
 *Status:* PLANNED
 
-A codec converts a value to bytes and back. Every codec guarantees `encode(decode(encode(v))) == encode(v)` byte for
-byte. `git-forms` supplies the YAML codec with fixed key order.
+A codec converts a value to bytes and back. `git-store` defines the codec interface; every codec guarantees
+`encode(decode(encode(v))) == encode(v)` byte for byte. `git-store` carries no YAML library: `git-forms` supplies the
+YAML codec with fixed key order.
+
+== Service Provider Interfaces
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-store` defines the interfaces below; the optional modules provide them through `ServiceLoader` (`uses` in
+`module-info.java` of the consumer, `provides` in the provider). No module calls a module it does not depend on.
+
+[cols="1,2,1"]
+|===
+|Interface |Contract |Provider
+
+|`SignatureLevelVerifier` |Checks the evidence of a signature level for a workflow transition; without a provider
+only level 0 is accepted |`git-signing`
+|`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
+|`FieldEncryptor` |Encrypts and decrypts a personal field with the data encryption key (DEK) of the data subject
+for the retention class of the field's document kind |`git-crypto`
+|`PseudonymResolver` |Maps issuer and `sub` to a pseudonym; without `git-crypto` the application provides one
+|`git-crypto`
+|===

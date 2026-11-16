@@ -14,7 +14,10 @@ Status: PLANNED
 
 The MCP endpoint for AI agents as an OAuth 2.1 protected resource. Reasoning:
 link:../concepts/mcp-server.adoc[MCP Server]. Normative sources: MCP specification revision 2026-07-28,
-`basic/authorization` and `basic/transports/streamable-http`; RFC 9728, RFC 8707, RFC 6750.
+link:https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[Authorization] and
+link:https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[Transports] (Streamable HTTP);
+RFC 9728, RFC 8707, RFC 6750. Authorization is optional in MCP; CISOs-Friend uses authorization and follows the MCP
+authorization specification for HTTP transports.
 
 == Transport
 _See Requirement link:../Requirements.adoc#CIFR-MCP-1[CIFR-MCP-1: Transport]_
@@ -26,7 +29,11 @@ Status: PLANNED
 |Item |Value
 
 |Endpoint
-|`POST /mcp`, Streamable HTTP, revision 2026-07-28 (no protocol-level sessions; an `Mcp-Session-Id` header is ignored)
+|`POST /mcp`, Streamable HTTP, revision 2026-07-28 (no protocol-level sessions; an `Mcp-Session-Id` header is ignored
+and never minted or echoed, a `Last-Event-ID` header is ignored)
+
+|`GET`, `DELETE`
+|`405 Method Not Allowed` on `/mcp` (the answer the revision gives to clients of earlier revisions)
 
 |`Origin`
 |Validated against `mcp.allowed-origins`; absent is accepted, present and not listed is `403`
@@ -43,7 +50,9 @@ _See Requirement link:../Requirements.adoc#CIFR-MCP-2[CIFR-MCP-2: Protected Reso
 
 Status: PLANNED
 
-`GET /.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`):
+`GET /.well-known/oauth-protected-resource/mcp`, the URL RFC 9728 forms by inserting the well-known path between the
+host and the path `/mcp` of the resource identifier. The same document is also served at
+`/.well-known/oauth-protected-resource`, which MCP clients try when the path-suffixed URL is not found:
 
 [source,json]
 ----
@@ -58,11 +67,11 @@ Status: PLANNED
 `resource` is `mcp.canonical-uri`; `authorization_servers` is `mcp.authorization-servers`. `offline_access` is never
 listed.
 
-Unauthenticated request:
+Unauthenticated request (the header is sent as one line; it is wrapped here for readability):
 
 ----
 HTTP/1.1 401 Unauthorized
-WWW-Authenticate: Bearer resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource",
+WWW-Authenticate: Bearer resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource/mcp",
                   scope="cisos-friend:read"
 ----
 
@@ -123,7 +132,7 @@ Status: PLANNED
 |Scope |Tools
 
 |`cisos-friend:read`
-|`list_documents`, `read_document`, `search`, `diff`, `list_due`, `read_catalog`
+|`list_documents`, `read_document`, `search`, `diff`, `list_due`, `read_catalog`, `read_recipe`
 
 |`cisos-friend:draft`
 |`write_draft`, `discard_draft`
@@ -135,12 +144,12 @@ Status: PLANNED
 |`request_release`
 |===
 
-Missing scope:
+Missing scope (one header line, wrapped here for readability):
 
 ----
 HTTP/1.1 403 Forbidden
 WWW-Authenticate: Bearer error="insufficient_scope", scope="cisos-friend:save",
-                  resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource"
+                  resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource/mcp"
 ----
 
 After the scope check the user's rights on the target repository are checked (link:authentication.adoc#_rights[Rights]);
@@ -179,6 +188,10 @@ Status: PLANNED
 |`catalog`
 |Entries of roles, teams or services
 
+|`read_recipe`
+|`category`, optional `id`
+|Without `id` the recipes of the category; with `id` the recipe's steps (`title`, `guidance`, `fills`)
+
 |`write_draft`
 |`repository`, `id`, `data` (validated against the category schema)
 |`DRAFT_SAVED` or validation errors per field
@@ -188,7 +201,7 @@ Status: PLANNED
 |`DISCARDED`
 
 |`save`
-|`repository`, `id`, `base-blob-ids`
+|`repository`, `id`, `base_blob_ids`
 |`SAVED`, `CONFLICT` (per field), `SAVED_LOCALLY`
 
 |`request_release`

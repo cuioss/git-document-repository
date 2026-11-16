@@ -6,7 +6,8 @@
 :source-highlighter: highlight.js
 
 == Overview
-_See Requirement link:Requirements.adoc#CIFR-GEN-1[CIFR-GEN-1: Categories as Configuration]_
+_See Requirements: link:Requirements.adoc[CISOs-Friend Requirements], all groups; the table below maps each document
+to its groups_
 
 This document is the entry point of the technical specification of CISOs-Friend. The requirements are in
 link:Requirements.adoc[Requirements], the reasoning in the link:README.adoc#_concepts[concepts]. Every section of every
@@ -26,8 +27,9 @@ implementing classes and tests as the application is built.
 |CIFR-GEN, CIFR-OPS-7, CIFR-NFR-5
 
 |link:specification/configuration.adoc[Configuration]
-|`application.properties`, `cisos-friend.yaml`, placeholders, boot validation, repositories and refresh
-|CIFR-OPS-4, CIFR-OPS-5
+|`application.properties`, `cisos-friend.yaml`, categories, retention classes, repositories and refresh, boot
+validation
+|CIFR-OPS-4, CIFR-OPS-5, CIFR-DP-1
 
 |link:specification/deployment.adoc[Deployment]
 |Image, ports and probes, secrets, compose sample
