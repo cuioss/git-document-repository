@@ -91,7 +91,8 @@ merge commit's first parent and no tag exists. Maven Central releases cannot be 
   deliberate dispatch from `main`, only once the modules contain code.
 - Do not rewrite the `cuioss/cui-java-module-template` literal in `.github/workflows/release.yml`; it only
   excludes the template repository itself.
-- `maven-build.enable-snapshot-deploy` is `false` until a module contains code. Set it to `true` then.
+- `maven-build.enable-snapshot-deploy` is `true`: every push to `main` deploys the SNAPSHOT modules to the
+  Sonatype snapshot repository. That is not a release.
 - There is no Maven site and no GitHub Pages (`pages.deploy-at-release: false`); do not add either back
   without the owner's decision.
 - Any PR that touches `.github/project.yml` starts the Release workflow on merge. The guard must skip it:
