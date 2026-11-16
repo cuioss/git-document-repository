@@ -1,5 +1,0 @@
-== About
-
-Base libraries for _Git as the Persistence of Versioned Documents_: a server-side Git repository as the persistence
-of versioned documents, built on JGit. The modules are `git-core`, `git-worktrees` and `git-testing`; further aspect
-modules follow. See the project https://github.com/cuioss/git-document-repository[README] and the study in `doc/git-document-persistence`.
