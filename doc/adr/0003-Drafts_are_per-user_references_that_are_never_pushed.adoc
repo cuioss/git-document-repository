@@ -22,8 +22,9 @@ Users expect their unsaved work to survive a closed browser. They do not expect 
 shared history. The question is where unsaved work lives.
 
 *The decision:* an intermediate save is a commit on the reference `refs/drafts/<user>/<document>` in the server's
-repository. An explicit save merges the draft in core into the document's working branch and deletes the draft
-reference. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*`. It never carries `refs/drafts/*`.
+repository. An explicit save merges the draft in core into the document's working branch as one commit whose only
+parent is the branch tip, so no draft commit becomes reachable from a pushed reference. It then deletes the draft
+reference, unless a newer draft commit arrived meanwhile. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*`. It never carries `refs/drafts/*`.
 
 See xref:../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving].
 

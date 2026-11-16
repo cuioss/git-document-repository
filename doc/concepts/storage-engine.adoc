@@ -94,8 +94,9 @@ Y") again on the new state: a rebase of one operation, without a textual merge.
 |No
 
 |Save (explicit)
-|Merge the draft in core into the document branch (optionally squashed), compare-and-swap; in remote mode fetch,
-merge onto the remote state, push, retry on rejection; delete the draft reference
+|Merge the draft in core into the document branch as one commit on the branch tip, compare-and-swap; in remote mode
+fetch, merge onto the remote state, push, retry on rejection; delete the draft reference if no newer draft commit
+arrived meanwhile
 |Locally and remotely
 |Yes, in remote mode
 |===
@@ -130,15 +131,17 @@ image::../resources/diagrams/visibility-modes.svg[Two visibility modes: save oft
 * *B: private until submitted.* The user works on the draft for longer and saves once. Only then do the others see
   the changes, merged in core into the working branch.
 
-*Release* is a merge of the working branch into `main` and a tag `<collection>/<id>`. Protected branches and tags of
-the Git server make the release immutable. Optionally the release opens a pull or merge request whose review is the
-four-eyes approval.
+*Release* is a merge of the working branch into `main` and a tag `<collection>/<id>/v<n>`, where `n` counts the
+releases of the document; a later release of the same document gets the next number, and no release tag ever moves.
+Protected branches and tags of the Git server make the release immutable. Optionally the release opens a pull or merge
+request whose review is the four-eyes approval.
 
 == Reading and Queries
 
 At start and after every fetch the store reads `main` and the open working branches into an *in-memory index*. Even
 hundreds of documents with about ninety fields each are a few megabytes. Dashboards, trends and evaluations are
-computed from it. A periodic fetch or a webhook of the Git server refreshes it.
+computed from it. Every save or release of the store updates it at once, in local and in remote mode; a periodic
+fetch or a webhook of the Git server brings the changes of other instances and of the Git server itself.
 
 * *Reporting dates.* "The register as of the audit on 1 March" is a tag or the commit of that date; the index is built
   from that snapshot instead of from the tip.

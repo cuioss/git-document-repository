@@ -66,10 +66,24 @@ Status: PLANNED
 |`notifications.nis2-notification`
 
 |`nis2-final-report`
-|`nis2-applicable: true`
-|`aware-at` + `P1M`
+|`nis2-applicable: true` and `resolved-at` ≤ notification `sent-at` + `P1M`
+|`notifications.nis2-notification.sent-at` + `P1M`
+|`notifications.nis2-final-report`
+
+|`nis2-progress-report`
+|`nis2-applicable: true`, still being handled at notification `sent-at` + `P1M`
+|`notifications.nis2-notification.sent-at` + `P1M`
+|`notifications.nis2-progress-report`
+
+|`nis2-final-report-after-handling`
+|`nis2-applicable: true`, a progress report was due
+|`resolved-at` + `P1M`
 |`notifications.nis2-final-report`
 |===
+
+The final-report rules start only when the notification `sent-at` is recorded; before that only the early-warning and
+notification deadlines are shown. Source of the three NIS2 report deadlines: Directive (EU) 2022/2555, Art. 23(4)
+_(unverified against the national transposition)_.
 
 A deadline is `MET` when its notification field holds `sent-at` ≤ due, `MISSED` otherwise after due, `OPEN` before.
 The NIS2 deadlines are configuration and are verified before the first release _(unverified)_.

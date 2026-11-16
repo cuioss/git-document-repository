@@ -68,8 +68,10 @@ approval that requires step-up.
 The directory of persons is a library module (link:../../concepts/directory-and-catalogs.adoc[Directory and
 Catalogs]); the application supplies the flow and the form.
 
-. The login yields `sub` and usually the name. The application finds no pseudonym for that `sub` in the keyring,
-  creates one and shows the first-login form.
+. The login yields the issuer, `sub` and usually the name. The application finds no saved entry for that pair
+  (issuer and `sub`; a `sub` is unique only within its issuer), creates a pseudonym if none exists yet, and shows the
+  first-login form. A user who left the form unsaved gets it again at the next login; until the entry is saved, no
+  other view opens.
 . The form is prefilled with the name from the token and, where the identity provider delivers groups or departments,
   with the team. Team and role are picked from the catalogs; free text is not allowed. A missing entry can be
   requested for the catalog.
@@ -158,9 +160,9 @@ library (0: author field only; 1: application signature with trailers; 2: plus s
 configured assurance, it re-drives authorization with `acr_values` and `max_age` (RFC 9470, provided by Token
 Sheriff's client) and verifies the result before it writes the approval.
 
-*Passkey (level 3)*: the web app registers the user's WebAuthn public key once; on approval the browser signs the
-commit id as the challenge after user verification; the server checks the signature and the library stores it as a
-note. An AI agent can never perform a level 2 or level 3 approval; it hands the approval to the human
+*Passkey (level 3)*: the web app registers the user's WebAuthn public key once; on approval the browser signs a
+fresh, single-use challenge bound to the commit id after user verification; the server checks ceremony type, origin,
+challenge and signature, and the library stores the assertion as a note. An AI agent can never perform a level 2 or level 3 approval; it hands the approval to the human
 (link:mcp-server.adoc[MCP Server]).
 
 == Open Questions

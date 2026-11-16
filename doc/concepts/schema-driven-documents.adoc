@@ -48,7 +48,8 @@ layer therefore separates truth from output:
 
 * *The structured data stay in YAML.* Free text may be AsciiDoc with tables and images.
 * *AsciiDoc is the output, not the truth.* `report.adoc` is generated reproducibly and committed as readable evidence.
-  A CI check makes sure it matches the YAML. PDF for external readers is generated from it as well.
+  A CI check that makes sure it matches the YAML is planned; no workflow implements it yet. PDF for external readers
+  is generated from it as well.
 * *Deterministic serialisation.* Fixed key order and stable formatting make diffs show real changes only.
 * *One file per independently edited part.* A document that several people edit at once (one file per section,
   practice or entry) keeps concurrent saves free of conflicts (see xref:storage-engine.adoc[Storage Engine]).

@@ -34,8 +34,9 @@ services with the same checks. Below the services sit the libraries of `git-docu
                                            └─► outbound (cui-http): TSA, KMS/Vault, Git host API, verinice.veo
 ----
 
-The layering is enforced by ArchUnit rules in the test suite: no surface package reaches a library directly, and no
-service package knows JGit.
+The layering is planned to be enforced by ArchUnit rules in the test suite: no surface package reaches a library
+directly, no service package knows JGit, and services reach outside systems only through their own port interfaces,
+which the integration adapters implement.
 
 == Maven Modules
 

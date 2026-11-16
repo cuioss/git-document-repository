@@ -69,6 +69,12 @@ Review: https://git.example/sec/register/pull/17
 One `Approved-by` per approval; `Review` only when the release came through a pull or merge request. The caller
 supplies the approvals collected from the Git server.
 
+When the Git server creates the release merge (protected `main`), the merge commit is the server's and carries no
+signature of the application. The library then writes the same `Approved-by` and `Review` lines as a note on that merge
+commit under `refs/notes/approvals`, in a notes commit signed by the application. The note is written when a fetch
+shows the new tip of `main` (outbox consumer `approvals` of `git-store`); in remote mode the notes reference is pushed
+right after.
+
 == Step-Up Evidence
 
 _See Requirement link:../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4: Step-Up Evidence (Level 2)]_
@@ -91,11 +97,13 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5: Passkey Approv
 
 |Registration file |`keys/webauthn.yaml`: per pseudonym a list of credential ids and COSE public keys with
 `registered` and optional `retired` dates; changed only by signed commits
-|Challenge |the raw 20-byte (SHA-1) or 32-byte (SHA-256) commit id
-|Acceptance |signature verifies with a registered, non-retired key; flags UP and UV set; RP id matches the configured
-`signing.rp-id`
-|Storage |note on the commit under `refs/notes/approvals`: YAML with pseudonym, credential id, authenticator data,
-client data JSON and signature, base64
+|Challenge |SHA-256 over the raw commit id followed by a 16-byte random nonce; the nonce is issued for one approval,
+used once, and expires after `signing.challenge-ttl` (ISO 8601 duration, required)
+|Acceptance |client data `type` is `webauthn.get`; client data `origin` is in `signing.allowed-origins`; client data
+`challenge` equals the issued challenge; the nonce is unused and not expired; signature verifies with a registered,
+non-retired key; flags UP and UV set; RP id hash matches the configured `signing.rp-id`
+|Storage |note on the commit under `refs/notes/approvals`: YAML with pseudonym, credential id, nonce, authenticator data,
+client data JSON and signature, base64. A verifier recomputes the challenge from the commit id and the nonce.
 |===
 
 == Signature Verification
@@ -106,6 +114,12 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6: Signature Veri
 
 * `allowed_signers` at the repository root, in the format of Git's SSH signature verification (principal, options
   `valid-after` / `valid-before`, public key).
+* Trust root: the verifier reads the application's signing keys from its own configuration (`signing.trust-root`), not
+  from the repository. A version of `allowed_signers` is trusted only when the commit that introduced it is signed by a
+  key the previous trusted version lists; the first version must be signed by a key of the trust root. A Git
+  administrator who replaces the file therefore cannot make own keys trusted.
+* A merge commit the Git server created on `main` passes when both parents pass and an approval note signed by the
+  application exists for it (Portable Approvals).
 * `verify(ref)` walks the commits of the reference and returns those without a signature valid at their commit time.
 * CI without the application: with `signing.format = ssh`, `git -c gpg.ssh.allowedSignersFile=allowed_signers
   verify-commit <id>` checks a commit with a stock git installation.

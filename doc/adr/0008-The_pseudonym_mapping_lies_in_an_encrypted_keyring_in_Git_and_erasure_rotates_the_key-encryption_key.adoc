@@ -26,7 +26,10 @@ keeps every old version of every file. The question is where the mapping lives w
 * Each person has a data key (DEK). Personal entries and personal fields are encrypted with it.
 * `keys/keyring.enc` holds the DEK and the `sub` per pseudonym. It is encrypted with the key-encryption key (KEK).
 * The KEK lies outside Git, supplied from outside and versioned.
-* Erasure removes the entry, re-encrypts the keyring with KEK version n+1, commits it and destroys version n.
+* Erasure removes the entry, re-encrypts the keyring with KEK version n+1, records version n as pending destruction,
+  and commits the keyring; in remote mode it pushes it. Only then does it destroy version n, and only after that
+  succeeds does a further commit record the destruction. A failed commit or push destroys nothing; a pending version is
+  destroyed by the next run or the next start.
 * Erasures are batched, for example daily.
 
 See xref:../concepts/data-protection.adoc#_an_encrypted_keyring_in_git[Data Protection, An Encrypted Keyring in Git].
@@ -61,6 +64,9 @@ one versioned KEK.
 === Accepted costs
 
 * Erasure is only as good as the destruction of the old KEK, backups included.
+* Until the keyring is published and the old KEK destroyed, the erasure is incomplete and reported as such.
+* An instance that holds the keyring in memory forgets an erased DEK only when it reloads the keyring, at the latest at
+  its next fetch.
 * The keyring is a hot spot for compare-and-swap.
 * Whether KEK destruction counts as erasure is not settled; operators agree it with their data protection officer.
 

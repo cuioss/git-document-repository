@@ -27,7 +27,10 @@ question is how the store records identity.
 * The application signs every commit with its own key, through an exchangeable signer (KMS, HSM or key file).
 * The commit message carries trailers: `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time`, `Auth-Context` and
   `Session` (an HMAC of the session id).
-* On merge, approvals of a pull request become `Approved-by` and `Review` trailers.
+* On merge, approvals of a pull request become `Approved-by` and `Review` trailers of the release commit the
+  application creates. When protected `main` forces the Git server to create the merge, the merge commit is the
+  server's: the application then records the same approvals as a note on it under `refs/notes/approvals`, in a notes
+  commit it signs, once a fetch shows the new tip of `main`.
 * Pushing with the user's token is an optional credentials strategy.
 
 This is level 1 of the graded traceability in xref:../concepts/identity-and-signing.adoc[Identity and Signing].

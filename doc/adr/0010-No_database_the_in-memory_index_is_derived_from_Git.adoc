@@ -22,7 +22,7 @@ Evaluations need queries across documents. A database is the usual answer and th
 to avoid. The question is where queries run.
 
 *The decision:* the store builds an in-memory index from `main` and the open working branches. It builds the index at
-start and after every fetch. A periodic fetch or a webhook of the Git server refreshes it. A reporting date builds the
+start, after every fetch, and after every save or release it performs itself, in local and in remote mode. A periodic fetch or a webhook of the Git server refreshes it. A reporting date builds the
 index from a tag or from the commit of that date. If a database is ever wanted, it is a disposable cache, rebuilt from
 Git.
 

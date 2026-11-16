@@ -20,7 +20,8 @@ Three forces would split a single module later, at a higher price:
   transport, cache repository). A second copy in the document store would need every security fix twice.
 * *Optional dependencies.* Encryption, timestamping and form rendering bring third-party libraries. In one module
   they become mandatory for every consumer, including one that only reads a repository.
-* *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries enforce it.
+* *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries make it checkable;
+  the build check that enforces it is planned (see xref:../specification/testing.adoc[Testing]).
 
 An earlier version of the study recommended one module to start. The owner decided for the cut below, which removes
 all three forces at once.

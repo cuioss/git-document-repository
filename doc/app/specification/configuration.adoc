@@ -143,16 +143,20 @@ Status: PLANNED
 
 |`webhook-secret-ref`
 |no
-|Reference to the HMAC secret of the Git server's push webhook
+|Reference to the secret of the Git server's push webhook
 
 |`fetch-interval`
 |no
 |ISO 8601 duration, default `PT5M`
 |===
 
-Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. The HMAC header of GitHub (`X-Hub-Signature-256`), GitLab
-(`X-Gitlab-Token`) and Gitea (`X-Gitea-Signature`) is verified against the referenced secret; a mismatch is answered
-with `401` and logged.
+Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. Authentication follows the Git server:
+
+* GitHub: HMAC-SHA-256 of the body in `X-Hub-Signature-256`, verified with the referenced secret.
+* Gitea: HMAC-SHA-256 of the body in `X-Gitea-Signature`, verified with the referenced secret.
+* GitLab: `X-Gitlab-Token` carries the secret itself; it is compared with the referenced secret in constant time.
+
+A mismatch is answered with `401` and logged.
 
 == Boot Validation
 _See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
@@ -173,7 +177,7 @@ record; any violation stops the boot.
 |Two repositories with one alias
 
 |One retention class per repository
-|A category mapping two retention classes into one repository
+|A repository whose assigned categories, taken together across all categories, carry more than one retention class
 
 |Rights reference repositories
 |A rights entry naming an unknown alias

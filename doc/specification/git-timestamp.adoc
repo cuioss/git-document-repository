@@ -23,10 +23,15 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per St
 
 *Status:* PLANNED
 
-* Registered as outbox consumer `timestamp` of `git-store`; it handles commits that became the tip of `main`.
+* Registered as outbox consumer `timestamp` of `git-store`, subscribed to `main`; it handles every commit of `main`
+  the outbox walk reaches, including merges the Git server performed, which the outbox sees through its fetch trigger.
 * Request: `TimeStampReq` with `messageImprint` = SHA-256 over the ASCII hex commit id, `certReq = true`, a random
   nonce.
 * Storage: the DER-encoded `TimeStampToken`, base64, as the note of the commit under `refs/notes/timestamps`.
+* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note. Only a successful push counts
+  as a successful call; a failed push leaves the outbox reference before the commit.
+* Retry: when the note already exists locally, the consumer pushes it and requests no new token, so the time the token
+  proves never moves later.
 
 [cols="1,2"]
 |===
@@ -52,6 +57,6 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-3[GDR-TSA-3: Unavailable Time
 
 *Status:* PLANNED
 
-The consumer runs after the push; a failure never changes the outcome of the save. A failed request leaves the outbox
+The consumer runs after the save; a failure never changes the outcome of the save. A failed request leaves the outbox
 reference of `timestamp` before the commit, so the next run retries it. `pending()` lists the commits of `main`
 without a token.

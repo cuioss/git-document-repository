@@ -31,7 +31,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-3[GDR-GEN-3: Results Instead 
 |===
 |Outcome (category) |Raised by
 
-|success |every operation
+|success |every operation; reported by the store as saved
 |conflict |compare-and-swap, merge, save, concurrent change detection
 |rejected |push refused by the remote
 |lease refused |push with lease
@@ -43,6 +43,8 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-3[GDR-GEN-3: Results Instead 
 |invalid |schema validation, typed links (`git-forms`)
 |transition refused, level not met |workflow (`git-forms`, `git-signing`)
 |undecryptable |`git-crypto`
+|entry required |first login and interrupted first login (`git-directory`)
+|incomplete |erasure whose commit, push or key destruction is still outstanding (`git-crypto`)
 |===
 
 Exceptions remain for programming errors (violated preconditions) and unexpected I/O failures; they are never used for

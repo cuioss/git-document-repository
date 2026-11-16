@@ -64,7 +64,7 @@ others see the changes. The pattern is a property of the category's workflow, no
 
 == Release, Comparison and Targets
 
-* *Release* merges the assessment branch into `main` and tags `assessment/<id>`. Protected branches and tags of the Git
+* *Release* merges the assessment branch into `main` and tags `assessment/<id>/v1` (an assessment is released once). Protected branches and tags of the Git
   server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes approval.
   The signature level of the release is configured per category (level 2 by default, see
   link:authentication-and-identity.adoc#_signature_levels_per_category_and_state[Signature Levels]).

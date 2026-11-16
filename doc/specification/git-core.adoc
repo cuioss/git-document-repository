@@ -54,7 +54,7 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-2[GDR-CORE-2: Remote Policy]
 |===
 |Policy value |Accepted remote
 
-|local only |none; every fetch and push is refused
+|local only |remotes without a host: a local path or a `file:` URL; every network remote is refused
 |HTTPS origin |URLs with scheme `https` and the configured origin (host and port)
 |===
 

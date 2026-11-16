@@ -75,9 +75,11 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login]_
 
 `login(claims)`:
 
-* known `sub` → the pseudonym and the entry;
-* unknown `sub` → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from the token,
-  memberships from IdP groups where mapped).
+* known (issuer, `sub`) with a saved entry → the pseudonym and the entry;
+* known (issuer, `sub`) without a saved entry (an interrupted first login) → the pseudonym and the outcome
+  entry-required with a prefill, as below;
+* unknown (issuer, `sub`) → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from
+  the token, memberships from IdP groups where mapped).
 
 `saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1.
 

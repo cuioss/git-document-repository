@@ -114,7 +114,11 @@ The integration tests use the same topology with additional variants.
 
 == Operating Duties
 
-. Back up nothing new: in remote mode the Git server's backup is the backup. In local mode back up the volume.
+. In remote mode the Git server's backup covers every saved state. Drafts are never pushed and live only on the
+  volume: back the volume up as well, or accept that losing it loses unsaved drafts (the default stance of the
+  reference deployment, see the library decision on drafts). In local mode back up the volume.
+. Let backups expire with the retention period of the repository they contain: deleting an expired repository in the
+  application does not reach copies in backups.
 . Keep the KEK versioned in the KMS and let the rotation destroy old versions; never copy the KEK into a backup by
   hand.
 . Watch the readiness probe: the application is not ready until every configured repository is fetched, the keyring

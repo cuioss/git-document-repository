@@ -26,7 +26,9 @@ period. Confidential registers must not be readable by everyone who reads a poli
 * Every repository holds one confidentiality class and one retention class.
 * The default cut is `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`, `threat-models` and
   `directory`. The cut is configuration.
-* A retention period ends by deleting the whole repository. No history is rewritten.
+* A retention period ends by deleting the whole repository: the remote repository and the application's local copy
+  on the volume. No history is rewritten. Backup copies lie outside the application; the operator lets them expire
+  with the same period.
 * References across repositories use stable ids and are checked on save.
 
 The details are in link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout].

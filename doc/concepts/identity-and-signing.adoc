@@ -59,8 +59,10 @@ Actor-Client: agent-client-42         ← only when a delegated client (an AI ag
 
 A release commit additionally carries the approvals, so the evidence survives a change of Git server:
 `Approved-by: p-91c2d0 (role:ciso)` and `Review: <url of the pull request>`. Approvals given in a pull request live in
-the Git server's database; on merge the application writes them as trailers. These *portable approvals* make the
-repository itself the evidence.
+the Git server's database; on merge the application writes them as trailers. When protected `main` makes the Git
+server create the merge, that commit is the server's and the application cannot sign it; the application then writes
+the approvals as a note on the merge commit, in a notes commit it signs, as soon as a fetch shows the new tip. These
+*portable approvals* make the repository itself the evidence.
 
 What the signature shows:
 
@@ -128,13 +130,15 @@ image::../resources/diagrams/graded-traceability-levels.svg[Five levels of trace
 Users shy away from own Git accounts or GPG keys, but many already have *passkeys* (Windows Hello, Touch ID, security
 keys). The flow:
 
-. On approval the application passes the commit id to WebAuthn as the challenge.
+. On approval the application issues a fresh, single-use challenge: the hash over the commit id and a random nonce.
 . The device signs it after the user confirms (flag _user verification_).
-. The application checks the signature with the registered public key and stores it as a note on the commit under
+. The application checks the client data (ceremony type, origin, challenge), the signature with the registered public
+  key and the nonce's single use, and stores the assertion with the nonce as a note on the commit under
   `refs/notes/approvals`.
 
-The commit id covers content and history, so the approval binds to exactly this state, with a key the server does not
-hold. The approval cannot sign the commit itself, because the commit id presupposes the commit; hence a note.
+The challenge covers the commit id, and the commit id covers content and history, so the approval binds to exactly
+this state, with a key the server does not hold. The nonce keeps a captured assertion from being replayed; the commit
+id alone is predictable and the same for every attempt. The approval cannot sign the commit itself, because the commit id presupposes the commit; hence a note.
 
 Limits: it is no qualified signature; the list of registered public keys has to be kept trustworthy itself, versioned
 and signed; with synchronised passkeys (iCloud, Google) the key is bound to the account, not to one device. This kind
@@ -156,6 +160,9 @@ directory; who may approve is a matter of access, not of the catalog of roles.
 . *Verify independently of the Git server.*
 ** A file `allowed_signers` in the repository, after the principle of Git's SSH signatures, with validity periods,
    so commits stay verifiable after a change of key.
+** A *trust root outside the repository.* An administrator who can rewrite the repository can also put a key of
+   their own into `allowed_signers`. The verifier therefore takes the application's keys from its own configuration,
+   and accepts a new version of the file only when a key of the previous trusted version signed it.
 ** The application and a CI job check that every commit on `main` carries a valid signature.
 ** The Git server can additionally require signed commits; for it to show "Verified", the key has to be registered
    with the bot account.
@@ -203,7 +210,8 @@ the application a neutral notary.
 == Open Questions
 
 . Prototype the graded signature: commit signature through a KMS with JGit's signer interface, the trailer schema,
-  `allowed_signers` with validity periods, and the passkey approval (WebAuthn challenge = commit id) as a note.
+  `allowed_signers` with validity periods and the configured trust root, and the passkey approval (challenge = hash
+  over commit id and nonce) as a note.
 . Which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups the identity provider delivers decides which
   trailers can be filled; the consuming application clarifies this with Token Sheriff.
 

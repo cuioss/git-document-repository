@@ -30,7 +30,8 @@ image::../resources/diagrams/keyring-envelope-encryption.svg[Envelope encryption
 |===
 |File (repository of the directory) |Content
 
-|`keys/keyring.enc` |envelope over the map pseudonym → { DEK, `sub` }, encrypted with KEK version n
+|`keys/keyring.enc` |envelope over the map pseudonym → { DEK, issuer, `sub` } and the list of KEK versions pending
+destruction, encrypted with KEK version n
 |`persons/<pseudonym>.enc` |envelope over the person entry, encrypted with the person's DEK
 |===
 
@@ -78,8 +79,9 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-3[GDR-CRYPTO-3: Pseudonyms
 *Status:* PLANNED
 
 * Format: `p-` followed by 12 lowercase hex characters from a `SecureRandom`; collisions are re-drawn.
-* `pseudonymFor(sub)` creates a pseudonym and a DEK when none exists (keyring save by compare-and-swap).
-* `subOf(pseudonym)` and `pseudonymOf(sub)` read the in-memory keyring.
+* The key of a keyring entry is the pair (issuer, `sub`); `sub` values of different issuers never collide.
+* `pseudonymFor(issuer, sub)` creates a pseudonym and a DEK when none exists (keyring save by compare-and-swap).
+* `subjectOf(pseudonym)` returns (issuer, `sub`); `pseudonymOf(issuer, sub)` reads the in-memory keyring.
 
 == Erasure by Key Rotation
 
@@ -91,11 +93,26 @@ image::../resources/diagrams/erasure-by-kek-rotation.svg[Erasure by rotation of 
 
 . Collect the pending erasures (batch).
 . Remove their entries from the in-memory keyring.
-. `rotate()` the key source; encrypt the keyring with version n+1.
-. Commit `keys/keyring.enc` with the evidence message (next section).
-. `destroy(n)`.
+. `rotate()` the key source; encrypt the keyring with version n+1. Its list of versions pending destruction holds every
+  version older than n+1 for which `get(v)` still returns a key.
+. Commit `keys/keyring.enc` with the rotation message (next section); in remote mode push it.
+. Only after step 4 succeeded: `destroy(v)` for every version `v` pending destruction.
+. For every destroyed version: remove it from the pending list and commit the keyring with the destruction message
+  (next section); in remote mode push it.
 
-When step 5 fails, the outcome names the version still to destroy; the erasure counts as incomplete until it succeeds.
+Failure handling:
+
+* Step 4 fails: the erasure is incomplete, nothing is destroyed, and the published keyring stays at version n with the
+  erased entries. Version n+1 encrypts nothing in Git. The next run repeats the erasure with version n+2; by the rule
+  of step 3 its pending list holds n and n+1.
+* Step 5 fails: the outcome names the version still to destroy; the erasure counts as incomplete. The pending list in
+  the published keyring keeps the version, so the next erasure run or the next start retries the destruction.
+* Step 6 fails: the version is destroyed but not yet recorded; the next run finds it absent at the key source
+  (`get(v)` empty) and writes the destruction message then.
+
+Other instances: an instance reloads `keys/keyring.enc` whenever a fetch or a reference update changes it, and drops
+the DEKs of entries that are gone before it serves the next decryption. In remote mode an erasure therefore takes
+effect in every instance at the latest at its next fetch.
 
 == Evidence of Erasure
 
@@ -103,14 +120,24 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5: Evidence o
 
 *Status:* PLANNED
 
+Rotation commit (step 4):
+
 ----
 Rotate keyring to KEK v8
 
-Kek-Destroyed: 7
+Kek-Pending-Destruction: 7
 Erased: p-3f9a0c11b2d4, p-77e01a9c4f20
 ----
 
-No key material appears in the commit. The commit is anchored like every state of `main` by `git-timestamp`.
+Destruction commit (step 6), written only after `destroy(7)` succeeded:
+
+----
+Record destruction of KEK v7
+
+Kek-Destroyed: 7
+----
+
+No key material appears in either commit; no commit records a destruction that has not succeeded. The commit is anchored like every state of `main` by `git-timestamp`.
 
 == Personal Fields in Documents
 
@@ -129,4 +156,6 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-7[GDR-CRYPTO-7: Keyring at
 
 At start the module reads `keys/keyring.enc`, takes `key-version` from the envelope and decrypts with
 `get(key-version)`. A missing version or a failed decryption stops the start with an outcome naming the expected
-version. The decrypted keyring stays in memory; it is never written in clear text.
+version. The decrypted keyring stays in memory; it is never written in clear text. When the keyring carries versions
+pending destruction, the start retries their destruction (Erasure by Key Rotation, step 5). A changed
+`keys/keyring.enc` after a fetch or a reference update is reloaded as described there.

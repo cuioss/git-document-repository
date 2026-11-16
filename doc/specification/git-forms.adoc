@@ -73,7 +73,8 @@ _See Requirement link:../Requirements.adoc#GDR-FORMS-4[GDR-FORMS-4: Generated Ou
 
 * `report.adoc` = template(data, fragments). Generation is a pure function of its inputs.
 * The save writes data, fragments and `report.adoc` in one commit.
-* `check(commit)` regenerates the output and returns match or mismatch; a CI job calls it on every pull request.
+* `check(commit)` regenerates the output and returns match or mismatch. When `git-forms` is created, a CI job of the
+  consuming repository is planned to call it on every pull request; no such job exists yet.
 
 == Workflow
 

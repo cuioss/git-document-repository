@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: For traceability level 3 the browser signs the commit id with the user's passkey (WebAuthn challenge); the application verifies the assertion and stores it as a note under refs/notes/approvals.
+// summary: For traceability level 3 the browser signs a fresh challenge bound to the commit id with the user's passkey (WebAuthn); the application verifies the assertion and stores it as a note under refs/notes/approvals.
 // tags: signing, passkey, webauthn, notes, approval
 // affects: git-signing, git-core
 // supersedes:
@@ -22,9 +22,11 @@ Some approvals need a statement stronger than "the application confirms the auth
 approve with a key only the user holds, without a Git account or a GPG key. The question is how such an approval is
 bound to a state of the repository.
 
-*The decision:* the application passes the commit id to WebAuthn as the challenge. The user's device signs it after
-user verification. The application verifies the assertion with the registered public key and stores it as a note on
-the commit under `refs/notes/approvals`. The push refspec carries `refs/notes/*`.
+*The decision:* the application passes a fresh, single-use challenge to WebAuthn: the SHA-256 over the commit id and a
+random nonce issued for this one approval. The commit id alone would be predictable and the same for every attempt, so
+a stored assertion could be replayed. The user's device signs the challenge after user verification. The application verifies the assertion with the registered public key and stores it as a note on
+the commit under `refs/notes/approvals`, together with the nonce, so any verifier can recompute the challenge from
+the commit id. The push refspec carries `refs/notes/*`.
 
 See xref:../concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Identity and Signing, Level 3].
 
@@ -48,7 +50,9 @@ no longer the tip, and a second approval would need a third commit.
 
 === Properties of the design
 
-* The approval binds to exactly one state: the commit id covers content and history.
+* The approval binds to exactly one state: the challenge covers the commit id, and the commit id covers content and
+  history.
+* A captured assertion cannot be replayed: each nonce is accepted once.
 * The server never holds the user's key.
 
 === Accepted costs

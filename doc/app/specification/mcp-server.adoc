@@ -81,7 +81,13 @@ Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry o
 |Check |Rule |Failure
 
 |Location
-|`Authorization: Bearer <token>`; `access_token` in the query string is refused
+|`Authorization: Bearer <token>`, or `Authorization: DPoP <token>` with a `DPoP` proof header for a DPoP-bound token
+(when DPoP is `accepted` or `required` for the issuer; with `required` the `Bearer` scheme is refused);
+`access_token` in the query string is refused
+|`401`
+
+|Client
+|`client_id` or `azp` present; a token with neither is refused, because its commits could not be attributed
 |`401`
 
 |Signature
@@ -101,7 +107,9 @@ Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry o
 |`401`
 
 |DPoP
-|Per issuer `off`, `accepted` (validated when `cnf.jkt` present), `required`
+|Per issuer `off`, `accepted` (validated when `cnf.jkt` present), `required`. A bound token (`cnf.jkt`) must arrive in
+the `DPoP` scheme with a proof whose key thumbprint equals `cnf.jkt`, whose `htm` and `htu` match the request and whose
+`ath` is the hash of the token (RFC 9449)
 |`401`
 |===
 

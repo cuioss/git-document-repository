@@ -62,17 +62,22 @@ repository, reading, notes, identity
 
 image::resources/diagrams/module-dependency-graph.svg[Module dependency graph of git-document-repository, align=center]
 
-[cols="1,2,2"]
-|===
-|Module |Depends on (reactor) |Third-party dependencies (each needs the owner's approval)
+The reactor dependencies are the edges of the graph above; its single source is
+xref:concepts/module-structure.adoc[Module Structure], and this page does not repeat them. The build check that
+enforces them is planned (xref:specification/testing.adoc[Testing]). The table lists only what the graph does not
+show, the third-party dependencies:
 
-|`git-core` |– |JGit
-|`git-worktrees` |`git-core` |–
-|`git-testing` |– |`cui-test-generator`, JUnit 5
-|`git-store` |`git-core` |–
-|`git-forms` |`git-store` |a YAML library, a JSON Schema validator, a template engine
-|`git-crypto` |`git-store` |an envelope-encryption library (candidate: Google Tink _(unverified)_)
-|`git-signing` |`git-store` |a WebAuthn verification library (open)
-|`git-timestamp` |`git-store` |an RFC 3161 client (open)
-|`git-directory` |`git-forms`, `git-crypto` |–
+[cols="1,3"]
+|===
+|Module |Third-party dependencies (each needs the owner's approval)
+
+|`git-core` |JGit
+|`git-worktrees` |–
+|`git-testing` |`cui-test-generator`, JUnit 5
+|`git-store` |–
+|`git-forms` |a YAML library, a JSON Schema validator, a template engine
+|`git-crypto` |an envelope-encryption library (candidate: Google Tink _(unverified)_)
+|`git-signing` |a WebAuthn verification library (open)
+|`git-timestamp` |an RFC 3161 client (open)
+|`git-directory` |–
 |===

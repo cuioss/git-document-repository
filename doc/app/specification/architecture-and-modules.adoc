@@ -80,23 +80,26 @@ Status: PLANNED
 |`config`
 
 |`service`
-|Application services: documents, workflow transitions, deadlines, dashboards, directory flows
+|Application services: documents, workflow transitions, deadlines, dashboards, directory flows; it declares the port
+interfaces it needs from outside systems (for example the deletion of a remote repository)
 |`config`, the `git-document-repository` modules
 
 |`integration`
-|Outbound adapters through `cui-http`: Git host API, ticket systems, issue tracker, verinice.veo, TSA, KMS
-|`config`
+|Outbound adapters through `cui-http`: Git host API, ticket systems, issue tracker, verinice.veo, TSA, KMS; each
+implements a port interface of `service`, and CDI injects the implementation
+|`config`, `service` (port interfaces only)
 
 |`config`
 |Configuration model, boot validation rules
 |—
 |===
 
-ArchUnit rules, executed in the unit lane:
+ArchUnit rules, planned for the unit lane:
 
 * No class outside `service` and `integration` depends on a `git-document-repository` package.
 * No class depends on `org.eclipse.jgit`.
 * `web` and `mcp` do not depend on each other.
+* `service` does not depend on `integration`; it reaches outside systems only through its own port interfaces.
 
 Every MCP tool delegates to exactly one service method that a web resource also calls.
 

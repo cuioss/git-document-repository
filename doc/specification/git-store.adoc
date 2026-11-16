@@ -54,10 +54,10 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 
 |`refs/heads/main` |released state |yes
 |`refs/heads/<collection>/<id>` |working branch of one document |yes
-|`refs/tags/<collection>/<id>` |release of one document |yes
+|`refs/tags/<collection>/<id>/v<n>` |release `n` of one document, never moved |yes
 |`refs/drafts/<user>/<document>` |intermediate saves of one user |*never*
 |`refs/notes/*` |timestamps, approvals |yes
-|`refs/meta/outbox/<consumer>` |last processed commit per outbox consumer |no
+|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch |no
 |===
 
 `<user>` is the pseudonym. Push refspec: `refs/heads/*:refs/heads/*`, `refs/tags/*:refs/tags/*`,
@@ -71,11 +71,14 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-3[GDR-STORE-3: Explicit Sav
 
 image::../resources/diagrams/save-sequence.svg[Sequence of an explicit save, align=center]
 
-. Merge the draft into the working branch in core (`git-core` merge); squash when configured.
+. Merge the draft into the working branch in core (`git-core` merge). The save commit has the working-branch tip as its
+  only parent; no draft commit becomes a parent, so no draft commit is reachable from a pushed reference.
 . Move the working branch by compare-and-swap.
-. Remote mode: fetch the working branch; on a moved remote, merge onto the remote state and repeat; push with lease.
+. Remote mode: fetch the working branch; for every edit with `expectedBlobId`, report conflict when the fetched blob
+  differs; on a moved remote, merge onto the remote state and repeat; push with lease.
 . On push rejection repeat from 3, up to `save.max-attempts`.
-. Delete the draft reference.
+. Delete the draft reference by compare-and-delete: only if it still points to the draft commit merged in step 1. A
+  newer draft commit stays for the next save.
 
 [cols="1,2"]
 |===
@@ -87,7 +90,7 @@ image::../resources/diagrams/save-sequence.svg[Sequence of an explicit save, ali
 |credentials expired |the push credentials were refused
 |===
 
-Configuration: `save.max-attempts` (required), `save.squash` (boolean, default `false`).
+Configuration: `save.max-attempts` (required).
 
 == Conflict Handling
 
@@ -105,7 +108,8 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-5[GDR-STORE-5: Concurrent C
 *Status:* PLANNED
 
 A save edit may carry `expectedBlobId`. When the path's current blob id on the working branch differs, the edit fails
-with conflict for that path. Without `expectedBlobId` the edit overwrites (mode B, private until submitted).
+with conflict for that path. In remote mode the comparison is repeated against the fetched remote state (Save, step 3)
+before the save merges onto it. Without `expectedBlobId` the edit overwrites (mode B, private until submitted).
 
 == Release
 
@@ -113,10 +117,14 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
 
 *Status:* PLANNED
 
-* Direct release: merge the working branch into `main`, create `refs/tags/<collection>/<id>`, push both with lease.
+* Direct release: merge the working branch into `main`, create `refs/tags/<collection>/<id>/v<n>` with `n` one more
+  than the highest existing release of the document, push both with lease. An existing release tag is never moved or
+  deleted.
 * Protected `main`: the push of `main` returns rejected; the store then supports a push of the working branch alone,
-  and the release completes as a pull or merge request on the Git server.
-* Release commits receive the approval trailers of `git-signing` when that module is present.
+  and the release completes as a pull or merge request on the Git server. The fetch that shows the new tip of `main`
+  hands it to the outbox (Post-Commit Outbox); the tag is created then.
+* Release commits the store creates receive the approval trailers of `git-signing` when that module is present; a
+  merge commit the Git server created receives them as a note (see `git-signing`, Portable Approvals).
 
 == Draft Expiry
 
@@ -152,8 +160,9 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-9[GDR-STORE-9: In-Memory In
 
 * The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
   every open working branch.
-* Build points: start, after every fetch, on `refresh()` (for a webhook), on a configured interval
-  (`index.refresh-interval`, optional).
+* Build points: start, after every fetch, after every save or release the store performs (local and remote mode), on
+  `refresh()` (for a webhook), on a configured interval (`index.refresh-interval`, optional). After a save only the
+  changed documents are re-read.
 * `snapshotIndex(tag | commit)` builds a separate index for a reporting date and leaves the current one unchanged.
 
 == Post-Commit Outbox
@@ -164,11 +173,16 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-10[GDR-STORE-10: Post-Commi
 
 image::../resources/diagrams/store-classes-and-outbox.svg[Git as the source of truth with derived, complementary and assuring stores fed by the outbox, align=center]
 
-* Consumers register by name (for example `timestamp`, `mirror`, `index`).
-* After a successful push the store walks the commits between `refs/meta/outbox/<consumer>` and the new tip, oldest
-  first, and calls the consumer per commit.
-* After each successful call the consumer's reference moves to that commit. A failing call stops the walk for that
-  consumer; the next push or a periodic retry resumes it.
+* Consumers register by name with the branches they subscribe to (for example `timestamp` on `main`, `mirror` on
+  every branch).
+* Triggers: a reference update the store performs in local mode, a successful push in remote mode, and a fetch that
+  moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
+  fetch).
+* On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
+  the branch's new tip, oldest first, and calls the consumer per commit.
+* After each successful call that branch's reference moves to that commit. A failing call stops the walk for that
+  consumer and branch only; the next trigger or a periodic retry resumes it. Progress on one branch never moves the
+  reference of another.
 * Consumers must be idempotent per commit hash.
 
 == Codecs

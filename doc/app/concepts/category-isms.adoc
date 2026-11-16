@@ -142,7 +142,9 @@ Do not compete with verinice as a complete ISMS; complement it
 
 . Verify the verinice statements (versioning, approval, licence of veo, catalogue coverage) with a demo instance.
 . Which registers ship in the first ISMS iteration (risks and controls first; suppliers and nonconformities later).
-. The shape of the veo bridge: which veo object type receives a released SAMM assessment.
+. The shape of the veo bridge: which veo object type receives a released SAMM assessment, and whether veo offers a
+  searchable external reference for an idempotent delivery. Until that is verified, the bridge stays disabled by
+  default; the released assessment itself is never changed by it.
 
 == Related
 

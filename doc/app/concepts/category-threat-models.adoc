@@ -87,12 +87,13 @@ Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 
 === Detecting an Outdated Model
 
-The detection compares two points in the application repository's history: the last commit that touched the threat
-model, and the current head. A model is due for review when, between the two, a configured set of paths changed:
-interface definitions (OpenAPI, protobuf), dependency manifests, infrastructure files (Dockerfile, Helm, Terraform),
-or when the service's entry in the service catalog changed its protection needs. The due date then follows the
-review interval derived from those protection needs. In variant B the comparison runs against the repositories the
-service catalog names.
+The detection compares two points in the history of each repository of the service: the head that was current at
+the last review, which the model records per repository, and the current head. A model is due for review when,
+between the two, a configured set of paths changed: interface definitions (OpenAPI, protobuf), dependency manifests,
+infrastructure files (Dockerfile, Helm, Terraform), or when the service's entry in the service catalog changed its
+protection needs. The due date then follows the review interval derived from those protection needs. Recording the
+reviewed head per repository matters in variant B: there the model's own commits live in the `threat-models`
+repository, not in the service's history, and could serve as no base for a diff there.
 
 == What to Observe
 

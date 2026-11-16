@@ -86,7 +86,9 @@ Readiness checks, all required for `UP`:
 |Check |`UP` when
 
 |`repositories`
-|Every configured repository has been opened and, in remote mode, fetched once
+|Every configured repository has been opened and, in remote mode, fetched once in this process or found as a valid
+local repository from an earlier fetch (start from the cache, see the degraded operation of the architecture
+specification); a remote repository without any local copy keeps readiness `DOWN`
 
 |`keyring`
 |The keyring was decrypted with the current KEK

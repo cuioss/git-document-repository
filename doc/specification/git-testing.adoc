@@ -32,8 +32,8 @@ _See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fix
 |===
 
 * All fixtures are JUnit 5 extensions or parameter resolvers; none needs network access.
-* Open: how the remote policy of `git-core` admits the local remote of the fixture (a test-only policy value or a
-  local-remote variant of the policy).
+* The local remote is addressed by a `file:` URL. The policy value local only of `git-core` admits it, because it
+  admits every remote without a host; tests of the HTTPS origin value use their own refused-remote cases.
 
 == Credential Generator
 

@@ -42,7 +42,8 @@ Status: PLANNED
 
 * `model.json`: the threat model in the chosen open format (OTM or Threat Dragon JSON; decision open). The category
   schema validates the parts the application reads; unknown fields are preserved on write.
-* `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`, `review-interval`.
+* `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`, `review-interval`, and `reviewed-heads`: per
+  repository of the service its URL and the commit id that was current at the last review.
 * Diagrams are generated from `model.json` when needed; no image is committed.
 
 == Detection
@@ -50,8 +51,11 @@ _See Requirement link:../Requirements.adoc#CIFR-TM-3[CIFR-TM-3: Outdated-Model D
 
 Status: PLANNED
 
-`OutdatedModelDetector` inputs: the commit of the last change of the model, the heads of the service's repositories,
-the configured path set, the service's protection needs history.
+`OutdatedModelDetector` inputs: `reviewed-heads` of `meta.yaml`, the current heads of the service's repositories, the
+configured path set, the service's protection needs history. Per repository the detector diffs from its reviewed head
+to its current head; this works the same in variant A and B, because the base always lies in the history of the
+repository it is diffed in. A repository without a reviewed head (newly added to the service) makes the model `DUE`.
+A completed review writes the current heads as the new `reviewed-heads`.
 
 Default path set (`threat-models.detection.paths`): `**/openapi*.{yaml,yml,json}`, `**/*.proto`, `**/pom.xml`,
 `**/package.json`, `**/Dockerfile`, `**/*.tf`, `**/Chart.yaml`, `**/values*.yaml`.

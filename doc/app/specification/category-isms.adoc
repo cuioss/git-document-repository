@@ -69,7 +69,7 @@ _See Requirement link:../Requirements.adoc#CIFR-ISMS-4[CIFR-ISMS-4: Evidence fro
 Status: PLANNED
 
 A control's `evidence` list accepts `samm:assessment/<id>` references; the reference must name a released assessment
-(tag `assessment/<id>` exists).
+(release tag `assessment/<id>/v1` exists).
 
 == verinice Bridge
 _See Requirement link:../Requirements.adoc#CIFR-ISMS-6[CIFR-ISMS-6: verinice.veo Bridge]_
@@ -77,5 +77,14 @@ _See Requirement link:../Requirements.adoc#CIFR-ISMS-6[CIFR-ISMS-6: verinice.veo
 Status: PLANNED
 
 Enabled by `integrations.verinice`. On `samm.release` the outbox delivers the released assessment (scope, date, model
-version, scores per practice, link to the tag) to the veo REST API through `cui-http`; the returned object id is written
-to `assessment.yaml` `verinice-id` in a follow-up commit. The target veo object type is an open question.
+version, scores per practice, link to the release tag) to the veo REST API through `cui-http`. The target veo object
+type is an open question.
+
+* Write path: the released assessment stays immutable. The returned object id goes into the bridge record
+  `bridge/verinice.yaml` of the `samm-assessments` repository (one entry per release tag: tag, veo object id,
+  delivered-at), saved by the application as an ordinary level-1 save.
+* Idempotency: before a create the bridge looks up the bridge record for the release tag; with an entry it updates
+  that veo object. Without an entry it searches veo for an object carrying the release tag as external reference and
+  adopts it when found; only then does it create one, with the release tag as external reference. Whether veo offers
+  a searchable field for an external reference is open _(unverified)_; until it is verified, the bridge stays disabled
+  by default.

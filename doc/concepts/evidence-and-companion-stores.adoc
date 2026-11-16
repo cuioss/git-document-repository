@@ -75,14 +75,22 @@ from an *independent proof*, the external anchor of the hash chain. Four options
 . *Public transparency logs* (Sigstore/Rekor): elegant, but public. Not recommended for internal data.
 
 Timestamps also protect the signatures of the application: a timestamp proves that a signed commit existed before a
-point in time, so a later compromise of the signing key devalues only the commits after the compromise (see
-xref:identity-and-signing.adoc#_what_has_to_be_done_right[Identity and Signing]).
+point in time, so a later compromise of the signing key devalues only the commits without a token from before the
+compromise (see xref:identity-and-signing.adoc#_what_has_to_be_done_right[Identity and Signing]).
+
+Notes in the repository have one blind spot. An administrator who rewrites `main` can delete the matching timestamp
+notes in the same push, and a verifier who knows only the rewritten repository sees nothing missing. Detecting a
+removed head therefore needs a *checkpoint outside the administrator's control*: the mirror under another
+responsibility, or a copy of each token in a store of another responsibility (WORM storage, an archive of the
+security team). Until the reference deployment decides, timestamps are paired with the mirror wherever removal must be
+detectable.
 
 == Consistency between Git and the Other Systems
 
 Git comes first; everything else follows and is derived from Git.
 
-* *An outbox whose outbox is Git.* After every successful push the store walks the new commits and writes journal,
+* *An outbox whose outbox is Git.* After every save (and in remote mode every push), and after every fetch that moves a
+  branch, for example a merge the Git server performed, the store walks the new commits and writes journal,
   timestamps and index from them.
 * *Idempotent by commit hash.* After a failure the store resumes from the last processed hash. The progress is
   remembered in a reference (`refs/notes` or `refs/meta`), again in Git, so it needs no store of its own.
@@ -99,14 +107,16 @@ The truth then sorts as follows:
 [CAUTION]
 ====
 The external anchor proves that a state existed; it cannot restore a state that was removed. Restoring after a
-rewritten history still needs the Git server's backup or the mirror. The anchor turns a silent rewrite into a
-detectable one, nothing more.
+rewritten history still needs the Git server's backup or the mirror. Together with a checkpoint outside the Git
+administrator's control the anchor turns a silent rewrite into a detectable one, nothing more; notes alone do not.
 ====
 
 == Open Questions
 
 . Choose a timestamp authority: qualified under eIDAS or internal.
 . Decide whether a mirror is part of the reference deployment or left to the operator.
+. Decide the independent checkpoint of the timestamped heads: the mirror, a token archive of another responsibility,
+  or both. Interim rule: where the removal of a released state must be detectable, the mirror is mandatory.
 
 == Related
 

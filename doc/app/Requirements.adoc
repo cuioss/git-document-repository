@@ -122,7 +122,8 @@ referenced, never restated:
 [#CIFR-SAMM-4]
 === CIFR-SAMM-4: Release
 
-* Release must produce the tag `assessment/<id>` on the released state and require signature level 2 by default.
+* Release must produce the tag `assessment/<id>/v1` on the released state and require signature level 2 by default;
+  an assessment is released once.
 * After release, any save to the released assessment must be rejected; a new assessment is created instead.
 * Specification: link:specification/category-samm.adoc#_release[SAMM, Release].
 
@@ -170,8 +171,9 @@ referenced, never restated:
 [#CIFR-TM-3]
 === CIFR-TM-3: Outdated-Model Detection
 
-* A threat model must be marked due for review when, since its last commit, a path matching the configured path set
-  changed in the service's repositories, or the protection needs of the service changed.
+* A threat model must be marked due for review when, since the reviewed head recorded for each of the service's
+  repositories, a path matching the configured path set changed there, or the protection needs of the service changed.
+* A review must record the current head of each of the service's repositories as the new reviewed head.
 * The review due date must follow the review interval configured for the service's highest protection need.
 * Specification: link:specification/category-threat-models.adoc#_detection[Threat Models, Detection].
 
@@ -206,8 +208,11 @@ referenced, never restated:
 * The report must record the time the organisation became aware of the incident.
 * When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
   plus 72 hours.
-* When the report is marked NIS2-applicable, the application must compute an early-warning due time (+24 hours), a
-  notification due time (+72 hours) and a final-report due time (+1 month).
+* When the report is marked NIS2-applicable, the application must compute an early-warning due time (awareness +24
+  hours) and a notification due time (awareness +72 hours).
+* The final report must be due one month after the incident notification was sent; when the incident is still being
+  handled at that point, a progress report must be due then instead, and the final report one month after the
+  incident was resolved. The report must record the time the notification was sent and the time of resolution.
 * Due times must be shown in the form and in the *Due* lens; a missed due time must stay visible in the released
   report.
 * Specification: link:specification/category-incident-reports.adoc#_deadlines[Incident Reports, Deadlines].
@@ -267,7 +272,7 @@ referenced, never restated:
 [#CIFR-ISMS-4]
 === CIFR-ISMS-4: Evidence from SAMM
 
-* A control must be able to reference a released SAMM assessment by its tag as evidence.
+* A control must be able to reference a released SAMM assessment by its release tag as evidence.
 * Specification: link:specification/category-isms.adoc#_evidence[ISMS, Evidence].
 
 [#CIFR-ISMS-5]
@@ -280,7 +285,9 @@ referenced, never restated:
 === CIFR-ISMS-6: verinice.veo Bridge
 
 * When configured, the application must deliver a released SAMM assessment to verinice.veo through its REST API and
-  record the target object id in the assessment.
+  record the target object id in a bridge record outside the released assessment, which stays immutable.
+* Delivery must be idempotent per released assessment: a repeated delivery must update or find the existing veo
+  object, never create a second one.
 * Concept: link:adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
 * Specification: link:specification/category-isms.adoc#_verinice_bridge[ISMS, verinice Bridge].
 
@@ -289,7 +296,8 @@ referenced, never restated:
 [#CIFR-DIR-1]
 === CIFR-DIR-1: First Login
 
-* A user whose `sub` has no pseudonym must be shown the first-login form before any other view.
+* A user without a saved directory entry (no pseudonym yet, or a pseudonym from an interrupted first login) must be
+  shown the first-login form before any other view; the restriction must hold until the entry is saved.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
 * The form must show the configured information text (GDPR Art. 13) before the save button.
@@ -327,6 +335,9 @@ referenced, never restated:
 * No access, refresh or ID token may be sent to the browser.
 * The session cookie must be `HttpOnly`, `Secure` and `SameSite=Strict`; the session must end after a configurable
   idle time (default 30 minutes) and absolute lifetime (default 8 hours).
+* The login transaction (`state`, `nonce`, PKCE verifier) must be kept server-side and referenced by a separate
+  short-lived `HttpOnly`, `Secure`, `SameSite=Lax` cookie, because the browser does not send a `SameSite=Strict` cookie
+  on the cross-site redirect back from the identity provider; the cookie must be deleted when the callback completes.
 * Logout must be RP-initiated and revoke the held tokens.
 * Concept: link:concepts/authentication-and-identity.adoc[Authentication and Identity];
   link:adr/0004-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0004].
@@ -370,9 +381,9 @@ referenced, never restated:
 === CIFR-AUTH-6: Passkey Approval
 
 * A user must be able to register one or more WebAuthn credentials.
-* A level-3 approval must require a WebAuthn assertion with user verification whose challenge is the commit id being
-  approved; the application must verify the assertion against a registered credential before handing it to the
-  library.
+* A level-3 approval must require a WebAuthn assertion with user verification over a fresh, single-use challenge
+  bound to the commit id being approved (link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5]); the application must
+  verify the assertion against a registered credential before handing it to the library.
 * Specification: link:specification/authentication.adoc#_passkey_approval[Authentication, Passkey Approval].
 
 [#CIFR-AUTH-7]
@@ -411,6 +422,8 @@ referenced, never restated:
 * The server must validate signature, expiry, issuer and audience; the audience must equal the server's configured
   canonical URI.
 * An invalid, expired or foreign-audience token must be answered with `401`.
+* A token that carries neither `client_id` nor `azp` must be answered with `401`, because its commits could not be
+  attributed (CIFR-MCP-7).
 * Specification: link:specification/mcp-server.adoc#_token_validation[MCP Server, Token Validation].
 
 [#CIFR-MCP-4]
@@ -463,6 +476,8 @@ referenced, never restated:
 === CIFR-MCP-10: Optional Sender Constraint
 
 * DPoP proof validation (RFC 9449) must be configurable per issuer as off, accepted or required.
+* A DPoP-bound token must be accepted in the `Authorization: DPoP <token>` scheme together with a valid `DPoP` proof
+  header; with `required`, a token in the `Bearer` scheme must be refused with `401`.
 * Specification: link:specification/mcp-server.adoc#_token_validation[MCP Server, Token Validation].
 
 == Functional Requirements: Web App
@@ -563,6 +578,8 @@ referenced, never restated:
 
 * The application must list repositories whose retention period has ended and offer their deletion to a user with the
   right *administer catalogs*; it must not rewrite history.
+* The deletion must remove the remote repository and the application's local repository on the volume; backup copies
+  are outside the application and must be named in the operator's duties with an expiry that matches the period.
 * Specification: link:specification/data-protection.adoc#_retention[Data Protection, Retention].
 
 [#CIFR-DP-5]
@@ -629,8 +646,9 @@ referenced, never restated:
 === CIFR-OPS-5: Repository Modes and Refresh
 
 * Each repository must be configurable as local or remote.
-* The application must accept the Git server's push webhook, verify its HMAC signature, and refresh the index of the
-  named repository; a periodic fetch must run as fallback, default every 5 minutes.
+* The application must accept the Git server's push webhook, authenticate it by the mechanism of the Git server (an
+  HMAC signature for GitHub and Gitea, a constant-time comparison of the secret token for GitLab), and refresh the
+  index of the named repository; a periodic fetch must run as fallback, default every 5 minutes.
 * Specification: link:specification/configuration.adoc#_repositories[Configuration, Repositories].
 
 [#CIFR-OPS-6]

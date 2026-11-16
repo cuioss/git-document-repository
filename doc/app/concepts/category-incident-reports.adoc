@@ -27,8 +27,10 @@ link:../adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_live
 
 . *Mandatory fields and deadlines are enforced.* Security incidents carry hard notification deadlines: GDPR Art. 33
   (notification within 72 hours; documentation of every personal data breach, para. 5) and, where it applies, NIS2
-  (early warning within 24 hours, notification within 72 hours, final report within one month) _(unverified; whether
-  NIS2 applies depends on sector and size)_. A form with a schema shows the deadlines and checks the mandatory fields;
+  (early warning within 24 hours and notification within 72 hours of awareness; a final report one month after the
+  notification, or, for an incident still being handled then, a progress report at that point and the final report
+  one month after it is handled; Art. 23(4)) _(unverified against the national transposition; whether NIS2 applies
+  depends on sector and size)_. A form with a schema shows the deadlines and checks the mandatory fields;
   a Confluence page cannot.
 . *Review and approval* by pull request, with a passkey approval where configured, immutable after approval,
   timestamped: evidence for ISO 27001 A.5.24–5.28 (among them 5.27, learning from incidents, and 5.28, collection of

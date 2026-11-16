@@ -73,8 +73,10 @@ Status: PLANNED
 
 Daily job: for each repository with a period retention class, compute `end = created + period` (for
 `isms-incidents-<year>`: 31 December of `<year>` + period). Expired repositories are listed in the *Due* lens of users
-with `administer-catalogs`. Deletion is a confirmed action that removes the local repository and, through the Git host
-API, the remote repository; it is logged and timestamped in `directory`. Before the end, entries can be marked
+with `administer-catalogs`. Deletion is a confirmed action that removes the local repository on the volume (the cache of a remote repository
+included) and, through the Git host API, the remote repository; it is logged and timestamped in `directory`. Backup
+copies of the Git server and of the volume are outside the application: the operator's duties (deployment concept)
+require their expiry to match the retention period. Before the end, entries can be marked
 `restricted: true` (Art. 18); restricted documents are readable only with `approve`.
 
 == Personal Fields

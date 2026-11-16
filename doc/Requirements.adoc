@@ -55,8 +55,8 @@ xref:specification/error-model.adoc[Error Model]_
 [#GDR-GEN-3]
 === GDR-GEN-3: Results Instead of Exceptions
 
-* Every operation whose expected outcomes include a non-success (saved, conflict, rejected by the remote, credentials
-  expired, not found, refused by policy) must return a result carrying one value of a closed list of outcomes.
+* Every operation whose expected outcomes include a non-success (conflict, rejected by the remote, credentials expired,
+  not found, refused by policy, entry required) must return a result carrying one value of a closed list of outcomes.
 * An expected non-success must not be signalled by an exception.
 * A result must carry a detail text for every non-success outcome; the detail must not contain credentials, keys or
   personal identifiers in clear text.
@@ -92,7 +92,9 @@ xref:specification/git-core.adoc[git-core]_
 [#GDR-CORE-2]
 === GDR-CORE-2: Remote Policy
 
-* A remote must be either an HTTPS origin or absent (local only).
+* The policy must have one of two values: an HTTPS origin, which admits only `https` URLs of that host and port, or
+  local only, which admits only remotes without a host (a local path or a `file:` URL) and refuses every network
+  remote.
 * The policy must be checked before every fetch and every push; a remote that violates it must be refused without any
   network contact.
 
@@ -268,11 +270,13 @@ xref:specification/git-store.adoc[git-store]_
 [#GDR-STORE-3]
 === GDR-STORE-3: Explicit Save
 
-* An explicit save must merge the draft in core into the document's working branch (optionally squashed) and move the
-  branch by compare-and-swap.
+* An explicit save must merge the draft in core into the document's working branch as one commit whose only parent is
+  the working-branch tip, and move the branch by compare-and-swap; no draft commit may become reachable from a pushed
+  reference.
 * In remote mode the save must fetch, merge onto the remote state, push, and retry on rejection up to a configured
   number of attempts.
-* After a successful save the draft reference must be deleted.
+* After a successful save the draft reference must be deleted only if it still points to the draft commit that was
+  merged; a newer draft commit must be kept for the next save.
 * The result must report one of: saved, conflict, rejected, credentials expired.
 
 _Concept: xref:concepts/storage-engine.adoc#_two_levels_of_saving[Two Levels of Saving] · Specification:
@@ -292,6 +296,7 @@ xref:specification/git-store.adoc[git-store]_
 
 * A save of a file must accept the blob id the caller loaded as expected value.
 * When the file's current blob id differs, the save of that file must report a conflict instead of overwriting it.
+* In remote mode the check must also run against the fetched remote state before the save merges onto it.
 
 _Concept: xref:concepts/storage-engine.adoc#_when_others_see_a_change[When Others See a Change] · Specification:
 xref:specification/git-store.adoc[git-store]_
@@ -299,8 +304,9 @@ xref:specification/git-store.adoc[git-store]_
 [#GDR-STORE-6]
 === GDR-STORE-6: Release
 
-* A release must merge the working branch into `main` and create the tag `<collection>/<id>` in one compare-and-swap
-  sequence.
+* A release must merge the working branch into `main` and create the tag `<collection>/<id>/v<n>` in one
+  compare-and-swap sequence; `n` counts the releases of that document from 1.
+* An existing release tag must never be moved or deleted.
 * When the remote refuses a direct push to `main`, the store must report that outcome and must support pushing the
   working branch alone, so the merge runs as a pull or merge request of the Git server.
 
@@ -329,7 +335,8 @@ xref:specification/git-store.adoc[git-store]_
 [#GDR-STORE-9]
 === GDR-STORE-9: In-Memory Index
 
-* The store must build an index from `main` and the open working branches at start and after every fetch.
+* The store must build an index from `main` and the open working branches at start, after every fetch, and after every
+  save or release the store itself performs, in local and in remote mode.
 * The content of the index must be supplied by the consumer through an index interface.
 * A refresh must be triggerable by a periodic fetch and by an external call (for a webhook).
 * The store must build an index from a tag or a commit for a reporting date, without changing the current index.
@@ -340,9 +347,13 @@ xref:specification/git-store.adoc[git-store]_
 [#GDR-STORE-10]
 === GDR-STORE-10: Post-Commit Outbox
 
-* After every successful push the store must hand every new commit to the registered consumers, oldest first.
-* Processing must be idempotent by commit hash; the last processed hash per consumer must be kept in a reference.
-* After a failure or a restart processing must resume after the last processed hash.
+* Every new tip of a branch a consumer subscribes to must reach that consumer: after a reference update the store
+  performs (local mode), after a successful push (remote mode), and after a fetch that moves the branch (for example a
+  merge the Git server performed).
+* The store must hand every new commit of the branch to the consumer, oldest first.
+* Processing must be idempotent by commit hash; the last processed commit must be kept per consumer and per branch in a
+  reference.
+* After a failure or a restart processing must resume after the last processed commit of that branch.
 
 _Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_git_and_the_other_systems[Consistency]
 · Specification: xref:specification/git-store.adoc[git-store]_
@@ -455,7 +466,7 @@ Specification: xref:specification/git-forms.adoc[git-forms]_
 === GDR-CRYPTO-1: Envelope Encryption
 
 * Every pseudonym must have its own data key (DEK).
-* The keyring (DEK and `sub` per pseudonym) must be encrypted with a versioned key-encryption key (KEK).
+* The keyring (DEK, issuer and `sub` per pseudonym) must be encrypted with a versioned key-encryption key (KEK).
 * The KEK must come from an exchangeable key source and must never be written to a repository or a log.
 
 _Concept: xref:concepts/data-protection.adoc#_an_encrypted_keyring_in_git[Encrypted Keyring] · Specification:
@@ -475,8 +486,10 @@ xref:specification/git-crypto.adoc[git-crypto]_
 [#GDR-CRYPTO-3]
 === GDR-CRYPTO-3: Pseudonyms
 
-* For a `sub` without an entry the library must create a random pseudonym not derived from the `sub`.
-* The library must resolve a pseudonym to its `sub` and a `sub` to its pseudonym.
+* The identity of a person in the keyring must be the pair of issuer and `sub`; a `sub` alone must never select an
+  entry.
+* For an issuer and `sub` without an entry the library must create a random pseudonym not derived from either.
+* The library must resolve a pseudonym to its issuer and `sub`, and an issuer and `sub` to its pseudonym.
 
 _Concept: xref:concepts/data-protection.adoc#_keeping_personal_data_out_of_the_history[Keeping Personal Data out] ·
 Specification: xref:specification/git-crypto.adoc[git-crypto]_
@@ -485,7 +498,11 @@ Specification: xref:specification/git-crypto.adoc[git-crypto]_
 === GDR-CRYPTO-4: Erasure by Key Rotation
 
 * Erasure must remove the entries of the given pseudonyms from the keyring, encrypt the keyring with KEK version n+1,
-  commit it, and ask the key source to destroy version n.
+  record version n as pending destruction, and commit it; in remote mode it must push the commit.
+* Only after the commit, and in remote mode the push, succeeded may the library ask the key source to destroy version n.
+* When the commit or the push fails, the erasure must report incomplete, and no KEK version may be destroyed.
+* A version recorded as pending destruction must be destroyed by the next erasure run or the next start, until the
+  destruction succeeds.
 * One rotation must erase any number of pseudonyms (batching).
 * After the rotation no earlier version of the keyring may be decryptable with the keys the key source still holds.
 
@@ -495,7 +512,9 @@ xref:specification/git-crypto.adoc[git-crypto]_
 [#GDR-CRYPTO-5]
 === GDR-CRYPTO-5: Evidence of Erasure
 
-* The rotation commit must name the destroyed KEK version and the erased pseudonyms, and must contain no key material.
+* The rotation commit must name the erased pseudonyms and the KEK version pending destruction.
+* After the destruction succeeded, a further commit must record the destroyed version.
+* No commit may contain key material, and no commit may record a destruction that has not succeeded.
 
 _Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
 xref:specification/git-crypto.adoc[git-crypto]_
@@ -514,6 +533,10 @@ Specification: xref:specification/git-crypto.adoc[git-crypto]_
 
 * The keyring must be decrypted at start with the current KEK and held in memory.
 * A missing or wrong KEK must stop the start with an outcome naming the KEK version expected.
+* When a fetch or a reference update brings a new version of the keyring, the instance must reload it and drop the DEKs
+  of removed pseudonyms before it serves the next decryption.
+* With several instances an erasure takes effect in each instance at the latest at its next fetch; the operator's
+  erasure delay must include the fetch interval.
 
 _Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
 xref:specification/git-crypto.adoc[git-crypto]_
@@ -547,8 +570,11 @@ Specification: xref:specification/git-signing.adoc[git-signing]_
 [#GDR-SIGN-3]
 === GDR-SIGN-3: Portable Approvals
 
-* A release commit must carry one `Approved-by: <pseudonym> (<role>)` trailer per approval and a `Review: <url>`
-  trailer when the release came through a pull or merge request.
+* A release commit the application creates must carry one `Approved-by: <pseudonym> (<role>)` trailer per approval
+  and a `Review: <url>` trailer when the release came through a pull or merge request.
+* When the Git server creates the release merge (protected `main`), the library must record the same approvals as a
+  note on that merge commit under `refs/notes/approvals`, in a notes commit signed by the application, once a fetch
+  shows the new tip of `main`.
 
 _Concept: xref:concepts/identity-and-signing.adoc#_what_a_signature_of_the_application_shows[Application
 Signature] · Specification: xref:specification/git-signing.adoc[git-signing]_
@@ -566,9 +592,11 @@ xref:specification/git-signing.adoc[git-signing]_
 === GDR-SIGN-5: Passkey Approvals (Level 3)
 
 * The library must register WebAuthn public keys per pseudonym in a versioned, signed file of the repository.
-* The approval challenge must be the commit id of the approved commit.
-* An assertion must be accepted only when its signature verifies with a registered key and the user-verification flag
-  is set.
+* The approval challenge must be fresh, single-use and bound to the approved commit: the SHA-256 over the commit id
+  and a random nonce of at least 128 bits, issued for one approval and valid for a configured time.
+* An assertion must be accepted only when its client data has the type `webauthn.get`, an allowed origin and the
+  expected challenge, its signature verifies with a registered key, and the user-presence and user-verification flags
+  are set.
 * An accepted assertion must be stored as a note on the commit under `refs/notes/approvals`.
 
 _Concept: xref:concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Level 3] · Specification:
@@ -579,6 +607,9 @@ xref:specification/git-signing.adoc[git-signing]_
 
 * The library must verify commit signatures against an `allowed_signers` file in the repository that carries a
   validity period per key.
+* The verifier must take its trust root (the application's signing keys) from its own configuration, not from the
+  repository; a change of `allowed_signers` must be accepted only when it is signed by a key the previous version
+  trusts, and the chain must start at the configured trust root.
 * A verification of a reference must list every commit without a valid signature; it must be runnable from CI without
   the application.
 
@@ -592,8 +623,11 @@ Specification: xref:specification/git-signing.adoc[git-signing]_
 === GDR-TSA-1: Timestamp per State of `main`
 
 * For every new state of `main` the module must obtain an RFC 3161 timestamp token over the commit id, as a consumer
-  of the outbox (GDR-STORE-10).
+  of the outbox (GDR-STORE-10); this includes states created by a merge on the Git server, which reach the module
+  through the fetch trigger of the outbox.
 * The token must be stored as a note on the commit under `refs/notes/timestamps`.
+* In remote mode the module must push the note right after writing it; a failed push must leave the commit pending,
+  and the retry must push the stored token instead of requesting a new one.
 
 _Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] · Specification:
 xref:specification/git-timestamp.adoc[git-timestamp]_
@@ -650,7 +684,9 @@ xref:specification/git-directory.adoc[git-directory]_
 [#GDR-DIR-4]
 === GDR-DIR-4: First Login
 
-* For a `sub` without a pseudonym the module must create one and report that an entry is required.
+* For an issuer and `sub` without a pseudonym the module must create one and report that an entry is required.
+* For a known pseudonym without a saved entry (an interrupted first login) the module must report again that an entry
+  is required.
 * Saving the entry must be a signed level-1 commit; the entry must be valid at once.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_first_login[First Login] · Specification:

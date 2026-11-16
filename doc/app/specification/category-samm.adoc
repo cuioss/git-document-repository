@@ -65,8 +65,9 @@ _See Requirement link:../Requirements.adoc#CIFR-SAMM-4[CIFR-SAMM-4: Release]_
 Status: PLANNED
 
 Transition `samm.release`: `in-review` → `released`, default signature level 2. Effect: merge into `main`, tag
-`assessment/<assessment-id>`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`. Optional
-`release.via-pull-request: true` opens a pull or merge request whose approval is recorded as trailer on merge.
+`assessment/<assessment-id>/v1`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`. Optional
+`release.via-pull-request: true` opens a pull or merge request; the library records its approval as trailer, or as a signed note when the Git server
+creates the merge.
 
 == Comparison
 _See Requirement link:../Requirements.adoc#CIFR-SAMM-5[CIFR-SAMM-5: Comparison over Time]_
