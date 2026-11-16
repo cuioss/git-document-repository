@@ -88,8 +88,17 @@ Status: PLANNED
 stream: score `from`, score `to`, difference. When the model versions differ, questions are mapped by id; a question
 present in one version only, or with changed text, is listed under `changed-questions`.
 
-`ScoreCalculator` computes practice and stream scores from the answers and the model; its result is cached in the index
-per released tag.
+`ScoreCalculator` computes the scores from the answers and the model version of the assessment, as the OWASP SAMM
+toolbox does (link:../concepts/category-samm.adoc[SAMM, Scores]); its result is cached in the index per released tag:
+
+* answer value: the `value` of the chosen answer in the model's answer set (0, 0.25, 0.5 or 1 in model v2.2.0); an
+  unanswered question counts 0;
+* stream score: the sum of the values of the stream's three questions (0 to 3);
+* practice score: the average of its two stream scores;
+* business function score: the average of its practice scores; overall score: the average of the business function
+  scores.
+
+Scores are not rounded in the calculation or in the API.
 
 == Targets
 _See Requirement link:../Requirements.adoc#CIFR-SAMM-6[CIFR-SAMM-6: Targets and Gaps]_

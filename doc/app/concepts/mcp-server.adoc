@@ -126,8 +126,16 @@ client as `Actor-Client`.
 == Sender Constraint
 
 Where the authorization server issues DPoP-bound tokens (RFC 9449), the server validates the proof through Token
-Sheriff's per-issuer DPoP support and can require it. The MCP specification does not require DPoP; the application
-offers it as configuration and recommends it once the agent clients support it _(client support unverified)_.
+Sheriff's per-issuer DPoP support and can require it. The MCP specification does not require DPoP: revision
+2026-07-28 mandates `Authorization: Bearer`
+(link:https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[Authorization]), and the DPoP
+profile link:https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1932[SEP-1932] is an open proposal.
+Client support is partial: the TypeScript SDK supports DPoP as an opt-in since `@modelcontextprotocol/client` 2.1.0
+(link:https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/CHANGELOG.md[changelog]), the
+Python SDK lists it on its link:https://github.com/modelcontextprotocol/python-sdk/blob/main/ROADMAP.md[roadmap], and
+an open issue reports that Claude Code sends no DPoP proof
+(link:https://github.com/anthropics/claude-code/issues/96290[anthropics/claude-code#96290]). The application
+therefore offers DPoP as configuration and recommends it once the agent clients in use support it.
 
 == Limits and Audit
 

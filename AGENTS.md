@@ -10,7 +10,8 @@ server-side Git repository (reached through JGit, in memory, without working tre
 application in which users maintain versioned documents. The documentation index is
 [`doc/README.adoc`](doc/README.adoc): concepts in `doc/concepts/`, decisions in `doc/adr/`, requirements in
 `doc/Requirements.adoc` (prefix `GDR`) and the specification in `doc/Specification.adoc` and `doc/specification/`.
-Read the concepts before changing the architecture. Statements marked _(unverified)_ are not checked against a source.
+Read the concepts before changing the architecture. Every statement about an external product, standard or law cites
+the source it was checked against; do not add unverified statements.
 
 `doc/app/` documents the application built on these libraries, CISOs-Friend (prefix `CIFR`). It moves to its own
 repository later: keep it self-contained, and link from it into the library documentation only to concepts and
@@ -50,8 +51,8 @@ verification classes outside JUnit. CI builds on Java 21 and 25; the compile tar
 
 ## Conventions
 
-These follow the conventions of the code that moves into this repository (`pm-provider-git` of `pm-mcp-core`),
-so it can move without rewriting:
+These follow the conventions of the foundation code that moves into this repository from its first client
+(see [`doc/clients/pm-mcp-core.adoc`](doc/clients/pm-mcp-core.adoc)), so it can move without rewriting:
 
 - Java modules (JPMS): every module has a `module-info.java`; the automatic module name in the pom is
   `de.cuioss.git.document.<suffix>`.

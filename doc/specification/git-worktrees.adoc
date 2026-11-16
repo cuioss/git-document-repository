@@ -13,8 +13,8 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 
 *Status:* PLANNED
 
-`git-worktrees` (module `de.cuioss.git.document.worktrees`) holds the linked working trees taken over from
-`pm-provider-git`. It depends on `git-core` alone. The document store does not use it; `pm-provider-git` does.
+`git-worktrees` (module `de.cuioss.git.document.worktrees`) holds the linked working trees. It depends on
+`git-core` alone. The document store does not use it; clients that work on files on disk do.
 
 [cols="1,3"]
 |===
@@ -22,8 +22,9 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 
 |`LinkedWorktrees` |Reads and writes git's administration files of linked working trees natively; JGit has no
 `git worktree` command
-|`WorktreeOperations` |New interface: the worktree part of `GitOperations`
-|JGit implementation of `WorktreeOperations` |The worktree part of `JGitOperations`
+|`WorktreeOperations` |The worktree operations: add, list and remove linked working trees, commit from a working
+tree, working-tree status
+|JGit implementation of `WorktreeOperations` |The operations on JGit, in process, without a `git` installation
 |===
 
 == Linked Working Trees
@@ -69,5 +70,5 @@ _See Requirement link:../Requirements.adoc#GDR-WT-3[GDR-WT-3: Working-Tree Statu
 |`deleted` |paths tracked and missing
 |===
 
-The status is a value; no digest is computed. `WorktreeShaDigest` (framing `git.worktree-sha` version 1) stays in
-`pm-provider-git` and builds on this status.
+The status is a value; no digest is computed. A client that needs a digest of the working tree builds it on this
+status.

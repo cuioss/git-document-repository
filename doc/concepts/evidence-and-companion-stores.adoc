@@ -10,8 +10,6 @@ against a rewritten history live. This concept names the gaps that remain beside
 close them without a database of their own, how the history is anchored externally, and how Git and the other
 systems stay consistent.
 
-Statements marked _(unverified)_ come from general knowledge and were not checked against a current source.
-
 == The Problem
 
 Git is an append-only, hash-chained store, but only as long as nobody with administrative rights rewrites it. A

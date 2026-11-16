@@ -88,7 +88,7 @@ xref:specification/error-model.adoc[Error Model]_
 * All operations must run in process; no `git` installation may be required.
 * A refused capability must be reported as an outcome, not executed.
 
-_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-core.adoc[git-core]_
 
 [#GDR-CORE-2]
@@ -100,7 +100,7 @@ xref:specification/git-core.adoc[git-core]_
 * The policy must be checked before every fetch and every push; a remote that violates it must be refused without any
   network contact.
 
-_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-core.adoc[git-core]_
 
 [#GDR-CORE-3]
@@ -164,7 +164,7 @@ Specification: xref:specification/git-core.adoc[git-core]_
 * It must read the content of one file at a given commit of the cache.
 * A commit the remote does not serve must be reported as an outcome.
 
-_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-core.adoc[git-core]_
 
 [#GDR-CORE-9]
@@ -193,7 +193,7 @@ Specification: xref:specification/git-core.adoc[git-core]_
 * The library must provide full and abbreviated commit ids and resolve branch, tag and remote-branch names.
 * A name that resolves to more than one object must be reported as ambiguous, not resolved to one of them.
 
-_Concept: xref:concepts/module-structure.adoc#_inventory_of_pm_provider_git[Inventory] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-core.adoc[git-core]_
 
 [#requirements-git-worktrees]
@@ -206,7 +206,7 @@ xref:specification/git-core.adoc[git-core]_
 * The administration files must follow git's own layout, so that `git worktree list` of a git installation lists the
   working trees the library created.
 
-_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-worktrees.adoc[git-worktrees]_
 
 [#GDR-WT-2]
@@ -215,7 +215,7 @@ xref:specification/git-worktrees.adoc[git-worktrees]_
 * The library must stage every change of a working tree (changed, untracked and deleted files) and commit it in one
   operation.
 
-_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-worktrees.adoc[git-worktrees]_
 
 [#GDR-WT-3]
@@ -224,7 +224,7 @@ xref:specification/git-worktrees.adoc[git-worktrees]_
 * The library must report the status of a working tree as three path sets: changed, untracked and deleted.
 * The status must not prescribe a digest format; a consumer builds its own digest on the path sets.
 
-_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-worktrees.adoc[git-worktrees]_
 
 [#requirements-git-testing]
@@ -237,7 +237,7 @@ xref:specification/git-worktrees.adoc[git-worktrees]_
   fetch and push tests.
 * The fixtures must work without network access and must clean up every directory they create.
 
-_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-testing.adoc[git-testing]_
 
 [#GDR-TEST-2]
@@ -245,7 +245,7 @@ xref:specification/git-testing.adoc[git-testing]_
 
 * The module must provide a `cui-test-generator` generator for transport credentials.
 
-_Concept: xref:concepts/module-structure.adoc#_what_moves_where[What Moves Where] · Specification:
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[The Foundation Modules] · Specification:
 xref:specification/git-testing.adoc[git-testing]_
 
 [#requirements-git-store]
@@ -830,7 +830,7 @@ xref:specification/error-model.adoc[Error Model]_
 * Every module except `git-testing` must work in a GraalVM native image; reflection and resource metadata the module
   needs must ship in `META-INF/native-image`.
 
-_Concept: xref:concepts/module-structure.adoc#_what_changes_in_pm_mcp_core[What Changes in `pm-mcp-core`] ·
+_Concept: xref:concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules] ·
 Specification: xref:specification/testing.adoc[Testing]_
 
 == Traceability
@@ -854,7 +854,7 @@ xref:concepts/identity-and-signing.adoc[Identity and Signing],
 xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
-xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005],
+xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005],
 xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007],
 xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009]
 |xref:specification/git-core.adoc[git-core]
@@ -862,13 +862,13 @@ xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_p
 |GDR-WT-1 – GDR-WT-3
 |xref:concepts/module-structure.adoc[Module Structure]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
-xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005]
+xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005]
 |xref:specification/git-worktrees.adoc[git-worktrees]
 
 |GDR-TEST-1 – GDR-TEST-2
 |xref:concepts/module-structure.adoc[Module Structure]
 |xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
-xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[ADR-0005]
+xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005]
 |xref:specification/git-testing.adoc[git-testing]
 
 |GDR-STORE-1 – GDR-STORE-11

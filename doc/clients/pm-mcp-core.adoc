@@ -1,0 +1,175 @@
+= Client: `pm-mcp-core`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+`pm-mcp-core` is the core repository of the product PM-MCP. It is a client of the foundation modules `git-core`,
+`git-worktrees` and `git-testing`, not a part of these libraries. Its module `pm-provider-git` holds the hardened JGit
+code from which the foundation is taken, and after the switch-over it depends on `git-core` and `git-worktrees`.
+
+This document collects everything that concerns this client: why the foundation is shared with it, the inventory of
+`pm-provider-git`, what moves where, what changes in `pm-mcp-core`, and the order of the switch-over. The library
+documentation does not depend on it; the foundation itself is described in
+xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules]. The decision
+is xref:../adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005].
+
+== A Shared Foundation with `pm-provider-git`
+
+`pm-provider-git` and the document store stand on one foundation instead of each carrying its own copy.
+
+Gains:
+
+* the hardening and the transport exist once, so a security fix reaches both products;
+* one test base runs against real local remotes;
+* `pm-provider-git` shrinks to a facade, an adapter and a digest.
+
+Constraints:
+
+* *The foundation does not live in `pm-mcp-core`.* That repository is proprietary, publishes only to the
+  organisation's registry and deploys `SNAPSHOT` versions that are never released. Another project must not hang on
+  that life cycle. The foundation lives in `git-document-repository` and is released with real versions to Maven
+  Central.
+* *Two life cycles are coupled.* PM-MCP is pre-1.0 and changes contracts without deprecation cycles. The foundation
+  therefore stays small and stable and carries no domain term of either side.
+* *Licence.* The code taken over from `pm-provider-git` has to be released for the open-source licence of
+  `git-document-repository` (Apache License 2.0). The other direction is unproblematic: a proprietary product may
+  depend on an open-source library.
+
+== Inventory of `pm-provider-git`
+
+The inventory was taken from the sources on 2026-11-12. The module holds about 2,000 lines of production code and
+3,800 lines of tests. Its only dependency on another module of the product lies in a single class,
+`JGitSourceRepository`, which uses three types of `pm-core`.
+
+[cols="2,3,2"]
+|===
+|Class |What it does |Dependency on `pm-core`
+
+|`RefusingFS`
+|A JGit file system that refuses hooks and process starts (`CapabilityRefusedException`)
+|none
+
+|`RemotePolicy`
+|The permitted remote: an HTTPS origin, or local only; checked before every fetch and push
+|none
+
+|`GitIdentity`
+|Full and abbreviated commit ids, branch, runtime and remote-branch references, resolution and ambiguity of a name
+|none
+
+|`GitResult`, `GitOutcome`
+|The result type (outcome, value, detail) and the closed list of outcomes, worktree outcomes included
+|none
+
+|`GitOperations`
+|The contract: open, init, log, commit, fetch, push with lease, the linked working trees, the worktree digest, the
+cache repository (`initCache`, `fetchCommit`, `readFile`), and its records
+|none
+
+|`JGitOperations`
+|The variant of the contract on JGit, in process, without a `git` installation
+|none
+
+|`LinkedWorktrees`
+|The administration files of git's linked working trees, read and written natively, because JGit has no command
+that adds or removes a linked working tree (JGit 7.0 added read support only; checked in JGit 7.8.0)
+|none
+
+|`WorktreeShaDigest`
+|The framing of `git.worktree-sha` version 1, fixed by the job runtime specification of PM-MCP
+|none in code; the format is a contract of PM-MCP
+
+|`JGitSourceRepository`
+|The adapter of the cache repository to the corpus interface `SourceRepository` of `pm-core`
+|`SourceRepository`, `SourceManifest`, `SourceFetch`
+|===
+
+The module logs nothing and carries no native-image metadata of its own. Within `pm-mcp-core` no module depends on
+it; its consumer is the assembly in `plan-marshall-mcp`. All of it is generic except the corpus adapter and the
+digest format. Even the cache repository is a generic mechanism: one commit fetched into a bare cache under a remote
+policy, a file read at that commit.
+
+== What Moves Where
+
+* *`git-core`* takes `RefusingFS`, `RemotePolicy`, `GitIdentity`, `GitResult` and `GitOutcome`, and from
+  `GitOperations`/`JGitOperations` the repository part: open and init, the log, fetch and push (with credentials and
+  lease), and the cache repository. The list of `GitOutcome` is kept and extended by the outcomes the requirements of
+  the libraries name.
+* *`git-worktrees`* takes `LinkedWorktrees`, adding, listing and removing working trees, and the commit from a working
+  tree, and offers the working-tree status on which `WorktreeShaDigest` builds.
+* *`git-testing`* takes the generator of the transport credential (`GitCredentialGenerator`, `GitGenerators`, today in
+  the test artifact `pm-provider-git:tests`).
+* *`pm-provider-git` keeps* `JGitSourceRepository`, `WorktreeShaDigest` with its ported tests and fixtures (its
+  framing is a contract of PM-MCP; it then builds on the working-tree status of `git-worktrees`), and `GitOperations`
+  as a facade over the two new interfaces, so the assembly keeps its interface for the first step.
+
+The tests move with the classes they test. Test classes that cover both sides (`JGitOperationsTest`,
+`GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces; the
+exact split follows from reading them. The history of the moved files is carried over, for example by filtering the
+source repository down to these paths, so authorship and blame survive.
+
+[cols="1,2"]
+|===
+|Module |Test classes
+
+|`git-core`
+|`RefusingFSTest`, `RemotePolicyTest`, `GitIdentityTest`, `JGitCacheRepositoryTest` and `UnservedWantTest` (both test
+the cache repository part of `JGitOperations`), the repository part of the split classes
+
+|`git-worktrees`
+|`LinkedWorktreesTest`, the worktree part of the split classes
+
+|`git-testing`
+|`GitCredentialGeneratorTest`
+
+|`pm-provider-git` (stays)
+|`JGitSourceRepositoryTest`, `WorktreeShaDigestTest`, `ported/*`, a test of the facade
+|===
+
+== What Changes in `pm-mcp-core`
+
+Each item is part of the work package that switches `pm-provider-git` over:
+
+. *The dependency decision* for the new artifacts, by the owner of `pm-mcp-core`; their version comes from its root
+  POM's `dependencyManagement`.
+. *The Module Structure Specification* of PM-MCP: `pm-provider-git` may depend on `git-core` and `git-worktrees`.
+. *The enforcer rules of the root POM* name the new artifacts, and `BuildGuardsIT` proves the changed rule. JGit stays
+  a dependency of `pm-provider-git` through `git-core`; `pm-core` and `pm-workflow` stay without JGit.
+. *The registry.* Artifacts under `de.cuioss` from Maven Central need no change of the group filter in `.mvn/rrf`.
+. *The documentation*: `pm-provider-git/README.adoc`, its developer documentation, ADR 012 of PM-MCP for the generator
+  that moves out of `pm-provider-git:tests`, and an ADR for the extraction itself.
+. *The assembly* `plan-marshall-mcp` keeps its interface through the facade; the native build of `pm-mcpd` against the
+  new `SNAPSHOT` verifies that JGit still works in the native image.
+
+The effect on the size of `pm-mcp-core` is small: about 1,700 lines of production code and most of 3,800 lines of
+tests leave, against more than 150,000 lines of production Java. The value lies in the shared foundation, not in
+the size.
+
+== Order of the Switch-Over
+
+. Fill `git-core`, `git-worktrees` and `git-testing`: move the classes and their tests, with history; build and
+  release a first version.
+. Work package in `pm-mcp-core`: switch `pm-provider-git` onto the two modules and reduce it to facade, adapter and
+  digest, with the changes listed above.
+
+The aspect modules of the document store (`git-store` and the modules above it) change nothing in `pm-mcp-core`.
+
+[CAUTION]
+====
+Coupling two life cycles is the price of the shared foundation. A contract change wanted by PM-MCP is a release of
+`git-document-repository` first. The foundation stays small precisely so that this price stays rare.
+====
+
+== Open Questions
+
+. The exact split of the test classes that cover both repository and worktree operations.
+. The release of the code taken over from `pm-provider-git` under the Apache License 2.0.
+. Whether JGit still works in the native image of `pm-mcpd` against the first `SNAPSHOT`.
+
+== Related
+
+* xref:../adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005] -- the
+  shared foundation.
+* xref:../concepts/module-structure.adoc[Module Structure] -- the modules of the libraries and their dependencies.

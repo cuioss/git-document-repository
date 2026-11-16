@@ -24,15 +24,17 @@ application.
 |JSON files; the web application stores directly in GitHub, GitLab, Bitbucket or locally
 |Best candidate to connect to; shows that Git as storage is common here
 
-|OWASP pytm _(unverified)_
-|Threat model as Python code, generates diagrams and report
+|OWASP pytm
+|Open source (MIT), threat model as Python code, generates data-flow and sequence diagrams and a report
 |In the application's repository
-|For developers, no UI
+|For developers, no UI; maintained (release v1.4.1 on 2026-11-01;
+https://github.com/OWASP/pytm[pytm on GitHub])
 
-|Threagile _(unverified)_
-|Threat model as YAML, risk rules
+|Threagile
+|Open source (MIT), threat model as YAML, built-in and custom risk rules
 |In the application's repository
-|Fits YAML in Git; whether it is still maintained is to verify
+|Fits YAML in Git; last release v0.9.1 on 2024-07-30, last commit on `master` on 2026-04-08 (documentation); its
+README calls a UI far from ready (https://github.com/Threagile/threagile[Threagile on GitHub])
 
 |Microsoft Threat Modeling Tool
 |Free, Windows only
@@ -47,8 +49,21 @@ application.
 |Open Threat Model (OTM)
 |Open exchange format (JSON or YAML)
 |Format, no tool
-|Threat Dragon converts OTM since v2.2.0 and ships an OTM JSON schema since v2.6.0; adoption beyond Threat Dragon is
-not verified
+a|Published by IriusRisk under CC BY-SA 4.0, schema version 0.2.0
+(https://github.com/iriusrisk/OpenThreatModel[OTM on GitHub]). Tools that read or write it:
+
+* IriusRisk imports OTM YAML in its UI since release 4.31
+  (https://iriusrisk.com/resources-blog/product-release-4-31[release notes, 2024-07-25]); the `iriusrisk-cli` of
+  IriusRisk imports and exports projects as OTM (https://pypi.org/project/iriusrisk-cli/[iriusrisk-cli 0.6.3]).
+* StartLeft (IriusRisk, Apache-2.0) converts CloudFormation, Terraform, Visio, draw.io and Microsoft Threat Modeling
+  Tool files into OTM and is the import service of IriusRisk (https://iriusrisk.github.io/startleft[StartLeft]).
+* Devici exports OTM 0.2.0 JSON, and SD Elements imports such a file
+  (https://docs.sdelements.com/master/guide/docs/import_from_devici/exporting_otm_from_devici.html[Devici export],
+  https://docs.sdelements.com/master/guide/docs/import_from_devici/importing_into_sd_elements.html[SD Elements import]).
+* Threat Dragon imports and exports OTM in v2.2.0 to v2.4.1 and ships the OTM JSON schema since v2.5.0. From v2.5.0 to
+  v2.6.2 (2026-05-10, the latest release) it exports OTM but rejects an OTM import as "not yet supported"; the import
+  of OTM diagrams is back on `main` since 2026-06-21, not yet released
+  (https://github.com/OWASP/threat-dragon[Threat Dragon on GitHub], `td.vue/src/views/ImportModel.vue` per tag).
 |===
 
 No existing system known to this concept maintains threat models across many applications, evaluates them and
@@ -75,8 +90,9 @@ place. Both answers are supported by configuration over the same repository laye
 Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 
 . *Recipes* guide the filling in; the result is a structured report in an open format.
-. *Format*: OTM or the JSON of Threat Dragon instead of an own schema, so teams can go on editing the diagram in
-  Threat Dragon and the application reads the same file.
+. *Format*: OTM or the JSON of Threat Dragon instead of an own schema. With Threat Dragon JSON teams can go on editing
+  the diagram in Threat Dragon and the application reads the same file; with OTM that needs a Threat Dragon release
+  that imports OTM (see the open questions).
 . *Maintenance*: detection of outdated models, due dates, review by pull request, approval trailers.
 . *Evaluation across applications*: open threats per application, untreated risks, age of the models.
 . *Links*: threat modelling is a stream of the SAMM practice _Threat Assessment_ (business function _Design_), so
@@ -105,7 +121,9 @@ repository, not in the service's history, and could serve as no base for a diff 
 
 == Open Questions
 
-. Decide the threat model format (OTM or Threat Dragon JSON); verify the state of pytm, Threagile and OTM.
+. Decide the threat model format (OTM or Threat Dragon JSON). OTM is read by IriusRisk and SD Elements, but the
+  released Threat Dragon (v2.6.2) exports OTM without importing it, so editing an OTM file in Threat Dragon needs a
+  release with the OTM import of `main` (see <<_existing_tools>>).
 . Prototype the detection of outdated threat models from Git diffs of the application's repository, including the
   default path set per technology.
 . Which recipes ship with the application, and whether a recipe is itself a schema-driven document.

@@ -11,9 +11,6 @@ run all of that once: a maintained Git server with history, rights, reviews and 
 the libraries of this repository use that Git server as the persistence, what they promise, and where the approach
 stops.
 
-Statements marked _(unverified)_ come from general knowledge and were not checked against a current source; they
-need verification before a decision rests on them.
-
 == The Problem
 
 Every additional database brings operating effort: provisioning, backup, restore tests, upgrades, access control.
@@ -97,8 +94,10 @@ bundles (checked in JGit 7.8.0); it carries no API stability promise, and `git-t
 optionally with a remote upstream.
 |Functional reference, but a whole product
 
-|Spring Cloud Config _(unverified)_
-|Reads configuration from Git through JGit.
+|Spring Cloud Config
+|Reads configuration from Git through JGit: the Config Server clones the repository and "never makes changes to the
+'remote' repository"
+(https://docs.spring.io/spring-cloud-config/reference/server/environment-repository/git-backend.html[Git Backend]).
 |Read-only, unsuitable
 
 |Dolt, Irmin, Gollum, Decap CMS
@@ -157,7 +156,12 @@ The client of the timestamp authority lives in the optional module `git-timestam
   personal data out of the history instead.
 * *The content API of the Git server* would be simpler than a clone, but binds to one vendor and runs into rate
   limits. A JGit clone works with any Git server.
-* *JGit's LFS support is limited* _(unverified)_. Evidence files therefore stay links, not blobs.
+* *JGit's LFS support works through a working tree.* It is the separate bundle `org.eclipse.jgit.lfs`, which uses
+  Gson: a clean filter that turns content into a pointer file when it is added, a smudge filter that restores it on
+  checkout, and a pre-push hook that uploads the media files
+  (link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit.lfs/src/org/eclipse/jgit/lfs[`org.eclipse.jgit.lfs`, JGit 7.8.0]).
+  The in-core write path passes through none of them, so the store would have to write the pointer files and upload
+  the objects itself. Evidence files therefore stay links, not blobs.
 
 [CAUTION]
 ====
@@ -175,8 +179,8 @@ the mechanisms; they do not certify them.
 
 == Related
 
-* xref:module-structure.adoc[Module Structure] -- the modules, their dependencies, and the shared foundation with
-  `pm-provider-git`.
+* xref:module-structure.adoc[Module Structure] -- the modules, their dependencies, and the foundation shared with
+  other clients.
 * xref:../Requirements.adoc[Requirements] and xref:../Specification.adoc[Specification] -- what the libraries must do
   and how.
 * xref:../adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010] -- why there is no database.

@@ -50,9 +50,14 @@ reference to the server-side login transaction (`state`, `nonce`, PKCE verifier)
 |`__Host-cisos-friend-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
 
 |Callback response
-|A small same-origin page that navigates to the checked `return`, not a `302`: after the cross-site redirect from
-the identity provider the browser would withhold the `Strict` session cookie on a redirect chain _(unverified for
-every browser)_
+|A small same-origin page that navigates to the checked `return`, not a `302`: a `302` continues the navigation that
+the identity provider's page started, and `Strict` cookies are not sent with top-level navigations triggered from a
+cross-site document context
+(link:https://www.ietf.org/archive/id/draft-ietf-httpbis-rfc6265bis-22.html#section-5.6.7.1[draft-ietf-httpbis-rfc6265bis-22, §5.6.7.1];
+a request is same-site only if its URL is same-site with its client's "site for cookies", §5.2;
+link:https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie[MDN]: `Strict` cookies are sent
+only for requests originating from the same site). The navigation started by the same-origin page is same-site and
+carries the session cookie.
 
 |Idle timeout
 |`web.session.idle-timeout`, default `PT30M`

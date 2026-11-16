@@ -80,7 +80,9 @@ before it is added:
 `cui-test-generator`, JUnit 5
 |`git-store` |none beyond those of `git-core`
 |`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
-|`git-crypto` |an envelope-encryption library (open; candidate: Google Tink _(unverified)_)
+|`git-crypto` |an envelope-encryption library (open; candidate: Google Tink for Java,
+link:https://github.com/tink-crypto/tink-java/releases/tag/v1.24.0[release 1.24.0], with envelope encryption in
+`KmsEnvelopeAead`)
 |`git-signing` |a WebAuthn verification library (open); for signing and verifying the configured format possibly
 JGit's `org.eclipse.jgit.ssh.apache` (`ssh`) or `org.eclipse.jgit.gpg.bc` (`openpgp`) (open)
 |`git-timestamp` |an RFC 3161 client library (open)

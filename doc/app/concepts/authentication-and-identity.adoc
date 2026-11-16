@@ -110,10 +110,37 @@ pseudonym as author and the bot as committer; the signed trailers carry the iden
 |*The user's token* (optional)
 |The token comes from an OAuth login against the Git server (GitHub App or OAuth App, GitLab OAuth), which can be the
 application's own login; with another identity provider the user authorises the Git server once in addition. Token
-Sheriff provides these flows, keeps the tokens and refreshes them (GitHub App user tokens: eight hours plus refresh
-token _(unverified)_); the library only consumes the token per push. Gain: the Git server enforces the rights and its
-audit log names the real pusher. A protected `main` usually rejects a user's direct push; the user then pushes the
-working branch and release runs as a pull or merge request.
+Sheriff provides these flows, keeps the tokens and refreshes them (token lifetimes: see the table below); the library
+only consumes the token per push. Gain: the Git server enforces the rights and its audit log names the real pusher. A
+protected `main` usually rejects a user's direct push; the user then pushes the working branch and release runs as a
+pull or merge request.
+|===
+
+Lifetimes of the user tokens per Git host, which decide how often Token Sheriff refreshes them:
+
+[cols="1,3"]
+|===
+|Git host |Access token and refresh
+
+|GitHub App
+|The user access token expires after eight hours, the refresh token after six months; the app owner can opt out of
+expiry
+(link:https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens[GitHub Docs]).
+
+|GitHub OAuth App
+|No fixed expiry; GitHub revokes an OAuth token that has not been used for one year
+(link:https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation[GitHub Docs]).
+
+|GitLab
+|The access token expires after two hours (7200 seconds) by default, configurable on GitLab Self-Managed and
+Dedicated; the refresh token works after the access token has expired and is replaced on use
+(link:https://docs.gitlab.com/integration/oauth_provider/[OAuth provider],
+link:https://docs.gitlab.com/api/oauth2/[OAuth 2.0 API]).
+
+|Gitea
+|The access token lives 3600 seconds, the refresh token 730 hours, both configurable in `[oauth2]`
+(`ACCESS_TOKEN_EXPIRATION_TIME`, `REFRESH_TOKEN_EXPIRATION_TIME`)
+(link:https://docs.gitea.com/administration/config-cheat-sheet[Gitea configuration cheat sheet]).
 |===
 
 Commits signed with the user's own Git key are not feasible server-side; the graded signature replaces them. One push
@@ -174,7 +201,6 @@ the approval to the human (link:mcp-server.adoc[MCP Server]).
 . Clarify with Token Sheriff which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups reach the application,
   how the step-up for approvals is triggered, and whether Token Sheriff can hold versioned secrets (the KEK).
 . Whether groups arrive by token claim or by SCIM.
-. Token lifetimes and refresh of the Git hosts for pushing in the user's name (GitHub, GitLab, Gitea) _(unverified)_.
 
 == Related
 

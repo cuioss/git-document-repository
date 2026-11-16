@@ -10,8 +10,6 @@ like different applications. Laid side by side they turn out to be one: a form, 
 readable output, a review, an approval, a deadline, a few links. This concept describes the generic layer that
 captures that shape, so that a new kind of document is configuration rather than code.
 
-Statements marked _(unverified)_ come from general knowledge and were not checked against a current source.
-
 == The Shape
 
 image::../resources/diagrams/document-shape-pipeline.svg["A schema drives the form; data in YAML and free text in AsciiDoc are joined by a template into the generated output, then reviewed, approved and frozen in Git",align=center]

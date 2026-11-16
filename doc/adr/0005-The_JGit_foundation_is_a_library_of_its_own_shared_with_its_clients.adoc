@@ -1,0 +1,82 @@
+= ADR-0005: The JGit foundation is a library of its own, shared with its clients
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The generic, hardened JGit code becomes the modules git-core, git-worktrees and git-testing of this repository, released to Maven Central and shared by the document store and other clients instead of being copied.
+// tags: foundation, extraction, jgit
+// affects: git-core, git-worktrees, git-testing
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Hardened JGit code already exists in a client of Git repositories: a refusing file system, a remote policy, identity
+handling, results, transport and a cache repository. The document store needs the same code. The question is whether
+the store copies it or both share it.
+
+*The decision:* the generic part of that code becomes a foundation of its own in this repository, and every client,
+the document store included, depends on it.
+
+* `git-core` takes the repository part, `git-worktrees` the linked working trees, `git-testing` the credential
+  generator and fixtures.
+* What is specific to a client stays with that client.
+* The foundation is released with real versions to Maven Central.
+
+The modules are described in xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The
+Foundation Modules]. The client the code comes from, its inventory and the order of the switch-over are described in
+xref:../clients/pm-mcp-core.adoc[Client: `pm-mcp-core`].
+
+== Alternatives rejected
+
+=== A copy in the document store
+
+The document store copies the hardened code and maintains its copy independently.
+
+*Rejected because* every security fix of the hardening would be needed twice, and the two copies would drift.
+
+=== The foundation inside the client's repository
+
+The foundation stays in the repository of the client it comes from, and the document store depends on it there.
+
+*Rejected because* a library must not hang on the life cycle of another product's repository; the repository in
+question is proprietary and deploys only `SNAPSHOT` versions to its own registry (see
+xref:../clients/pm-mcp-core.adoc#_a_shared_foundation_with_pm_provider_git[Client: `pm-mcp-core`]).
+
+=== Leave the linked working trees with the client
+
+The document store does not need linked working trees, so they could stay with the client.
+
+*Rejected because* linked working trees are generic Git functionality. Keeping them with one client would split the
+foundation along a consumer's needs rather than along Git's terms.
+
+== Consequences
+
+=== Properties of the design
+
+* Hardening and transport exist once.
+* One test base runs against real local remotes.
+* A client keeps only what is specific to it.
+
+=== Accepted costs
+
+* Life cycles are coupled. A contract change wanted by a client is a release of this repository first.
+* The code taken over must be released under this repository's open-source licence.
+
+=== When this is revisited
+
+When the contracts needed by a client and by the document store diverge.
+
+== Links
+
+* xref:../concepts/module-structure.adoc[Module Structure]
+* xref:../clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]
+* xref:0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[ADR-0004]
+* xref:../specification/git-core.adoc[`git-core` specification]

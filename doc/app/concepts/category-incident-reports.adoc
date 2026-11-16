@@ -29,11 +29,20 @@ link:../adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_live
 
 . *Mandatory fields and deadlines are enforced.* Security incidents carry hard notification deadlines: GDPR Art. 33
   (notification within 72 hours; documentation of every personal data breach, para. 5) and, where it applies, NIS2
-  (early warning within 24 hours and notification within 72 hours of awareness; a final report one month after the
-  notification, or, for an incident still being handled then, a progress report at that point and the final report
-  one month after it is handled; Art. 23(4)) _(unverified against the national transposition; whether NIS2 applies
-  depends on sector and size)_. A form with a schema shows the deadlines and checks the mandatory fields;
-  a Confluence page cannot.
+  (early warning within 24 hours and incident notification within 72 hours of becoming aware of a significant
+  incident; an intermediate report on request of the CSIRT or competent authority; a final report no later than one
+  month after the notification, or, for an incident still ongoing then, a progress report at that point and the final
+  report within one month of its handling;
+  https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4)). Germany transposes this in
+  https://www.gesetze-im-internet.de/bsig_2025/__32.html[§ 32 BSIG] (BSI-Gesetz of 2 December 2025, BGBl. 2025 I
+  Nr. 301, in force since 6 December 2025) with the same 24-hour, 72-hour and one-month deadlines, reported to the
+  joint reporting office of BSI and BBK; one difference: after a progress report, § 32(2) sets no period for the final
+  report, which is due once the handling is completed. NIS2 applies to entities of a type listed in Annex I or II of
+  the directive that are at least medium-sized enterprises under Recommendation 2003/361/EC (Art. 2(1)), and to some
+  types regardless of size (Art. 2(2)); Art. 3 divides them into essential and important entities. The German
+  thresholds in https://www.gesetze-im-internet.de/bsig_2025/__28.html[§ 28 BSIG] are at least 50 employees, or an
+  annual turnover and a balance sheet total each above EUR 10 million, for the entity types of Anlagen 1 and 2.
+  A form with a schema shows the deadlines and checks the mandatory fields; a Confluence page cannot.
 . *Review and approval* by pull request, with a passkey approval where configured, immutable after approval,
   timestamped: evidence for ISO 27001 A.5.24–5.28 (among them 5.27, learning from incidents, and 5.28, collection of
   evidence).
@@ -104,13 +113,19 @@ free text.
 |Open source incident management with Slack
 |Live phase; archived on GitHub (last push 2025-09-03) and no longer maintained
 
-|DFIR-IRIS _(unverified)_
-|Open source handling of security incidents (forensics), report templates
-|Closest for security incidents; a database and operation of its own
+|DFIR-IRIS
+|Open source (LGPL-3.0) collaborative incident response platform; report templates producing docx, Markdown or
+HTML (https://docs.dfir-iris.org/latest/operations/reports/[IRIS reports])
+|Closest for security incidents; maintained (release v2.4.29 on 2026-08-10); a PostgreSQL database and a Docker
+Compose stack of its own (https://github.com/dfir-iris/iris-web[iris-web on GitHub])
 
-|TheHive _(unverified)_
-|Platform for security incidents in a SOC
-|For SOC teams; commercial licence since v5 to this concept's knowledge
+|TheHive
+|Case management platform for security incidents in a SOC, by StrangeBee
+|For SOC teams; TheHive 5 is distributed commercially and every edition needs a licence, the free Community licence
+is for non-commercial use
+(https://docs.strangebee.com/thehive/installation/licenses/about-licenses/[TheHive licenses]); the open source
+TheHive 4 (AGPL-3.0, last release 4.1.24 on 2022-09-13) is archived
+(https://github.com/TheHive-Project/TheHive[TheHive on GitHub])
 
 |Postmortems as Markdown in Git
 |Established practice (template of the Google SRE book)
@@ -123,9 +138,8 @@ them to the ISMS, the threat models and the notification duties. The gap is the 
 == Open Questions
 
 . Draft the schema of incident response reports with the notification deadlines (GDPR Art. 33; NIS2 where it
-  applies), after checking the deadlines and the applicability of NIS2.
+  applies).
 . Design the import of the timeline from the ticket system or the chat (which systems, pull or push).
-. Verify the state and licences of DFIR-IRIS and TheHive.
 
 == Related
 
