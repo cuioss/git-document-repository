@@ -1,0 +1,18 @@
+**/.settings
+**/target
+**/bin
+**/.idea
+**/src/main/gen
+*.iml
+*.classpath
+*.project
+**/.vscode
+.DS_Store
+.asciidoctorconfig.adoc
+.factorypath
+
+# Planning system (managed by plan-marshall)
+# Runtime state (plans, run-configuration, lessons-learned, memory, logs — managed by plan-marshall)
+.plan/*
+!.plan/marshal.json
+!.plan/project-architecture/
