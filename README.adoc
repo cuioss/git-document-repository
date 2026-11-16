@@ -68,4 +68,4 @@ Every other `project.yml` edit reaches the release workflow too and is refused b
   `chore/release_<version>` PR that changes nothing but the version, merged only after the pre-cut
   checks.
 * Do not rewrite the `cuioss/cui-java-module-template` literal in `.github/workflows/release.yml`; it only excludes the template repository itself.
-* `maven-build.enable-snapshot-deploy` is `false` until the first module contains code; set it to `true` then.
+* `maven-build.enable-snapshot-deploy` is `true`: every push to `main` deploys the `0.1.0-SNAPSHOT` modules to the Sonatype snapshot repository. This is not a release.
