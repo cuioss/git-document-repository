@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023-present CUI-OpenSource-Software (info@cuioss.de)
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.template;
+/**
+ * Hardened Git repositories, remote policy, identity, results, transport, reading, cache repository and in-core writing on JGit.
+ */
+module de.cuioss.git.document.core {
+    // exports follow with the first public class of the package (javac rejects exporting an empty package)
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
-import org.junit.jupiter.api.Test;
-
-class HelloTest {
-
-    @Test
-    void test() {
-        assertEquals("Hello cui", new Hello().hello("cui"));
-    }
-
+    requires static org.jspecify;
 }

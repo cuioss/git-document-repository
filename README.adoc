@@ -1,25 +1,46 @@
-= cui-java-module-template
+= git-document-repository
 
 == Status
 
-image:https://github.com/cuioss/cui-java-module-template/actions/workflows/maven.yml/badge.svg[Java CI with Maven,link=https://github.com/cuioss/cui-java-module-template/actions/workflows/maven.yml]
+image:https://github.com/cuioss/git-document-repository/actions/workflows/maven.yml/badge.svg[Java CI with Maven,link=https://github.com/cuioss/git-document-repository/actions/workflows/maven.yml]
 image:http://img.shields.io/:license-apache-blue.svg[License,link=http://www.apache.org/licenses/LICENSE-2.0.html]
-image:https://img.shields.io/maven-central/v/de.cuioss/cui-java-module-template.svg?label=Maven%20Central["Maven Central", link="https://central.sonatype.com/artifact/de.cuioss/cui-java-module-template"]
+image:https://img.shields.io/maven-central/v/de.cuioss/git-document-repository.svg?label=Maven%20Central["Maven Central", link="https://central.sonatype.com/artifact/de.cuioss/git-document-repository"]
 
-https://sonarcloud.io/summary/new_code?id=cuioss_cui-java-module-template[image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_cui-java-module-template&metric=alert_status[Quality
+https://sonarcloud.io/summary/new_code?id=cuioss_git-document-repository[image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_git-document-repository&metric=alert_status[Quality
 Gate Status]]
-image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_cui-java-module-template&metric=ncloc[Lines of Code,link=https://sonarcloud.io/summary/new_code?id=cuioss_cui-java-module-template]
-image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_cui-java-module-template&metric=coverage[Coverage,link=https://sonarcloud.io/summary/new_code?id=cuioss_cui-java-module-template]
+image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_git-document-repository&metric=ncloc[Lines of Code,link=https://sonarcloud.io/summary/new_code?id=cuioss_git-document-repository]
+image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_git-document-repository&metric=coverage[Coverage,link=https://sonarcloud.io/summary/new_code?id=cuioss_git-document-repository]
 
 
-https://cuioss.github.io/cui-java-module-template/about.html[Generated Documentation on github-pages]
+https://cuioss.github.io/git-document-repository/about.html[Generated Documentation on github-pages]
 
 == What is it?
 
-This is a template repository for creating java-modules for cui-open-source-projects. This incorporates all necessary java-structures, including `pom.xml`, sensible project-documentation, 
-an predefined github pipelines. 
+Base libraries for _Git as the Persistence of Versioned Documents_: a server-side Git repository as the persistence
+of an application in which users maintain versioned documents (OWASP SAMM assessments, threat models, incident
+response reports, ISMS). Git is the persistence only, not a user-facing tool; the libraries build on JGit and work
+in memory, without working trees.
 
-It is meant to be used as copy-paste-template.
+The study behind the design is in link:doc/git-document-persistence/README.adoc[doc/git-document-persistence].
+The repository is a multi-module Maven reactor whose modules are released together but consumed separately.
+
+[cols="1,3"]
+|===
+|Module |Content
+
+|`git-core`
+|Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing.
+
+|`git-worktrees`
+|Linked working trees, commit from a working tree, working-tree status. Depends on `git-core` only.
+
+|`git-testing`
+|Generators and fixtures: local and in-memory repositories, a local remote.
+|===
+
+The modules are scaffolded; the code is taken over from `pm-provider-git` in a later step (see the study,
+`extraction-from-pm-mcp-core.adoc`). The aspect modules (`git-store`, `git-forms`, `git-crypto`, `git-signing`,
+`git-timestamp`, `git-directory`) follow as the document store needs them.
 
 === Maven Coordinates
 
@@ -27,108 +48,13 @@ It is meant to be used as copy-paste-template.
 ----
     <dependency>
         <groupId>de.cuioss</groupId>
-        <artifactId>cui-java-module-template</artifactId>
+        <artifactId>git-core</artifactId>
     </dependency>
 ----
 
-== Customization
-
-=== Automated Customization
-
-This template provides an automated customization process to easily update all relevant project files:
-
-1. Configure your project properties in `customization.properties`
-2. Run the customization script: `./customize.sh`
-
-The script will update all required files with your project-specific information.
-
-After running the script, you can review the changes in your git repository. The script will not commit or push any changes automatically, allowing you to verify them first.
-
-After reviewing the changes,
-you delete the files `customization.properties` and `./customize.sh` you can commit them to your repository.
-
-=== Names / Keys
-
-Create a new Repository by clicking "Use this template"
-If not using the automated customization process, manually replace all occurrences of `cui-java-module-template` with the new project 'key' / name, e.g. `my-java-module`. Relevant Files are:
-
-[CAUTION]
-====
-The key must *not* contain spaces. They are used for creating urls as well.
-
-====
-
-
-* `README.adoc` -> the badges on top
-* `pom.xml`
-* `.github/project.yml` -> `name`, `description`, `sonar.project-key`, `pages.reference` only
-* `CLAUDE.md`, `.claude/skills/release/SKILL.md` -> the repository slug
-* `src/site/site.xml`
-* `src/site/asciidoc/about.adoc`
-
-[WARNING]
-====
-Do *not* touch `release.current-version` in `.github/project.yml`, and do *not* replace
-`cuioss/cui-java-module-template` in `.github/workflows/release.yml` (it only excludes this template
-from releasing). See <<releasing>>.
-====
-
-=== Credentials
+== Credentials
 
 All secrets (GPG, Sonatype, Sonar, Release App) are managed at the https://github.com/cuioss/cuioss-organization[cuioss organization level]. The caller workflows pass them explicitly to the reusable workflows; pass only the secrets a reusable workflow declares, an undeclared one makes every run end in `startup_failure`. No repo-level secrets need to be configured.
-
-=== After creating the repository
-
-* *cuioss-organization*: add the repository to `consumers:` in
-  https://github.com/cuioss/cuioss-organization/blob/main/.github/project.yml[`.github/project.yml`],
-  so every org workflow release opens the pin-bump PR here. Apply repository settings and branch
-  protection (merge queue) with the org's `repo-settings` and `branch-protection` scripts.
-* *SonarCloud*: create the project `cuioss_<key>`. New projects start with a main branch called
-  `master`; rename it to `main` (Administration -> Branches and Pull Requests) *before* the first
-  analysis. Otherwise `main` is analysed as a short-lived branch and the overview stays empty. If it
-  already happened: delete the short-lived `main`, then rename `master`. Set New Code to "Previous
-  version". The first analysis of the renamed branch reports quality gate `NONE` (no baseline yet),
-  which fails `sonar.qualitygate.wait`; the next analysis is green.
-* *Release*: leave `release.current-version` alone, see <<releasing>>.
-
-=== Further Steps
-
-* Verify that the customization was applied correctly to all files
-* If you're using manual customization:
-** `pom.xml`: Adjust `name` and `description` elements
-** Adjust `module-info` accordingly
-** `pom.xml`: Adjust property `maven.jar.plugin.automatic.module.name` according to your `module-info`
-* `src/site/asciidoc/about.adoc`: Adjust content
-* Review / Enable the elements under 'Security' Tab
-* Review / Add Collaborators
-* Add (link) the resulting maven-documentation: https://github.com/cuioss/cuioss.github.io/edit/main/README.md[github.io-documentation]
-
-=== Customization Properties
-
-The `customization.properties` file controls how the project is customized:
-
-[source,properties]
-----
-# Used in pom.xml (artifactId), README.adoc (badges), .github/project.yml (name, pages-reference) src/site/site.xml (links), SECURITY.md (links)
-project.key=cui-java-module-template
-
-# Used in pom.xml (<n> tag)
-project.name=cui java module template
-
-# Used in pom.xml (<description> tag)
-project.description=Template module for cuioss open source projects.
-
-# Used in pom.xml (property maven.jar.plugin.automatic.module.name)
-project.moduleName=de.cuioss.template
-
-# Used in pom.xml (groupId, README.adoc (badges))
-project.groupId=de.cuioss
-----
-
-The script automatically derives additional properties:
-* `project.scm.url` - SCM URL based on the project key
-* `project.pages.url` - GitHub Pages URL based on the project key
-* `project.sonar.id` - Sonar ID based on the project key 
 
 [#releasing]
 == Releasing
@@ -138,11 +64,10 @@ guard in `reusable-maven-release.yml` publishes to Maven Central whenever that v
 merge commit's first parent and no tag for it exists. Maven Central releases cannot be withdrawn.
 Every other `project.yml` edit reaches the release workflow too and is refused by the guard.
 
-* This template declares `current-version: 0.1.0` together with `0.1.0-SNAPSHOT` in `pom.xml`, so a
-  new repository never has to touch the value. Its first release is a deliberate
-  `workflow_dispatch` from `main`.
+* `current-version: 0.1.0` is declared together with `0.1.0-SNAPSHOT` in the poms. Do not touch it in an ordinary PR.
+  The first release is a deliberate `workflow_dispatch` from `main`, and only once the modules contain code.
 * Every later release goes through the runbook `.claude/skills/release/SKILL.md`: a dedicated
   `chore/release_<version>` PR that changes nothing but the version, merged only after the pre-cut
   checks.
-* The release workflow excludes this template repository itself, so it never publishes
-  `cui-java-module-template`.
+* Do not rewrite the `cuioss/cui-java-module-template` literal in `.github/workflows/release.yml`; it only excludes the template repository itself.
+* `maven-build.enable-snapshot-deploy` is `false` until the first module contains code; set it to `true` then.
