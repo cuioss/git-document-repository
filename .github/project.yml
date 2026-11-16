@@ -24,9 +24,10 @@ sonar:
   enabled: true
   skip-on-dependabot: true
 
+# No Maven site / GitHub Pages: the default of deploy-at-release is true, so it is switched off explicitly.
 pages:
-  reference: git-document-repository
-  deploy-at-release: true
+  deploy-at-release: false
+
 github-automation:
   auto-merge-build-versions: true
 

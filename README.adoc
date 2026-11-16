@@ -12,8 +12,6 @@ image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_git-docume
 image:https://sonarcloud.io/api/project_badges/measure?project=cuioss_git-document-repository&metric=coverage[Coverage,link=https://sonarcloud.io/summary/new_code?id=cuioss_git-document-repository]
 
 
-https://cuioss.github.io/git-document-repository/about.html[Generated Documentation on github-pages]
-
 == What is it?
 
 Base libraries for _Git as the Persistence of Versioned Documents_: a server-side Git repository as the persistence

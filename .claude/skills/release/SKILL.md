@@ -36,7 +36,7 @@ template itself never releases. That literal must stay unchanged in derived repo
 
 A merged change of `current-version` publishes the reactor's deployable modules to **Maven Central**
 at merge time (`skipPublishing` modules excluded; list them from the `central-staging/…` lines of
-the `release / release` job log). It also creates the tag, the GitHub release and the site deployment. Maven Central releases are
+the `release / release` job log). It also creates the tag and the GitHub release. Maven Central releases are
 **immutable**: a coordinate can be superseded, never withdrawn. Every safety assertion below therefore
 runs **before** the merge.
 
@@ -253,8 +253,8 @@ mechanism enforces this; it is the operator's obligation.
 
 Run `gh run watch "$RUN_ID" --repo cuioss/git-document-repository` (check that `RUN_ID` is non-empty first).
 
-The release is a single job: Maven release, then site deploy, push of the version commits, tag
-push and GitHub release. If it fails **after** `Maven release <v>` succeeded, the jars are on Central:
+The release is a single job: Maven release, then push of the version commits, tag push and
+GitHub release. If it fails **after** `Maven release <v>` succeeded, the jars are on Central:
 - Don't dispatch again; it would re-release.
 - Establish which step failed.
 - Complete the missing tag, push or GitHub release by hand, or cut a new patch version.
