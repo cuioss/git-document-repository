@@ -9,60 +9,37 @@
         <version>1.7.7</version>
         <relativePath/>
     </parent>
-    <artifactId>cui-java-module-template</artifactId>
+    <artifactId>git-document-repository</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <packaging>jar</packaging>
+    <packaging>pom</packaging>
     <!-- Must be declared: <inceptionYear> is inherited, and the license plugin binds the
          copyright ${year} to it. Without this, a new project reports cui-parent-pom's 2022
          and every -Ppre-commit run restamps every header. customize.sh sets this. -->
-    <inceptionYear>2023</inceptionYear>
-    <name>cui java module template</name>
-    <description>Template module for cuioss open source projects.
+    <inceptionYear>2026</inceptionYear>
+    <name>git document repository</name>
+    <description>Base libraries for "Git as the Persistence of Versioned Documents"
     </description>
-    <url>https://github.com/cuioss/cui-java-module-template/</url>
+    <url>https://github.com/cuioss/git-document-repository/</url>
     <scm>
-        <url>https://github.com/cuioss/cui-java-module-template/</url>
+        <url>https://github.com/cuioss/git-document-repository/</url>
         <connection>
-            scm:git:https://github.com/cuioss/cui-java-module-template.git
+            scm:git:https://github.com/cuioss/git-document-repository.git
         </connection>
         <developerConnection>
-            scm:git:https://github.com/cuioss/cui-java-module-template/
+            scm:git:https://github.com/cuioss/git-document-repository/
         </developerConnection>
         <tag>HEAD</tag>
     </scm>
     <issueManagement>
-        <url>https://github.com/cuioss/cui-java-module-template/issues</url>
+        <url>https://github.com/cuioss/git-document-repository/issues</url>
         <system>GitHub Issues</system>
     </issueManagement>
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
-        <maven.jar.plugin.automatic.module.name>de.cuioss.template</maven.jar.plugin.automatic.module.name>
     </properties>
-    <dependencies>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-        </dependency>
-        <!-- Unit testing -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter-api</artifactId>
-        </dependency>
-    </dependencies>
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
+    <modules>
+        <module>git-core</module>
+        <module>git-worktrees</module>
+        <module>git-testing</module>
+    </modules>
 </project>

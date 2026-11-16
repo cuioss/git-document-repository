@@ -1,5 +1,5 @@
 /*
- * Copyright © 2023-present CUI-OpenSource-Software (info@cuioss.de)
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-module de.cuioss.template {
-    exports de.cuioss.template;
+/**
+ * Linked working trees, commit from a working tree and working-tree status.
+ */
+module de.cuioss.git.document.worktrees {
+    // exports follow with the first public class of the package (javac rejects exporting an empty package)
+    requires transitive de.cuioss.git.document.core;
 
-    requires static lombok;
+    requires static org.jspecify;
 }
