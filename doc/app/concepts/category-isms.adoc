@@ -104,7 +104,8 @@ comparison between versions
 |Workflow functions of the application (scope to verify)
 
 |Tamper evidence
-|Hash chain, signed commits and RFC 3161 timestamps, verifiable externally
+|Hash chain, signed commits, anchored releases and daily checkpoints (own timestamp, optionally RFC 3161),
+verifiable without the application
 |Depends on the database and the administrators' rights
 
 |Rights

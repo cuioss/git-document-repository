@@ -14,10 +14,10 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, identity per save, the in-memory index and the post-commit outbox. It depends on `git-core` only and
-defines the service provider interfaces through which the optional modules contribute without a dependency of
-`git-store` on them (see Service Provider Interfaces). Rationale: xref:../concepts/storage-engine.adoc[Storage
-Engine].
+saving, release, identity per save, the in-memory index, the post-commit outbox and the anchoring. It depends on
+`git-core` only and defines the service provider interfaces through which the optional modules contribute without a
+dependency of `git-store` on them (see Service Provider Interfaces). Rationale:
+xref:../concepts/storage-engine.adoc[Storage Engine].
 
 == Repository Registry
 
@@ -60,8 +60,9 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 |`refs/heads/review/<collection>/<id>` |review branch of one numbered entry for a pull or merge request: `main` with
 only that entry's path applied (see Release) |yes
 |`refs/tags/<collection>/<id>/v<n>` |release `n` of one document or numbered entry, never moved |yes
+|`refs/tags/checkpoints/<n>` |checkpoint `n` of the anchoring (see Anchoring), never moved |yes
 |`refs/drafts/<user>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
-|`refs/notes/*` |timestamps, approvals |yes
+|`refs/notes/*` |anchor proofs (`refs/notes/anchors/<provider>`), approvals |yes
 |`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch; the branch name is
 escaped, first every `%` as `%25`, then every `/` as `%2F` |*never*
 |`refs/meta/pending/<user>/<collection>/<id>/<commit-id>` |a pending commit that conflicted when it was replayed onto
@@ -71,7 +72,7 @@ the fetched remote tip, kept until its user resolves it (see Conflict Handling) 
 * A collection is either per-document (one working branch per document) or numbered (one collection branch, no
   branch per entry), never both: Git refuses a reference and a reference nested below it, so `refs/heads/risks` and
   `refs/heads/risks/<id>` cannot exist side by side. For the same reason the outbox references escape the branch name.
-* A collection must not be named `main` or `review`.
+* A collection must not be named `main`, `review` or `checkpoints`.
 * `<id>` of a per-document collection is the document's ULID; it names the working branch, the release tag, the data
   directory and the link target. `<id>` of a numbered collection is the readable number (`prefix` + counter, for
   example `R-042`); it names the entry file, the release tag and the link target. Until its first save a new numbered
@@ -243,14 +244,14 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-10[GDR-STORE-10: Post-Commi
 
 image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of truth: the outbox feeds the derived and assuring stores; complementary systems are referenced by id, not fed by the outbox",align=center]
 
-* Consumers register by name with the branches they subscribe to (for example `timestamp` on `main`, `mirror` on
-  every branch).
+* Consumers register by name with the branches they subscribe to (for example `index` on `main` and the working
+  branches, `mirror` on every branch).
 * Triggers: a reference update the store performs in local mode, a successful push in remote mode, and a fetch that
   moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
   fetch).
 * On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
   the branch's new tip, oldest first, and calls the consumer per commit. The branch name is escaped injectively:
-  first every `%` as `%25`, then every `/` as `%2F` (`refs/meta/outbox/timestamp/risks%2F01J…`). So the references of
+  first every `%` as `%25`, then every `/` as `%2F` (`refs/meta/outbox/mirror/risks%2F01J…`). So the references of
   `risks` and `risks/<id>` never nest, and two branch names never map to one reference. These references are never
   pushed.
 * After each successful call that branch's reference moves to that commit. A failing call stops the walk for that
@@ -260,6 +261,103 @@ image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of 
 * When a progress reference is missing (for example in a new clone), the walk for that consumer and branch starts again
   at the first commit of the branch; the consumer recognises the commits it already processed by their hash and skips
   them.
+
+== Anchoring
+
+_See Requirements link:../Requirements.adoc#GDR-STORE-12[GDR-STORE-12: Pluggable Anchor Providers],
+link:../Requirements.adoc#GDR-STORE-13[GDR-STORE-13: Anchored Subjects and Checkpoints],
+link:../Requirements.adoc#GDR-STORE-14[GDR-STORE-14: Anchor Proofs as Notes]_
+
+*Status:* PLANNED
+
+Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+
+=== The Provider Interface
+
+[source,java]
+----
+public interface AnchorProvider {
+
+    /** The provider id: lowercase letters, digits and '-'; names the notes reference refs/notes/anchors/<id>. */
+    String id();
+
+    /** Obtains a proof for the object id; previous is the provider's latest proof in this repository, if any. */
+    AnchorResult anchor(ObjectId subject, @Nullable AnchorProof previous);
+
+    /** Verifies a stored proof against the object id and, where the provider chains its proofs, its predecessor. */
+    AnchorVerification verify(ObjectId subject, AnchorProof proof, @Nullable AnchorProof previous);
+}
+----
+
+* `AnchorProof` is the provider's proof as bytes; the store does not interpret it.
+* `AnchorResult` is a proof or one of the outcomes unavailable, refused (with the provider's reason) and failed.
+* `AnchorVerification` is the time the proof establishes or one of the outcomes imprint mismatch, signature invalid,
+  chain broken and unreadable (see xref:error-model.adoc[Error Model]).
+* Providers shipped with the libraries: `signed` (xref:git-signing.adoc#_own_timestamp[git-signing, Own Timestamp])
+  and `rfc3161` (xref:git-timestamp.adoc[git-timestamp]).
+
+=== Subjects
+
+* *Releases*: once a release tag exists (Release; after a merge on the Git server, once the fetch shows it), the
+  commit it points to is anchored with every active provider.
+* *Checkpoints*: a checkpoint is due when `anchor.checkpoint-interval` has passed since the commit time of the
+  previous checkpoint and the pushed references differ from those it lists. The store then writes a commit:
+** tree: one file `refs`, one line per pushed reference, `<object id> SP <reference name> LF`, sorted by reference name
+   in byte order; it lists `refs/heads/*`, `refs/tags/*` and `refs/notes/*`, without `refs/tags/checkpoints/*` and
+   `refs/notes/anchors/*`;
+** parent: the previous checkpoint commit, none for the first;
+** author and committer: the technical user (a system commit, see Identity per Save); message `Checkpoint <n>`;
+** tag: `refs/tags/checkpoints/<n>`, `n` one more than the previous checkpoint, created by compare-and-swap that
+   expects the tag to be absent. In remote mode the tag is pushed with lease; a rejection means another instance wrote
+   checkpoint `n`, and the store fetches and decides again whether a checkpoint is due.
+* The due check runs on every trigger of the outbox and on a periodic task (`anchor.retry-interval`). Without an
+  active provider the store writes no checkpoints.
+
+=== Proofs as Notes
+
+* The proof of provider `p` for a commit is a note under `refs/notes/anchors/<p>`: the proof base64-encoded, one proof
+  per line. A note normally holds one proof; it holds more when instances obtained proofs for the same commit and
+  their notes were merged.
+* The store passes a provider its latest proof in the repository as `previous`: the proof on the newest checkpoint or
+  release the provider anchored, as recorded in the provider's notes.
+* Remote mode: the store pushes `refs/notes/anchors/<p>` right after writing the note, on its own and with the
+  technical user's credentials. Only a successful push counts; a failed push keeps the subject pending.
+* Retry: when the note already exists locally, the store pushes it and requests no new proof, so the time the proof
+  establishes never moves later.
+* Push: before every push of `refs/notes/anchors/<p>` the store fetches the remote notes reference and merges the local
+  notes into it with JGit's `NoteMapMerger` (`org.eclipse.jgit.notes`; base: the merge base of the two notes commits)
+  and a note merger that keeps every distinct proof line, duplicates removed. It commits the merged notes (parents: the
+  local and the fetched notes commit), moves the local reference by compare-and-swap and pushes with lease, the
+  expected remote id being the fetched one. On a rejection it repeats from the fetch, up to `save.max-attempts`.
+* `pendingAnchors(provider)` lists the release commits and checkpoints without a proof of that provider.
+
+=== Verification
+
+`verifyAnchors()` walks the checkpoint chain from the highest checkpoint tag and every release tag, and reports per
+provider:
+
+* every proof with the time it establishes, or its verification outcome;
+* every subject without a proof;
+* every reference a checkpoint lists whose listed object id is no longer reachable from that reference, and every
+  listed tag that is missing or points elsewhere: a rewritten or removed state;
+* every checkpoint number between 1 and the highest one without a tag.
+
+It runs from CI without the application, given the providers' trust configuration.
+
+=== Configuration
+
+[cols="1,2"]
+|===
+|Key |Semantics
+
+|`anchor.providers` |list of provider ids to activate; default empty, so nothing is anchored
+|`anchor.releases` |anchor the commit of every release tag; default `true`
+|`anchor.checkpoint-interval` |ISO 8601 duration; default `P1D`
+|`anchor.retry-interval` |ISO 8601 duration of the periodic task for due checkpoints and pending proofs; default
+`PT15M`
+|===
+
+A provider named in `anchor.providers` but not found by `ServiceLoader` fails the start of the store.
 
 == Codecs
 
@@ -291,4 +389,6 @@ only level 0 is accepted |`git-signing`
 for the retention class of the field's document kind |`git-crypto`
 |`PseudonymResolver` |Maps issuer and `sub` to a pseudonym; without `git-crypto` the application provides one
 |`git-crypto`
+|`AnchorProvider` |Obtains and verifies a proof that an object existed at a time (see Anchoring); several providers
+may be active |`git-signing` (`signed`), `git-timestamp` (`rfc3161`)
 |===

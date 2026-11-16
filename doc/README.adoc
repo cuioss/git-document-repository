@@ -58,7 +58,7 @@ realised).
 |Pseudonymous history, the encrypted keyring, erasure by key rotation, repositories per class
 
 |xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
-|Derived, complementary and assuring stores, RFC 3161 timestamps, the post-commit outbox
+|Derived, complementary and assuring stores, anchoring of releases and checkpoints, the post-commit outbox
 
 |xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 |Schema, data and generated output, workflow, deadlines, links, running numbers
@@ -125,8 +125,8 @@ application in `doc/app/adr/` follow the same structure.
 |The pseudonym mapping lies in an encrypted keyring in Git; erasure rotates the key-encryption key
 |Accepted
 
-|xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[0009]
-|RFC 3161 timestamps anchor the history as `git notes`, written by a post-commit outbox
+|xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[0009]
+|Releases and checkpoints are anchored through pluggable providers; a post-commit outbox follows every save
 |Accepted
 
 |xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[0010]

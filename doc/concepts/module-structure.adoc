@@ -64,12 +64,13 @@ in-core writing, compare-and-swap, in-core merge, notes
 |planned
 
 |`git-signing` (optional)
-|Commit signature, user claims, passkey approvals, signature check (xref:identity-and-signing.adoc[Identity and
-Signing])
+|Commit signature, user claims, passkey approvals, signature check, the own timestamp as anchor provider
+(xref:identity-and-signing.adoc[Identity and Signing])
 |planned
 
 |`git-timestamp` (optional)
-|RFC 3161 anchoring through the outbox (xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores])
+|RFC 3161 timestamps as anchor provider (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion
+Stores, The Anchor])
 |planned
 
 |`git-directory` (optional)
@@ -99,6 +100,9 @@ interfaces are planned:
   provided by `git-crypto`; `git-forms` interprets the schema marker `x-personal` and calls it.
 * `PseudonymResolver` (issuer and `sub` to pseudonym) is provided by `git-crypto`. Without `git-crypto` the
   application provides one, so `git-signing` and `git-store` get the pseudonym of the author in either case.
+* `AnchorProvider` (a proof that an object existed at a time) is provided by `git-signing` (`signed`, the own
+  timestamp) and by `git-timestamp` (`rfc3161`). `git-store` decides what is anchored and stores the proofs; without
+  an active provider it anchors nothing.
 * `git-directory` saves at signature level 1 and therefore needs a `SignatureLevelVerifier` provider, that is
   `git-signing`, at run time. The static dependency graph above stays unchanged.
 * `git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules

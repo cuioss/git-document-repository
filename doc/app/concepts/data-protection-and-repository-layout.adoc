@@ -117,8 +117,8 @@ an operational concept:
   "former member"; because responsibilities run through roles, they stay understandable.
 * *Evidence of erasure*: the rotation commit names the concerned pseudonyms and records the previous KEK version n as
   pending destruction (never the key). The destruction is recorded in a later commit, only after the key source
-  confirmed it. Where a timestamp authority is configured, both commits are anchored with an RFC 3161 timestamp like
-  every new state of `main`.
+  confirmed it. Both commits are anchored by the next checkpoint (daily by default, with the own timestamp, and with
+  RFC 3161 where an organisation adds it).
 * *Restriction instead of erasure*: during a statutory retention period (GDPR Art. 17(3)(b) for the retention
   obligation; § 35(3) BDSG) the data stay, and their processing is restricted and marked as such; at the end of the
   period the repository of that retention class is deleted.

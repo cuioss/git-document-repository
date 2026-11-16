@@ -16,7 +16,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 `git-signing` (module `de.cuioss.git.document.signing`, not yet created, optional) signs commits, writes the identity
 and approval trailers, verifies passkey approvals and checks signatures. It depends on `git-store` and provides two
 of its service provider interfaces: `SignatureLevelVerifier` (evidence of a signature level for a transition) and
-`CommitTrailerContributor` (identity and approval trailers); see
+`CommitTrailerContributor` (identity and approval trailers), and the anchor provider `signed` (Own Timestamp); see
 xref:git-store.adoc#_service_provider_interfaces[git-store, Service Provider Interfaces]. A WebAuthn verification
 library is open and needs the owner's approval. Rationale: xref:../concepts/identity-and-signing.adoc[Identity and
 Signing].
@@ -173,3 +173,53 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6: Signature Veri
   also checks a single signature with a stock Git installation, but it applies no trust-root chain: it trusts the
   given file as it is. A CI job using it must therefore take the file from a trusted source (the chain check above),
   never from the commit under test.
+
+== Own Timestamp
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-7[GDR-SIGN-7: Own Timestamp]_
+
+*Status:* PLANNED
+
+The provider `signed` of `git-store`'s `AnchorProvider` (see xref:git-store.adoc#_anchoring[git-store, Anchoring]).
+It proves on a best-effort basis that an object existed at a time, without an external service. Rationale and limits:
+xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+
+* Statement: UTF-8 text, one field per line in this order, each line ended by LF:
++
+----
+anchor signed 1
+object <object id, lowercase hex>
+time <UTC, ISO 8601 with seconds, for example 2026-11-16T09:30:00Z>
+sequence <n>
+previous <SHA-256 of the previous proof, lowercase hex, or "none" for sequence 1>
+----
+* Proof: the statement followed by a detached signature over it in the configured `signing.format`: for `ssh` an
+  armored SSH signature with the namespace `git-document-anchor`
+  (https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]); for `openpgp` an
+  ASCII-armored detached signature.
+* Key: `anchor.signed.key-source`, a `SigningKeySource` of its own (KMS, HSM, key file). The start fails when its
+  public key equals that of the commit-signing key. The key should lie under a responsibility other than the Git
+  administration, for example the security team's KMS policy.
+* Sequence and chain: `previous` is the proof the store passes (see xref:git-store.adoc#_proofs_as_notes[git-store,
+  Proofs as Notes]); `sequence` is one more than its sequence, 1 without one.
+* Clock: the provider refuses (outcome refused, reason clock behind) when its time is earlier than the time of the
+  previous proof, or earlier than the commit time of the subject minus `anchor.signed.max-clock-skew` (default
+  `PT5M`).
+* Log copy: every proof is written as a `LogRecord` at INFO with the repository alias, the object id, the time, the
+  sequence number and the SHA-256 of the proof. The operator's log pipeline carries it to a store outside the Git
+  administration, for example the SIEM.
+* Verification: the signature against `anchor.signed.trust` (the anchor keys with their validity periods, from the
+  verifier's configuration, never from the repository); the statement's object id against the subject; the chain
+  against the previous proof (sequence one more, `previous` equal to its hash, time not earlier). Outcomes: the time
+  of the statement, signature invalid, imprint mismatch, chain broken. With `ssh`, a single proof can also be checked
+  with a stock OpenSSH installation: `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor
+  -s <signature file> < <statement file>` (https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
+
+[cols="1,2"]
+|===
+|Configuration |Semantics
+
+|`anchor.signed.key-source` |required when `signed` is active; the anchor key, never the commit-signing key
+|`anchor.signed.trust` |required for verification; the public anchor keys with validity periods
+|`anchor.signed.max-clock-skew` |ISO 8601 duration; default `PT5M`
+|===

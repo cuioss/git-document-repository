@@ -35,8 +35,8 @@ repository, reading, notes, identity
 |Repository fixtures and the credential generator
 
 |xref:specification/git-store.adoc[git-store]
-|Repository registry, reference layout, drafts, saving, release, identity per save, index, outbox, codecs, service
-provider interfaces for the optional modules
+|Repository registry, reference layout, drafts, saving, release, identity per save, index, outbox, anchoring, codecs,
+service provider interfaces for the optional modules
 
 |xref:specification/git-forms.adoc[git-forms]
 |Kinds of documents, schema validation, data layout, generated output, workflow, deadlines, links, running numbers
@@ -45,10 +45,10 @@ provider interfaces for the optional modules
 |Envelope encryption, pseudonyms, erasure by key rotation, personal fields
 
 |xref:specification/git-signing.adoc[git-signing]
-|Commit signature, identity trailers, approvals, step-up evidence, passkeys, verification
+|Commit signature, identity trailers, approvals, step-up evidence, passkeys, verification, own timestamp
 
 |xref:specification/git-timestamp.adoc[git-timestamp]
-|RFC 3161 tokens as notes, verification, retry
+|RFC 3161 anchor provider and its verification
 
 |xref:specification/git-directory.adoc[git-directory]
 |Catalogs, service catalog, persons, first login, resolution, Backstage import, confirmation

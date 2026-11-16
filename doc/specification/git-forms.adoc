@@ -40,10 +40,10 @@ kinds:
     numbering: { prefix: R-, digits: 3 }   # optional, see Running Numbers
 ----
 
-`numbering` is optional. `template` is required for a per-document kind and optional for a numbered kind. Every
-other field is required. A kind with `numbering` is a numbered collection, a kind without it a per-document
-collection (see xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a collection is never both and is
-never named `main` or `review`. The configuration files live in a configuration repository or directory chosen by the
+`numbering` is optional. `template` is required for a per-document kind and optional for a numbered kind. Every other
+field is required. A kind with `numbering` is a numbered collection, a kind without it a per-document collection (see
+xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a collection is never both and is never named
+`main`, `review` or `checkpoints`. The configuration files live in a configuration repository or directory chosen by the
 application.
 
 == Schema Validation

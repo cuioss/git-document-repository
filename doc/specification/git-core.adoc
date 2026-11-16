@@ -233,7 +233,7 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-10[GDR-CORE-10: Git Notes]_
   (`NoteMap.read(ObjectReader, RevCommit)`, `NoteMap.set`, `NoteMap.writeTree(ObjectInserter)`).
 * A write builds a new notes commit and moves the notes reference with the compare-and-swap above.
 * `git-core` reserves no notes reference itself; the names are configuration supplied by the modules above
-  (`refs/notes/timestamps` by `git-timestamp`, `refs/notes/approvals` by `git-signing`).
+  (`refs/notes/anchors/<provider>` by `git-store`, `refs/notes/approvals` by `git-signing`).
 
 == Identity of Commits and References
 

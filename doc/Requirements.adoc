@@ -181,10 +181,10 @@ xref:specification/git-core.adoc[git-core]_
 === GDR-CORE-10: Git Notes
 
 * The library must read and write notes on a commit under a caller-named notes reference (for example
-  `refs/notes/timestamps`, `refs/notes/approvals`).
+  `refs/notes/anchors/rfc3161`, `refs/notes/approvals`).
 * Writing a note must use the compare-and-swap of GDR-CORE-5 on the notes reference.
 
-_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] ·
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] ·
 Specification: xref:specification/git-core.adoc[git-core]_
 
 [#GDR-CORE-11]
@@ -403,6 +403,53 @@ _Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_
 
 _Concept: xref:concepts/schema-driven-documents.adoc#_data_free_text_and_generated_output[Data and Output] ·
 Specification: xref:specification/git-store.adoc[git-store]_
+
+[#GDR-STORE-12]
+=== GDR-STORE-12: Pluggable Anchor Providers
+
+* The store must define a service interface for anchor providers: obtain a proof for an object id, given the
+  provider's previous proof in the repository, and verify a stored proof against an object id, reporting the time the
+  proof establishes.
+* Providers must be found through `ServiceLoader`; a provider must be active only when the configuration names it.
+  Without an active provider the store must anchor nothing. Several providers may be active at once.
+* Which subjects are anchored must be decided by the store, the same for every provider (<<GDR-STORE-13>>); a provider
+  must only obtain and verify proofs.
+* A failing or unreachable provider must not block or fail a save, a release or a fetch.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
+xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
+
+[#GDR-STORE-13]
+=== GDR-STORE-13: Anchored Subjects and Checkpoints
+
+* With an active provider the store must anchor the commit of every release tag once the tag exists, including tags
+  created after a merge on the Git server; this must be switchable off by configuration.
+* With an active provider the store must create a checkpoint when the configured interval has passed since the previous checkpoint and a
+  pushed reference changed since then: a commit whose tree lists every pushed reference except the checkpoint tags and
+  the anchor notes, with its object id, sorted by reference name, and whose parent is the previous checkpoint.
+* A checkpoint must be tagged `refs/tags/checkpoints/<n>`, `n` counting from 1; an existing checkpoint tag must never
+  be moved or deleted, and two checkpoints must never share a parent.
+* The store must anchor every checkpoint with every active provider.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
+xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
+
+[#GDR-STORE-14]
+=== GDR-STORE-14: Anchor Proofs as Notes
+
+* A proof must be stored as a note on the anchored commit under `refs/notes/anchors/<provider>`.
+* In remote mode the note must be pushed right after it is written, separately from the commits of any save; a failed
+  push must leave the subject pending, and the retry must push the stored proof instead of requesting a new one.
+* Before a push the store must merge its notes into the fetched remote notes reference, keeping every distinct proof of
+  a commit, and push with lease; a rejected push must be repeated from the fetch, up to a configured number of
+  attempts.
+* The subjects still without a proof must be listable per provider and must be retried on the next trigger of the
+  outbox and by a periodic task.
+* A verification of the checkpoints must check every stored proof and list every reference whose listed object id is
+  no longer reachable from that reference (or, for a tag, no longer its target).
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
+xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
 
 [#requirements-git-forms]
 == `git-forms` Requirements
@@ -680,41 +727,44 @@ xref:specification/git-signing.adoc[git-signing]_
 _Concept: xref:concepts/identity-and-signing.adoc#_what_has_to_be_done_right[What Has to Be Done Right] ·
 Specification: xref:specification/git-signing.adoc[git-signing]_
 
+[#GDR-SIGN-7]
+=== GDR-SIGN-7: Own Timestamp
+
+* The module must provide the anchor provider `signed` of `git-store` (<<GDR-STORE-12>>): for an object id it must
+  sign a statement of the object id, the time, a sequence number and the hash of the provider's previous proof in the
+  repository.
+* The statement must be signed with an anchor key from its own key source, in the configured signature format; the
+  configuration must reject an anchor key equal to the commit-signing key.
+* The provider must refuse to sign when its clock is behind the time of its previous proof, and report that outcome.
+* Every proof must be written as a log record with the repository alias, the object id, the time, the sequence number
+  and the hash of the proof.
+* The verification must check the signature against the configured anchor keys and the chain: the sequence numbers
+  without gaps, every proof referring to its predecessor, the times never decreasing.
+
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
+xref:specification/git-signing.adoc#_own_timestamp[git-signing, Own Timestamp]_
+
 [#requirements-git-timestamp]
 == `git-timestamp` Requirements
 
 [#GDR-TSA-1]
-=== GDR-TSA-1: Timestamp per State of `main`
+=== GDR-TSA-1: RFC 3161 Anchor Provider
 
-* For every new commit of `main` the module must obtain an RFC 3161 timestamp token over the commit id, as a consumer
-  of the outbox (GDR-STORE-10); this includes states created by a merge on the Git server, which reach the module
-  through the fetch trigger of the outbox.
-* The token must be stored as a note on the commit under `refs/notes/timestamps`.
-* In remote mode the module must push the note right after writing it; a failed push must leave the commit pending,
-  and the retry must push the stored token instead of requesting a new one.
-* Before a push the module must merge its notes into the fetched remote notes reference, keeping every distinct token
-  of a commit, and push with lease; a rejected push must be repeated from the fetch, up to a configured number of
-  attempts.
+* The module must provide the anchor provider `rfc3161` of `git-store` (<<GDR-STORE-12>>): for an object id it must
+  obtain an RFC 3161 timestamp token from the configured timestamp authority.
+* The module must contain no decision about which commits are anchored and no handling of notes or pushes.
 
-_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] · Specification:
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
 xref:specification/git-timestamp.adoc[git-timestamp]_
 
 [#GDR-TSA-2]
 === GDR-TSA-2: Timestamp Verification
 
-* The module must verify a stored token against the commit id and the certificate of the timestamp authority.
+* The module must verify a stored token against the object id and the certificate of the timestamp authority, and
+  report the time the token proves.
 
-_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_external_anchor[External Anchor] · Specification:
+_Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
 xref:specification/git-timestamp.adoc[git-timestamp]_
-
-[#GDR-TSA-3]
-=== GDR-TSA-3: Unavailable Timestamp Authority
-
-* An unreachable timestamp authority must not block or fail a save.
-* The outbox must retry the missing timestamps; the states still without a token must be listable.
-
-_Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_git_and_the_other_systems[Consistency]
-· Specification: xref:specification/git-timestamp.adoc[git-timestamp]_
 
 [#requirements-git-directory]
 == `git-directory` Requirements
@@ -856,7 +906,7 @@ xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
 xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005],
 xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007],
-xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009]
+xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-core.adoc[git-core]
 
 |GDR-WT-1 – GDR-WT-3
@@ -871,7 +921,7 @@ xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_client
 xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005]
 |xref:specification/git-testing.adoc[git-testing]
 
-|GDR-STORE-1 – GDR-STORE-11
+|GDR-STORE-1 – GDR-STORE-14
 |xref:concepts/storage-engine.adoc[Storage Engine],
 xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores],
 xref:concepts/data-protection.adoc[Data Protection],
@@ -880,7 +930,7 @@ xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
 xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003],
-xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009],
+xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009],
 xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
 |xref:specification/git-store.adoc[git-store]
 
@@ -896,15 +946,16 @@ xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_
 |xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[ADR-0008]
 |xref:specification/git-crypto.adoc[git-crypto]
 
-|GDR-SIGN-1 – GDR-SIGN-6
+|GDR-SIGN-1 – GDR-SIGN-7
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
 |xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006],
-xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007]
+xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007],
+xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-signing.adoc[git-signing]
 
-|GDR-TSA-1 – GDR-TSA-3
+|GDR-TSA-1 – GDR-TSA-2
 |xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
-|xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009]
+|xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-timestamp.adoc[git-timestamp]
 
 |GDR-DIR-1 – GDR-DIR-7

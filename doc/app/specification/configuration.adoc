@@ -97,9 +97,14 @@ for `private_key_jwt`), `groups-claim` (default `groups`)
 |`kek-source` (`kms`, `vault-transit`, `file`), `kek-ref`, `rotation-interval` (ISO 8601 duration, default `P1D`,
 maximum `P30D`)
 
-|`timestamp`
+|`anchor`
 |no
-|`tsa-url`, `trust-ref`
+|Anchoring of releases and checkpoints
+(link:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
+`providers` (default `[signed]`; `[]` switches anchoring off), `releases` (default `true`), `checkpoint-interval`
+(ISO 8601 duration, default `P1D`), `signed-key-ref` (the anchor key of the own timestamp; required while `signed` is
+active; must differ from `signing.key-ref`), `rfc3161.tsa-url` and `rfc3161.trust-ref` (required when `rfc3161` is
+active)
 
 |`mirror`
 |no
@@ -123,7 +128,7 @@ maximum `P30D`)
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 
 * `file:/run/secrets/...`: a mounted file.
-* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, KEK with `kek-source: kms`).
+* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, anchor key, KEK with `kek-source: kms`).
 * `vault:<path>`: a Vault path; the transit key with `kek-source: vault-transit`
   (`vault:transit/keys/<name>`), a secret of the key-value engine otherwise.
 

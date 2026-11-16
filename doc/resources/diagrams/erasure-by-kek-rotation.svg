@@ -58,7 +58,7 @@
   <text x="500" y="270" class="sub">every old keyring version in the history is unreadable: its KEK is gone</text>
   <text x="500" y="290" class="sub">the DEKs of p-x are gone with it, so persons/p-x.enc and its personal fields are noise</text>
   <text x="500" y="310" class="sub">everyone else stays readable: their DEKs are in the new keyring</text>
-  <text x="500" y="330" class="sub">no history is rewritten; the destruction commit is timestamped like every state of main</text>
+  <text x="500" y="330" class="sub">no history is rewritten; the next checkpoint anchors the destruction commit</text>
 
   <text x="500" y="388" class="caption">Erasures are batched (for example daily); one rotation erases any number of pseudonyms.</text>
 </svg>

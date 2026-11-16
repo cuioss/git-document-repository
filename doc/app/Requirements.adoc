@@ -38,8 +38,10 @@ referenced, never restated:
 |Commit signature, trailer schema, signature levels, passkey approval notes, signature check
 |link:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
 
-|RFC 3161 timestamps as notes
-|link:../Requirements.adoc#requirements-git-timestamp[`git-timestamp` requirements]
+|Anchoring of releases and checkpoints: the own timestamp by default, RFC 3161 as a variant
+|link:../Requirements.adoc#GDR-STORE-12[GDR-STORE-12 – GDR-STORE-14],
+link:../Requirements.adoc#GDR-SIGN-7[GDR-SIGN-7], link:../Requirements.adoc#requirements-git-timestamp[`git-timestamp`
+requirements]
 
 |Directory of persons, catalogs, stable ids, Backstage import
 |link:../Requirements.adoc#requirements-git-directory[`git-directory` requirements]

@@ -52,8 +52,10 @@ the last attempt
 |entry required |first login and interrupted first login (`git-directory`)
 |incomplete |erasure whose commit, push or key destruction is still outstanding (`git-crypto`); release whose tag is
 still missing after `main` moved (`git-store`)
-|no token, imprint mismatch, signature invalid |timestamp verification (`git-timestamp`); a valid token is success
-with the time
+|unavailable, refused |obtaining an anchor proof (`git-store` with a provider): the provider is unreachable, or
+`signed` refuses because its clock is behind; the subject stays pending
+|no proof, imprint mismatch, signature invalid, chain broken |anchor verification (`git-store` with the providers
+`signed` and `rfc3161`); a valid proof is success with the time it establishes
 |===
 
 Exceptions remain for programming errors (violated preconditions) and unexpected I/O failures (for example the
