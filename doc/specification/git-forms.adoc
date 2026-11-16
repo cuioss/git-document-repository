@@ -43,7 +43,7 @@ kinds:
 `numbering` is optional. `template` is required for a per-document kind and optional for a numbered kind. Every other
 field is required. A kind with `numbering` is a numbered collection, a kind without it a per-document collection (see
 xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a collection is never both and is never named
-`main`, `review` or `checkpoints`. The configuration files live in a configuration repository or directory chosen by the
+`main` or `checkpoints`. The configuration files live in a configuration repository or directory chosen by the
 application.
 
 == Schema Validation
@@ -95,7 +95,7 @@ _See Requirement link:../Requirements.adoc#GDR-FORMS-4[GDR-FORMS-4: Generated Ou
 * The save writes data, fragments and the output in one commit.
 * A kind without `template` generates no output: the generate step of the save and its check are skipped.
 * `check(commit)` regenerates the output and returns match or mismatch. When `git-forms` is created, a CI job of the
-  consuming repository is planned to call it on every pull request; no such job exists yet.
+  consuming repository is planned to call it on every push; no such job exists yet.
 
 == Workflow
 
@@ -109,11 +109,11 @@ image::../resources/diagrams/document-workflow-states.svg["Document states and t
 ----
 states: [draft, review, approved, superseded]
 transitions:
-  - { name: edit,      from: draft,    to: draft,      mechanism: intermediate-save, level: 1 }
-  - { name: submit,    from: draft,    to: review,     mechanism: save,              level: 1 }
-  - { name: approve,   from: review,   to: approved,   mechanism: release,           level: 2 }
-  - { name: rework,    from: review,   to: draft,      mechanism: save,              level: 1 }
-  - { name: supersede, from: approved, to: superseded, mechanism: release,           level: 2 }
+  - { name: edit,      from: draft,    to: draft,      mechanism: intermediate-save }
+  - { name: submit,    from: draft,    to: review,     mechanism: save }
+  - { name: approve,   from: review,   to: approved,   mechanism: release, step-up: true }
+  - { name: rework,    from: review,   to: draft,      mechanism: save }
+  - { name: supersede, from: approved, to: superseded, mechanism: release, step-up: true }
 deadlines:
   - { state: review,   within: P14D }
   - { state: approved, review-interval: P1Y }
@@ -123,7 +123,7 @@ deadlines:
 * The current state is the field `state`, written by the transition: in `document.yaml` for a per-document kind, in
   the entry file `<collection>/<number>.yaml` for a numbered kind. The workflow state `draft` is a value of that field;
   it is unrelated to the draft references of `git-store`, which hold intermediate saves in any state.
-* When `main` is protected, `submit` opens the pull or merge request and `approve` (release) merges it (see
+* `approve` (release) merges into `main` through the store, which pushes as the technical user (see
   xref:git-store.adoc#_release[git-store, Release]).
 * A transition not listed for the current state returns the transition-refused outcome.
 
@@ -138,20 +138,17 @@ _See Requirement link:../Requirements.adoc#GDR-FORMS-6[GDR-FORMS-6: Deadlines]_
 * `due(instant)` returns the documents with a deadline at or before the instant, computed from the index of
   `git-store`. No deadline is persisted.
 
-== Signature Level per Transition
+== Step-Up per Transition
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Signature Level per Transition]_
+_See Requirement link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Step-Up per Transition]_
 
 *Status:* PLANNED
 
-`level` (0–4) per transition. The transition asks the `SignatureLevelVerifier` of `git-store` (see
-xref:git-store.adoc#_service_provider_interfaces[git-store, Service Provider Interfaces]) for the evidence of that
-level: trailers for 1, step-up for 2, a passkey note for 3. `git-signing` provides it; `git-forms` does not depend on
-`git-signing`. Missing evidence returns the level-not-met outcome. Without a provider only level 0 is accepted.
-
-Level 4 (qualified electronic signature through a remote signing service) has no provider in this reactor: a
-transition that requires level 4 returns the level-not-met outcome unless a provider of the application supplies the
-evidence.
+`step-up: true` on a transition (default `false`). Such a transition asks the `StepUpVerifier` of `git-store` (see
+xref:git-store.adoc#_service_provider_interfaces[git-store, Service Provider Interfaces]) for the caller's evidence.
+`git-signing` provides it; `git-forms` does not depend on `git-signing`. Missing evidence returns the step-up-required
+outcome; without a provider such a transition is refused with the same outcome. Every commit is signed the same way,
+whether the transition requires step-up or not.
 
 == Typed Links
 

@@ -36,7 +36,7 @@ validation
 |CIFR-OPS-1–3, CIFR-OPS-6
 
 |link:specification/authentication.adoc[Authentication]
-|Web login, rights, trailer values, signature levels, step-up, passkeys, push credentials, first login, directory flows
+|Web login, rights, trailer values, step-up, the Git credential, first login, directory flows
 |CIFR-AUTH, CIFR-DIR-1–3
 
 |link:specification/mcp-server.adoc[MCP Server]

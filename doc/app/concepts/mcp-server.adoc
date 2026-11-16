@@ -69,7 +69,7 @@ permission of a call is the intersection: the agent never exceeds the user it ac
 |Write the user's drafts; nothing becomes visible to others.
 
 |`cisos-friend:save`
-|Save drafts to the working branch (signature level 1).
+|Save drafts to the working branch, signed by the application like every commit.
 
 |`cisos-friend:request-release`
 |Open a release or approval request that a human completes.
@@ -89,26 +89,26 @@ service account.
 |Read what the user may not read
 
 |Fill in drafts from recipes, timelines, tickets
-|Release, approve or sign above level 1
+|Release or approve
 
-|Save at signature level 1, attributed to user and agent
+|Save, attributed to user and agent in the signed trailers
 |Change catalogs, rights or configuration
 
 |Request a release; the human approves in the web app
-|Perform step-up MFA or a passkey approval
+|Perform step-up MFA
 
 |Receive validation errors per field and conflicts per file
 |Obtain Git, KMS or timestamp-authority credentials
 |===
 
-An approval at signature level 2 or 3 is bound to a human act: step-up authentication or a passkey on the user's
-device. The MCP server therefore stops at the request; the request appears in the user's *Due* lens of the web app.
+An approval is bound to a human act: the step-up authentication of the user. The MCP server therefore stops at the
+request; the request appears in the user's *Due* lens of the web app.
 
 [#_git_credentials_never_reach_the_agent]
 == Git Credentials Never Reach the Agent
 
-The application pushes with the technical user, or with the user's Git token that Token Sheriff keeps
-(link:authentication-and-identity.adoc#_push_credentials[Push Credentials]). Neither credential is ever part of a tool
+The application pushes only with the technical user
+(link:authentication-and-identity.adoc#_the_git_credential[The Git Credential]). That credential is never part of a tool
 result, an error message or a log line, and the agent's access token is never used against the Git server. A
 compromised agent therefore holds at most an audience-bound token for this one server, valid for the lifetime its
 authorization server sets.
@@ -145,13 +145,13 @@ therefore offers DPoP as configuration and recommends it once the agent clients 
 * *Audit*: every tool call is logged with a `LogRecord`: pseudonym, client id, tool, repository, outcome. Token
   material, session ids and document content are never logged. The records reach the SIEM.
 * *Content is data*: document text returned to an agent may contain instructions written by anyone with write access.
-  The server treats every write the agent sends as untrusted input: schema validation, rights check, signature level,
+  The server treats every write the agent sends as untrusted input: schema validation, rights check, step-up,
   exactly as for a human.
 
 [CAUTION]
 ====
 The design binds an agent to its user's rights; it does not make the agent's judgement better. An agent with
-`cisos-friend:save` can still save a wrong answer at level 1. That is why nothing an agent saves is released without a
+`cisos-friend:save` can still save a wrong answer. That is why nothing an agent saves is released without a
 human.
 ====
 

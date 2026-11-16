@@ -38,7 +38,7 @@ The shape is described in link:../../concepts/schema-driven-documents.adoc[Schem
 === One module per category with its own code
 
 *Rejected because* the four categories differ in content, not in mechanism. Four implementations of review, deadlines
-and signature levels would drift apart.
+and step-up would drift apart.
 
 === Free-form documents without schema
 

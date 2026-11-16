@@ -11,12 +11,11 @@ Most users of an ISMS or of an incident report have no account on the Git server
 every one of them a Git seat just to fill in a form has bought a licence problem along with the form. CISOs-Friend
 therefore authenticates people against the organisation's identity provider, pushes with a technical user, and
 writes the identity of the person into every commit in a form the application signs. This page is the application
-side of that design: the login, the claims used, the first login, the rights, the push credentials and the signature
-level each category asks for.
+side of that design: the login, the claims used, the first login, the rights, the Git credential and the step-up each
+category asks for.
 
-The library side (the trailer schema, the commit signature, the graded traceability, passkey approvals as notes, the
-signature check) is described in link:../../concepts/identity-and-signing.adoc[Identity and Signing] and is not
-restated here.
+The library side (the trailer schema, the commit signature, step-up, the signature check) is described in
+link:../../concepts/identity-and-signing.adoc[Identity and Signing] and is not restated here.
 
 == Login Through Token Sheriff
 
@@ -81,7 +80,7 @@ Catalogs]); the application supplies the flow and the form. The first login belo
   requested for the catalog.
 . The form carries the *information duty* under GDPR Art. 13: what the directory is for, what it holds (name, team and
   role only), how long it is kept, and the legal basis agreed with the data protection officer.
-. Saving is a signed commit at level 1; the entry is valid at once. There is no pending state in the first iteration,
+. Saving is a signed commit; the entry is valid at once. There is no pending state in the first iteration,
   because roles are names only and grant nothing.
 . Later the user changes the own entry in the same form. A periodic confirmation ("Is your team still right?") opens
   the form yearly or on the first login after a reorganisation.
@@ -93,109 +92,62 @@ Who may read and write a repository through the application comes from the ident
 a configured mapping from groups to repositories and to the actions *read*, *edit*, *approve* and *administer
 catalogs*. In the first iteration no right is derived from the roles of the directory; who may approve is a matter of
 access, not of the catalog of roles. A later iteration may derive rights from roles; then the assignment of such a role
-needs a confirmation (signature level 2) or comes from the identity provider.
+needs a confirmation with step-up or comes from the identity provider.
 
 The application enforces the rights for every request, in the web app and in the MCP server alike. The Git server sees
-only the technical user, unless the organisation pushes in the user's name.
+only the technical user.
 
-== Push Credentials
+== The Git Credential
 
-[cols="1,3"]
-|===
-|Strategy |Meaning
+The application reaches every Git server as one technical user, with a credential per repository (a deploy key or a
+bot account token). The commit names the user's pseudonym as author and the bot as committer; the signed trailers carry
+the identity. No user needs an account on the Git server, and nothing is pushed in a user's name.
 
-|*Technical user* (default)
-|The application pushes with its own credential (a deploy key or a bot account token). The commit names the user's
-pseudonym as author and the bot as committer; the signed trailers carry the identity.
+`main` of every repository is protected on the Git server so that only the technical user may push to it and nobody
+may force-push. The application merges releases itself; the approvals of the workflow are trailers of the signed
+release commit.
 
-|*The user's token* (optional)
-|The token comes from an OAuth login against the Git server (GitHub App or OAuth App, GitLab OAuth), which can be the
-application's own login; with another identity provider the user authorises the Git server once in addition. Token
-Sheriff provides these flows, keeps the tokens and refreshes them (token lifetimes: see the table below); the library
-only consumes the token per push. Gain: the Git server enforces the rights and its audit log names the real pusher. A
-protected `main` usually rejects a user's direct push; the user then pushes the working branch and release runs as a
-pull or merge request.
-|===
+[#_step_up_per_transition]
+== Step-Up per Transition
 
-Lifetimes of the user tokens per Git host, which decide how often Token Sheriff refreshes them:
-
-[cols="1,3"]
-|===
-|Git host |Access token and refresh
-
-|GitHub App
-|The user access token expires after eight hours, the refresh token after six months; the app owner can opt out of
-expiry
-(link:https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens[GitHub Docs]).
-
-|GitHub OAuth App
-|No fixed expiry; GitHub revokes an OAuth token that has not been used for one year
-(link:https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation[GitHub Docs]).
-
-|GitLab
-|The access token expires after two hours (7200 seconds) by default, configurable on GitLab Self-Managed and
-Dedicated; the refresh token works after the access token has expired and is replaced on use
-(link:https://docs.gitlab.com/integration/oauth_provider/[OAuth provider],
-link:https://docs.gitlab.com/api/oauth2/[OAuth 2.0 API]).
-
-|Gitea
-|The access token lives 3600 seconds, the refresh token 730 hours, both configurable in `[oauth2]`
-(`ACCESS_TOKEN_EXPIRATION_TIME`, `REFRESH_TOKEN_EXPIRATION_TIME`)
-(link:https://docs.gitea.com/administration/config-cheat-sheet[Gitea configuration cheat sheet]).
-|===
-
-Commits signed with the user's own Git key are not feasible server-side; the graded signature replaces them. One push
-per save keeps every push to the commits of exactly one user.
-
-[#_signature_levels_per_transition]
-== Signature Levels per Transition
-
-The signature level is part of the workflow of each category and is configured per transition. The levels are
-defined by the library (0: author field only; 1: application signature with trailers; 2: plus step-up MFA; 3: plus
-passkey approval; 4: qualified electronic signature). The defaults of CISOs-Friend:
+Every commit is signed by the application with the identity trailers. A transition of a category's workflow can in
+addition require *step-up*: before the approval the server checks `acr` and `auth_time` of the session. If they do not
+meet the configured assurance, it re-drives authorization with `acr_values` and `max_age` (RFC 9470, provided by Token
+Sheriff's client) and verifies the result before it writes the approval; the trailers record the fresh authentication.
+The defaults of CISOs-Friend:
 
 [cols="2,1,3"]
 |===
-|Transition |Level |Effort for the user
+|Transition |Step-up |Effort for the user
 
 |Every intermediate save and every save
-|1
+|no
 |none
 
 |First-login entry, change of the own directory entry
-|1
+|no
 |none
 
 |Release of a SAMM assessment
-|2
+|yes
 |one MFA confirmation
 
 |Release of a threat model
-|2
+|yes
 |one MFA confirmation
 
 |Release of an incident response report
-|3
-|one passkey confirmation (user verification on the device)
+|yes
+|one MFA confirmation
 
 |Approval of a policy or of the statement of applicability
-|3
-|one passkey confirmation (user verification on the device)
-
-|Qualified electronic signature
-|4
-|only where the law demands it; not in the first iteration
+|yes
+|one MFA confirmation
 |===
 
-*Step-up (level 2)*: before the approval the server checks `acr` and `auth_time` of the session. If they do not meet the
-configured assurance, it re-drives authorization with `acr_values` and `max_age` (RFC 9470, provided by Token
-Sheriff's client) and verifies the result before it writes the approval.
-
-*Passkey (level 3)*: the web app registers the user's WebAuthn public key once; on approval the browser signs a
-fresh, single-use challenge bound to the commit id (a hash over the commit id and a server nonce) after user
-verification, with a key the server does not hold; the server checks ceremony type, origin, challenge and signature,
-and the library stores the assertion as a note. An AI agent can never perform a level 2 or level 3 approval; it hands
-the approval to the human (link:mcp-server.adoc[MCP Server]).
+An AI agent can never perform a transition that requires step-up; it hands the approval to the human
+(link:mcp-server.adoc[MCP Server]). A document that needs a qualified electronic signature is signed outside the
+application.
 
 == Open Questions
 

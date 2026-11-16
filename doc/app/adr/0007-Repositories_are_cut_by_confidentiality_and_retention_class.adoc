@@ -48,7 +48,8 @@ history of everything else.
 
 === Properties of the design
 
-* Git server rights enforce confidentiality when pushing in the user's name.
+* Git server rights per repository back the confidentiality class: only the technical user and the readers the
+  organisation grants reach a repository.
 * Erasure by retention is a repository deletion.
 
 === Accepted costs

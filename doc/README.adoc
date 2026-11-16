@@ -52,7 +52,7 @@ realised).
 |Local and remote mode, no working trees, compare-and-swap, drafts and saving, visibility, the in-memory index
 
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
-|Technical user and user token, the application signature, trailers, graded traceability, passkey approvals
+|The technical user, the application signature on every commit, trailers, step-up for approvals
 
 |xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
 |Pseudonymous history, the pluggable person directory, erasure, repositories per class
@@ -113,13 +113,13 @@ application in `doc/app/adr/` follow the same structure.
 |The JGit foundation is a library of its own, shared with its clients
 |Accepted
 
-|xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[0006]
-|The application signs every commit and records the user's claims as signed trailers
+|xref:adr/0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[0006]
+|A technical user writes, and the application signs every commit with the user claims as signed trailers
 |Accepted
 
 |xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[0007]
 |Passkey approvals are stored as `git notes` on the approved commit
-|Accepted
+|Superseded by 0006
 
 |xref:adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[0008]
 |Commits name pseudonyms; a pluggable person directory keeps persons in Git by default

@@ -172,11 +172,9 @@ The release of an entry of a numbered collection merges that entry's path from t
 (a path-level merge in core). In remote mode protected branches and tags of the Git server make the release
 immutable; in local mode only the store's rule never to move or delete a release tag protects it, together with the
 file system rights of the operator.
-Optionally the Git server's review path is used: "submit for review" opens a pull or merge request whose review is the
-four-eyes approval, and the "approve" transition (release) merges it (see
-xref:schema-driven-documents.adoc[Schema-Driven Documents]). The request comes from the document's working branch;
-for an entry of a numbered collection from a review branch that holds `main` with only that entry applied, so the
-counter and the other entries stay out of it.
+The store merges every release itself and pushes it as the technical user; `main` is protected so that only the
+technical user may push to it. A four-eyes approval is a transition of the document's workflow, approved by a second
+user in the application (see xref:schema-driven-documents.adoc[Schema-Driven Documents]).
 
 == Reading and Queries
 

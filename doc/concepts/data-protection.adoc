@@ -125,13 +125,12 @@ repositories*, each with a stable alias, a confidentiality class and an optional
 widely readable policies, restricted registers and strongly restricted records of one year (with a retention period)
 into separate repositories; the concrete cut is the decision of the application.
 
-* With pushes in the user's name (see xref:identity-and-signing.adoc[Identity and Signing]) the Git server enforces the
-  rights itself; otherwise the application enforces them per repository.
+* The application enforces the rights per repository; the Git server sees only the technical user (see
+  xref:identity-and-signing.adoc[Identity and Signing]).
 * *References across repositories* use stable ids of the form `<alias>:<kind>/<id>` for documents (for example
   `register:risk/R-042`) and `<catalog>:<id>` for entries of the directory catalogs (for example `role:ciso`). The
   store checks on save that the target exists.
-* A CI pipeline on the pull request can validate schemas (JSON Schema) and references with the existing
-  infrastructure.
+* A CI pipeline on every push can validate schemas (JSON Schema) and references with the existing infrastructure.
 * After its retention period a repository is deleted as a whole.
 
 [CAUTION]

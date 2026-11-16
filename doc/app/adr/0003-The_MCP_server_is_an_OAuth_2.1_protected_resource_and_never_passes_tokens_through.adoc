@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: The MCP endpoint is an OAuth 2.1 resource server with RFC 9728 metadata; it validates every token through Token Sheriff including the audience, enforces scopes intersected with the user's rights, never forwards the token, and leaves approvals above signature level 1 to the human.
+// summary: The MCP endpoint is an OAuth 2.1 resource server with RFC 9728 metadata; it validates every token through Token Sheriff including the audience, enforces scopes intersected with the user's rights, never forwards the token, and leaves approvals that require step-up to the human.
 // tags: mcp, oauth, security, tokens, agents
 // affects: cisos-friend
 // supersedes:
@@ -34,7 +34,8 @@ the MCP endpoint is an OAuth 2.1 protected resource.
 * The token is never forwarded. Git, KMS and timestamp authority use the application's own credentials.
 * Only Streamable HTTP in the shape of revision 2026-07-28 is offered, without protocol sessions. Every request
   carries its token. `GET` and `DELETE` on `/mcp` are answered with `405`.
-* An agent saves at signature level 1 at most. Higher levels need the human in the web app.
+* An agent saves, signed by the application like every commit, but never completes a transition that requires
+  step-up; that needs the human in the web app.
 
 The details are in link:../concepts/mcp-server.adoc[MCP Server].
 
@@ -58,8 +59,8 @@ the server-side persistence.
 
 === Agents approve with the user's session
 
-*Rejected because* signature levels 2 and 3 state that the human confirmed this very approval. An agent cannot make that
-statement true.
+*Rejected because* step-up states that the human confirmed this very approval with a fresh MFA login. An agent cannot
+make that statement true.
 
 == Consequences
 

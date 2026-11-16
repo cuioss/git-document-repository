@@ -14,7 +14,10 @@
 
 == Status
 
-Accepted
+Superseded by
+xref:0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006]
+on 2026-11-16: commits are always signed by the application, and passkey approvals are not offered. The decision below
+is kept as the record of what was decided before.
 
 == Decision
 
@@ -29,10 +32,11 @@ application verifies the assertion with the registered public key and stores it,
 of `kind` `passkey` in the note on the commit under `refs/notes/approvals`, so any verifier can recompute the
 challenge from the commit id. It reads the note, appends its entry and writes the note back by compare-and-swap of the
 notes reference, so the entry never replaces another approval
-(xref:0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006]). The push
+(xref:0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006]). The push
 refspec carries `refs/notes/*`.
 
-See xref:../concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Identity and Signing, Level 3].
+See xref:../concepts/identity-and-signing.adoc[Identity and Signing]; its passkey section was removed when this decision
+was superseded.
 
 == Alternatives rejected
 
@@ -85,5 +89,5 @@ When the prototype shows that browsers or authenticators refuse the challenge fo
 == Links
 
 * xref:../concepts/identity-and-signing.adoc[Identity and Signing]
-* xref:0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006]
+* xref:0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006]
 * xref:../specification/git-signing.adoc[`git-signing` specification]

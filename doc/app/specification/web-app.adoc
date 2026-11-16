@@ -133,11 +133,9 @@ Status: PLANNED
 
 * Diff: `GET /api/v1/documents/{repository}/{id}/diff?from=released` returns a structured diff of the YAML data; the
   view groups it by schema section.
-* Approve: `POST /api/v1/approvals/{id}`; responses `APPROVED`, `STEP_UP_REQUIRED` (follow the address),
-  `PASSKEY_REQUIRED` (run `navigator.credentials.get` with the options of
-  link:authentication.adoc#_passkey_approval[Passkey Approval]). These are the REST mapping of the service result
-  `SIGNATURE_LEVEL_REQUIRED` (link:authentication.adoc#_signature_levels[Authentication, Signature Levels]).
-* The approve button text names the level: "Approve (level 2: confirm with MFA)".
+* Approve: `POST /api/v1/approvals/{id}`; responses `APPROVED` and `STEP_UP_REQUIRED` (follow the address; see
+  link:authentication.adoc#_step_up_defaults[Authentication, Step-Up Defaults]).
+* The approve button text says when step-up follows: "Approve (confirm with MFA)".
 
 == Texts
 _See Requirement link:../Requirements.adoc#CIFR-WEB-7[CIFR-WEB-7: Texts]_

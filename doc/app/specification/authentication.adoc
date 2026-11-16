@@ -12,12 +12,11 @@ _See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
 
 Status: PLANNED
 
-Login, rights, the identity values written into commits, signature levels, step-up, passkeys, push credentials, the
-first login and the directory flows. Reasoning:
-link:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library contract for trailers,
-signatures and approval notes is in link:../../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1],
-link:../../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2], link:../../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4] and
-link:../../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5].
+Login, rights, the identity values written into commits, step-up, the Git credential, the first login and the
+directory flows. Reasoning: link:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library
+contract for trailers, signatures and approvals is in link:../../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1],
+link:../../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2], link:../../Requirements.adoc#GDR-SIGN-3[GDR-SIGN-3],
+link:../../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4] and link:../../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5].
 
 == Web Login
 _See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
@@ -88,10 +87,10 @@ Input: the `groups` claim (or the claim configured as group source) of the sessi
 |Reading documents, index views and diffs of the repository
 
 |`edit`
-|Drafts and saves (signature level 1)
+|Drafts and saves
 
 |`approve`
-|Transitions requiring level 2 or 3
+|Approval transitions (releases and approvals), with step-up where the workflow requires it
 
 |`administer-catalogs`
 |Changes of the role, team and service catalogs; deletion of expired repositories
@@ -131,42 +130,38 @@ for an MCP bearer token its `sid`, else its `jti`, else the SHA-256 of the token
 |`client_id`, else `azp`
 |===
 
-== Signature Levels
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-4[CIFR-AUTH-4: Signature Levels per Transition]_
+== Step-Up Defaults
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-4[CIFR-AUTH-4: Signed Commits and Step-Up per Transition]_
 
 Status: PLANNED
 
-Defaults in `categories/<category>/workflow.yaml`; overrides in `cisos-friend.yaml` → `categories`.
+Every commit is signed by the application with the identity trailers. Defaults of `step-up` per transition in
+`categories/<category>/workflow.yaml`; overrides in `cisos-friend.yaml` → `categories`.
 
 [cols="2,1"]
 |===
-|Transition |Default level
+|Transition |Step-up
 
 |`save` (all categories), `directory-entry`
-|1
+|no
 
-|`samm.release`, `threat-model.release`
-|2
-
-|`incident.release`; `isms.policy.approve`, `isms.scope.approve`, `isms.soa.approve`, `isms.audit-report.approve`,
-`isms.management-review.approve`
-|3
+|`samm.release`, `threat-model.release`, `incident.release`; `isms.policy.approve`, `isms.scope.approve`,
+`isms.soa.approve`, `isms.audit-report.approve`, `isms.management-review.approve`
+|yes
 |===
 
-A transition whose required level is not reached returns the service result `SIGNATURE_LEVEL_REQUIRED` with the
-required level and the missing evidence; nothing is written. The interfaces map it as follows:
+A transition that requires step-up and lacks the evidence returns the service result `STEP_UP_REQUIRED`; nothing is
+written. The interfaces map it as follows:
 
 [cols="1,3"]
 |===
 |Interface |Mapping
 
 |REST (`/api/v1`)
-|`STEP_UP_REQUIRED` with the step-up address while the level-2 evidence (renewed `acr` and `auth_time`) is missing;
-`PASSKEY_REQUIRED` with the passkey-options address of <<_passkey_approval>> while only the
-level-3 assertion is missing; `SIGNATURE_LEVEL_REQUIRED` for a level the web app cannot supply (4)
+|`STEP_UP_REQUIRED` with the step-up address (Step-Up)
 
 |MCP
-|Tool error `SIGNATURE_LEVEL_REQUIRED` with the level; an agent never completes a transition above level 1
+|Tool error `STEP_UP_REQUIRED`; an agent never completes a transition that requires step-up
 (link:mcp-server.adoc#_tools[MCP Server, Tools])
 |===
 
@@ -179,43 +174,21 @@ Configuration per category in `cisos-friend.yaml` → `categories.<category>.ste
 and `max-age` (default `PT5M`) (link:configuration.adoc#_categories[Configuration, Categories]).
 
 . The approval request checks the session's `acr` and `auth_time`.
-. Not met: the service result is `SIGNATURE_LEVEL_REQUIRED`, which the REST API returns as `STEP_UP_REQUIRED` with a
-  step-up address (<<_signature_levels>>); the web app redirects there.
+. Not met: the service result is `STEP_UP_REQUIRED`, which the REST API returns with a step-up address
+  (<<_step_up_defaults>>); the web app redirects there.
 . The client re-drives authorization with `acr_values` and `max_age` (RFC 9470) and verifies the returned `acr` and
   `auth_time`.
 . The approval is written with the renewed values in the trailers.
 
-== Passkey Approval
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-6[CIFR-AUTH-6: Passkey Approval]_
+== Git Credential
+_See Requirement link:../Requirements.adoc#CIFR-AUTH-6[CIFR-AUTH-6: Git Credential]_
 
 Status: PLANNED
 
-[cols="1,3"]
-|===
-|Step |Contract
-
-|Registration
-|`POST /api/v1/passkeys/options` → creation options (`userVerification: required`); `POST /api/v1/passkeys` with the
-attestation; the public key is stored through the library's registered-keys list
-
-|Approval options
-|`POST /api/v1/approvals/{id}/passkey-options` → request options with the fresh, single-use challenge the library
-issues for the commit being approved (hash over commit id and nonce), `userVerification: required`
-
-|Approval
-|`POST /api/v1/approvals/{id}/passkey` with the assertion; verified (ceremony type `webauthn.get`, origin, challenge
-and its single use, signature, UP and UV flags, sign count) against the registered credential; then handed to the
-library as approval note
-|===
-
-== Push Credentials
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-7[CIFR-AUTH-7: Push Credentials]_
-
-Status: PLANNED
-
-Per repository: `push-credential` = `technical-user` (default) or `user-token`. With `user-token` the application asks
-Token Sheriff for the user's Git-host token at push time; a missing or expired token returns `CREDENTIALS_EXPIRED` and
-the draft stays. Release to a protected branch with `user-token` opens a pull or merge request through the Git host API.
+Per repository: `credential-ref`, the credential of the technical user (a deploy key or a bot account token); there is
+no other kind of Git credential. The application pushes every commit, releases included, with it. `main` is protected
+on the Git server so that only the technical user may push and nobody may force-push; a refused push returns
+`REJECTED` and the draft stays.
 
 == First Login
 _See Requirement link:../Requirements.adoc#CIFR-DIR-1[CIFR-DIR-1: First Login]_
@@ -228,7 +201,7 @@ Status: PLANNED
   `FIRST_LOGIN_REQUIRED`, until the entry is saved.
 . `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
 . The form shows the text referenced by `web.information-text-ref`.
-. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry at level 1.
+. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry.
 
 Allow-list during the first login, exactly the requests the form and the shell need:
 
@@ -252,8 +225,3 @@ Status: PLANNED
   next login shows the form with "Is this still right?"; confirming writes the confirmation date.
 * Catalogs: `PUT /api/v1/catalogs/{catalog}/{id}` requires `administer-catalogs`; `DELETE` is not offered; retiring sets
   `retired: true`.
-* Catalogs through a pull request: a change to the catalog files of the `directory` repository may also come as a
-  pull or merge request of the Git server. The operator protects `main` of `directory` with a required review; the
-  application does not merge such a request. After the Git server merged it, the next fetch (webhook or periodic)
-  brings the change; the index validates every changed entry against the catalog schema, and an invalid entry is
-  shown to the users with `administer-catalogs` in the *Due* lens and not offered in pickers.

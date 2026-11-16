@@ -16,9 +16,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 `git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs in Git and
 provides the default person directory `git` of `git-store` (see xref:git-store.adoc#_person_directory[git-store,
 Person Directory]). It depends on `git-forms`. Catalog entries and person entries are schema-driven documents; person
-entries are saved directly on `main`, without a release workflow (Person Directory in Git). Saving a person entry needs
-signature level 1 and therefore a provider of the `SignatureLevelVerifier` of `git-store` (`git-signing`) at run time;
-the static dependencies stay as above. Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
+entries are saved directly on `main`, without a release workflow (Person Directory in Git). Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
 
 == Catalogs
 
@@ -102,8 +100,7 @@ An interrupted first login whose pseudonym was never saved gets a new pseudonym 
 the old one, because no save happened under it.
 
 `saveEntry(pseudonym, entry)` validates against the person schema and saves the entry with its subject hash on `main`
-of the persons' repository with signature level 1; the evidence is checked by the `SignatureLevelVerifier` provider
-(`git-signing`), which must be present at run time. The entry is valid at once.
+of the persons' repository; the commit is signed like every other. The entry is valid at once.
 
 `erase(pseudonym, restrictUntil)`:
 

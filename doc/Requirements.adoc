@@ -154,7 +154,7 @@ xref:specification/git-core.adoc[git-core]_
   value.
 * A rejected push, a refused lease and expired or invalid credentials must each be reported as a distinct outcome.
 
-_Concept: xref:concepts/identity-and-signing.adoc#_pushing_technical_user_or_the_logged_in_user[Pushing] ·
+_Concept: xref:concepts/identity-and-signing.adoc#_one_technical_user[One Technical User] ·
 Specification: xref:specification/git-core.adoc[git-core]_
 
 [#GDR-CORE-8]
@@ -181,7 +181,7 @@ xref:specification/git-core.adoc[git-core]_
 === GDR-CORE-10: Git Notes
 
 * The library must read and write notes on a commit under a caller-named notes reference (for example
-  `refs/notes/anchors/rfc3161`, `refs/notes/approvals`).
+  `refs/notes/anchors/rfc3161`).
 * Writing a note must use the compare-and-swap of GDR-CORE-5 on the notes reference.
 
 _Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] ·
@@ -334,11 +334,8 @@ xref:specification/git-store.adoc[git-store]_
   outcome, and a repeated release of the same document must create the missing tag on the merged commit instead of
   merging again.
 * An existing release tag must never be moved or deleted.
-* When the remote refuses a direct push to `main`, the store must report that outcome and must support pushing the
-  working branch alone, so the release completes as the merge of a pull or merge request on the Git server; the tag
-  must then be created once a fetch shows the merged commit on `main`. A numbered entry must be released through a
-  review branch `refs/heads/review/<collection>/<id>`, created from `main` with only that entry's path applied, so
-  the counter file and the other entries are not part of the request.
+* The release must be merged by the store itself; when the remote refuses the push of `main`, the release must report
+  the rejected outcome.
 
 _Concept: xref:concepts/storage-engine.adoc#_when_others_see_a_change[When Others See a Change] · Specification:
 xref:specification/git-store.adoc[git-store]_
@@ -356,11 +353,10 @@ xref:specification/git-store.adoc[git-store]_
 === GDR-STORE-8: Identity per Save
 
 * Every commit of a save must carry the caller's pseudonym as author and the technical user as committer.
-* The credentials of a push must come from a credentials strategy chosen per push: technical user or the user's token.
-* A push of a save must carry only the commits of that save and the pending commits before it (earlier saves reported
-  saved locally); apart from these, commits of different users must never be combined in one push.
+* Every push must use the credentials of the technical user configured for the repository; the store must offer no
+  other credentials.
 * Commits the store writes without a user's save (notes, checkpoints, erasure records) must not be combined with the
-  commits of a save and must be pushed with the technical user's credentials.
+  commits of a save.
 
 _Concept: xref:concepts/identity-and-signing.adoc[Identity and Signing] · Specification:
 xref:specification/git-store.adoc[git-store]_
@@ -382,7 +378,7 @@ xref:specification/git-store.adoc[git-store]_
 
 * Every new tip of a branch a consumer subscribes to must reach that consumer: after a reference update the store
   performs (local mode), after a successful push (remote mode), and after a fetch that moves the branch (for example a
-  merge the Git server performed).
+  commit another instance or a direct push created).
 * The store must hand every new commit of the branch to the consumer, oldest first.
 * Processing must be idempotent by commit hash; the last processed commit must be kept per consumer and per branch in a
   reference.
@@ -422,8 +418,8 @@ xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
 [#GDR-STORE-13]
 === GDR-STORE-13: Anchored Subjects and Checkpoints
 
-* With an active provider the store must anchor the commit of every release tag once the tag exists, including tags
-  created after a merge on the Git server; this must be switchable off by configuration.
+* With an active provider the store must anchor the commit of every release tag once the tag exists; this must be
+  switchable off by configuration.
 * With an active provider the store must create a checkpoint when the configured interval has passed since the previous checkpoint and a
   pushed reference changed since then: a commit whose tree lists every pushed reference except the checkpoint tags and
   the anchor notes, with its object id, sorted by reference name, and whose parent is the previous checkpoint.
@@ -532,15 +528,15 @@ _Concept: xref:concepts/schema-driven-documents.adoc#_workflow[Workflow] · Spec
 xref:specification/git-forms.adoc[git-forms]_
 
 [#GDR-FORMS-7]
-=== GDR-FORMS-7: Signature Level per Transition
+=== GDR-FORMS-7: Step-Up per Transition
 
-* A workflow must declare the required signature level (0 to 4) per transition.
-* A transition must be refused when the caller cannot supply the evidence of the required level.
-* The evidence must be checked through the `SignatureLevelVerifier` interface of `git-store`; without a provider of that
-  interface only level 0 must be accepted.
+* A workflow must declare per transition whether it requires step-up.
+* A transition that requires step-up must be refused when the caller cannot supply the evidence.
+* The evidence must be checked through the `StepUpVerifier` interface of `git-store`; without a provider of that
+  interface a transition that requires step-up must be refused.
 
-_Concept: xref:concepts/identity-and-signing.adoc#_the_level_is_configuration[The Level Is Configuration] ·
-Specification: xref:specification/git-forms.adoc[git-forms]_
+_Concept: xref:concepts/identity-and-signing.adoc#_step_up_for_approvals[Step-Up for Approvals] · Specification:
+xref:specification/git-forms.adoc[git-forms]_
 
 [#GDR-FORMS-8]
 === GDR-FORMS-8: Typed Links
@@ -574,7 +570,7 @@ Specification: xref:specification/git-forms.adoc[git-forms]_
 * Every commit written through the store must be signed by the application through an exchangeable signer (KMS, HSM or
   key file).
 * The signature format must be selectable: SSH or GPG. Every selectable format must be verifiable as
-  <<GDR-SIGN-6>> requires.
+  <<GDR-SIGN-5>> requires.
 
 _Concept: xref:concepts/identity-and-signing.adoc#_what_a_signature_of_the_application_shows[Application
 Signature] · Specification: xref:specification/git-signing.adoc[git-signing]_
@@ -593,50 +589,28 @@ _Concept: xref:concepts/identity-and-signing.adoc#_which_identifier_goes_into_th
 Specification: xref:specification/git-signing.adoc[git-signing]_
 
 [#GDR-SIGN-3]
-=== GDR-SIGN-3: Portable Approvals
+=== GDR-SIGN-3: Approvals
 
-* A release commit the application creates must carry one `Approved-by: <pseudonym> (<role>)` trailer per approval
-  and a `Review: <url>` trailer when the release came through a pull or merge request.
-* When the Git server creates the release merge (protected `main`), the library must record the same approvals as a
-  note on that merge commit under `refs/notes/approvals`, in a notes commit signed by the application, once a fetch
-  shows the new tip of `main`.
-* A commit must have at most one note under `refs/notes/approvals`: a YAML document with a list `approvals` whose
-  entries carry a `kind` (`merge` or `passkey`) and its fields. A writer must read the note, append its entry and
-  write it back by compare-and-swap of the notes reference; an approval must never replace another.
-* In remote mode the library must merge its approval notes into the fetched remote notes reference before a push,
-  taking the union of the `approvals` entries of a commit, and push with lease; a rejected push must be repeated from
-  the fetch, up to a configured number of attempts.
+* A release commit must carry one `Approved-by: <pseudonym> (<role>)` trailer per approval of the workflow.
+* The store creates every release commit itself (<<GDR-STORE-6>>), so every approval lies in a commit signed by the
+  application.
 
 _Concept: xref:concepts/identity-and-signing.adoc#_what_a_signature_of_the_application_shows[Application
 Signature] · Specification: xref:specification/git-signing.adoc[git-signing]_
 
 [#GDR-SIGN-4]
-=== GDR-SIGN-4: Step-Up Evidence (Level 2)
+=== GDR-SIGN-4: Step-Up Evidence
 
-* An approval at level 2 must be refused unless the caller's `Auth-Context` contains one of the configured `amr` or
-  `acr` values that denote multi-factor authentication and its `Auth-Time` is not older than a configured maximum
-  age.
+* The module must provide the `StepUpVerifier` interface of `git-store`.
+* A transition that requires step-up must be refused unless the caller's `Auth-Context` contains one of the configured
+  `amr` or `acr` values that denote multi-factor authentication and its `Auth-Time` is not older than a configured
+  maximum age.
 
-_Concept: xref:concepts/identity-and-signing.adoc#_graded_traceability[Graded Traceability] · Specification:
+_Concept: xref:concepts/identity-and-signing.adoc#_step_up_for_approvals[Step-Up for Approvals] · Specification:
 xref:specification/git-signing.adoc[git-signing]_
 
 [#GDR-SIGN-5]
-=== GDR-SIGN-5: Passkey Approvals (Level 3)
-
-* The library must register WebAuthn public keys per pseudonym in a versioned, signed file of the repository.
-* The approval challenge must be fresh, single-use and bound to the approved commit: the SHA-256 over the commit id
-  and a random nonce of at least 128 bits, issued for one approval and valid for a configured time.
-* An assertion must be accepted only when its client data has the type `webauthn.get`, an allowed origin and the
-  expected challenge, the RP ID hash of its authenticator data matches the configured RP ID, its signature verifies
-  with a registered key that is not retired, and the user-presence and user-verification flags are set.
-* An accepted assertion must be stored as an entry of `kind` `passkey` in the note on the commit under
-  `refs/notes/approvals` (<<GDR-SIGN-3>>).
-
-_Concept: xref:concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Level 3] · Specification:
-xref:specification/git-signing.adoc[git-signing]_
-
-[#GDR-SIGN-6]
-=== GDR-SIGN-6: Signature Verification
+=== GDR-SIGN-5: Signature Verification
 
 * The library must verify commit signatures against a signed key file in the repository that carries a validity
   period per key; for the SSH format this is an `allowed_signers` file.
@@ -645,14 +619,12 @@ xref:specification/git-signing.adoc[git-signing]_
   trusts, and the chain must start at the configured trust root.
 * A verification of a reference must list every commit without a signature valid at its commit time; it must be
   runnable from CI without the application.
-* A merge commit the Git server created on `main` must pass when both parents pass and an approval note signed by the
-  application exists for it (<<GDR-SIGN-3>>).
 
 _Concept: xref:concepts/identity-and-signing.adoc#_what_has_to_be_done_right[What Has to Be Done Right] ·
 Specification: xref:specification/git-signing.adoc[git-signing]_
 
-[#GDR-SIGN-7]
-=== GDR-SIGN-7: Own Timestamp
+[#GDR-SIGN-6]
+=== GDR-SIGN-6: Own Timestamp
 
 * The module must provide the anchor provider `signed` of `git-store` (<<GDR-STORE-12>>): for an object id it must
   sign a statement of the object id, the time, a sequence number and the hash of the provider's previous proof in the
@@ -736,8 +708,7 @@ xref:specification/git-directory.adoc#_person_directory_in_git[git-directory, Pe
 * For an issuer and `sub` without a pseudonym the module must create one and report that an entry is required.
 * For a known pseudonym without a saved entry (an interrupted first login) the module must report again that an entry
   is required.
-* Saving the entry must be a signed level-1 save on `main` of the persons' repository; the entry must be valid at
-  once. Level 1 needs a provider of the `SignatureLevelVerifier` interface (`git-signing`) at run time.
+* Saving the entry must be a save on `main` of the persons' repository; the entry must be valid at once.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_first_login[First Login] · Specification:
 xref:specification/git-directory.adoc#_person_directory_in_git[git-directory, Person Directory in Git]_
@@ -810,7 +781,7 @@ xref:specification/testing.adoc[Testing]_
 
 * No token, password, private or secret key material, session id, `sub`, e-mail address or person name may
   appear in a result detail, an exception message, a log message or a commit.
-* Public keys (WebAuthn, `allowed_signers`) are not secrets and may be stored.
+* Public keys (`allowed_signers`, anchor keys) are not secrets and may be stored.
 
 _Concept: xref:concepts/identity-and-signing.adoc[Identity and Signing] · Specification:
 xref:specification/error-model.adoc[Error Model]_
@@ -846,7 +817,6 @@ xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
 xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005],
-xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007],
 xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-core.adoc[git-core]
 
@@ -880,13 +850,12 @@ xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
 |xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents],
 xref:concepts/identity-and-signing.adoc[Identity and Signing]
 |xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011],
-xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006]
+xref:adr/0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006]
 |xref:specification/git-forms.adoc[git-forms]
 
-|GDR-SIGN-1 – GDR-SIGN-7
+|GDR-SIGN-1 – GDR-SIGN-6
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
-|xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006],
-xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007],
+|xref:adr/0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006],
 xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-signing.adoc[git-signing]
 

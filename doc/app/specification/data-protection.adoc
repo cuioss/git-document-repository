@@ -126,7 +126,7 @@ Status: PLANNED
 
 |`git` (default)
 |Entries `persons/<pseudonym>.yaml` in the repository named by `directory.persons.repository` (default `directory`),
-saved on `main` at signature level 1; first-login form and own-entry changes as in
+saved on `main` and signed like every commit; first-login form and own-entry changes as in
 link:authentication.adoc#_first_login[Authentication, First Login].
 
 |the id of a provider for the organisation's own source

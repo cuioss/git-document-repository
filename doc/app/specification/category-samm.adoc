@@ -63,7 +63,7 @@ file by blob id: when another save changed the same practice file, `git-forms` c
 changes to different questions are combined and the save re-applied, and a question changed on both sides is a
 `CONFLICT` naming the question with both values. The draft stays unchanged.
 
-Transition `samm.submit`: `draft` → `in-review`, signature level 1, by a user with `edit`; it validates `required` of
+Transition `samm.submit`: `draft` → `in-review`, without step-up, by a user with `edit`; it validates `required` of
 the schema. Saves stay possible in `in-review`.
 
 == Release
@@ -71,13 +71,9 @@ _See Requirement link:../Requirements.adoc#CIFR-SAMM-4[CIFR-SAMM-4: Release]_
 
 Status: PLANNED
 
-Transition `samm.release`: `in-review` → `released`, default signature level 2. Effect: merge into `main`, tag
-`assessments/<assessment-id>/v1`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`.
-
-With `categories.samm.release.via-pull-request: true`
-(link:configuration.adoc#_categories[Configuration, Categories]) `samm.submit` opens a pull or merge request, and
-approve (release) merges it. The library records the approval as trailer, or as a signed note when the Git server
-creates the merge.
+Transition `samm.release`: `in-review` → `released`, with step-up by default. Effect: the application merges into
+`main`, tags `assessments/<assessment-id>/v1` and sets `state: released`; the approval is an `Approved-by` trailer of
+the signed release commit. Saves to a released assessment return `DOCUMENT_RELEASED`.
 
 == Comparison
 _See Requirement link:../Requirements.adoc#CIFR-SAMM-5[CIFR-SAMM-5: Comparison over Time]_

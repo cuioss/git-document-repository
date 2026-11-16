@@ -25,11 +25,11 @@ documentation only to the library concepts and requirements (`../concepts/`, `..
 |Interface |For
 
 |*Web app*
-|People: forms generated from the category schemas, dashboards, review and approval with step-up or passkey. A Svelte
+|People: forms generated from the category schemas, dashboards, review and approval with step-up. A Svelte
 single-page application with the visuals and UI structure of `pm-web-app`.
 
 |*MCP server*
-|AI agents acting for a user: reading, drafting and saving at signature level 1, requesting releases. An OAuth 2.1
+|AI agents acting for a user: reading, drafting and saving, requesting releases. An OAuth 2.1
 protected resource; tokens are audience-bound and never passed through.
 |===
 
@@ -76,7 +76,7 @@ positioning beside verinice.
 |Clause 7.5 on Git, artefact groups, the bridge to SAMM, verinice comparison
 
 |link:concepts/authentication-and-identity.adoc[Authentication and Identity]
-|Login through Token Sheriff, claims, first login, rights, push credentials, signature levels
+|Login through Token Sheriff, claims, first login, rights, the Git credential, step-up per transition
 
 |link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
 |Repository cut, personal data per category, person directory, erasure concept, what is agreed with the DPO

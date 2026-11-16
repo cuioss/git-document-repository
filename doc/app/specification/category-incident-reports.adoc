@@ -121,7 +121,7 @@ _See Requirement link:../Requirements.adoc#CIFR-IR-3[CIFR-IR-3: Mandatory Fields
 
 Status: PLANNED
 
-States: `draft` → `in-review` → `released`; default signature level of `incident.release`: 3. Draft saves validate
+States: `draft` → `in-review` → `released`; `incident.release` requires step-up by default. Draft saves validate
 types only; the transition to `in-review` and `released` validates `required`; a failure returns
 `MANDATORY_FIELDS_MISSING` with the JSON Pointers of the missing fields.
 

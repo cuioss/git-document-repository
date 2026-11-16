@@ -67,13 +67,13 @@ Two rules hold for every configuration:
 
 * *One retention class per repository.* Data with different retention periods never share a repository, because a
   repository is deleted as a whole when its period ends; no history is rewritten.
-* *One confidentiality class per repository.* Git grants rights per repository only; with pushes in the user's name
-  the Git server enforces them itself.
+* *One confidentiality class per repository.* Git grants rights per repository only; the application enforces them for
+  its users, and the Git server limits who besides the technical user may read a repository.
 
 References across repositories have the form `<alias>:<kind>/<id>`, where the alias is the repository's stable alias
 from the registry (`isms-register:risk/R-042`, `samm-assessments:assessment/<id>`); entries of the directory's catalogs
 are referenced as `<catalog>:<id>` (`service:payment-api`, `role:ciso`). The application checks on save that the target
-exists, and a CI pipeline on the pull request validates schemas and references with the existing infrastructure. The
+exists, and a CI pipeline on every push validates schemas and references with the existing infrastructure. The
 decision is recorded in link:../adr/0007-Repositories_are_cut_by_confidentiality_and_retention_class.adoc[ADR-0007].
 
 == Personal Data in the Categories

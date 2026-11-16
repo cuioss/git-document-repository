@@ -66,9 +66,9 @@ others see the changes. The pattern is a property of the category's workflow, no
 
 * *Release* merges the assessment branch into `main` and creates the library's release tag `<collection>/<id>/v<n>`,
   here `assessments/<id>/v1`: an assessment is released once, so `n` is always 1. Protected branches and tags of the
-  Git server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes
-  approval. The signature level is configured per transition of the category's workflow (level 2 for the release
-  by default, see link:authentication-and-identity.adoc#_signature_levels_per_transition[Signature Levels]).
+  Git server make it immutable. The application merges the release itself; the approval is a signed trailer of the
+  release commit, and the release requires step-up by default (see
+  link:authentication-and-identity.adoc#_step_up_per_transition[Step-Up per Transition]).
 * *Scores* are computed as the OWASP SAMM toolbox computes them, so they stay comparable with toolbox results and the
   SAMM benchmark. The model has one question per activity, 90 in all (15 practices, 2 streams each, 3 maturity
   levels), and each answer carries the value of the model's answer set: 0, 0.25, 0.5 or 1

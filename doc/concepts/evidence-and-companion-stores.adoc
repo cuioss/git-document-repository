@@ -39,7 +39,8 @@ independent proof is needed
 |none for the own timestamp (it uses the key source of the signing); a timestamp authority for RFC 3161
 
 |Approvals live in the Git server's database
-|Commit trailers on merge; passkey approvals as notes (see xref:identity-and-signing.adoc[Identity and Signing])
+|`Approved-by` trailers of the release commit, which the application merges and signs (see
+xref:identity-and-signing.adoc[Identity and Signing])
 |none
 
 |Personal, deletable data
@@ -140,7 +141,7 @@ readable by anyone.
 Git comes first; everything else follows and is derived from Git.
 
 * *An outbox whose queue is Git.* After every save (and in remote mode every push), and after every fetch that moves
-  a branch, for example a merge the Git server performed, the store walks the new commits and feeds its consumers from
+  a branch, for example after a commit of another instance, the store walks the new commits and feeds its consumers from
   them: mirror and index. The anchoring runs on the same triggers.
 * *Idempotent by commit hash.* After a failure the store resumes from the last processed hash. The progress is
   remembered per consumer and branch in a reference `refs/meta/outbox/<consumer>/<branch>`, again in Git, so it needs

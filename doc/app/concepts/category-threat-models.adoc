@@ -75,12 +75,13 @@ A threat model describes one application and has to change with its architecture
 place. Both answers are supported by configuration over the same repository layer.
 
 * *A: in the application's repository* (`threat-model/` beside the code), recommended as the source of truth. It is
-  versioned with the code and reviewed in pull requests; a release has its threat model. Outdated models become
+  versioned with the code; a release has its threat model. Outdated models become
   detectable: the architecture changed since the last commit of the threat model (new interfaces, dependencies,
   infrastructure files), so a review is due. This works through Git diffs, and only when model and code share the
-  repository. The application reads many repositories, which the library's repository layer does anyway, and writes
-  through pull requests, because the `main` of the applications is protected: by the technical user with the signed
-  trailers of the user, or in the user's name (link:authentication-and-identity.adoc[Authentication and Identity]).
+  repository. The application reads many repositories, which the library's repository layer does anyway. It writes as
+  the technical user, with commits it signs, into a branch of the service's repository and opens a pull or merge
+  request, because the `main` of the applications belongs to their teams; the service team merges it
+  (link:authentication-and-identity.adoc[Authentication and Identity]).
 * *B: a central repository `threat-models`*, like SAMM. Simpler where teams allow no writes into their repositories or
   the applications are not in Git; outdated models are then detected only through references to the applications'
   repositories.
@@ -93,7 +94,7 @@ Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 . *Format*: OTM or the JSON of Threat Dragon instead of an own schema. With Threat Dragon JSON teams can go on editing
   the diagram in Threat Dragon and the application reads the same file; with OTM that needs a Threat Dragon release
   that imports OTM (see the open questions).
-. *Maintenance*: detection of outdated models, due dates, review by pull request, approval trailers.
+. *Maintenance*: detection of outdated models, due dates, review and approval trailers.
 . *Evaluation across applications*: open threats per application, untreated risks, age of the models.
 . *Links*: threat modelling is a stream of the SAMM practice _Threat Assessment_ (business function _Design_), so
   maintained threat models are direct evidence for that practice in a SAMM assessment; accepted or untreated

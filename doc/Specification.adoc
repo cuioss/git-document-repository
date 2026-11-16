@@ -42,7 +42,7 @@ service provider interfaces for the optional modules
 |Kinds of documents, schema validation, data layout, generated output, workflow, deadlines, links, running numbers
 
 |xref:specification/git-signing.adoc[git-signing]
-|Commit signature, identity trailers, approvals, step-up evidence, passkeys, verification, own timestamp
+|Commit signature, identity trailers, approvals, step-up evidence, verification, own timestamp
 
 |xref:specification/git-timestamp.adoc[git-timestamp]
 |RFC 3161 anchor provider and its verification
@@ -77,8 +77,8 @@ before it is added:
 `cui-test-generator`, JUnit 5
 |`git-store` |none beyond those of `git-core`
 |`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
-|`git-signing` |a WebAuthn verification library (open); for signing and verifying the configured format possibly
-JGit's `org.eclipse.jgit.ssh.apache` (`ssh`) or `org.eclipse.jgit.gpg.bc` (`openpgp`) (open)
+|`git-signing` |for signing and verifying the configured format possibly JGit's `org.eclipse.jgit.ssh.apache` (`ssh`) or
+`org.eclipse.jgit.gpg.bc` (`openpgp`) (open)
 |`git-timestamp` |an RFC 3161 client library (open)
 |`git-directory` |none beyond those of `git-forms`
 |===

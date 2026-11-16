@@ -84,7 +84,7 @@ link:authentication-and-identity.adoc[Authentication and Identity]).
 
 |*Web app*
 |A Svelte single-page application for people: forms generated from the category schemas, dashboards from the
-in-memory index, review and approval with step-up or passkey. Visuals and UI structure follow `pm-web-app`. See
+in-memory index, review and approval with step-up. Visuals and UI structure follow `pm-web-app`. See
 link:web-app.adoc[Web App].
 
 |*MCP server*
@@ -92,8 +92,8 @@ link:web-app.adoc[Web App].
 audience-bound tokens that the server validates and never passes on. See link:mcp-server.adoc[MCP Server].
 |===
 
-Both interfaces call the same application services. Neither carries a rule of its own: what a user may do, which
-signature level an approval needs and which deadline is due is decided once, in the server.
+Both interfaces call the same application services. Neither carries a rule of its own: what a user may do, whether
+an approval needs step-up and which deadline is due is decided once, in the server.
 
 == What the Application Builds On
 

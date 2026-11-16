@@ -31,7 +31,8 @@ validation error.
 
 |A
 |`threat-model/` in the repository named by `threat-model.repository`
-|Branch `cisos-friend/threat-model/<model-id>`, then a pull or merge request through the Git host API
+|Branch `cisos-friend/threat-model/<model-id>` with commits the application signs, pushed by the technical user, then
+a pull or merge request through the Git host API, which the service team merges
 
 |B
 |`threat-models` repository, `services/<service-id>/<model-id>/`

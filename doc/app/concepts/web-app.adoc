@@ -108,7 +108,7 @@ The rail carries the *lenses* of CISOs-Friend:
 |`DashboardPage`
 
 |*Settings*
-|own directory entry, passkeys
+|own directory entry
 |`WizardPage`
 |===
 
@@ -145,10 +145,7 @@ practice another assessor saved refreshes in place.
 === Review and Approval
 
 Release shows the diff against the last released state, generated from the YAML, not from the AsciiDoc output. The
-approve button names the signature level it needs. Level 2 triggers step-up; level 3 asks the browser's WebAuthn API to
-sign a single-use challenge bound to the commit id (a hash over the commit id and a server nonce) with the user's
-passkey (user verification required) and sends the assertion to the server. Passkey
-registration lives in the settings.
+approve button says when it needs step-up and then triggers the renewed MFA login before the approval is written.
 
 === Brand
 

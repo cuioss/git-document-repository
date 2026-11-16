@@ -19,7 +19,8 @@ organisations, not a replacement for a complete ISMS product.
 |Clause 7.5 |Git
 
 |Versioning, change history |commits, diff
-|Review and approval |pull or merge request with review, protected `main`
+|Review and approval |workflow transition in the application, signed release commit with approval trailers,
+protected `main`
 |Protection against unauthorised change |repository rights, protected branches and tags
 |Availability and retention |the Git server and its backup
 |===
@@ -42,8 +43,8 @@ The ISMS artefacts sort into three groups:
 
 All of these are library mechanisms; the ISMS category uses them and adds no mechanism of its own.
 
-* *Portable approvals*: approvals of a pull request live in the Git server's database. On merge the application
-  writes them as commit trailers, so the evidence survives a change of Git server
+* *Approvals in the repository*: the application merges every release itself and writes the approvals as trailers of
+  the signed release commit, so the evidence survives a change of Git server
   (link:../../concepts/identity-and-signing.adoc[Identity and Signing]).
 * *Running numbers* (R-042) under concurrent creation: a ULID identifies a new entry until its first save, which
   assigns the readable number that then names the entry file
@@ -100,7 +101,7 @@ and the veo-history service returns all revisions of a resource and the one curr
 comparison between versions
 
 |Approval, four eyes
-|Pull request review, protected branches, commit trailers, graded signatures up to passkeys
+|Workflow approval with step-up, protected branches, approval trailers in signed commits
 |Workflow functions of the application (scope to verify)
 
 |Tamper evidence

@@ -45,7 +45,7 @@ the last attempt
 |ambiguous |identity resolution
 |invalid |schema validation, typed links, a person field without a known pseudonym (`git-forms`)
 |mismatch |check of the generated output (`git-forms`)
-|transition refused, level not met |workflow (`git-forms`, signature level evidence)
+|transition refused, step-up required |workflow (`git-forms`, step-up evidence of `git-signing`)
 |cycle |effective protection needs over `dependsOn` (`git-directory`)
 |entry required |first login and interrupted first login (`git-directory`)
 |not supported, managed by source |a person directory whose source the operator maintains: saving an entry, erasing a
@@ -92,14 +92,14 @@ _See Requirement link:../Requirements.adoc#GDR-NFR-3[GDR-NFR-3: Secrets]_
 
 The single list of material that must never appear in a result detail, an exception message, a log message or a
 commit is link:../Requirements.adoc#GDR-NFR-3[GDR-NFR-3]. The table states where each secret may live. Public keys
-(WebAuthn credentials, `allowed_signers`) are no secrets.
+(`allowed_signers`, anchor keys) are no secrets.
 
 [cols="1,2"]
 |===
 |Material |Rule
 
 |access tokens, passwords |accepted as call parameters only; never stored, logged or put into a detail
-|technical push secret (`CredentialsStrategy` `technical`), `timestamp.credentials` |read from the application's
+|credential of the technical user, `timestamp.credentials` |read from the application's
 configuration for the call; never logged, put into a detail or committed
 |signing and anchor keys |held by the key source or in memory; never written in clear text
 |HMAC key of the `Session` trailer |configured secret, held in memory; never logged, put into a detail or committed

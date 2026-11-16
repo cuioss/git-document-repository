@@ -68,7 +68,7 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 * *Stable ids instead of names.* Documents refer to `role:security-champion` and `team:payments`; renaming an entry
   breaks no reference.
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to a retired team.
-* *Changes by review.* A new or renamed entry is a pull request or a reviewed save, like every other document.
+* *Changes by review.* A new or renamed entry is a reviewed save, like every other document.
 
 == Catalog of Applications and Services
 
@@ -156,9 +156,8 @@ different role in each, and assignments almost always ask for "role X in team Y"
   issuer and `sub`, creates a random pseudonym and asks the application to show the entry form.
 . The form is prefilled with the name from the token. Team and role are picked from the catalogs; a missing entry can
   be requested for the catalog.
-. Saving is a signed commit (signature level 1, see xref:identity-and-signing.adoc[Identity and Signing]); the entry
-  is valid at once. The directory therefore needs `git-signing` at run time, which provides the evidence of the
-  signature levels.
+. Saving is a commit, signed by the application like every other (see xref:identity-and-signing.adoc[Identity and
+  Signing]); the entry is valid at once.
 . Later the user changes the own entry through the same form.
 
 The catalogs are xref:schema-driven-documents.adoc[schema-driven documents]: form, workflow and validation come from
@@ -201,7 +200,7 @@ Self-entered data age: teams change and nobody updates. Hence:
   groups.
 * Every kind of document needs it, so it is a shared part, not one kind among others.
 * Persons, roles, teams and services are free of any domain, and the directory builds on `git-store` and
-  `git-forms`, and needs `git-signing` at run time for signature level 1; it is therefore the module `git-directory`
+  `git-forms`; it is therefore the module `git-directory`
   (see xref:module-structure.adoc[Module Structure]), which also provides the default person directory `git`.
 * Which catalogs exist is configuration; further catalogs (suppliers, locations) cost little.
 
@@ -209,7 +208,7 @@ Self-entered data age: teams change and nobody updates. Hence:
 == Later Iterations
 
 * *Rights from roles.* When approvals are tied to roles, a self-chosen role must not grant them: assignments of such
-  roles need a confirmation by a team lead or an administrator (a pending state and signature level 2), or come from
+  roles need a confirmation by a team lead or an administrator (a pending state and step-up), or come from
   the identity provider. A workflow then counts confirmed assignments only.
 * *Confirmed protection needs.* Changes of the protection needs of a service, on which review intervals and
   notification duties depend, may need a confirmation by the information security officer.

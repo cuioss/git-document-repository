@@ -36,12 +36,12 @@ referenced, never restated:
 |link:../Requirements.adoc#GDR-STORE-15[GDR-STORE-15],
 link:../Requirements.adoc#requirements-git-directory[`git-directory` requirements]
 
-|Commit signature, trailer schema, signature levels, passkey approval notes, signature check
+|Commit signature, trailer schema, approvals, step-up evidence, signature check
 |link:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
 
 |Anchoring of releases and checkpoints: the own timestamp by default, RFC 3161 as a variant
 |link:../Requirements.adoc#GDR-STORE-12[GDR-STORE-12 – GDR-STORE-14],
-link:../Requirements.adoc#GDR-SIGN-7[GDR-SIGN-7], link:../Requirements.adoc#requirements-git-timestamp[`git-timestamp`
+link:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6], link:../Requirements.adoc#requirements-git-timestamp[`git-timestamp`
 requirements]
 
 |Directory of persons, catalogs, stable ids, Backstage import
@@ -72,7 +72,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 === CIFR-GEN-2: One Rule Set for Both Interfaces
 
 * Every operation offered by the MCP server must be executed by the same application service as the web app's
-  equivalent operation, with the same rights check, schema validation and signature-level check.
+  equivalent operation, with the same rights check, schema validation and step-up check.
 * For every MCP tool, a test must show that the web-app request and the tool call with the same user and input
   produce the same outcome (success, validation error, conflict, forbidden).
 * Specification: link:specification/architecture-and-modules.adoc#_layers[Architecture and Modules, Layers].
@@ -129,8 +129,8 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-SAMM-4]
 === CIFR-SAMM-4: Release
 
-* Release must produce the tag `assessments/<id>/v1` on the released state and require signature level 2 by default;
-  an assessment is released once.
+* Release must produce the tag `assessments/<id>/v1` on the released state and require step-up by default; an
+  assessment is released once.
 * After release, any save to the released assessment must be rejected; a new assessment is created instead.
 * Specification: link:specification/category-samm.adoc#_release[SAMM, Release].
 
@@ -165,8 +165,8 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 
 * The place of a threat model must be configurable per service: in the service's own repository (variant A, path
   `threat-model/`) or in the central repository `threat-models` (variant B).
-* In variant A the application must write through a pull or merge request and never push to the protected default
-  branch of the service repository.
+* In variant A the application must write as the technical user through a pull or merge request, with commits it
+  signs, and never push to the protected default branch of the service repository; the service team merges it.
 * Concept: link:concepts/category-threat-models.adoc[Threat Models].
 * Specification: link:specification/category-threat-models.adoc#_place[Threat Models, Place].
 
@@ -264,7 +264,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 === CIFR-ISMS-1: Documents
 
 * Policies, scope, statement of applicability, internal audit reports and management review reports must be
-  schema-driven documents in `isms-core`, released at signature level 3 by default (CIFR-AUTH-4).
+  schema-driven documents in `isms-core`, released with step-up by default (CIFR-AUTH-4).
 * Concept: link:concepts/category-isms.adoc[ISMS].
 * Specification: link:specification/category-isms.adoc#_documents[ISMS, Documents].
 
@@ -305,7 +305,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
 * The form must show the configured information text (GDPR Art. 13) before the save button.
-* The saved entry must be valid immediately and signed at signature level 1.
+* The saved entry must be valid immediately and signed by the application.
 * Concept: link:concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login].
 * Specification: link:specification/authentication.adoc#_first_login[Authentication, First Login].
 
@@ -320,8 +320,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 === CIFR-DIR-3: Catalog Maintenance
 
 * Entries of the role, team and service catalogs must be created or changed only by users with the right *administer
-  catalogs*, or by a pull or merge request merged by the Git server after the review its branch protection requires;
-  the application must validate entries arriving this way and show invalid ones to the catalog administrators.
+  catalogs*, through the application.
 * A catalog entry must be retired, never deleted; documents referring to a retired entry must show it as retired.
 * Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
 
@@ -370,40 +369,35 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Specification: link:specification/authentication.adoc#_trailer_values[Authentication, Trailer Values].
 
 [#CIFR-AUTH-4]
-=== CIFR-AUTH-4: Signature Levels per Transition
+=== CIFR-AUTH-4: Signed Commits and Step-Up per Transition
 
-* The signature level must be configurable per category and transition, with the defaults: saves and directory
-  entries level 1; release of SAMM assessments and threat models level 2; release of incident reports and of the ISMS
-  documents of CIFR-ISMS-1 (policies, scope, statement of applicability, internal audit reports, management reviews)
-  level 3.
-* A transition must be refused when the required level is not reached
-  (link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Signature Level per Transition]).
-* Specification: link:specification/authentication.adoc#_signature_levels[Authentication, Signature Levels].
+* Every commit must be signed by the application with the identity trailers; there must be no unsigned commit and no
+  other kind of signature.
+* Step-up must be configurable per category and transition, with the defaults: no step-up for saves and directory
+  entries; step-up for the release of SAMM assessments, threat models and incident reports and for the approval of the
+  ISMS documents of CIFR-ISMS-1 (policies, scope, statement of applicability, internal audit reports, management
+  reviews).
+* A transition that requires step-up must be refused without the evidence
+  (link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Step-Up per Transition]).
+* Specification: link:specification/authentication.adoc#_step_up_defaults[Authentication, Step-Up Defaults].
 
 [#CIFR-AUTH-5]
 === CIFR-AUTH-5: Step-Up
 
-* Before a level-2 approval the application must check `acr` and `auth_time` against the configured assurance and
-  maximum age, and re-drive authorization with `acr_values` and `max_age` (RFC 9470) when they are not met.
+* Before an approval that requires step-up the application must check `acr` and `auth_time` against the configured
+  assurance and maximum age, and re-drive authorization with `acr_values` and `max_age` (RFC 9470) when they are not
+  met.
 * The approval must be written only after the renewed `acr` and `auth_time` were verified.
 * Specification: link:specification/authentication.adoc#_step_up[Authentication, Step-Up].
 
 [#CIFR-AUTH-6]
-=== CIFR-AUTH-6: Passkey Approval
+=== CIFR-AUTH-6: Git Credential
 
-* A user must be able to register one or more WebAuthn credentials.
-* A level-3 approval must require a WebAuthn assertion with user verification over a fresh, single-use challenge
-  bound to the commit id being approved (link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5]); the application must
-  verify the assertion against a registered credential before handing it to the library.
-* Specification: link:specification/authentication.adoc#_passkey_approval[Authentication, Passkey Approval].
-
-[#CIFR-AUTH-7]
-=== CIFR-AUTH-7: Push Credentials
-
-* The push credential must be configurable per repository: the technical user (default) or the user's Git-host token
-  provided by Token Sheriff.
-* With the user's token, release to a protected branch must run as a pull or merge request.
-* Specification: link:specification/authentication.adoc#_push_credentials[Authentication, Push Credentials].
+* The application must reach every Git server only as the technical user configured per repository; it must offer no
+  push in a user's name.
+* The application must merge every release itself and push it as the technical user; `main` must be protected so that
+  only the technical user may push to it.
+* Specification: link:specification/authentication.adoc#_git_credential[Authentication, Git Credential].
 
 == Functional Requirements: MCP Server
 
@@ -459,7 +453,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-MCP-6]
 === CIFR-MCP-6: Human-Bound Approvals
 
-* An agent must not complete a transition requiring signature level 2 or higher.
+* An agent must not complete a transition that requires step-up.
 * The tool `request_release` must create a pending approval that appears in the requesting user's *Due* lens.
 * Specification: link:specification/mcp-server.adoc#_tools[MCP Server, Tools].
 
@@ -542,8 +536,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 === CIFR-WEB-6: Review and Approval
 
 * Release must show the diff of the structured data against the last released state.
-* The approve control must name the signature level it requires and start step-up or the passkey ceremony
-  accordingly.
+* The approve control must say whether it requires step-up and start it when needed.
 * Specification: link:specification/web-app.adoc#_review_and_approval[Web App, Review and Approval].
 
 [#CIFR-WEB-7]
@@ -776,7 +769,7 @@ link:concepts/application-architecture.adoc[Application Architecture]
 |ADR-0004
 |link:specification/authentication.adoc[Authentication], link:specification/data-protection.adoc[Data Protection]
 
-|CIFR-AUTH-1–7
+|CIFR-AUTH-1–6
 |link:concepts/authentication-and-identity.adoc[Authentication and Identity]
 |ADR-0004
 |link:specification/authentication.adoc[Authentication]

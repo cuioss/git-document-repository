@@ -1,0 +1,117 @@
+= ADR-0006: A technical user writes, and the application signs every commit with the user claims as signed trailers
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The application reaches Git only as a technical user and signs every commit with its own key through an exchangeable signer; pseudonym, issuer, auth time, auth context, a session HMAC and, for a delegated client, its client id are trailers; approvals are Approved-by trailers of the release commit the application merges itself; a workflow transition may require step-up MFA. There is no push in the user's name, no passkey approval and no graded signature.
+// tags: identity, signing, trailers, traceability, step-up
+// affects: git-signing, git-store, git-forms
+// supersedes: ADR-0007
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Every change must name who made it, in a way an auditor can check. Many users have no account on the Git server. The
+question is how the store reaches Git and records identity, with as few variants as possible.
+
+*The decision:* one way.
+
+* *Only a technical user* reaches the Git server, with a credential per repository. Nothing is pushed in a user's
+  name.
+* *The application signs every commit* with its own key, through an exchangeable signer (KMS, HSM or key file).
+* The commit message carries trailers: `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time`, `Auth-Context` and
+  `Session` (an HMAC of the session id). A save that a delegated client performs on the user's behalf also carries
+  `Actor-Client` (the OAuth client id of that client).
+* *The application merges releases itself.* `main` is protected so that only the technical user may push to it; the
+  approvals of the workflow become `Approved-by` trailers of the release commit, which the application signs.
+* *Step-up* is a property of a workflow transition: the user re-authenticates with MFA before the approval, and the
+  `Auth-Context` and `Auth-Time` trailers record it.
+
+See xref:../concepts/identity-and-signing.adoc[Identity and Signing].
+
+== Alternatives rejected
+
+=== Push in each user's name
+
+Every push uses the credentials of the user who made the change, obtained through an OAuth login against the Git
+server, and the Git server records who pushed.
+
+*Rejected because* every user would need an account and rights on the Git server, the application would manage a
+second set of tokens per user, and the evidence would lie in the server's audit log, not in the repository. As an
+optional variant beside the technical user it doubles every path through the store.
+
+=== Releases through pull or merge requests on the Git server
+
+The release opens a pull or merge request; reviewers approve in the Git server, which then merges into protected
+`main`.
+
+*Rejected because* the reviewers need Git accounts, the merge commit is the server's and cannot carry the
+application's signature, and the approvals would have to be copied into notes on that commit afterwards.
+
+=== Passkey approvals (WebAuthn) and graded signature levels
+
+An approval is additionally signed by a passkey on the user's device, stored as a note on the approved commit, as one
+of several signature levels up to a qualified electronic signature.
+
+*Rejected because* it needs a WebAuthn library, the registration and trust of public keys per user, notes per
+approval and a prototype of a challenge that WebAuthn does not standardise; and every level is a further variant to
+build and verify. The decision recorded in
+xref:0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007] is superseded.
+
+=== Commits signed with the user's own Git key
+
+Each commit carries a signature made with a key of the user who made the change.
+
+*Rejected because* a server-side JGit push would need the user's private key. Creating the commits through a Git
+server's API instead binds the store to one vendor, and the server signs them with its own key, not the user's: GitHub
+for web-interface commits and for API commits of a GitHub App without custom author or committer
+(link:https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification[GitHub Docs]),
+GitLab with the instance key once _Sign web-based commits_ is enabled
+(link:https://docs.gitlab.com/user/project/repository/signed_commits/web_commits/[GitLab Docs]), Gitea with the key
+configured under `[repository.signing]` (link:https://docs.gitea.com/administration/signing[Gitea Docs]).
+
+=== `sub` and `sid` in clear text as trailers
+
+The trailers name the user by the identity provider's subject (`sub`) and session id (`sid`).
+
+*Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym is erasable
+through the person directory; the HMAC of `sid` still correlates with logs.
+
+=== The author field only
+
+The commit's author field names the user, without trailers or a signature.
+
+*Rejected because* the author field is unchecked metadata. It makes no statement anyone can verify.
+
+== Consequences
+
+=== Properties of the design
+
+* One path through the store: one credential type, one signature, one place for approvals.
+* Integrity and origin of every commit are checkable without the Git server.
+* Evidence is portable across Git servers.
+* No user needs a Git account.
+
+=== Accepted costs
+
+* Trust lies in the application and its key. A compromised server can sign in anyone's name; no key on the user's
+  device confirms an approval.
+* The Git server's audit log names only the technical user.
+* The signing key needs a KMS or HSM, an `allowed_signers` file with validity periods, and anchoring.
+
+=== When this is revisited
+
+When an approval must be confirmed by a key the application does not hold, or when a document needs a qualified
+electronic signature inside the application.
+
+== Links
+
+* xref:../concepts/identity-and-signing.adoc[Identity and Signing]
+* xref:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]

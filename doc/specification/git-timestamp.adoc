@@ -29,8 +29,8 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: RFC 3161 Anchor 
 
 * Provider id: `rfc3161`; its notes reference is `refs/notes/anchors/rfc3161`.
 * Request: `TimeStampReq` with `messageImprint` = SHA-256 over the object id as lowercase ASCII hex (the same form as
-  the passkey challenge of `git-signing`), `certReq = true`, a random nonce. The previous proof the store passes is not
-  used.
+  the statement of the own timestamp of `git-signing`), `certReq = true`, a random nonce. The previous proof the store
+  passes is not used.
 * Proof: the DER-encoded `TimeStampToken`.
 * An unreachable authority or an error response returns the outcome unavailable or failed; `git-store` keeps the
   subject pending and retries.

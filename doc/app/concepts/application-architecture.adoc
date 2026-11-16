@@ -23,7 +23,7 @@ One Quarkus application, compiled to a native image on Java 25, serves three sur
 * the *MCP endpoint* for AI agents;
 * the *static web app*, served same-origin from a resource JAR.
 
-Behind the surfaces sits one layer of *application services*: categories, rights, signature levels, deadlines, the first
+Behind the surfaces sits one layer of *application services*: categories, rights, step-up, deadlines, the first
 login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same services
 with the same checks. Below the services sit the libraries of `git-document-repository`
 (link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which reaches
@@ -127,7 +127,7 @@ bundled JSON Schema:
 
 * the repositories with alias, remote, confidentiality and retention class, and credential reference;
 * the mapping from identity-provider groups to rights per repository;
-* the enabled categories and, per category, the overrides of signature levels and deadlines;
+* the enabled categories and, per category, the overrides of step-up and deadlines;
 * the person directory provider, the anchor providers and keys, the timestamp authority, the mirror;
 * the fetch interval and the webhook secret reference.
 
@@ -198,8 +198,8 @@ anything else depends on it.
 == Open Questions
 
 . Verify that JGit (HTTPS transport, in-core writing, notes) runs in the native image without the JVM fallback.
-. Which Git host APIs are needed beyond Git itself (pull or merge requests for releases, webhook registration), and
-  for which hosts first.
+. Which Git host APIs are needed beyond Git itself (webhook registration, pull or merge requests for threat models in
+  the services' repositories), and for which hosts first.
 . Whether the categories module ships inside the application or as an overridable directory mounted at run time.
 
 == Related

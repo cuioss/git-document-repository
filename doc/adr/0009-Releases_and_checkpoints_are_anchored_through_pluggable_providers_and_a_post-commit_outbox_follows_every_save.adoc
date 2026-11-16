@@ -28,8 +28,8 @@ making an external service a requirement.
 
 * An *outbox* walks the new commits of every branch a consumer subscribes to. It runs after a reference update the
   store performs (local mode), after a successful push (remote mode), and after a fetch that moves a subscribed branch.
-  The last trigger covers a merge the Git server performs into protected `main`; a webhook or the periodic fetch
-  brings it. The walk is idempotent by commit hash and keeps its progress per consumer and branch in a reference
+  The last trigger covers a commit another instance or a direct push created; a webhook or the periodic fetch brings
+  it. The walk is idempotent by commit hash and keeps its progress per consumer and branch in a reference
   (`refs/meta/outbox/<consumer>/<branch>`, the branch name escaped: first every `%` as `%25`, then every `/` as
   `%2F`), so it resumes after a failure. The progress references are never pushed. The index and an optional mirror
   to a second Git server are its consumers.
@@ -148,5 +148,5 @@ checkpoints, or when the checkpoint interval proves too coarse for an audit.
 
 * xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 * xref:../Requirements.adoc#GDR-STORE-12[GDR-STORE-12 – GDR-STORE-14] -- anchoring in `git-store`
-* xref:../Requirements.adoc#GDR-SIGN-7[GDR-SIGN-7] -- the own timestamp `signed`
+* xref:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6] -- the own timestamp `signed`
 * xref:../Requirements.adoc#requirements-git-timestamp[`git-timestamp` requirements] -- the RFC 3161 provider

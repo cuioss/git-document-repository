@@ -57,8 +57,6 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 |`refs/heads/main` |released state |yes
 |`refs/heads/<collection>/<id>` |working branch of one document of a per-document collection |yes
 |`refs/heads/<collection>` |collection branch of a numbered collection: every entry and the counter file |yes
-|`refs/heads/review/<collection>/<id>` |review branch of one numbered entry for a pull or merge request: `main` with
-only that entry's path applied (see Release) |yes
 |`refs/tags/<collection>/<id>/v<n>` |release `n` of one document or numbered entry, never moved |yes
 |`refs/tags/checkpoints/<n>` |checkpoint `n` of the anchoring (see Anchoring), never moved |yes
 |`refs/drafts/<user>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
@@ -72,7 +70,7 @@ the fetched remote tip, kept until its user resolves it (see Conflict Handling) 
 * A collection is either per-document (one working branch per document) or numbered (one collection branch, no
   branch per entry), never both: Git refuses a reference and a reference nested below it, so `refs/heads/risks` and
   `refs/heads/risks/<id>` cannot exist side by side. For the same reason the outbox references escape the branch name.
-* A collection must not be named `main`, `review` or `checkpoints`.
+* A collection must not be named `main` or `checkpoints`.
 * `<id>` of a per-document collection is the document's ULID; it names the working branch, the release tag, the data
   directory and the link target. `<id>` of a numbered collection is the readable number (`prefix` + counter, for
   example `R-042`); it names the entry file, the release tag and the link target. Until its first save a new numbered
@@ -183,16 +181,11 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
   outcome. A repeated release of the same document creates the missing tag on the merged commit and does not merge
   again.
 * An existing release tag is never moved or deleted.
-* Protected `main`: the push of `main` returns rejected; the store then supports a push of the release source alone,
-  and the release completes as a pull or merge request on the Git server: "submit for review" opens it and the
-  transition "approve (release)" merges it. The fetch that shows the new tip of `main` hands it to the outbox
-  (Post-Commit Outbox); the tag is created on the merged commit then.
-* The source of the pull or merge request: for a per-document kind its working branch. For a numbered entry a review
-  branch `refs/heads/review/<collection>/<id>`, created from `main` with only that entry's path applied (path-level
-  merge in core, as for a direct release); the counter file and the other entries are not part of it.
-* Release commits the store creates carry the trailers of the registered `CommitTrailerContributor` (provided by
-  `git-signing`; see Service Provider Interfaces); a merge commit the Git server created receives the approvals as a
-  note (see xref:git-signing.adoc#_portable_approvals[git-signing, Portable Approvals]).
+* The store merges every release itself. `main` is protected on the Git server so that only the technical user may
+  push to it and nobody may force-push; a refused push of `main` returns rejected.
+* Release commits carry the trailers of the registered `CommitTrailerContributor` (provided by `git-signing`; see
+  Service Provider Interfaces), the approvals included (see xref:git-signing.adoc#_approvals[git-signing,
+  Approvals]).
 
 == Draft Expiry
 
@@ -215,13 +208,11 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per
 
 |author |the caller's pseudonym (`p-<random>`) from the person directory (see Person Directory), e-mail field empty
 |committer |the technical user configured per repository
-|credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
+|credentials |the technical user's credential configured per repository; there is no other
 |===
 
-A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that reported
-saved locally, see Save); apart from these, commits of different users are never combined in one push. Commits the store
-writes without a user's save (notes, checkpoints, erasure records) are never combined with the commits of a save and are
-pushed separately with the technical user's credentials.
+Every push uses the technical user's credential. Commits the store writes without a user's save (notes, checkpoints,
+erasure records) are never combined with the commits of a save and are pushed separately.
 
 == In-Memory Index
 
@@ -247,7 +238,7 @@ image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of 
 * Consumers register by name with the branches they subscribe to (for example `index` on `main` and the working
   branches, `mirror` on every branch).
 * Triggers: a reference update the store performs in local mode, a successful push in remote mode, and a fetch that
-  moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
+  moves a subscribed branch (for example a commit of another instance, seen through a webhook or the periodic
   fetch).
 * On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
   the branch's new tip, oldest first, and calls the consumer per commit. The branch name is escaped injectively:
@@ -298,7 +289,7 @@ public interface AnchorProvider {
 
 === Subjects
 
-* *Releases*: once a release tag exists (Release; after a merge on the Git server, once the fetch shows it), the
+* *Releases*: once a release tag exists (Release), the
   commit it points to is anchored with every active provider.
 * *Checkpoints*: a checkpoint is due when `anchor.checkpoint-interval` has passed since the commit time of the
   previous checkpoint and the pushed references differ from those it lists. The store then writes a commit:
@@ -426,8 +417,8 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 |===
 |Interface |Contract |Provider
 
-|`SignatureLevelVerifier` |Checks the evidence of a signature level for a workflow transition; without a provider
-only level 0 is accepted |`git-signing`
+|`StepUpVerifier` |Checks the step-up evidence for a workflow transition that requires it; without a provider such a
+transition is refused |`git-signing`
 |`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
 |`PersonDirectory` |Pseudonyms, person entries, holders of a role in a team, erasure (see Person Directory); exactly
 one provider is active |`git-directory` (`git`, the default), or a provider for the operator's own source

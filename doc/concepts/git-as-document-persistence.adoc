@@ -44,9 +44,8 @@ in memory; references move by compare-and-swap. Drafts are references per user; 
 merge in core and, in remote mode, pushes the result. Local and remote repositories share one API.
 |xref:storage-engine.adoc[The Storage Engine on Git]
 
-|*Identity by signature.* A technical user pushes; the application signs every commit and records the claims of the
-logged-in user as trailers. Approvals can be raised to MFA or a passkey signature. Pushing in the user's name stays
-optional.
+|*Identity by signature.* Only a technical user talks to Git; the application signs every commit and records the
+claims of the logged-in user as trailers. An approval can require a fresh MFA login (step-up).
 |xref:identity-and-signing.adoc[Identity and Signing]
 
 |*Data protection by pseudonyms.* Commits and documents name persons only by pseudonym; names lie in one place, the
@@ -128,8 +127,8 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * *Drafts and saving*: draft references per user and document; intermediate save; save as squash merge in core,
   compare-and-swap, fetch, push and re-apply on rejection; conflict results per path; expiry and garbage collection
   of drafts.
-* *Identity*: author and committer per save; a credentials strategy per push (technical user or user token); commit
-  trailers for approvals.
+* *Identity*: author and committer per save; the technical user's credential for every push; commit trailers for
+  approvals.
 * *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
   index interface the domain fills.
 * *Post-commit processing*: an outbox over the new commits, idempotent by commit hash, with its progress kept in a

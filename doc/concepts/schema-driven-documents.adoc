@@ -79,11 +79,10 @@ the mechanisms of the store:
 |intermediate saves on the user's draft reference
 
 |submit for review
-|save onto the working branch; when the Git server's review path is used, open the pull or merge request
+|save onto the working branch
 
 |approve (release)
-|merge into `main` and tag, or, on the review path, merge the pull or merge request; approvals written as signed
-trailers, a passkey approval as a note
+|merge into `main` and tag, by the application; approvals written as signed trailers
 
 |supersede
 |a later approved version of the same document; the old tag stays
@@ -92,8 +91,8 @@ trailers, a passkey approval as a note
 The workflow further declares:
 
 * *deadlines* per state -- notification duties and review intervals, computed from the in-memory index;
-* *the signature level* per transition -- see xref:identity-and-signing.adoc#_graded_traceability[Identity and
-  Signing].
+* *step-up* per transition, a fresh MFA login before the transition -- see
+  xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing].
 
 Deadlines and reminders are computed, never stored: notifications are runtime state of the application, not
 persistence.

@@ -7,7 +7,7 @@
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">The web app shell with rail, top bar and a triage page of three columns</title>
-  <desc id="desc">The AppShell taken over from pm-web-app. On the left the navigation rail lists the lenses Due, SAMM, Threat models, Incidents, ISMS, Catalogs, Reports and Settings. Across the top the top bar holds the command palette, the live indicator fed by the event stream, and the user menu. The main area shows one page template; here the triage page of the SAMM lens with three columns: the scopes, the assessments of the selected scope, and the selected practice as object column with the generated form, its draft state and the approve control naming the signature level. On phones a bottom bar replaces the rail.</desc>
+  <desc id="desc">The AppShell taken over from pm-web-app. On the left the navigation rail lists the lenses Due, SAMM, Threat models, Incidents, ISMS, Catalogs, Reports and Settings. Across the top the top bar holds the command palette, the live indicator fed by the event stream, and the user menu. The main area shows one page template; here the triage page of the SAMM lens with three columns: the scopes, the assessments of the selected scope, and the selected practice as object column with the generated form, its draft state and the approve control saying when step-up follows. On phones a bottom bar replaces the rail.</desc>
 
   <defs>
     <style>
@@ -72,7 +72,7 @@
   <text x="604" y="282" class="item">question 2  answer ▾</text>
   <text x="596" y="316" class="item">saved for you · 12:04</text>
   <rect class="stroke" x="596" y="392" width="236" height="32" rx="4"/>
-  <text x="604" y="412" class="item">Approve (level 2: MFA)</text>
+  <text x="604" y="412" class="item">Approve (confirm with MFA)</text>
 
   <!-- caption -->
   <text x="450" y="500" class="caption">Shell, templates and components from pm-web-app; on phones a BottomBar replaces the NavRail.</text>

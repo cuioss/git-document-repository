@@ -209,7 +209,7 @@ Status: PLANNED
 |`APPROVAL_REQUESTED` with the approval id; the approval waits in the user's *Due* lens
 |===
 
-No tool performs a transition above signature level 1. Tool input sizes are limited to the category schema's
+No tool performs a transition that requires step-up. Tool input sizes are limited to the category schema's
 `maxLength` and `maxItems`; a document of more than 1 MiB is refused.
 
 == Upstream Credentials
@@ -217,8 +217,7 @@ _See Requirement link:../Requirements.adoc#CIFR-MCP-5[CIFR-MCP-5: No Passthrough
 
 Status: PLANNED
 
-* Git push: the repository's configured push credential (technical user or the user's Git-host token from Token
-  Sheriff); never the MCP access token.
+* Git push: the technical user's credential configured for the repository; never the MCP access token.
 * KMS, TSA, ticket system, issue tracker: the application's own credentials from `-ref` keys.
 * Tool results and errors are built from typed result objects that carry no credential field.
 * The integration suite greps every MCP response and every log line for the configured credential values; one match

@@ -124,7 +124,7 @@ pseudonym
 |Template that generates the AsciiDoc output from YAML and fragments
 
 |`workflow.yaml`
-|States, transitions, signature level per transition, deadlines, repository alias
+|States, transitions, step-up per transition, deadlines, repository alias
 |===
 
 Extension points for behaviour a schema cannot express, each a named CDI interface in `service`:

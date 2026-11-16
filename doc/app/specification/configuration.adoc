@@ -158,25 +158,21 @@ except `retention-class` is optional and overrides the default of the category's
 |`true`
 |Whether the category is offered
 
-|`signature-levels`
+|`step-up.transitions`
 |from `workflow.yaml`
-|Map of transition → signature level (link:authentication.adoc#_signature_levels[Signature Levels])
+|Map of transition → `true` or `false` (link:authentication.adoc#_step_up_defaults[Step-Up Defaults])
 
 |`deadlines`
 |from `workflow.yaml`
 |Overrides of the category's deadline rules
 
 |`step-up.acr`
-|required when a transition of the category needs level 2 or higher
+|required when a transition of the category requires step-up
 |`acr` value that states multi-factor authentication (link:authentication.adoc#_step_up[Step-Up])
 
 |`step-up.max-age`
 |`PT5M`
 |Maximum age of `auth_time` for an approval
-
-|`release.via-pull-request`
-|`false`
-|Release opens a pull or merge request of the Git server instead of merging into `main` directly
 
 |`retention-class`
 |— (required)
@@ -252,13 +248,9 @@ requests and for the deletion of the remote repository
 |yes
 |Name of a retention class from `retention-classes` (<<_retention_classes>>)
 
-|`push-credential`
-|no
-|`technical-user` (default) or `user-token`
-
 |`credential-ref`
-|for `technical-user`
-|Reference to the push credential
+|yes
+|Reference to the credential of the technical user, the only Git credential
 
 |`webhook-secret-ref`
 |no
@@ -310,7 +302,7 @@ retention class, or carry a class other than the repository's `retention`
 |A `-ref` value in a form its key does not accept (`signing.key-ref` as `vault:`)
 
 |Step-up assurance
-|A category with a transition at level 2 or higher and no `step-up.acr`
+|A category with a transition that requires step-up and no `step-up.acr`
 
 |Rights reference repositories
 |A rights entry naming an unknown alias
