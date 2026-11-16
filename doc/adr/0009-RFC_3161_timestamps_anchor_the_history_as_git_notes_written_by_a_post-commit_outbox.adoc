@@ -28,8 +28,8 @@ consistent with what it derives.
   store performs (local mode), after a successful push (remote mode), and after a fetch that moves a subscribed branch.
   The last trigger covers a merge the Git server performs into protected `main`; a webhook or the periodic fetch
   brings it. The walk is idempotent by commit hash and keeps its progress per consumer and branch in a reference
-  (`refs/meta/outbox/<consumer>/<branch>`, every `/` of the branch name escaped as `%2F`), so it resumes after a
-  failure. The progress references are never pushed.
+  (`refs/meta/outbox/<consumer>/<branch>`, the branch name escaped: first every `%` as `%25`, then every `/` as
+  `%2F`), so it resumes after a failure. The progress references are never pushed.
 * `git-timestamp` is one consumer of the outbox, subscribed to `main`. It obtains an RFC 3161 timestamp for every new
   commit of `main` and stores the token as a note under `refs/notes/timestamps`. In remote mode it pushes the note
   right after writing it; a failed push keeps the commit pending, and the retry pushes the stored token instead of

@@ -98,8 +98,9 @@ Git comes first; everything else follows and is derived from Git.
   them: timestamps, mirror and index.
 * *Idempotent by commit hash.* After a failure the store resumes from the last processed hash. The progress is
   remembered per consumer and branch in a reference `refs/meta/outbox/<consumer>/<branch>`, again in Git, so it needs
-  no store of its own. Every `/` of the branch name is escaped as `%2F`, so the progress references of `risks` and
-  `risks/<id>` never nest; they are never pushed.
+  no store of its own. The branch name is escaped, first every `%` as `%25`, then every `/` as `%2F`, so the progress
+  references of `risks` and `risks/<id>` never nest and two branch names never share one reference; they are never
+  pushed.
 * *Complementary data by reference only.* Git holds `incident: TICKET-4711`; the ticket system never holds Git
   content.
 

@@ -19,8 +19,10 @@ interfaces, `PseudonymResolver` and `FieldEncryptor` (see xref:git-store.adoc#_s
 Service Provider Interfaces]). The envelope-encryption library is open (candidate: Google Tink _(unverified)_) and needs
 the owner's approval. Rationale: xref:../concepts/data-protection.adoc[Data Protection].
 
-Every person has a data encryption key (DEK); the keyring that holds the DEKs is encrypted with a key-encryption key
-(KEK) held by a key source outside Git.
+Every person has one data encryption key (DEK) per retention class; the keyring that holds the DEKs is encrypted with
+a key-encryption key (KEK) held by a key source outside Git. The retention class of a document kind is the `retention`
+of its repository in the registry of `git-store` (an ISO 8601 period, or none); data under a retention duty and
+erasable data therefore never share a DEK.
 
 == Envelope Encryption
 
@@ -34,9 +36,10 @@ image::../resources/diagrams/keyring-envelope-encryption.svg["Envelope encryptio
 |===
 |File (repository of the directory) |Content
 
-|`keys/keyring.enc` |envelope over the map pseudonym → { DEK, issuer, `sub` } and the list of KEK versions pending
-destruction, encrypted with KEK version n
-|`persons/<pseudonym>.enc` |envelope over the person entry, encrypted with the person's DEK
+|`keys/keyring.enc` |envelope over the map pseudonym → { issuer, `sub`, DEKs: retention class → DEK } and the list
+of KEK versions pending destruction, encrypted with KEK version n
+|`persons/<pseudonym>.enc` |envelope over the person entry, encrypted with the person's DEK for the retention class of
+the directory's repository
 |===
 
 Envelope format (all integers big-endian):
@@ -90,8 +93,9 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-3[GDR-CRYPTO-3: Pseudonyms
 
 * Format: `p-` followed by 12 lowercase hex characters from a `SecureRandom`; collisions are re-drawn.
 * The key of a keyring entry is the pair (issuer, `sub`); `sub` values of different issuers never collide.
-* `pseudonymFor(issuer, sub)` returns the pseudonym of the pair; when none exists it creates a pseudonym and a DEK
-  (keyring save by compare-and-swap). It is the `PseudonymResolver` that `git-crypto` provides to `git-store`.
+* `pseudonymFor(issuer, sub)` returns the pseudonym of the pair; when none exists it creates a pseudonym and its
+  entry (keyring save by compare-and-swap). The DEK of a retention class is created on its first use. It is the
+  `PseudonymResolver` that `git-crypto` provides to `git-store`.
 * `findPseudonym(issuer, sub)` reads the in-memory keyring only; an unknown pair returns the not-found outcome.
 * `subjectOf(pseudonym)` returns (issuer, `sub`); an unknown or erased pseudonym returns the not-found outcome.
 
@@ -103,8 +107,11 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4: Erasure by
 
 image::../resources/diagrams/erasure-by-kek-rotation.svg["Erasure by rotation of the key-encryption key",align=center]
 
-. Collect the pending erasures (batch).
-. Remove their entries from the in-memory keyring.
+. Collect the pending erasures (batch). An erasure names the pseudonym and the retention classes whose data must be
+  erased; a class under a statutory retention duty is not named but kept under restriction (§ 35(3) BDSG) until its
+  retention ends, and is erased by a later run then.
+. Remove the DEKs of the named classes from the in-memory keyring; remove an entry with no DEK left as a whole
+  (issuer and `sub` included).
 . `rotate()` the key source; encrypt the keyring with version n+1. Its list of versions pending destruction holds the
   versions of the previous list and every other version older than n+1 for which `get(v)` still returns a key.
 . Commit `keys/keyring.enc` with the rotation message (next section); in remote mode push it.
@@ -115,7 +122,7 @@ image::../resources/diagrams/erasure-by-kek-rotation.svg["Erasure by rotation of
 Failure handling:
 
 * Step 4 fails: the erasure is incomplete, nothing is destroyed, and the published keyring stays at version n with the
-  erased entries. Version n+1 encrypts nothing in Git. The next run repeats the erasure with version n+2; by the rule
+  erased DEKs. Version n+1 encrypts nothing in Git. The next run repeats the erasure with version n+2; by the rule
   of step 3 its pending list holds n and n+1.
 * Step 5 fails: the outcome names the version still to destroy; the erasure counts as incomplete. The pending list in
   the published keyring keeps the version, so the next erasure run or the next start retries the destruction.
@@ -124,7 +131,7 @@ Failure handling:
   destruction message then.
 
 Other instances: an instance reloads `keys/keyring.enc` whenever a fetch or a reference update changes it, and drops
-the DEKs of entries that are gone before it serves the next decryption. In remote mode an erasure therefore takes
+the DEKs that are gone before it serves the next decryption. In remote mode an erasure therefore takes
 effect in every instance at the latest at its next fetch.
 
 == Evidence of Erasure
@@ -139,8 +146,11 @@ Rotation commit (step 4):
 Rotate keyring to KEK v8
 
 Kek-Pending-Destruction: 7
-Erased: p-3f9a0c11b2d4, p-77e01a9c4f20
+Erased: p-3f9a0c11b2d4, p-77e01a9c4f20 (P1Y)
 ----
+
+`Erased` names every pseudonym whose DEKs were removed; when an entry keeps the DEK of a retained class, the removed
+retention classes follow in parentheses.
 
 Destruction commit (step 6), written only after `destroy(7)` succeeded:
 
@@ -162,11 +172,12 @@ _See Requirement link:../Requirements.adoc#GDR-CRYPTO-6[GDR-CRYPTO-6: Personal F
 *Status:* PLANNED
 
 `git-crypto` provides the `FieldEncryptor` of `git-store`. `git-forms` interprets the schema marker
-`"x-personal": "<pseudonym-field>"` and calls the `FieldEncryptor` for every marked field; the field is stored as a
-base64 envelope (`key-version` `0`) encrypted with the DEK of its data subject, the pseudonym named by the referenced
-field. The stored value never contains the clear text. Without a `FieldEncryptor` provider, a save of a document with
-a marked field returns the invalid outcome instead of writing the clear text. After erasure of that pseudonym the
-field reads as the undecryptable outcome.
+`"x-personal": "<pseudonym-field>"` and calls the `FieldEncryptor` for every marked field, with the retention class
+of the field's document kind; the field is stored as a base64 envelope (`key-version` `0`) encrypted with the DEK of
+its data subject (the pseudonym named by the referenced field) for that retention class. The stored value never
+contains the clear text. Without a `FieldEncryptor` provider, a save of a document with a marked field returns the
+invalid outcome instead of writing the clear text. After erasure of that DEK the field reads as the undecryptable
+outcome.
 
 == Keyring at Run Time
 

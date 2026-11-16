@@ -36,9 +36,10 @@ the Git server's API can be signed by the server itself, depending on the vendor
 binding to one vendor. The graded signature below replaces this level.
 |===
 
-*One push per save* keeps every push to the commits of exactly one user. Who may read and write a repository is
-decided by the application from the identity provider; in the first iteration no right is derived from the roles of
-the directory (see xref:directory-and-catalogs.adoc[Directory and Catalogs]).
+*One push per save* keeps every push to the commits of exactly one user; the only exception are commits saved locally
+while the remote could not be reached, which the next successful push carries along. Who may read and write a
+repository is decided by the application from the identity provider; in the first iteration no right is derived from
+the roles of the directory (see xref:directory-and-catalogs.adoc[Directory and Catalogs]).
 
 == What a Signature of the Application Shows
 

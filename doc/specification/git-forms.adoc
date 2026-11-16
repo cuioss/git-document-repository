@@ -40,11 +40,11 @@ kinds:
     numbering: { prefix: R-, digits: 3 }   # optional, see Running Numbers
 ----
 
-`numbering` is optional. `template` is required for a per-document kind; whether a numbered kind has a template, and
-what it generates, is open. Every other field is required. A kind with `numbering` is a numbered collection, a kind
-without it a per-document collection (see xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a
-collection is never both and is never named `main`. The configuration files live in a configuration repository or
-directory chosen by the application.
+`numbering` is optional. `template` is required for a per-document kind and optional for a numbered kind. Every
+other field is required. A kind with `numbering` is a numbered collection, a kind without it a per-document
+collection (see xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a collection is never both and is
+never named `main` or `review`. The configuration files live in a configuration repository or directory chosen by the
+application.
 
 == Schema Validation
 
@@ -77,7 +77,8 @@ Per-document kind, on the document's working branch:
 
 Numbered kind, on the collection branch: one entry file per entry, named by its readable number
 (`<collection>/<number>.yaml`, for example `risks/R-042.yaml`), and the counter file `<collection>/.counter` (see
-Running Numbers).
+Running Numbers). A numbered kind with a template has its generated output next to the entry file
+(`<collection>/<number>.adoc`, for example `risks/R-042.adoc`).
 
 A kind may split `document.yaml` into one file per independently edited part (for example one file per section) when
 its schema declares the split. YAML is written by the YAML codec of `git-forms`, an implementation of the codec
@@ -89,8 +90,10 @@ _See Requirement link:../Requirements.adoc#GDR-FORMS-4[GDR-FORMS-4: Generated Ou
 
 *Status:* PLANNED
 
-* `report.adoc` = template(data, fragments). Generation is a pure function of its inputs.
-* The save writes data, fragments and `report.adoc` in one commit.
+* `report.adoc` = template(data, fragments). Generation is a pure function of its inputs. For a numbered kind the
+  output is `<collection>/<number>.adoc` = template(entry file).
+* The save writes data, fragments and the output in one commit.
+* A kind without `template` generates no output: the generate step of the save and its check are skipped.
 * `check(commit)` regenerates the output and returns match or mismatch. When `git-forms` is created, a CI job of the
   consuming repository is planned to call it on every pull request; no such job exists yet.
 
@@ -117,8 +120,9 @@ deadlines:
 ----
 
 * `mechanism` is one of `intermediate-save`, `save`, `release`, `tag`.
-* The current state is a field of `document.yaml` written by the transition. The workflow state `draft` is a value of
-  that field; it is unrelated to the draft references of `git-store`, which hold intermediate saves in any state.
+* The current state is the field `state`, written by the transition: in `document.yaml` for a per-document kind, in
+  the entry file `<collection>/<number>.yaml` for a numbered kind. The workflow state `draft` is a value of that field;
+  it is unrelated to the draft references of `git-store`, which hold intermediate saves in any state.
 * When `main` is protected, `submit` opens the pull or merge request and `approve` (release) merges it (see
   xref:git-store.adoc#_release[git-store, Release]).
 * A transition not listed for the current state returns the transition-refused outcome.

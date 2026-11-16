@@ -106,6 +106,15 @@ A writer reads the note, appends its entry and writes the note back in a new not
 `refs/notes/approvals` by compare-and-swap (`git-core` Notes); on a lost race it reads the new note and appends again.
 A second approval therefore never replaces the first.
 
+In remote mode every write of `refs/notes/approvals` is pushed right after, as a system commit with the technical
+user's credentials. Before the push the writer fetches the remote notes reference and merges the local notes into it,
+with JGit's `NoteMapMerger` (`org.eclipse.jgit.notes`; base: the merge base of the two notes commits) and a note
+merger of this module: for a commit with a note on both sides the merged note holds the union of the `approvals`
+entries, an entry present on both sides once. The writer commits the merged notes (parents: the local and the fetched
+notes commit), signed by the application, moves the local reference by compare-and-swap and pushes with lease, the
+expected remote id being the fetched one. On a rejection it repeats from the fetch, up to the configured number of
+attempts (`save.max-attempts` of `git-store`). An approval written on another instance is therefore never replaced.
+
 == Step-Up Evidence
 
 _See Requirement link:../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4: Step-Up Evidence (Level 2)]_

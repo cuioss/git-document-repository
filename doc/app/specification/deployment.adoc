@@ -89,7 +89,8 @@ Readiness checks, all required for `UP`:
 |Every configured repository is either fetched in this process or present as a valid local repository from an earlier
 fetch (start from the cache, see
 link:architecture-and-modules.adoc#_degraded_operation[Architecture and Modules, Degraded Operation]); a remote
-repository without a local copy keeps readiness `DOWN`. A later fetch failure does not drop readiness
+repository without a local copy keeps readiness `DOWN`. A local-mode repository (`remote: none`) counts once its local
+repository opens and its index is built. A later fetch failure does not drop readiness
 
 |`keyring`
 |The keyring was decrypted with the current KEK

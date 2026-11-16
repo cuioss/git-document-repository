@@ -104,7 +104,8 @@ notes do not belong there, and fields that hold personal data are marked as such
 
 == The Erasure Concept
 
-The library erases a person by removing the person's entry from the keyring, re-encrypting the remaining keyring
+The library erases a person by removing from the keyring the person's data encryption keys of the retention classes
+to be erased (one key per retention class; the whole entry when none is left), re-encrypting the remaining keyring
 with a new version of the key-encryption key (KEK), and destroying the old KEK version at the key source once the
 rotation commit (and in remote mode its push) has succeeded. The application only configures this; it turns it into
 an operational concept:
@@ -114,9 +115,10 @@ an operational concept:
   concept the organisation publishes.
 * *Leaving the organisation*: the entry is erased through the next rotation. Documents keep the pseudonym and show
   "former member"; because responsibilities run through roles, they stay understandable.
-* *Evidence of erasure*: the rotation commit names the destroyed KEK version and the concerned pseudonyms (never the
-  key). Where a timestamp authority is configured, it is anchored with an RFC 3161 timestamp like every new state of
-  `main`.
+* *Evidence of erasure*: the rotation commit names the concerned pseudonyms and records the previous KEK version n as
+  pending destruction (never the key). The destruction is recorded in a later commit, only after the key source
+  confirmed it. Where a timestamp authority is configured, both commits are anchored with an RFC 3161 timestamp like
+  every new state of `main`.
 * *Restriction instead of erasure*: during a statutory retention period (GDPR Art. 17(3)(b) for the retention
   obligation; § 35(3) BDSG) the data stay, and their processing is restricted and marked as such; at the end of the
   period the repository of that retention class is deleted.

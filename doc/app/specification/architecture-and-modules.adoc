@@ -207,9 +207,13 @@ after the first successful start
 
 |Push fails after save
 |The commit stays on the local working branch and the save result is `SAVED_LOCALLY`; the web app shows "not yet
-visible to others"; the push is retried with backoff (a rejection on retry re-applies the save onto the fetched tip)
+visible to others". The next successful push of the working branch carries it (the next save or release, or the retry
+with backoff); when the Git server's state moved meanwhile, the library replays the change onto the fetched tip. A
+change that conflicts on this reconciliation is kept for its user to resolve and shown as a conflict on the next load
+of the document; it is never dropped
 
 |Git server unreachable at start
 |Remote repositories with a valid local repository start from it; a remote repository without a local copy keeps
-readiness `DOWN`
+readiness `DOWN`; a local-mode repository (`remote: none`) needs no Git server and counts once its local repository
+opens and its index is built
 |===

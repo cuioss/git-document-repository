@@ -118,8 +118,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Saves by different users to different practices of one assessment must all succeed without a conflict.
 * Concurrent saves to the same question must yield a conflict for the later save that names the question and both
   values; the later user's draft must be kept.
-* Every explicit save must be visible to the other editors of the assessment within 5 seconds (save-often pattern;
-  CIFR-WEB-5).
+* Every explicit save pushed to the Git server must be visible to the other editors of the assessment within 5
+  seconds (save-often pattern; CIFR-WEB-5); for editors on the same instance this holds for every save. A save that is
+  only saved locally (`SAVED_LOCALLY`) must become visible to editors on other instances after its push.
 * Specification: link:specification/category-samm.adoc#_editing[SAMM, Editing].
 
 [#CIFR-SAMM-4]
@@ -534,7 +535,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 
 * A form must save a draft no later than 5 seconds after the last change.
 * A conflict must be shown per field with the own and the other value; the draft must be kept.
-* A save by another user to an open document must be visible within 5 seconds through the event stream.
+* A save by another user to an open document must be visible within 5 seconds through the event stream: on the same
+  instance for every save, on other instances for a save pushed to the Git server; a save only saved locally
+  (`SAVED_LOCALLY`) becomes visible there after its push.
 * Specification: link:specification/web-app.adoc#_editing[Web App, Editing].
 
 [#CIFR-WEB-6]
@@ -641,8 +644,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 
 * The application must serve HTTPS on 8443 and the management interface (readiness, liveness, metrics) on 9000.
 * Readiness must report `UP` only when every configured repository is either fetched in this process or present as a
-  valid local repository from an earlier fetch, the keyring is decrypted and the index built; a remote repository
-  without a local copy must keep readiness `DOWN`, and a later fetch failure must not drop readiness.
+  valid local repository from an earlier fetch, the keyring is decrypted and the index built; a local-mode repository
+  (`remote: none`) must count once its local repository opens and its index is built; a remote repository without a
+  local copy must keep readiness `DOWN`, and a later fetch failure must not drop readiness.
 * Specification: link:specification/deployment.adoc#_ports_and_probes[Deployment, Ports and Probes].
 
 [#CIFR-OPS-4]
@@ -717,8 +721,11 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 === CIFR-NFR-5: Degraded Git Server
 
 * When the Git server is unreachable, reads must be served from the local repositories, saves must be committed
-  locally and reported as `SAVED_LOCALLY` (pushed when the Git server is reachable again), and the web app must show
-  the degraded state; no save may be reported as visible to others before its push succeeded.
+  locally and reported as `SAVED_LOCALLY`, and the web app must show the degraded state; no save may be reported as
+  visible to others before its push succeeded.
+* A locally saved change must be pushed by the next successful push of its working branch. When the Git server's
+  state moved meanwhile and the change conflicts with it on reconciliation, the change must be kept for its user to
+  resolve; it must never be dropped.
 * Specification: link:specification/architecture-and-modules.adoc#_degraded_operation[Architecture and Modules,
   Degraded Operation].
 

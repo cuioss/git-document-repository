@@ -6,11 +6,11 @@
   theme-handling: A (theme-neutral)
   see pm-documents:ref-svg-diagrams/standards/theme-handling.md
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 624"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 636"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">Sequence of an explicit save in remote mode</title>
-  <desc  id="desc">The application asks git-store to save a draft. git-store applies the draft's changes onto the tip of the working branch as one commit whose only parent is that tip (squash merge in core) and moves the working branch by compare-and-swap; if the branch moved meanwhile it re-applies the operation. In a loop in remote mode it fetches the working branch from the remote Git server: on a moved remote it resets the local branch to the fetched tip and re-applies; a path changed concurrently (expectedBlobId) ends the save with a conflict. It then pushes with lease and repeats on rejection until the push is accepted or save.max-attempts is reached. Only when the save succeeded does it delete the draft reference, by compare-and-delete, so a newer draft commit stays. It returns saved, conflict, rejected or credentials expired. On conflict nothing is pushed, the draft reference is kept and the local working branch is not moved. In local mode the loop is absent.</desc>
+  <desc  id="desc">The application asks git-store to save a draft. git-store applies the draft's changes onto the tip of the working branch as one commit whose only parent is that tip (squash merge in core) and moves the working branch by compare-and-swap; if the branch moved meanwhile it re-applies the operation. In a loop in remote mode it fetches the working branch from the remote Git server: on a moved remote it resets the local branch to the fetched tip by a guarded reset, replays the pending commits of earlier locally saved changes onto it and re-applies; a path changed concurrently (expectedBlobId) ends the save with a conflict, and a conflicting pending commit is kept for its user, never dropped. An unreachable remote ends the save as saved locally. It then pushes with lease and repeats on rejection until the push is accepted or save.max-attempts is reached. Only when the save succeeded, saved or saved locally, does it delete the draft reference, by compare-and-delete, so a newer draft commit stays. It returns saved, saved locally, conflict, rejected or credentials expired. On conflict nothing is pushed, the draft reference is kept and no commit of the save stays on the local working branch. In local mode the loop is absent.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="9" markerHeight="9" orient="auto">
@@ -35,25 +35,25 @@
   <text x="100" y="30" class="col-header">application</text>
   <rect class="stroke" x="24" y="42" width="152" height="36" rx="6"/>
   <text x="100" y="64" class="col-sub">caller</text>
-  <line class="sep" x1="100" y1="78" x2="100" y2="576"/>
+  <line class="sep" x1="100" y1="78" x2="100" y2="588"/>
 
   <text x="380" y="30" class="col-header">git-store</text>
   <rect class="stroke" x="304" y="42" width="152" height="36" rx="6"/>
   <text x="380" y="64" class="col-sub">save operation</text>
-  <line class="sep" x1="380" y1="78" x2="380" y2="576"/>
+  <line class="sep" x1="380" y1="78" x2="380" y2="588"/>
 
   <text x="610" y="30" class="col-header">local repository</text>
   <rect class="stroke" x="534" y="42" width="152" height="36" rx="6"/>
   <text x="610" y="64" class="col-sub">bare, in core</text>
-  <line class="sep" x1="610" y1="78" x2="610" y2="576"/>
+  <line class="sep" x1="610" y1="78" x2="610" y2="588"/>
 
   <text x="820" y="30" class="col-header">Git server</text>
   <rect class="stroke" x="744" y="42" width="152" height="36" rx="6"/>
   <text x="820" y="64" class="col-sub">remote</text>
-  <line class="sep" x1="820" y1="78" x2="820" y2="576"/>
+  <line class="sep" x1="820" y1="78" x2="820" y2="588"/>
 
   <!-- activation -->
-  <rect class="activation" x="375" y="112" width="10" height="444"/>
+  <rect class="activation" x="375" y="112" width="10" height="456"/>
 
   <!-- save -->
   <line class="arrow" x1="100" y1="112" x2="375" y2="112" marker-end="url(#arrow)"/>
@@ -70,27 +70,29 @@
   <text x="497" y="228" class="arrow-lbl">moved | stale: re-apply</text>
 
   <!-- loop, remote mode -->
-  <rect class="sep" x="340" y="256" width="544" height="180" rx="4" ry="4"/>
+  <rect class="sep" x="340" y="256" width="544" height="192" rx="4" ry="4"/>
   <text x="394" y="274" class="note-lbl">loop [remote mode] until accepted or save.max-attempts</text>
   <line class="arrow" x1="385" y1="304" x2="820" y2="304" marker-end="url(#arrow)"/>
   <text x="602" y="296" class="arrow-lbl">fetch working branch</text>
   <line class="arrow-return" x1="820" y1="332" x2="385" y2="332" marker-end="url(#arrow)"/>
   <text x="602" y="324" class="arrow-lbl">remote tip</text>
-  <text x="394" y="358" class="note-lbl">moved remote: reset to the fetched tip, re-apply · changed path: conflict, stop</text>
-  <line class="arrow" x1="385" y1="388" x2="820" y2="388" marker-end="url(#arrow)"/>
-  <text x="602" y="380" class="arrow-lbl">push with lease</text>
-  <line class="arrow-return" x1="820" y1="416" x2="385" y2="416" marker-end="url(#arrow)"/>
-  <text x="602" y="408" class="arrow-lbl">accepted | rejected</text>
+  <text x="394" y="352" class="note-lbl">moved remote: reset to the fetched tip, replay pending commits, re-apply</text>
+  <text x="394" y="366" class="note-lbl">changed path: conflict, stop · unreachable: saved locally, stop</text>
+  <line class="arrow" x1="385" y1="400" x2="820" y2="400" marker-end="url(#arrow)"/>
+  <text x="602" y="392" class="arrow-lbl">push with lease</text>
+  <line class="arrow-return" x1="820" y1="428" x2="385" y2="428" marker-end="url(#arrow)"/>
+  <text x="602" y="420" class="arrow-lbl">accepted | rejected</text>
 
   <!-- only on saved -->
-  <rect class="sep" x="340" y="450" width="544" height="66" rx="4" ry="4"/>
-  <text x="394" y="468" class="note-lbl">opt [saved]</text>
-  <line class="arrow" x1="385" y1="498" x2="610" y2="498" marker-end="url(#arrow)"/>
-  <text x="497" y="490" class="arrow-lbl">compare-and-delete draft reference</text>
+  <rect class="sep" x="340" y="462" width="544" height="66" rx="4" ry="4"/>
+  <text x="394" y="480" class="note-lbl">opt [saved | saved locally]</text>
+  <line class="arrow" x1="385" y1="510" x2="610" y2="510" marker-end="url(#arrow)"/>
+  <text x="497" y="502" class="arrow-lbl">compare-and-delete draft reference</text>
 
   <!-- result -->
-  <line class="arrow-return" x1="375" y1="548" x2="100" y2="548" marker-end="url(#arrow)"/>
-  <text x="237" y="540" class="arrow-lbl">saved | conflict | rejected | credentials expired</text>
+  <line class="arrow-return" x1="375" y1="560" x2="100" y2="560" marker-end="url(#arrow)"/>
+  <text x="237" y="538" class="arrow-lbl">saved | saved locally | conflict</text>
+  <text x="237" y="552" class="arrow-lbl">rejected | credentials expired</text>
 
-  <text x="460" y="604" class="caption">In local mode the loop is absent. On conflict nothing is pushed, the draft reference is kept and the local branch is not moved.</text>
+  <text x="460" y="616" class="caption">In local mode the loop is absent. On conflict nothing is pushed, the draft reference is kept and no commit of the save stays on the local branch.</text>
 </svg>

@@ -137,24 +137,32 @@ _See Requirement link:../Requirements.adoc#GDR-CORE-5[GDR-CORE-5: Compare-and-Sw
 *Status:* PLANNED
 
 * The update sets the expected old object id to the parent the change was built on
-  (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference that must not exist yet). The update never
-  sets the force flag.
+  (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference that must not exist yet). The ordinary
+  update never sets the force flag; only the guarded reset below does.
 * The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit.
 * On a lost race the operation is re-applied to the new tip and the commit rebuilt.
+* *Guarded reset*: a reference update to a commit that does not descend from the current one, allowed only when the
+  reference still points to the expected old id (`RefUpdate.setExpectedOldObjectId` together with
+  `setForceUpdate(true)`). JGit checks the expected old id before it considers the force flag, so a reference that
+  moved meanwhile returns `LOCK_FAILURE` and is not reset. `git-store` uses it where a save moves the local working
+  branch back to a fetched remote tip, with or without pending commits replayed onto it (see
+  xref:git-store.adoc#_save[git-store, Save]).
 
 [cols="1,2"]
 |===
 |`RefUpdate.Result` |Handling
 
 |`NEW`, `FAST_FORWARD` |success
+|`FORCED` |guarded reset: success; ordinary compare-and-swap: rejected, as below
 |`LOCK_FAILURE` |the reference is locked by a concurrent update or no longer points to the expected old id (JGit
 returns `LOCK_FAILURE` for both): re-apply the operation to the new tip and retry; after the last attempt the
 conflict outcome, the reference unchanged
 |`IO_FAILURE` |an unexpected I/O failure: no retry; an exception, as the
 xref:error-model.adoc[Error Model] prescribes
 |`REJECTED`, `REJECTED_MISSING_OBJECT`, `REJECTED_OTHER_REASON`, `REJECTED_CURRENT_BRANCH`, `NOT_ATTEMPTED`,
-`NO_CHANGE`, `FORCED`, `RENAMED` |no retry; returned at once as the rejected outcome, the detail names the result
-(`FORCED` and `RENAMED` do not occur, because the update neither forces nor renames)
+`NO_CHANGE`, `RENAMED`; `FORCED` of an ordinary compare-and-swap |no retry; returned at once as the rejected outcome,
+the detail names the result (`FORCED` and `RENAMED` do not occur for an ordinary compare-and-swap, because it neither
+forces nor renames)
 |===
 
 Configuration: the maximum number of attempts is a required parameter of the call; `git-core` has no default and no

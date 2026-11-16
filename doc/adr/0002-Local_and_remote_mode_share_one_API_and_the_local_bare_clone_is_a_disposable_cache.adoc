@@ -29,9 +29,9 @@ remote.
 * In *remote mode* the remote repository is the source of truth. The local bare clone is a cache: a new clone
   restores every pushed state. Saving adds a fetch and a push.
 * The local bare clone also holds what is never or not yet pushed: the drafts
-  (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]), the outbox progress references and
-  notes whose push is pending. Deleting the clone loses them. The outbox then walks the subscribed branches again; its
-  idempotency by commit hash
+  (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]), the outbox progress references,
+  and the commits saved locally and notes whose push is pending. Deleting the clone loses them. The outbox then walks
+  the subscribed branches again; its idempotency by commit hash
   (xref:0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009])
   skips commits whose result is already pushed.
 
@@ -70,7 +70,8 @@ explicitly unsecured (see xref:0003-Drafts_are_per-user_references_that_are_neve
 === Accepted costs
 
 * In remote mode every save pays a fetch and a push.
-* The local directory needs persistent storage for drafts, outbox progress and pending notes even in remote mode.
+* The local directory needs persistent storage for drafts, outbox progress, pending commits and pending notes even in
+  remote mode.
 
 === When this is revisited
 

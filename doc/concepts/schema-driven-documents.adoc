@@ -22,7 +22,7 @@ output. Review and approval freeze the result in Git. Deadlines, links and evalu
 A *kind of document* is then four pieces of configuration:
 
 * a *schema*,
-* a *template*,
+* a *template* (optional for a numbered kind, a register),
 * a *workflow*,
 * a *repository* (from the registry, see
   xref:data-protection.adoc#_repositories_per_confidentiality_and_retention_class[Data Protection]).
@@ -62,7 +62,9 @@ YAML file per independently edited part instead (see below).
 
 == Template
 
-A template per kind of document produces the AsciiDoc output. The template engine is not chosen yet.
+A template per kind of document produces the AsciiDoc output. A numbered kind (a register) may do without one; then
+it has no generated output. With a template, each entry's output lies next to its entry file. The template engine is
+not chosen yet.
 
 == Workflow
 

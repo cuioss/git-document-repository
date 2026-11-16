@@ -8,11 +8,12 @@
 link:../README.adoc[CISOs-Friend documentation] » Concepts
 
 An application that stores its data in someone else's Git server has a pleasant property: it owns no database, so it
-has no schema migration, no database backup and no connection pool to tune; the Git server's backup covers the saved
-states, and only the volume with the drafts needs one of its own. It also has an unpleasant one: everything it
-knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend is the arrangement
-that keeps the pleasant property and contains the unpleasant one. Its build, runtime and test structure follow API
-Sheriff, so a contributor who knows one knows the other.
+has no schema migration, no database backup and no connection pool to tune; the Git server's backup covers the pushed
+states. Commits saved locally while the Git server was unreachable (`SAVED_LOCALLY`, not yet pushed) and the drafts
+are covered only by the backup of the volume, which therefore needs one of its own. It also has an unpleasant one:
+everything it knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend is the
+arrangement that keeps the pleasant property and contains the unpleasant one. Its build, runtime and test structure
+follow API Sheriff, so a contributor who knows one knows the other.
 
 == Shape
 

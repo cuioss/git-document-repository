@@ -9,7 +9,7 @@
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">Envelope encryption of the pseudonym keyring</title>
-  <desc  id="desc">The key-encryption key (KEK), held outside Git in a KMS, Vault or configuration and versioned, decrypts the keyring file keys/keyring.enc. The keyring maps each pseudonym to its data encryption key (DEK), the issuer of its identity provider and its sub, and lists the KEK versions pending destruction. Each DEK decrypts the encrypted entry of its person and the personal fields of that person in documents of any repository. The dashed box marks what lives outside Git.</desc>
+  <desc  id="desc">The key-encryption key (KEK), held outside Git in a KMS, Vault or configuration and versioned, decrypts the keyring file keys/keyring.enc. The keyring maps each pseudonym to the issuer of its identity provider, its sub and one data encryption key (DEK) per retention class, and lists the KEK versions pending destruction. Each DEK decrypts the encrypted entry of its person and the personal fields of that person in documents of its retention class, in any repository; data under a retention duty and erasable data never share a DEK. The dashed box marks what lives outside Git.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="9" markerHeight="9" orient="auto">
@@ -41,10 +41,11 @@
 
   <text x="450" y="32" class="hdr">keys/keyring.enc</text>
   <rect class="stroke" x="320" y="48" width="260" height="264" rx="6" ry="6"/>
-  <text x="450" y="88" class="item-c">p-7f3a… → DEK₁, issuer₁, sub₁</text>
-  <text x="450" y="112" class="item-c">p-91c2… → DEK₂, issuer₂, sub₂</text>
-  <text x="450" y="136" class="item-c">p-4be0… → DEK₃, issuer₃, sub₃</text>
-  <text x="450" y="166" class="item-c">pending destruction: v n−1</text>
+  <text x="450" y="82" class="item-c">p-7f3a… → issuer₁, sub₁, DEKs₁</text>
+  <text x="450" y="104" class="item-c">p-91c2… → issuer₂, sub₂, DEKs₂</text>
+  <text x="450" y="126" class="item-c">p-4be0… → issuer₃, sub₃, DEKs₃</text>
+  <text x="450" y="146" class="sub">DEKs: one DEK per retention class</text>
+  <text x="450" y="172" class="item-c">pending destruction: v n−1</text>
   <line class="sep" x1="350" y1="190" x2="550" y2="190"/>
   <text x="450" y="218" class="sub">encrypted with KEK version n</text>
   <text x="450" y="236" class="sub">small; rewritten on every erasure</text>
@@ -57,8 +58,9 @@
   <line class="sep" x1="670" y1="190" x2="830" y2="190"/>
   <text x="750" y="218" class="name">personal fields</text>
   <text x="750" y="236" class="sub">in documents of any repository</text>
-  <text x="750" y="270" class="sub">each with the DEK of its person;</text>
-  <text x="750" y="288" class="sub">rewritten only when it changes</text>
+  <text x="750" y="262" class="sub">each with the DEK of its person</text>
+  <text x="750" y="279" class="sub">and retention class;</text>
+  <text x="750" y="296" class="sub">rewritten only when it changes</text>
 
   <line class="arrow" x1="260" y1="178" x2="318" y2="178" marker-end="url(#arrow)"/>
   <text x="289" y="170" class="lbl">decrypts</text>

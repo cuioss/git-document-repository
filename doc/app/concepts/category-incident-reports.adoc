@@ -76,7 +76,8 @@ incidents/<id>/
 ----
 
 The structured data stay in YAML; free text may be AsciiDoc with tables and images. `report.adoc` is generated
-reproducibly and committed as readable evidence; a CI check makes sure it matches the YAML. PDF for authorities or
+reproducibly and committed as readable evidence; a CI check that makes sure it matches the YAML is planned, but does
+not exist yet. PDF for authorities or
 customers is generated from it as well. The mechanism is the library's
 link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
 template and the workflow.

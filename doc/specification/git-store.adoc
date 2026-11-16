@@ -57,17 +57,21 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 |`refs/heads/main` |released state |yes
 |`refs/heads/<collection>/<id>` |working branch of one document of a per-document collection |yes
 |`refs/heads/<collection>` |collection branch of a numbered collection: every entry and the counter file |yes
+|`refs/heads/review/<collection>/<id>` |review branch of one numbered entry for a pull or merge request: `main` with
+only that entry's path applied (see Release) |yes
 |`refs/tags/<collection>/<id>/v<n>` |release `n` of one document or numbered entry, never moved |yes
 |`refs/drafts/<user>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
 |`refs/notes/*` |timestamps, approvals |yes
-|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch; every `/` of the
-branch name is escaped as `%2F` |*never*
+|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch; the branch name is
+escaped, first every `%` as `%25`, then every `/` as `%2F` |*never*
+|`refs/meta/pending/<user>/<collection>/<id>/<commit-id>` |a pending commit that conflicted when it was replayed onto
+the fetched remote tip, kept until its user resolves it (see Conflict Handling) |*never*
 |===
 
 * A collection is either per-document (one working branch per document) or numbered (one collection branch, no
   branch per entry), never both: Git refuses a reference and a reference nested below it, so `refs/heads/risks` and
   `refs/heads/risks/<id>` cannot exist side by side. For the same reason the outbox references escape the branch name.
-* A collection must not be named `main`.
+* A collection must not be named `main` or `review`.
 * `<id>` of a per-document collection is the document's ULID; it names the working branch, the release tag, the data
   directory and the link target. `<id>` of a numbered collection is the readable number (`prefix` + counter, for
   example `R-042`); it names the entry file, the release tag and the link target. Until its first save a new numbered
@@ -85,30 +89,51 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-3[GDR-STORE-3: Explicit Sav
 
 image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",align=center]
 
-. Remote mode: fetch the working branch; the tip in the next steps is the fetched remote tip.
-. Squash merge in core: apply the draft's changes onto the working-branch tip as one commit whose only parent is that
-  tip (path-level, `git-core` In-Core Merge; no textual three-way merge of file content). No draft commit becomes a
-  parent, so no draft commit is reachable from a pushed reference.
-. For every edit with `expectedBlobId`, compare it with the path's blob on the tip; a difference is a conflict for that
+In remote mode the local working branch may be ahead of the remote by *pending* commits: commits of earlier saves that
+reported saved locally. The save observes the local working-branch tip when it starts; every later move of the local
+working branch is a compare-and-swap from that observed tip.
+
+. Remote mode: fetch the working branch. When the remote cannot be reached (a transport failure, not a refusal), the
+  save continues locally, and its outcome is saved locally instead of saved.
+. Determine the base:
+  * Local mode, or the remote could not be reached: the local working-branch tip, pending commits included.
+  * The fetched remote tip is the local tip or an ancestor of it: the local tip; the push in step 6 carries the pending
+    commits and the new one.
+  * Both moved: replay the pending commits in order, oldest first, onto the fetched remote tip, each as the path
+    changes of that commit, with the blob ids of its parent as expected blob ids, so a concurrent change to the same
+    path is a conflict. A replayed commit keeps the author, message and trailers of the pending commit. The base is the
+    last replayed commit, or the fetched remote tip when no pending commit is left.
+  * A pending commit that conflicts is never dropped: it is kept under
+    `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` (`<user>`: the pseudonym of its `Actor` trailer), its
+    paths are conflicts of this save, and the next load of the document reports the kept commit like a draft
+    conflict, so the user resolves it.
+. Squash merge in core: apply the draft's changes onto the base as one commit whose only parent is the base
+  (path-level, `git-core` In-Core Merge; no textual three-way merge of file content). No draft commit becomes a parent,
+  so no draft commit is reachable from a pushed reference.
+. For every edit with `expectedBlobId`, compare it with the path's blob on the base; a difference is a conflict for that
   path (Concurrent Change Detection). Conflicts are detected per path, never per field.
-. Move the local working branch by compare-and-swap. A lost race re-applies the operation onto the new tip
-  (`git-core` Compare-and-Swap), from step 2.
+. Move the local working branch by compare-and-swap from the observed tip to the new commit. When the new commit does
+  not descend from the observed tip (after a replay, or after a refused push in step 6), the move is a guarded reset
+  (`git-core` Compare-and-Swap). When the compare-and-swap fails because another local save moved the branch, re-read
+  the local tip as the new observed tip and re-apply the operation from step 2. Saves on one branch are thus
+  serialised by the compare-and-swap.
 . Remote mode: push with lease, the expected remote id being the fetched tip. On a lease refusal or a push rejection
-  fetch again, reset the local working branch to the fetched remote tip and re-apply the operation from step 2, up to
-  `save.max-attempts`. When the remote cannot be reached (a transport failure, not a refusal), the commit stays on
-  the local working branch and the outcome is saved locally; the next push of that branch (the next save or release
-  of the document) carries it, with the lease expecting the last fetched remote tip.
+  fetch again and re-apply the operation from step 2 onto the newly fetched state, up to `save.max-attempts`. This
+  save's own commit is no pending commit: the pending commits are those up to its parent, the observed tip is this
+  save's commit, and the move back to the fetched remote tip, with the pending commits replayed onto it, is a guarded
+  reset. When the remote cannot be reached, the commit stays on the local working branch and the outcome is saved
+  locally; the next push of that branch (the next save or release of the document) carries it.
 . On saved or saved locally, delete the draft reference by compare-and-delete: only if it still points to the draft
-  commit applied in step 2. A newer draft commit stays for the next save.
+  commit applied in step 3. A newer draft commit stays for the next save.
 
 [cols="1,2"]
 |===
 |Outcome |Meaning
 
-|saved |the working branch (and in remote mode the remote) holds the change
+|saved |the working branch (and in remote mode the remote) holds the change and every pending commit before it
 |saved locally |remote mode only: the local working branch holds the change, the remote could not be reached; the
-push is pending
-|conflict |a real conflict; see Conflict Handling
+change is a pending commit until the next successful push
+|conflict |a real conflict of the draft or of a pending commit; see Conflict Handling
 |rejected |the remote refused the push or the lease after the last attempt
 |credentials expired or invalid |the fetch or push credentials were refused
 |===
@@ -122,10 +147,14 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-4[GDR-STORE-4: Conflict Han
 
 *Status:* PLANNED
 
-On conflict nothing is pushed, the draft reference is unchanged and the save moves the local working branch to no
-commit of its own: the compare-and-swap of step 4 runs only for a commit that is then pushed, and after a refused push
-the branch was reset to the fetched remote tip (step 5). The result lists every conflicting path.
-Field-level resolution inside a YAML file is the consumer's task (`git-forms`).
+On conflict nothing is pushed, the draft reference is unchanged and no commit of this save stays on the local working
+branch: the branch ends on the base of Save, step 2. When it points elsewhere (the base came from a replay, or a
+refused push left this save's commit on it), it is moved to the base by guarded reset; the branch then holds the
+fetched remote tip and the pending commits that replayed without conflict. A pending commit that conflicts is kept
+under `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` before the branch moves, so it is never dropped;
+the kept reference is deleted once its user has saved or discarded the resolution. The result lists every conflicting
+path, those of kept pending commits included. Field-level resolution inside a YAML file is the consumer's task
+(`git-forms`).
 
 == Concurrent Change Detection
 
@@ -134,9 +163,9 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-5[GDR-STORE-5: Concurrent C
 *Status:* PLANNED
 
 A save edit may carry `expectedBlobId`. When the path's current blob id on the working branch differs, the edit fails
-with conflict for that path. In remote mode the comparison runs against the fetched remote state (Save, steps 1 and 3)
-before the save applies the draft onto it. Without `expectedBlobId` an edit overwrites a concurrent change to the same
-file.
+with conflict for that path. In remote mode the comparison runs against the fetched remote state with the pending
+commits on top (Save, steps 2 and 4), before the save applies the draft onto it. Without `expectedBlobId` an edit
+overwrites a concurrent change to the same file.
 
 == Release
 
@@ -153,10 +182,13 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
   outcome. A repeated release of the same document creates the missing tag on the merged commit and does not merge
   again.
 * An existing release tag is never moved or deleted.
-* Protected `main`: the push of `main` returns rejected; the store then supports a push of the working branch alone,
+* Protected `main`: the push of `main` returns rejected; the store then supports a push of the release source alone,
   and the release completes as a pull or merge request on the Git server: "submit for review" opens it and the
   transition "approve (release)" merges it. The fetch that shows the new tip of `main` hands it to the outbox
   (Post-Commit Outbox); the tag is created on the merged commit then.
+* The source of the pull or merge request: for a per-document kind its working branch. For a numbered entry a review
+  branch `refs/heads/review/<collection>/<id>`, created from `main` with only that entry's path applied (path-level
+  merge in core, as for a direct release); the counter file and the other entries are not part of it.
 * Release commits the store creates carry the trailers of the registered `CommitTrailerContributor` (provided by
   `git-signing`; see Service Provider Interfaces); a merge commit the Git server created receives the approvals as a
   note (see xref:git-signing.adoc#_portable_approvals[git-signing, Portable Approvals]).
@@ -185,7 +217,8 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per
 |credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
 |===
 
-A push carries only commits of the save that triggered it; commits of different users are never combined in one push.
+A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that
+reported saved locally, see Save); apart from these, commits of different users are never combined in one push.
 Commits the store writes without a user's save (notes, keyring rotations) are never combined with the commits of a save
 and are pushed separately with the technical user's credentials.
 
@@ -216,9 +249,10 @@ image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of 
   moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
   fetch).
 * On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
-  the branch's new tip, oldest first, and calls the consumer per commit. Every `/` of the branch name is escaped as
-  `%2F` (`refs/meta/outbox/timestamp/risks%2F01J…`), so the references of `risks` and `risks/<id>` never nest. These
-  references are never pushed.
+  the branch's new tip, oldest first, and calls the consumer per commit. The branch name is escaped injectively:
+  first every `%` as `%25`, then every `/` as `%2F` (`refs/meta/outbox/timestamp/risks%2F01J…`). So the references of
+  `risks` and `risks/<id>` never nest, and two branch names never map to one reference. These references are never
+  pushed.
 * After each successful call that branch's reference moves to that commit. A failing call stops the walk for that
   consumer and branch only; the next trigger or a periodic retry resumes it. Progress on one branch never moves the
   reference of another.
@@ -254,7 +288,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 only level 0 is accepted |`git-signing`
 |`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
 |`FieldEncryptor` |Encrypts and decrypts a personal field with the data encryption key (DEK) of the data subject
-|`git-crypto`
+for the retention class of the field's document kind |`git-crypto`
 |`PseudonymResolver` |Maps issuer and `sub` to a pseudonym; without `git-crypto` the application provides one
 |`git-crypto`
 |===

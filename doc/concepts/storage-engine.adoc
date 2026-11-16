@@ -25,9 +25,10 @@ of truth and the backup.
 * *Local*: there is no remote; the bare repository on the server's disk is the source of truth. The operator backs up
   the directory. JGit creates it; no `git` installation is needed.
 * *Remote*: the remote repository is the source of truth; the local bare clone is a cache that can be deleted and
-  cloned again. Deleting it loses the unsaved drafts, the outbox progress references and notes not yet pushed,
-  because none of them is pushed; after a new clone the outbox walks the history again and skips the commits already
-  processed, by commit hash. Saving adds a fetch and a push.
+  cloned again. Deleting it loses the unsaved drafts, the outbox progress references, and the commits and notes not
+  yet pushed (saves reported saved locally, kept pending commits), because none of them is on the remote; after a new
+  clone the outbox walks the history again and skips the commits already processed, by commit hash. Saving adds a
+  fetch and a push.
 
 Both modes run the same code. The configuration says `remote: none` or names the remote. A remote can be added later
 with one push of the local repository.
@@ -100,8 +101,9 @@ fails with a conflict for that path.
 
 |Save (explicit)
 |Apply the draft's changes onto the working-branch tip as one commit whose only parent is that tip (squash merge in
-core), compare-and-swap; in remote mode fetch, re-apply onto the remote state, push, re-apply on rejection; delete the
-draft reference if no newer draft commit arrived meanwhile
+core), compare-and-swap; in remote mode fetch, replay pending commits onto the remote state, re-apply, push, re-apply
+on rejection; if the remote cannot be reached, keep the commit locally as pending; delete the draft reference if no
+newer draft commit arrived meanwhile
 |The working branch; in remote mode also the remote repository
 |Yes, in remote mode
 |===
@@ -124,8 +126,13 @@ Conditions:
 * *Expiry.* Abandoned drafts expire after a configured period; a garbage collection removes their objects.
 * *Real conflicts.* A conflict is detected per path: the same file changed in parallel. Resolving it per field of
   the YAML structure is the task of `git-forms`. On a conflict nothing is pushed, the draft reference is kept unchanged
-  and the local working branch is not moved: in remote mode the store moves the local branch only for the commit it
-  then pushes, and on a remote conflict resets it to the fetched remote tip before it re-applies.
+  and no commit of the save stays on the local working branch: on a remote conflict the store resets the local branch
+  to the fetched remote tip, by a compare-and-swap that may move it backwards (a guarded reset).
+* *Pending commits.* When the remote cannot be reached, a save stays on the local working branch as a pending commit
+  and reports saved locally; the next successful push carries it. When the remote moved meanwhile, the next save
+  replays the pending commits path by path onto the fetched remote tip before its own change. A pending commit that
+  now conflicts is never dropped: the store keeps it under a reference that is never pushed and reports it on the
+  next load of the document, so its user resolves it.
 
 == When Others See a Change
 
@@ -151,7 +158,9 @@ immutable; in local mode only the store's rule never to move or delete a release
 file system rights of the operator.
 Optionally the Git server's review path is used: "submit for review" opens a pull or merge request whose review is the
 four-eyes approval, and the "approve" transition (release) merges it (see
-xref:schema-driven-documents.adoc[Schema-Driven Documents]).
+xref:schema-driven-documents.adoc[Schema-Driven Documents]). The request comes from the document's working branch;
+for an entry of a numbered collection from a review branch that holds `main` with only that entry applied, so the
+counter and the other entries stay out of it.
 
 == Reading and Queries
 

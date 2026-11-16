@@ -119,8 +119,9 @@ The integration tests use the same topology with additional variants.
 
 == Operating Duties
 
-. In remote mode the Git server's backup covers every saved state. Drafts are never pushed and stay on the volume:
-  back the volume up as well, otherwise losing it loses the unsaved drafts
+. In remote mode the Git server's backup covers every pushed state. Drafts are never pushed, and commits saved
+  locally while the Git server was unreachable (`SAVED_LOCALLY`) are not pushed yet; both stay on the volume: back the
+  volume up as well, otherwise losing it loses them
   (link:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]). In local
   mode the volume backup covers everything.
 . Let backups expire with the retention period of the repository they contain: deleting an expired repository in the
@@ -129,8 +130,8 @@ The integration tests use the same topology with additional variants.
   hand.
 . Watch the readiness probe: the application is ready once every configured repository is either fetched in this
   process or present as a valid local repository from an earlier fetch, the keyring is decrypted and the index is
-  built. A remote repository without a local copy keeps it not ready; a later fetch failure does not make it
-  unready.
+  built; a local-mode repository (`remote: none`) counts once its local repository opens and its index is built. A
+  remote repository without a local copy keeps it not ready; a later fetch failure does not make it unready.
 . Register the commit-signing key with the bot account if the Git server shall show commits as "Verified".
 . Route the application's security events into the SIEM.
 
