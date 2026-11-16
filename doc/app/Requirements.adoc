@@ -291,16 +291,6 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Tasks and measures must be referenced by issue-tracker id; the application must not store task state in Git.
 * Specification: link:specification/category-isms.adoc#_registers[ISMS, Registers].
 
-[#CIFR-ISMS-6]
-=== CIFR-ISMS-6: verinice.veo Bridge
-
-* When configured, the application must deliver a released SAMM assessment to verinice.veo through its REST API and
-  record the target object id in a bridge record outside the released assessment, which stays immutable.
-* Delivery must be idempotent per released assessment: a repeated delivery must update or find the existing veo
-  object, never create a second one.
-* Concept: link:adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
-* Specification: link:specification/category-isms.adoc#_verinice_bridge[ISMS, verinice Bridge].
-
 == Functional Requirements: Directory
 
 [#CIFR-DIR-1]

@@ -98,8 +98,8 @@ others see the changes. The pattern is a property of the category's workflow, no
   (link:category-threat-models.adoc[Threat Models]).
 * A released assessment is evidence for the secure-development controls of ISO 27001 (Annex A 8.25 ff.) by a reference
   to its tag.
-* Where an organisation runs verinice, a released assessment can be delivered as evidence through the veo REST API
-  (disabled by default, link:category-isms.adoc#_open_questions[ISMS, Open Questions]).
+* An ISMS product, verinice for example, refers to a released assessment by its release tag; the application delivers
+  nothing into it (link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]).
 
 == Open Questions
 
