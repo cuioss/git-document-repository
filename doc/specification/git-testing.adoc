@@ -1,0 +1,46 @@
+= git-document-repository: `git-testing`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-testing` (module `de.cuioss.git.document.testing`) provides test support for consumers of the reactor. It is a
+regular artifact consumed in test scope; it depends on no other module of the reactor.
+
+== Repository Fixtures
+
+_See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fixtures]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Fixture |Contract
+
+|local repository |A bare repository in a temporary directory, created per test, deleted after it
+|in-memory repository |A JGit in-memory (DFS) repository _(unverified: `InMemoryRepository`)_; no file system
+|local remote |A second bare repository reachable as a remote, for fetch and push tests
+|===
+
+* All fixtures are JUnit 5 extensions or parameter resolvers; none needs network access.
+* Open: how the remote policy of `git-core` admits the local remote of the fixture (a test-only policy value or a
+  local-remote variant of the policy).
+
+== Credential Generator
+
+_See Requirement link:../Requirements.adoc#GDR-TEST-2[GDR-TEST-2: Credential Generator]_
+
+*Status:* PLANNED
+
+`GitCredentialGenerator` and `GitGenerators` move from the test artifact `pm-provider-git:tests`. They implement the
+`cui-test-generator` contract and produce transport credentials (user and token) for tests; values are random and
+never real secrets.

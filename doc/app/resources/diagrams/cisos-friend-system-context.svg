@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- theme-handling: A (theme-neutral); diagram type: deployment -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680"
+     role="img" aria-labelledby="title desc"
+     font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
+  <title id="title">CISOs-Friend deployment and the systems it relies on</title>
+  <desc id="desc">Outside the organisation boundary sit two callers: a browser running the web app with a session cookie, and an AI agent as MCP client with a bearer token. Both reach the CISOs-Friend container over HTTPS on port 8443. The container is a native image in a distroless image; it serves the static web app, the REST API with its event stream, the MCP endpoint as OAuth 2.1 resource, the application services, the git-document-repository libraries and JGit; management runs on port 9000. Mounted into it are the persistent volume for the repositories, the configuration directory and the secrets. The container talks to six systems the organisation already runs: the identity provider with Token Sheriff over OIDC, the Git server for fetch, push and webhooks, the KMS or Vault for the signing key and the key-encryption key, an optional RFC 3161 timestamp authority, the SIEM for security events, and the issue tracker, ticket system and verinice over REST.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow-fill"/>
+    </marker>
+    <style>
+      .stroke      { stroke: #6e7681; stroke-width: 1.2; fill: none; }
+      .encl        { font-size: 13px; font-weight: 600; fill: #6e7681; }
+      .encl-sub    { font-size: 11px; fill: #6e7681; font-style: italic; }
+      .item        { font-size: 12px; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .own-bar     { stroke: #6e7681; stroke-width: 3; }
+      .divider     { stroke: #6e7681; stroke-width: 0.6; stroke-dasharray: 3 3; }
+      .trust-cross { stroke: #6e7681; stroke-width: 1.2; fill: none; }
+      .arrow       { stroke: #6e7681; stroke-width: 1.5; fill: none; }
+      .arrow-fill  { fill: #6e7681; }
+      .edge-lbl    { font-size: 11px; fill: #6e7681; text-anchor: middle; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .mount-stem  { stroke: #6e7681; stroke-width: 1; stroke-dasharray: 2 2; fill: none; }
+      .mount       { font-size: 10px; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <!-- callers outside the organisation boundary -->
+  <rect class="stroke" x="24" y="160" width="216" height="72" rx="4"/>
+  <text x="36" y="184" class="encl">browser</text>
+  <text x="36" y="200" class="encl-sub">web app (SPA)</text>
+  <text x="36" y="220" class="item">session cookie</text>
+
+  <rect class="stroke" x="24" y="400" width="216" height="72" rx="4"/>
+  <text x="36" y="424" class="encl">AI agent</text>
+  <text x="36" y="440" class="encl-sub">MCP client, OAuth 2.1</text>
+  <text x="36" y="460" class="item">bearer token</text>
+
+  <!-- organisation enclosure (depth 1) -->
+  <rect class="stroke" x="280" y="24" width="896" height="632" rx="8"/>
+  <text x="292" y="48" class="encl">organisation</text>
+  <text x="292" y="64" class="encl-sub">the application and the systems it relies on</text>
+
+  <!-- CISOs-Friend container (depth 2, first-party) -->
+  <rect class="stroke" x="304" y="96" width="400" height="496" rx="6"/>
+  <line class="own-bar" x1="304" y1="104" x2="304" y2="584"/>
+  <text x="316" y="120" class="encl">cisos-friend container</text>
+  <text x="316" y="136" class="encl-sub">Quarkus native image, distroless, nonroot</text>
+  <text x="328" y="176" class="item">web app (static SPA)</text>
+  <text x="328" y="204" class="item">/api/v1 + event stream</text>
+  <text x="328" y="232" class="item">/mcp (OAuth 2.1 resource)</text>
+  <line class="divider" x1="320" y1="256" x2="688" y2="256"/>
+  <text x="328" y="284" class="item">application services</text>
+  <text x="328" y="312" class="item">git-document-repository</text>
+  <text x="328" y="340" class="item">JGit (in-core, HTTPS)</text>
+  <line class="divider" x1="320" y1="364" x2="688" y2="364"/>
+  <text x="328" y="392" class="item">listener   :8443 HTTPS</text>
+  <text x="328" y="420" class="item">management :9000</text>
+
+  <!-- mounted material -->
+  <line class="mount-stem" x1="384" y1="592" x2="384" y2="608"/>
+  <rect class="stroke" x="320" y="608" width="136" height="18" rx="4"/>
+  <text x="328" y="621" class="mount">/app/data (volume)</text>
+  <line class="mount-stem" x1="508" y1="592" x2="508" y2="608"/>
+  <rect class="stroke" x="472" y="608" width="72" height="18" rx="4"/>
+  <text x="480" y="621" class="mount">config/</text>
+  <line class="mount-stem" x1="612" y1="592" x2="612" y2="608"/>
+  <rect class="stroke" x="560" y="608" width="104" height="18" rx="4"/>
+  <text x="568" y="621" class="mount">/run/secrets</text>
+
+  <!-- external systems (depth 2, no accent bar) -->
+  <rect class="stroke" x="760" y="96" width="392" height="72" rx="4"/>
+  <text x="772" y="120" class="encl">identity provider + Token Sheriff</text>
+  <text x="772" y="136" class="encl-sub">login, groups, step-up, token validation</text>
+
+  <rect class="stroke" x="760" y="184" width="392" height="72" rx="4"/>
+  <text x="772" y="208" class="encl">Git server</text>
+  <text x="772" y="224" class="encl-sub">GitHub, GitLab, Gitea, Bitbucket: truth and backup</text>
+
+  <rect class="stroke" x="760" y="272" width="392" height="72" rx="4"/>
+  <text x="772" y="296" class="encl">KMS or Vault</text>
+  <text x="772" y="312" class="encl-sub">commit-signing key, key-encryption key</text>
+
+  <rect class="stroke" x="760" y="360" width="392" height="72" rx="4"/>
+  <text x="772" y="384" class="encl">timestamp authority</text>
+  <text x="772" y="400" class="encl-sub">RFC 3161, optional</text>
+
+  <rect class="stroke" x="760" y="448" width="392" height="72" rx="4"/>
+  <text x="772" y="472" class="encl">SIEM</text>
+  <text x="772" y="488" class="encl-sub">security and read-access events</text>
+
+  <rect class="stroke" x="760" y="536" width="392" height="72" rx="4"/>
+  <text x="772" y="560" class="encl">issue tracker, ticket system, verinice</text>
+  <text x="772" y="576" class="encl-sub">referenced, never written into Git content</text>
+
+  <!-- inbound edges, crossing the organisation boundary -->
+  <line class="arrow" x1="240" y1="196" x2="304" y2="196" marker-end="url(#arrow)"/>
+  <text x="260" y="188" class="edge-lbl">HTTPS</text>
+  <circle class="trust-cross" cx="280" cy="196" r="3.5"/>
+  <line class="arrow" x1="240" y1="436" x2="304" y2="436" marker-end="url(#arrow)"/>
+  <text x="260" y="428" class="edge-lbl">HTTPS</text>
+  <circle class="trust-cross" cx="280" cy="436" r="3.5"/>
+
+  <!-- outbound edges -->
+  <line class="arrow" x1="704" y1="132" x2="760" y2="132" marker-end="url(#arrow)"/>
+  <text x="732" y="124" class="edge-lbl">OIDC</text>
+  <line class="arrow" x1="704" y1="214" x2="760" y2="214" marker-end="url(#arrow)"/>
+  <line class="arrow" x1="760" y1="226" x2="704" y2="226" marker-end="url(#arrow)"/>
+  <text x="732" y="206" class="edge-lbl">git</text>
+  <text x="732" y="242" class="edge-lbl">hook</text>
+  <line class="arrow" x1="704" y1="308" x2="760" y2="308" marker-end="url(#arrow)"/>
+  <text x="732" y="300" class="edge-lbl">keys</text>
+  <line class="arrow" x1="704" y1="396" x2="760" y2="396" marker-end="url(#arrow)"/>
+  <text x="732" y="388" class="edge-lbl">TSA</text>
+  <line class="arrow" x1="704" y1="484" x2="760" y2="484" marker-end="url(#arrow)"/>
+  <text x="732" y="476" class="edge-lbl">events</text>
+  <line class="arrow" x1="704" y1="572" x2="760" y2="572" marker-end="url(#arrow)"/>
+  <text x="732" y="564" class="edge-lbl">REST</text>
+</svg>

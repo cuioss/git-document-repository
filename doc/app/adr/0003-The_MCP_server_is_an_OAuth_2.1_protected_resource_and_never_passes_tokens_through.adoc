@@ -1,0 +1,80 @@
+= ADR-0003: The MCP server is an OAuth 2.1 protected resource that accepts only audience-bound tokens and never passes them through
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The MCP endpoint is an OAuth 2.1 resource server with RFC 9728 metadata; it validates every token through Token Sheriff including the audience, enforces scopes intersected with the user's rights, never forwards the token, and leaves approvals above signature level 1 to the human.
+// tags: mcp, oauth, security, tokens, agents
+// affects: cisos-friend
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+AI agents shall work with the documents through the Model Context Protocol. The owner required token handling from
+the ground up. An agent acts for a user and must be held to that user's rights.
+
+*The decision:* the MCP endpoint is an OAuth 2.1 protected resource.
+
+* It serves Protected Resource Metadata (RFC 9728) and answers a missing token with `401` and `resource_metadata`.
+* `token-sheriff-validation-quarkus` validates every token: signature, expiry, issuer and audience. The audience is the
+  server's canonical URI (RFC 8707).
+* Scopes name operation kinds. The effective permission is the intersection of the scopes and the user's rights.
+* An insufficient scope is answered with `403` and `insufficient_scope`.
+* The token is never forwarded. Git, KMS and timestamp authority use the application's own credentials.
+* Only Streamable HTTP is offered, without protocol sessions. Every request carries its token.
+* An agent saves at signature level 1 at most. Higher levels need the human in the web app.
+
+The details are in link:../concepts/mcp-server.adoc[MCP Server].
+
+== Alternatives rejected
+
+=== API keys per agent
+
+A static key per agent is simple. *Rejected because* the key carries no user. The history would name a service account.
+A leaked key would stay valid until someone notices.
+
+=== Token passthrough to the Git server
+
+The agent could obtain a Git host token and the server could forward it. *Rejected because* the MCP specification
+forbids passthrough. The agent would also gain Git rights beyond the application's checks.
+
+=== A STDIO server on the user's machine
+
+*Rejected because* the specification does not apply its authorization to STDIO. A local process cannot prove a user to
+the server-side persistence.
+
+=== Agents approve with the user's session
+
+*Rejected because* signature levels 2 and 3 state that the human confirmed this very approval. An agent cannot make that
+statement true.
+
+== Consequences
+
+=== Properties of the design
+
+* Every agent action is attributed to a user and a client and signed.
+* A stolen token is short-lived and useless against any other resource.
+
+=== Accepted costs
+
+* Agents need an OAuth-capable client and registration at the organisation's authorization server.
+* Releases by agents always wait for a human.
+
+=== When this is revisited
+
+* When the MCP authorization specification changes its requirements for resource servers.
+* When agent clients support sender-constrained tokens widely; then DPoP becomes required.
+
+== Links
+
+* link:../concepts/mcp-server.adoc[MCP Server]
+* link:../concepts/authentication-and-identity.adoc[Authentication and Identity]
+* https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization[MCP Authorization]

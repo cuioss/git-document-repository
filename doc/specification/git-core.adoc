@@ -1,0 +1,218 @@
+= git-document-repository: `git-core`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-core` is the JGit level of the reactor: module `de.cuioss.git.document.core`, package
+`de.cuioss.git.document.core`. It depends on no other module of the reactor; its only third-party dependency is JGit
+(not yet added; needs the owner's approval). Statements about JGit APIs are marked _(unverified)_ until checked
+against the JGit version in use.
+
+=== Types Taken Over from `pm-provider-git`
+
+[cols="1,3"]
+|===
+|Type |Role in `git-core`
+
+|`RefusingFS` |JGit file system that refuses hooks and process starts (`CapabilityRefusedException`)
+|`RemotePolicy` |The permitted remote: HTTPS origin or local only
+|`GitIdentity` |Commit ids, reference names, resolution and ambiguity
+|`GitResult`, `GitOutcome` |Result type and closed outcome list (see xref:error-model.adoc[Error Model])
+|`RepositoryOperations` |New interface: the repository part of `GitOperations` (open, init, log, fetch, push, cache
+repository), extended by the operations below
+|JGit implementation of `RepositoryOperations` |The repository part of `JGitOperations`
+|===
+
+== Hardened Repository Access
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-1[GDR-CORE-1: Hardened Repository Access]_
+
+*Status:* PLANNED
+
+* Every repository is built with `RefusingFS` as its file system abstraction.
+* Hook execution and process starts throw `CapabilityRefusedException` inside JGit; `RepositoryOperations` maps it to
+  a refused outcome.
+* No operation shells out; no `git` binary is looked up.
+
+== Remote Policy
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-2[GDR-CORE-2: Remote Policy]_
+
+*Status:* PLANNED
+
+[cols="1,2"]
+|===
+|Policy value |Accepted remote
+
+|local only |none; every fetch and push is refused
+|HTTPS origin |URLs with scheme `https` and the configured origin (host and port)
+|===
+
+The check runs before the transport is opened. A refused remote returns the refused-by-policy outcome; no connection
+is attempted.
+
+== Local and Remote Mode
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-3[GDR-CORE-3: Local and Remote Mode Behind One API]_
+
+*Status:* PLANNED
+
+[cols="1,1,2"]
+|===
+|Configuration |Mode |Source of truth
+
+|`remote: none` |local |the bare repository on disk
+|`remote: <https-url>` |remote |the remote repository; the local bare clone is a cache
+|===
+
+* Switching from local to remote: configure the remote, then push every reference matched by the push refspec
+  (`refs/heads/*`, `refs/tags/*`, `refs/notes/*`).
+* A missing local clone in remote mode is re-created by a clone on open.
+
+== In-Core Writing
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-4[GDR-CORE-4: In-Core Writing]_
+
+*Status:* PLANNED
+
+The write path builds the new tree from the parent's tree in an in-core `DirCache` and inserts blob, tree and commit
+through one `ObjectInserter` _(unverified)_:
+
+[source,java]
+----
+Ref ref = repo.exactRef("refs/heads/documents/" + id);
+try (ObjectInserter ins = repo.newObjectInserter();
+     ObjectReader reader = repo.newObjectReader();
+     RevWalk walk = new RevWalk(reader)) {
+    RevCommit parent = walk.parseCommit(ref.getObjectId());
+    DirCache index = DirCache.read(reader, parent.getTree());
+    ObjectId blob = ins.insert(Constants.OBJ_BLOB, content);
+    DirCacheEditor editor = index.editor();
+    editor.add(new DirCacheEditor.PathEdit(path) {
+        @Override public void apply(DirCacheEntry e) {
+            e.setFileMode(FileMode.REGULAR_FILE);
+            e.setObjectId(blob);
+        }
+    });
+    editor.finish();
+    CommitBuilder cb = new CommitBuilder();
+    cb.setTreeId(index.writeTree(ins));
+    cb.setParentId(parent);
+    cb.setAuthor(userIdent);
+    cb.setCommitter(serviceIdent);
+    cb.setMessage(message);
+    ObjectId commit = ins.insert(cb);
+    ins.flush();
+    // reference update: see Compare-and-Swap
+}
+----
+
+* An edit is one of: set path to content, delete path.
+* Author, committer, message (including trailers) and parents are caller input.
+* Signing is a hook on the commit builder supplied by `git-signing`; `git-core` signs nothing itself.
+
+== Compare-and-Swap
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-5[GDR-CORE-5: Compare-and-Swap Reference Update]_
+
+*Status:* PLANNED
+
+* The update sets the expected old object id to the parent the change was built on
+  (`RefUpdate.setExpectedOldObjectId`) _(unverified)_.
+* The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit.
+* On a lost race the operation is re-applied to the new tip and the commit rebuilt.
+
+[cols="1,2"]
+|===
+|`RefUpdate.Result` _(unverified)_ |Handling
+
+|`NEW`, `FAST_FORWARD` |success
+|`LOCK_FAILURE` |retry with the new tip
+|any other value |conflict outcome after the last attempt; detail names the result
+|===
+
+Configuration: `max-attempts` -- required, no default in the specification; the store sets it.
+
+== In-Core Merge
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-6[GDR-CORE-6: In-Core Merge]_
+
+*Status:* PLANNED
+
+* Merge runs on a merger created in core (no working tree) _(unverified: `MergeStrategy.RECURSIVE.newMerger(repo, true)`)_.
+* Success: a tree id; the caller builds the merge commit.
+* Conflict: the conflict outcome with the list of conflicting paths; no commit is written.
+
+== Fetch and Push
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-7[GDR-CORE-7: Fetch and Push with Credentials and Lease]_
+
+*Status:* PLANNED
+
+* Credentials are a parameter of every fetch and push (`CredentialsProvider` per call); `git-core` keeps no reference
+  to them after the call.
+* A push with lease names the expected remote object id per reference; a mismatch returns the lease-refused outcome.
+
+[cols="1,2"]
+|===
+|Situation |Outcome
+
+|remote refuses the update (protected branch, non-fast-forward) |rejected
+|lease mismatch |lease refused
+|HTTP 401/403 or expired token |credentials expired or invalid
+|policy violation |refused by policy (no contact)
+|===
+
+== Cache Repository
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-8[GDR-CORE-8: Cache Repository]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Operation |Contract
+
+|`initCache` |Create or open a bare cache repository bound to one remote under the remote policy
+|`fetchCommit` |Fetch exactly one commit id; a want the remote does not serve returns the unserved outcome
+|`readFile` |Return the bytes of one path at one commit of the cache; a missing path returns not found
+|===
+
+== Reading
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-9[GDR-CORE-9: Reading]_
+
+*Status:* PLANNED
+
+* Snapshot: a read-only tree view of a reference, a tag or a commit id.
+* History: commits touching a path, newest first, with author, committer, time and message.
+* Diff: the set of added, modified and deleted paths between two commits.
+
+== Notes
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-10[GDR-CORE-10: Git Notes]_
+
+*Status:* PLANNED
+
+* Read and write the note of one commit under a named notes reference, through JGit's `NoteMap` _(unverified)_.
+* A write builds a new notes commit and moves the notes reference with the compare-and-swap above.
+* Reserved notes references: `refs/notes/timestamps` (`git-timestamp`), `refs/notes/approvals` (`git-signing`).
+
+== Identity of Commits and References
+
+_See Requirement link:../Requirements.adoc#GDR-CORE-11[GDR-CORE-11: Identity of Commits and References]_
+
+*Status:* PLANNED
+
+`GitIdentity` provides full and abbreviated commit ids and the resolution of branch, tag and remote-branch names. An
+abbreviated id or name matching more than one object returns the ambiguous outcome with the candidates in the detail.

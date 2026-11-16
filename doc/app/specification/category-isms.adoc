@@ -1,0 +1,81 @@
+= CISOs-Friend: Category ISMS
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-ISMS-1[CIFR-ISMS-1: Documents]_
+
+Status: PLANNED
+
+The ISMS category as configuration (`categories/isms/`). Reasoning: link:../concepts/category-isms.adoc[ISMS].
+Repositories: `isms-core` (documents), `isms-register` (registers).
+
+== Documents
+_See Requirement link:../Requirements.adoc#CIFR-ISMS-1[CIFR-ISMS-1: Documents]_
+
+Status: PLANNED
+
+[cols="1,2,1"]
+|===
+|Document type |Path in `isms-core` |Release level
+
+|Policy |`policies/<id>/` |3
+|Scope |`scope/` |3
+|Statement of applicability |`soa/` (one file per control) |3
+|Internal audit report |`audits/<year>/<id>/` |3
+|Management review |`management-reviews/<year>/` |3
+|===
+
+Each type is a schema-driven document with YAML data, AsciiDoc fragments and generated output.
+
+== Registers
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-ISMS-2[CIFR-ISMS-2: Registers]_
+* _link:../Requirements.adoc#CIFR-ISMS-5[CIFR-ISMS-5: Operational Data by Reference]_
+
+Status: PLANNED
+
+[cols="1,1,2"]
+|===
+|Register |Path in `isms-register` |Readable number
+
+|Risks |`risks/<ulid>.yaml` |`R-<n>`
+|Controls |`controls/<ulid>.yaml` |`C-<n>`
+|Suppliers |`suppliers/<ulid>.yaml` |`S-<n>`
+|Nonconformities |`nonconformities/<ulid>.yaml` |`NC-<n>`
+|Assets (non-application) |`assets/<ulid>.yaml` |`A-<n>`
+|===
+
+The readable number is assigned on save by the library's running-number mechanism. Measures and tasks are fields
+`issues: [<tracker-id>]`; no task state is stored.
+
+== Reporting Dates
+_See Requirement link:../Requirements.adoc#CIFR-ISMS-3[CIFR-ISMS-3: Reporting Dates]_
+
+Status: PLANNED
+
+`GET /api/v1/isms/{register}?as-of=<tag|date>`: the index is built from the tagged commit, or from the last commit on
+`main` at or before the date. Audit tags: `audit/<yyyy-mm-dd>`.
+
+== Evidence
+_See Requirement link:../Requirements.adoc#CIFR-ISMS-4[CIFR-ISMS-4: Evidence from SAMM]_
+
+Status: PLANNED
+
+A control's `evidence` list accepts `samm:assessment/<id>` references; the reference must name a released assessment
+(tag `assessment/<id>` exists).
+
+== verinice Bridge
+_See Requirement link:../Requirements.adoc#CIFR-ISMS-6[CIFR-ISMS-6: verinice.veo Bridge]_
+
+Status: PLANNED
+
+Enabled by `integrations.verinice`. On `samm.release` the outbox delivers the released assessment (scope, date, model
+version, scores per practice, link to the tag) to the veo REST API through `cui-http`; the returned object id is written
+to `assessment.yaml` `verinice-id` in a follow-up commit. The target veo object type is an open question.

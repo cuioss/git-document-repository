@@ -1,0 +1,154 @@
+= git-document-repository: `git-forms`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-forms` (module `de.cuioss.git.document.forms`, not yet created) is the layer of schema-driven documents on top of
+`git-store`. Its third-party dependencies (a YAML library, a JSON Schema validator, a template engine) are open and
+need the owner's approval. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+
+== Kind of Document
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-1[GDR-FORMS-1: Kinds of Documents as Configuration]_
+
+*Status:* PLANNED
+
+[source,yaml]
+----
+kinds:
+  - id: risk                         # kind id, used in links: <alias>:risk/<id>
+    repository: register             # alias from the repository registry
+    collection: risks                # working branches: refs/heads/risks/<id>
+    schema: schemas/risk.schema.json
+    template: templates/risk.adoc.tpl
+    workflow: workflows/approval.yaml
+    numbering: { prefix: R-, digits: 3 }   # optional, see Running Numbers
+----
+
+All fields except `numbering` are required. The configuration files live in a configuration repository or directory
+chosen by the application.
+
+== Schema Validation
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-2[GDR-FORMS-2: Schema Validation]_
+
+*Status:* PLANNED
+
+* Validation runs before every save of the data file.
+* A failure returns the invalid outcome with one entry per violation: JSON Pointer of the field and message.
+* The schema file is plain JSON Schema; the dialect is open (see the concept's open questions).
+
+== Data Layout
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-3[GDR-FORMS-3: Data Layout and Serialisation]_
+
+*Status:* PLANNED
+
+[source]
+----
+<collection>/<ulid>/
+  document.yaml        structured fields, validated by the schema
+  narrative/<name>.adoc  free-text fragments, one file per section
+  report.adoc          generated output
+----
+
+A kind may split `document.yaml` into one file per independently edited part (for example one file per section) when
+its schema declares the split. YAML is written by the codec of `git-store` with the key order of the schema.
+
+== Generated Output
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-4[GDR-FORMS-4: Generated Output]_
+
+*Status:* PLANNED
+
+* `report.adoc` = template(data, fragments). Generation is a pure function of its inputs.
+* The save writes data, fragments and `report.adoc` in one commit.
+* `check(commit)` regenerates the output and returns match or mismatch; a CI job calls it on every pull request.
+
+== Workflow
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-5[GDR-FORMS-5: Workflow]_
+
+*Status:* PLANNED
+
+image::../resources/diagrams/document-workflow-states.svg[Document states and transitions, align=center]
+
+[source,yaml]
+----
+states: [draft, review, approved, superseded]
+transitions:
+  - { name: edit,      from: draft,    to: draft,      mechanism: intermediate-save, level: 1 }
+  - { name: submit,    from: draft,    to: review,     mechanism: save,              level: 1 }
+  - { name: approve,   from: review,   to: approved,   mechanism: release,           level: 2 }
+  - { name: rework,    from: review,   to: draft,      mechanism: save,              level: 1 }
+  - { name: supersede, from: approved, to: superseded, mechanism: release,           level: 2 }
+deadlines:
+  - { state: review,   within: P14D }
+  - { state: approved, review-interval: P1Y }
+----
+
+* `mechanism` is one of `intermediate-save`, `save`, `release`, `tag`.
+* The current state is a field of `document.yaml` written by the transition.
+* A transition not listed for the current state returns the transition-refused outcome.
+
+== Deadlines
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-6[GDR-FORMS-6: Deadlines]_
+
+*Status:* PLANNED
+
+* `within`: due after entering the state; `review-interval`: due periodically while in the state; `field`: due at the
+  date of a data field.
+* `due(instant)` returns the documents with a deadline at or before the instant, computed from the index of
+  `git-store`. No deadline is persisted.
+
+== Signature Level per Transition
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Signature Level per State]_
+
+*Status:* PLANNED
+
+`level` (0–4) per transition. The transition asks `git-signing` for the evidence of that level (trailers for 1, step-up
+for 2, a passkey note for 3); missing evidence returns the level-not-met outcome. Without `git-signing` only level 0 is
+accepted.
+
+== Typed Links
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-8[GDR-FORMS-8: Typed Links]_
+
+*Status:* PLANNED
+
+[cols="1,2"]
+|===
+|Form |Example
+
+|`<alias>:<kind>/<id>` |`register:risk/R-042`
+|`<catalog>:<id>` |`service:payment-api`, `team:payments`, `role:service-owner`
+|===
+
+The schema marks link fields (`"format": "gdr-link"`). On save every link target is resolved through the index or the
+directory; an unresolved target returns the invalid outcome. A retired target resolves.
+
+== Running Numbers
+
+_See Requirement link:../Requirements.adoc#GDR-FORMS-9[GDR-FORMS-9: Running Numbers]_
+
+*Status:* PLANNED
+
+* A new document's directory is named by a ULID.
+* A kind with `numbering` keeps its entries and the counter file `<collection>/.counter` on one shared collection
+  branch, `refs/heads/<collection>` (a register: one file per entry, no branch per entry).
+* On the first save of an entry the counter is incremented in the same commit, and the readable number (`prefix` +
+  zero-padded counter) is written to `document.yaml`.
+* Two concurrent creations race on the collection branch; the compare-and-swap of `git-core` makes the loser re-read
+  the counter and take the next number.

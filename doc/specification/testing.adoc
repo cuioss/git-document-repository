@@ -1,0 +1,62 @@
+= git-document-repository: Testing
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Test Approach
+
+_See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fixtures]_
+
+*Status:* PLANNED
+
+* JUnit 5, test data from `cui-test-generator`, test doubles with EasyMock.
+* Every module tests against the fixtures of `git-testing`: in-memory repositories for logic, local repositories and
+  a local remote for transport, fetch and push. No test needs network access.
+* Tests move with the classes taken over from `pm-provider-git` (see
+  xref:../concepts/module-structure.adoc#_what_moves_where[Module Structure, What Moves Where]).
+* Build: `./mvnw clean verify`; CI runs on Java 21 and 25.
+
+== Layering Checks
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+* The allowed reactor dependencies are fixed in a build rule; a POM that declares another reactor dependency fails the
+  build. The mechanism (Maven Enforcer rule or an architecture test) is open; either needs the owner's approval if it
+  adds a dependency.
+* A test consumer project depending on `git-core` alone asserts its resolved dependency set contains no third-party
+  artifact of the upper modules.
+
+== Index Footprint
+
+_See Requirement link:../Requirements.adoc#GDR-NFR-1[GDR-NFR-1: Index Footprint]_
+
+*Status:* PLANNED
+
+A test generates 500 documents with 90 fields each into an in-memory repository, builds the index and measures the
+retained size of the index object graph. The test fails at or above 16 MB.
+
+== Concurrent Writers
+
+_See Requirement link:../Requirements.adoc#GDR-NFR-2[GDR-NFR-2: Concurrent Writers]_
+
+*Status:* PLANNED
+
+* Ten threads save different files of one working branch at the same time against a local remote; all must report
+  saved.
+* Two threads save the same file with the same expected blob id; exactly one must report saved and one conflict.
+
+== Native Image
+
+_See Requirement link:../Requirements.adoc#GDR-NFR-4[GDR-NFR-4: Native Image]_
+
+*Status:* PLANNED
+
+Each module ships the reflection and resource metadata it needs under
+`META-INF/native-image/de.cuioss/<artifactId>/`. The native verification runs in a consuming application's native
+build (the first is the `pm-mcpd` build named in the module structure); a native test lane in this repository is open.

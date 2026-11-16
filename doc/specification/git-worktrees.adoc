@@ -1,0 +1,73 @@
+= git-document-repository: `git-worktrees`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-worktrees` (module `de.cuioss.git.document.worktrees`) holds the linked working trees taken over from
+`pm-provider-git`. It depends on `git-core` alone. The document store does not use it; `pm-provider-git` does.
+
+[cols="1,3"]
+|===
+|Type |Role
+
+|`LinkedWorktrees` |Reads and writes git's administration files of linked working trees natively; JGit has no
+`git worktree` command
+|`WorktreeOperations` |New interface: the worktree part of `GitOperations`
+|JGit implementation of `WorktreeOperations` |The worktree part of `JGitOperations`
+|===
+
+== Linked Working Trees
+
+_See Requirement link:../Requirements.adoc#GDR-WT-1[GDR-WT-1: Linked Working Trees]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Operation |Contract
+
+|`worktreeAdd` |Create a linked working tree for a branch at a path; write `$GIT_DIR/worktrees/<name>/` (`gitdir`,
+`commondir`, `HEAD`) and the `.git` file in the working tree
+|`worktreeList` |List the main and the linked working trees from the administration files
+|`worktreeRemove` |Remove the working tree directory and its administration directory
+|===
+
+Compatibility: a git installation lists the result with `git worktree list`; the test suite asserts this where a git
+binary is present.
+
+== Commit from a Working Tree
+
+_See Requirement link:../Requirements.adoc#GDR-WT-2[GDR-WT-2: Commit from a Working Tree]_
+
+*Status:* PLANNED
+
+One operation stages all changed, new and deleted files of the working tree and commits them with caller-supplied
+author, committer and message. Hooks stay refused through `RefusingFS` of `git-core`.
+
+== Working-Tree Status
+
+_See Requirement link:../Requirements.adoc#GDR-WT-3[GDR-WT-3: Working-Tree Status]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Field |Content
+
+|`changed` |paths tracked and modified
+|`untracked` |paths present and not tracked
+|`deleted` |paths tracked and missing
+|===
+
+The status is a value; no digest is computed. `WorktreeShaDigest` (framing `git.worktree-sha` version 1) stays in
+`pm-provider-git` and builds on this status.

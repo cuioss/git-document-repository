@@ -1,0 +1,76 @@
+= ADR-0004: The libraries are one reactor of separately consumed modules, with optional aspect modules
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: git-document-repository is a multi-module reactor released together; the aspects of the document store are modules of their own, and each carries its own third-party dependencies.
+// tags: modules, layering, dependencies, release
+// affects: git-core, git-worktrees, git-testing, git-store, git-forms, git-crypto, git-signing, git-timestamp, git-directory
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+The document store has several aspects: storage, forms, encryption, signing, timestamps and a directory. Some bring
+third-party libraries. The question is how the code is cut into artifacts.
+
+*The decision:* one repository, one Maven reactor, released together. Every aspect is a module of its own and is
+consumed separately:
+
+* `git-core`, `git-worktrees`, `git-testing` -- the JGit level;
+* `git-store` -- drafts, saving, index, outbox;
+* `git-forms` -- schema-driven documents;
+* `git-crypto`, `git-signing`, `git-timestamp`, `git-directory` -- optional aspects.
+
+Each module carries its own third-party dependencies. A consumer of `git-core` alone pulls none of the dependencies of
+the modules above it. The dependency graph is in xref:../concepts/module-structure.adoc[Module Structure].
+
+== Alternatives rejected
+
+=== One module to start, split later
+
+An earlier version of the study recommended one module.
+
+*Rejected because* three forces would split it later at a higher price: the foundation shared with
+`pm-provider-git`, optional dependencies that become mandatory in one module, and a layering that one module does not
+enforce.
+
+=== One repository per module
+
+*Rejected because* the modules change together while the store is young. Separate repositories would need a release
+per change and version alignment across them.
+
+=== The application's kinds of documents as modules
+
+Modules per kind of document (assessments, reports, registers).
+
+*Rejected because* the kinds are configuration of `git-forms`, not code. No module of this repository knows a term of
+a domain.
+
+== Consequences
+
+=== Properties of the design
+
+* Module boundaries enforce the layering.
+* Consumers take only what they need.
+
+=== Accepted costs
+
+* More POMs and `module-info.java` files to maintain.
+* All modules share one version, even when only one changed.
+
+=== When this is revisited
+
+When a module needs a release cadence of its own.
+
+== Links
+
+* xref:../concepts/module-structure.adoc[Module Structure]
+* xref:../Requirements.adoc#requirements-general[General requirements]

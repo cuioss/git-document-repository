@@ -1,0 +1,70 @@
+= ADR-0003: Drafts are per-user references that are never pushed
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Intermediate saves are commits on refs/drafts/<user>/<document> in the server's repository; the push refspec never carries refs/drafts/*.
+// tags: storage, drafts, refspec, saving
+// affects: git-store
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Users expect their unsaved work to survive a closed browser. They do not expect half-finished work to appear in the
+shared history. The question is where unsaved work lives.
+
+*The decision:* an intermediate save is a commit on the reference `refs/drafts/<user>/<document>` in the server's
+repository. An explicit save merges the draft in core into the document's working branch and deletes the draft
+reference. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*`. It never carries `refs/drafts/*`.
+
+See xref:../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving].
+
+== Alternatives rejected
+
+=== Drafts in browser storage
+
+*Rejected because* a draft in the browser is lost with the device and invisible on another device. It also moves
+document content out of the server's control.
+
+=== Drafts in a database table
+
+*Rejected because* a table brings back the database the store avoids
+(xref:0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]).
+
+=== Drafts pushed to the remote
+
+*Rejected as the default because* the remote would collect every abandoned draft of every user. An organisation that
+wants drafts secured can push them to restricted references of its own.
+
+== Consequences
+
+=== Properties of the design
+
+* A user who logs in again finds the drafts under `refs/drafts/<user>/` and continues.
+* The shared history holds saved states only.
+
+=== Accepted costs
+
+* Drafts are unsecured: a lost repository directory loses them. The directory needs persistent storage.
+* With several instances a draft lives on the instance that wrote it: one instance, sticky sessions or a shared
+  volume.
+* Abandoned drafts need expiry and a garbage collection.
+
+=== When this is revisited
+
+When operators demand secured drafts by default.
+
+== Links
+
+* xref:../concepts/storage-engine.adoc[Storage Engine]
+* xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] -- unsecured drafts as an
+  accepted gap
+* xref:../Requirements.adoc#requirements-git-store[`git-store` requirements]

@@ -1,0 +1,181 @@
+= git-document-repository: `git-store`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
+saving, release, identity per save, the in-memory index and the post-commit outbox. It depends on `git-core` only.
+Rationale: xref:../concepts/storage-engine.adoc[Storage Engine].
+
+== Repository Registry
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry]_
+
+*Status:* PLANNED
+
+[source,yaml]
+----
+repositories:
+  - alias: register              # stable id, used in links (register:risk/R-042)
+    remote: https://git.example/sec/register.git   # or: none
+    confidentiality: restricted  # application-defined class name
+    retention: null              # optional, ISO 8601 period, e.g. P10Y
+----
+
+[cols="1,1,2"]
+|===
+|Field |Required |Semantics
+
+|`alias` |yes |Unique, `[a-z0-9-]+`; never changes for the life of the repository
+|`remote` |yes |`none` (local mode) or an HTTPS URL (remote mode)
+|`confidentiality` |yes |Class name; the application maps classes to access rules
+|`retention` |no |Period after which the repository as a whole is deleted by the operator; the store only reports it
+|===
+
+== Reference Layout
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per User and Document]_
+
+*Status:* PLANNED
+
+[cols="2,3,1"]
+|===
+|Reference |Content |Pushed
+
+|`refs/heads/main` |released state |yes
+|`refs/heads/<collection>/<id>` |working branch of one document |yes
+|`refs/tags/<collection>/<id>` |release of one document |yes
+|`refs/drafts/<user>/<document>` |intermediate saves of one user |*never*
+|`refs/notes/*` |timestamps, approvals |yes
+|`refs/meta/outbox/<consumer>` |last processed commit per outbox consumer |no
+|===
+
+`<user>` is the pseudonym. Push refspec: `refs/heads/*:refs/heads/*`, `refs/tags/*:refs/tags/*`,
+`refs/notes/*:refs/notes/*`.
+
+== Save
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-3[GDR-STORE-3: Explicit Save]_
+
+*Status:* PLANNED
+
+image::../resources/diagrams/save-sequence.svg[Sequence of an explicit save, align=center]
+
+. Merge the draft into the working branch in core (`git-core` merge); squash when configured.
+. Move the working branch by compare-and-swap.
+. Remote mode: fetch the working branch; on a moved remote, merge onto the remote state and repeat; push with lease.
+. On push rejection repeat from 3, up to `save.max-attempts`.
+. Delete the draft reference.
+
+[cols="1,2"]
+|===
+|Outcome |Meaning
+
+|saved |the working branch (and in remote mode the remote) holds the change
+|conflict |a real conflict; see Conflict Handling
+|rejected |the remote refused after the last attempt
+|credentials expired |the push credentials were refused
+|===
+
+Configuration: `save.max-attempts` (required), `save.squash` (boolean, default `false`).
+
+== Conflict Handling
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-4[GDR-STORE-4: Conflict Handling]_
+
+*Status:* PLANNED
+
+On conflict nothing is pushed and the draft reference is unchanged. The result lists every conflicting path. Field-level
+resolution inside a YAML file is the consumer's task (`git-forms`).
+
+== Concurrent Change Detection
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-5[GDR-STORE-5: Concurrent Change Detection]_
+
+*Status:* PLANNED
+
+A save edit may carry `expectedBlobId`. When the path's current blob id on the working branch differs, the edit fails
+with conflict for that path. Without `expectedBlobId` the edit overwrites (mode B, private until submitted).
+
+== Release
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
+
+*Status:* PLANNED
+
+* Direct release: merge the working branch into `main`, create `refs/tags/<collection>/<id>`, push both with lease.
+* Protected `main`: the push of `main` returns rejected; the store then supports a push of the working branch alone,
+  and the release completes as a pull or merge request on the Git server.
+* Release commits receive the approval trailers of `git-signing` when that module is present.
+
+== Draft Expiry
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-7[GDR-STORE-7: Draft Expiry]_
+
+*Status:* PLANNED
+
+Configuration: `drafts.expiry` (ISO 8601 period, required). A periodic task deletes draft references whose tip commit
+time is older than the period, then runs a garbage collection of unreachable objects.
+
+== Identity per Save
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per Save]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Element |Value
+
+|author |the caller's pseudonym (`p-<random>`), e-mail field empty or a fixed placeholder
+|committer |the technical user configured per repository
+|credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
+|===
+
+A push carries only commits of the save that triggered it; commits of different users are never combined in one push.
+
+== In-Memory Index
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-9[GDR-STORE-9: In-Memory Index]_
+
+*Status:* PLANNED
+
+* The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
+  every open working branch.
+* Build points: start, after every fetch, on `refresh()` (for a webhook), on a configured interval
+  (`index.refresh-interval`, optional).
+* `snapshotIndex(tag | commit)` builds a separate index for a reporting date and leaves the current one unchanged.
+
+== Post-Commit Outbox
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-10[GDR-STORE-10: Post-Commit Outbox]_
+
+*Status:* PLANNED
+
+image::../resources/diagrams/store-classes-and-outbox.svg[Git as the source of truth with derived, complementary and assuring stores fed by the outbox, align=center]
+
+* Consumers register by name (for example `timestamp`, `mirror`, `index`).
+* After a successful push the store walks the commits between `refs/meta/outbox/<consumer>` and the new tip, oldest
+  first, and calls the consumer per commit.
+* After each successful call the consumer's reference moves to that commit. A failing call stops the walk for that
+  consumer; the next push or a periodic retry resumes it.
+* Consumers must be idempotent per commit hash.
+
+== Codecs
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-11[GDR-STORE-11: Deterministic Content through Codecs]_
+
+*Status:* PLANNED
+
+A codec converts a value to bytes and back. Every codec guarantees `encode(decode(encode(v))) == encode(v)` byte for
+byte. `git-forms` supplies the YAML codec with fixed key order.

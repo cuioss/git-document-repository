@@ -1,0 +1,189 @@
+= Git as the Persistence of Versioned Documents
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+An application in which users maintain versioned documents usually ends up with a database, a versioning scheme
+bolted onto it, an approval table and a backup concept of its own. The organisations this repository serves already
+run all of that once: a maintained Git server with history, rights, reviews and backups. This concept explains why
+the libraries of this repository use that Git server as the persistence, what they promise, and where the approach
+stops.
+
+Statements marked _(unverified)_ come from general knowledge and were not checked against a current source; they
+need verification before a decision rests on them.
+
+== The Problem
+
+Every additional database brings operating effort: provisioning, backup, restore tests, upgrades, access control.
+For an application whose content is a few thousand structured documents, that effort dominates the value of the
+store. The documents also need what a plain database does not give for free: a complete history with diffs, a
+release that freezes a state, an approval that survives as evidence, and a format a person can read without the
+application.
+
+Development organisations already operate exactly such a store. GitHub, GitLab, Gitea or Bitbucket keep history,
+enforce rights, review changes and are backed up. Reusing that server avoids the extra database.
+
+== Assumptions
+
+* *Server-based.* One application server manages the Git repositories. No client holds a clone.
+* *Git is the persistence only.* Users never see Git; they see forms, documents and approvals.
+* *A maintained Git server exists*, with backups, in the organisation that runs the application.
+* *Authentication is given.* User login and the OAuth flows against the Git server come from Token Sheriff, a system
+  of its own in a parallel repository. The libraries consume credentials; they run no login flow.
+
+== The Structural Response
+
+The libraries turn the Git server into a document store with a small set of primitives. Each primitive has a concept
+of its own:
+
+[cols="1,3"]
+|===
+|Primitive |Concept
+
+|*No working trees.* A branch is a reference, not a working area. Documents are written as blobs, trees and commits
+in memory; references move by compare-and-swap. Drafts are references per user; saving is a merge and a push. Local
+and remote repositories share one API.
+|xref:storage-engine.adoc[The Storage Engine on Git]
+
+|*Identity by signature.* A technical user pushes; the application signs every commit and records the claims of the
+logged-in user as trailers. Approvals can be raised to MFA or a passkey signature. Pushing in the user's name stays
+optional.
+|xref:identity-and-signing.adoc[Identity and Signing]
+
+|*Data protection without a further store.* The pseudonym mapping lies in Git in an encrypted keyring; erasure
+rotates the key-encryption key and destroys the old one. Repositories are cut by confidentiality and retention class.
+|xref:data-protection.adoc[Data Protection]
+
+|*Evidence.* RFC 3161 timestamps stored as `git notes` anchor the history externally. Every other store beside Git is
+either derived from it (the index) or lives in a system the organisation already runs.
+|xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+
+|*One shape for all documents.* A schema, YAML data with AsciiDoc free text, generated AsciiDoc output, review and
+approval, deadlines and links. A kind of document becomes configuration of one generic layer.
+|xref:schema-driven-documents.adoc[Schema-Driven Documents]
+
+|*Master data.* A directory of persons (encrypted) and catalogs of roles, teams and services that every document
+refers to by stable ids.
+|xref:directory-and-catalogs.adoc[Directory and Catalogs]
+|===
+
+How these primitives are cut into Maven modules is described in xref:module-structure.adoc[Module Structure].
+
+== Existing Solutions
+
+No finished Java library provides this shape: drafts per user, merge on save, local or remote by configuration, and
+the same API for both. Building blocks and reference designs exist.
+
+[cols="1,2,1"]
+|===
+|Candidate |What it is |Use
+
+|JGit
+|Git in pure Java. Builds commits without a working tree (`ObjectInserter`, in-core `DirCache`), merges in core,
+updates references atomically; pluggable object storage (DFS, `InMemoryRepository`).
+|Foundation
+
+|Gerrit NoteDb
+|Gerrit keeps all review metadata in Git references and writes them with atomic multi-reference `BatchRefUpdate`.
+|Architectural reference, not a library
+
+|CrafterCMS
+|A Java CMS on Git with two repositories per project: _Sandbox_ for drafts, _Published_ for released content,
+optionally with a remote upstream.
+|Functional reference, but a whole product
+
+|Spring Cloud Config _(unverified)_
+|Reads configuration from Git through JGit.
+|Read-only, unsuitable
+
+|Dolt, Irmin, Gollum, Decap CMS
+|Git-like databases or Git-based content tools outside Java.
+|Comparison only
+|===
+
+The pattern is proven by Gerrit and CrafterCMS. A reusable persistence library for it does not exist.
+
+== Why a Library of Its Own
+
+The applications that use this store hold domain logic: assessment models, report formats, registers. The Git layer
+underneath is generic, and every domain needs it identically. Separating it has three effects:
+
+* the domains stay free of JGit,
+* the layer is testable on its own against an in-memory or local repository,
+* further domains reuse it without copying it.
+
+=== Scope
+
+* *Repositories*: local or remote mode by configuration; a bare clone as disposable cache; a registry of several
+  repositories (confidentiality and retention classes) with stable aliases.
+* *Writing*: in-core commits (blob, tree, commit) without working trees; compare-and-swap reference updates with retry;
+  in-core merge; deterministic file content through a codec interface.
+* *Drafts and saving*: draft references per user and document; intermediate save; save as merge, compare-and-swap,
+  fetch, push and retry on rejection; conflict results per path; expiry and garbage collection of drafts.
+* *Identity*: author and committer per save; a credentials strategy per push (technical user or user token); commit
+  trailers for approvals.
+* *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
+  index interface the domain fills.
+* *Post-commit processing*: an outbox over the new commits, idempotent by commit hash, with its progress kept in a
+  reference; the hook for timestamps, mirror and index.
+* *Notes*: reading and writing `git notes` for timestamps, approvals and other annotations.
+* *Results instead of exceptions* for the expected outcomes (saved, conflict, rejected, credentials expired).
+
+=== Not in Scope
+
+* the user interface,
+* the domain schemas (assessment models, threat model formats, report formats, register entities),
+* the OAuth flows and the identity provider (Token Sheriff; the libraries only consume credentials),
+* integrations with issue trackers and ticket systems.
+
+The client of the timestamp authority lives in the optional module `git-timestamp`, not in the store.
+
+== Risks and Limits
+
+* *Many concurrent writers on one branch cause retries.* For documents maintained by few people over days this is
+  uncritical; a high-frequency write load is not a case for this store.
+* *Several application instances* stay safe through compare-and-swap on push, but each in-memory index is only as
+  fresh as its last fetch. Webhooks of the Git server shorten the gap.
+* *A conflict in the same file* is resolved per field of the YAML structure; a real conflict goes to the user.
+* *Removing data from the history stays expensive.* The rules of xref:data-protection.adoc[Data Protection] keep
+  personal data out of the history instead.
+* *The content API of the Git server* would be simpler than a clone, but binds to one vendor and runs into rate
+  limits. A JGit clone works with any Git server.
+* *JGit's LFS support is limited* _(unverified)_. Evidence files therefore stay links, not blobs.
+
+[CAUTION]
+====
+Git replaces no document management system an auditor already knows. A process description of the control of
+documented information has to be written once by the organisation that runs the application. The libraries provide
+the mechanisms; they do not certify them.
+====
+
+== Open Questions
+
+. Prototype the store: concurrent saves against one branch, measuring conflicts and retries
+  (see xref:storage-engine.adoc#_open_questions[Storage Engine, Open Questions]).
+. Draft the API of the modules together with the repository layout of the first consuming application.
+. JGit is not yet a dependency of this repository; adding it needs the owner's approval like every dependency.
+
+== Related
+
+* xref:module-structure.adoc[Module Structure] -- the modules, their dependencies, and the shared foundation with
+  `pm-provider-git`.
+* xref:../Requirements.adoc[Requirements] and xref:../Specification.adoc[Specification] -- what the libraries must do
+  and how.
+* xref:../adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010] -- why there is no database.
+
+This concept stops at the library boundary. What an application built on it looks like is documented with that
+application.
+
+== Sources
+
+* JGit: https://projects.eclipse.org/projects/technology.jgit[Eclipse JGit project],
+  https://gerrit.googlesource.com/jgit/+/refs/heads/next/README.md[JGit README]
+* Gerrit NoteDb: https://gerrit.googlesource.com/gerrit/+/HEAD/Documentation/note-db.txt[note-db.txt],
+  https://gerrit.googlesource.com/homepage/+/md-pages/docs/Notedb.md[What is NoteDb]
+* CrafterCMS:
+  https://craftercms.com/docs/3.1/developers/developer-workflow/developer-workflow.html[Developer workflow (Sandbox and Published)],
+  https://craftercms.com/blog/technical/git-based-cms-what-it-is-and-why-you-need-it[Git-based CMS]

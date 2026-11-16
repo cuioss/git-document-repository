@@ -1,0 +1,102 @@
+= Category: OWASP SAMM Assessments
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../README.adoc[CISOs-Friend documentation] » Concepts
+
+An OWASP SAMM assessment usually ends its life as a spreadsheet named `samm-final-v3-reviewed.xlsx`, and the
+comparison with last year's assessment is done by eye. That loses the one thing an assessment is for: the trend.
+SAMM is the core category of CISOs-Friend because it fits Git almost too well.
+
+== What an Assessment Is
+
+An OWASP SAMM assessment is a self-contained document at a date: answers per question of the model, comments,
+evidence, and the scores computed from them. Its value is the comparison over time. It is edited as a draft, then
+released and frozen as audit evidence. It refers to the SAMM model version it was taken with; since version 2 the
+model itself is published as YAML files with semantic versioning. The data volume is small, and the only personal
+data are the assessors, kept as pseudonyms and resolved through the directory.
+
+Git therefore fits:
+
+* the model is already YAML in Git;
+* an assessment as YAML diffs well;
+* release maps to a merge and a tag;
+* history, rights, reviews and backups come from the existing infrastructure.
+
+Drafts, the working branch per assessment, saving and release are mechanisms of the library's
+link:../../concepts/storage-engine.adoc[storage engine]; this page names only what SAMM adds.
+
+== Repository Layout
+
+----
+samm.yaml                              # pinned SAMM model version(s)
+scopes/<scope-id>/scope.yaml           # refers to a team:, a service: or the organisation (directory)
+scopes/<scope-id>/assessments/<assessment-id>/
+    assessment.yaml                    # header: date, model version, status, assessors
+    answers/<practice-id>.yaml         # one file per practice: parallel editing without conflicts
+    evidence.yaml                      # evidence as links, not as files
+scopes/<scope-id>/targets.yaml         # target maturity, roadmap
+----
+
+* *One file per practice* keeps concurrent edits of different practices conflict-free.
+* *Deterministic serialisation* (fixed key order, stable formatting) makes diffs show real changes only; the
+  serialisation is the library's (link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
+* *Evidence as links* (wiki, ticket, pipeline) avoids large files and Git LFS.
+* *The scope* refers to a team, a service or the organisation through the stable ids of the
+  link:../../concepts/directory-and-catalogs.adoc[directory and catalogs].
+
+The repository is `samm-assessments`, readable by development and security
+(link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
+
+== Workshop Mode: Save Often
+
+SAMM is mostly filled in jointly in workshops. The application therefore uses the storage engine's _save often_
+pattern: every explicit save lands on the assessment's working branch at once, as a small commit; the draft holds only
+what is not yet saved. The UI remembers the blob id it loaded, like an ETag, and detects a concurrent change of the
+same practice file. Two assessors on different practices never conflict; two on the same question see the conflict
+in the form, per question, and decide.
+
+The alternative pattern, _private until submitted_, is available for single assessors who want to work longer before
+others see the changes. The pattern is a property of the category's workflow, not of the user.
+
+== Release, Comparison and Targets
+
+* *Release* merges the assessment branch into `main` and tags `assessment/<id>`. Protected branches and tags of the Git
+  server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes approval.
+  The signature level of the release is configured per category (level 2 by default, see
+  link:authentication-and-identity.adoc#_signature_levels_per_category_and_state[Signature Levels]).
+* *Comparison* reads two released tags from the in-memory index and shows the score difference per practice and
+  stream. Dashboards, trends and heat maps over hundreds of assessments come from the same index.
+* *Targets* in `targets.yaml` name the target maturity per practice. A gap between the released score and the target
+  becomes a measure: an issue in the issue tracker, and optionally a risk in the ISMS register
+  (link:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
+* *Model versions*: an assessment keeps the model version it was taken with. A comparison across model versions maps
+  practices by id and marks questions that changed.
+
+== Links to the Other Categories
+
+* A maintained threat model is direct evidence for the SAMM practice _Threat Assessment_ (business function
+  _Design_); the assessment links to the threat models of the services in its scope
+  (link:category-threat-models.adoc[Threat Models]).
+* A released assessment is evidence for the secure-development controls of ISO 27001 (Annex A 8.25 ff.) by a reference
+  to its tag.
+* Where an organisation runs verinice, a released assessment is delivered as evidence through the veo REST API.
+
+== Open Questions
+
+. Draft the repository schema of SAMM (the JSON Schema of `assessment.yaml`, `answers/*.yaml`, `targets.yaml`).
+. How the SAMM model YAML is pinned and updated (vendored copy in the repository or a fetched release).
+. Whether the score calculation follows the OWASP SAMM toolbox exactly; to be verified against the published model.
+
+== Related
+
+* link:../../concepts/storage-engine.adoc[Storage Engine] — drafts, saving, release, index
+* link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents] — the shape of every category
+* link:category-threat-models.adoc[Threat Models], link:category-isms.adoc[ISMS]
+* Sources: https://owasp.org/2020/02/11/SAMM-v2.html[SAMM v2.0 released],
+  https://owaspsamm.org/release-notes-v2/[Key changes in SAMM v2],
+  https://owaspsamm.org/blog/2020/01/31/samm2-release[SAMM v2 release (YAML model)],
+  https://owaspsamm.org/model/[SAMM model]

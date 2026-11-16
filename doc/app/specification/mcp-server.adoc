@@ -1,0 +1,230 @@
+= CISOs-Friend: MCP Server
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-MCP-1[CIFR-MCP-1: Transport]_
+
+Status: PLANNED
+
+The MCP endpoint for AI agents as an OAuth 2.1 protected resource. Reasoning:
+link:../concepts/mcp-server.adoc[MCP Server]. Normative sources: MCP specification revision 2026-07-28,
+`basic/authorization` and `basic/transports/streamable-http`; RFC 9728, RFC 8707, RFC 6750.
+
+== Transport
+_See Requirement link:../Requirements.adoc#CIFR-MCP-1[CIFR-MCP-1: Transport]_
+
+Status: PLANNED
+
+[cols="1,3"]
+|===
+|Item |Value
+
+|Endpoint
+|`POST /mcp`, Streamable HTTP, revision 2026-07-28 (no protocol-level sessions; an `Mcp-Session-Id` header is ignored)
+
+|`Origin`
+|Validated against `mcp.allowed-origins`; absent is accepted, present and not listed is `403`
+
+|STDIO
+|Not offered
+
+|Content types
+|Request `application/json`; response `application/json` or `text/event-stream`
+|===
+
+== Metadata
+_See Requirement link:../Requirements.adoc#CIFR-MCP-2[CIFR-MCP-2: Protected Resource Metadata]_
+
+Status: PLANNED
+
+`GET /.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`):
+
+[source,json]
+----
+{
+  "resource": "https://cisos-friend.example.org/mcp",
+  "authorization_servers": ["https://idp.example.org/realms/main"],
+  "scopes_supported": ["cisos-friend:read", "cisos-friend:draft", "cisos-friend:save", "cisos-friend:request-release"],
+  "bearer_methods_supported": ["header"]
+}
+----
+
+`resource` is `mcp.canonical-uri`; `authorization_servers` is `mcp.authorization-servers`. `offline_access` is never
+listed.
+
+Unauthenticated request:
+
+----
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource",
+                  scope="cisos-friend:read"
+----
+
+== Token Validation
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-MCP-3[CIFR-MCP-3: Token Validation]_
+* _link:../Requirements.adoc#CIFR-MCP-10[CIFR-MCP-10: Optional Sender Constraint]_
+
+Status: PLANNED
+
+Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry of `mcp.authorization-servers`.
+
+[cols="1,2,1"]
+|===
+|Check |Rule |Failure
+
+|Location
+|`Authorization: Bearer <token>`; `access_token` in the query string is refused
+|`401`
+
+|Signature
+|Against the issuer's JWKS; asymmetric algorithms only
+|`401`
+
+|`exp`, `nbf`, `iat`
+|Current time within bounds (clock skew per Token Sheriff configuration)
+|`401`
+
+|`iss`
+|One of `mcp.authorization-servers`
+|`401`
+
+|`aud`
+|Contains `mcp.canonical-uri` (`expected-audience`)
+|`401`
+
+|DPoP
+|Per issuer `off`, `accepted` (validated when `cnf.jkt` present), `required`
+|`401`
+|===
+
+== Scopes
+_See Requirement link:../Requirements.adoc#CIFR-MCP-4[CIFR-MCP-4: Scopes and Rights]_
+
+Status: PLANNED
+
+[cols="1,2"]
+|===
+|Scope |Tools
+
+|`cisos-friend:read`
+|`list_documents`, `read_document`, `search`, `diff`, `list_due`, `read_catalog`
+
+|`cisos-friend:draft`
+|`write_draft`, `discard_draft`
+
+|`cisos-friend:save`
+|`save`
+
+|`cisos-friend:request-release`
+|`request_release`
+|===
+
+Missing scope:
+
+----
+HTTP/1.1 403 Forbidden
+WWW-Authenticate: Bearer error="insufficient_scope", scope="cisos-friend:save",
+                  resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource"
+----
+
+After the scope check the user's rights on the target repository are checked (link:authentication.adoc#_rights[Rights]);
+a missing right is a tool error `FORBIDDEN`, not an HTTP error, and names no document the user may not read.
+
+== Tools
+_See Requirement link:../Requirements.adoc#CIFR-MCP-6[CIFR-MCP-6: Human-Bound Approvals]_
+
+Status: PLANNED
+
+[cols="1,2,2"]
+|===
+|Tool |Input |Result
+
+|`list_documents`
+|`repository`, `category`, optional `filter`
+|Ids, titles, states
+
+|`read_document`
+|`repository`, `id`, optional `revision` (tag or commit)
+|YAML data and fragments
+
+|`search`
+|`query`
+|Matches from the index the user may read
+
+|`diff`
+|`repository`, `id`, `from`, `to`
+|Structured diff
+
+|`list_due`
+|—
+|Deadlines, reviews and pending approvals of the user
+
+|`read_catalog`
+|`catalog`
+|Entries of roles, teams or services
+
+|`write_draft`
+|`repository`, `id`, `data` (validated against the category schema)
+|`DRAFT_SAVED` or validation errors per field
+
+|`discard_draft`
+|`repository`, `id`
+|`DISCARDED`
+
+|`save`
+|`repository`, `id`, `base-blob-ids`
+|`SAVED`, `CONFLICT` (per field), `SAVED_LOCALLY`
+
+|`request_release`
+|`repository`, `id`, `comment`
+|`APPROVAL_REQUESTED` with the approval id; the approval waits in the user's *Due* lens
+|===
+
+No tool performs a transition above signature level 1. Tool input sizes are limited to the category schema's
+`maxLength` and `maxItems`; a document of more than 1 MiB is refused.
+
+== Upstream Credentials
+_See Requirement link:../Requirements.adoc#CIFR-MCP-5[CIFR-MCP-5: No Passthrough, No Credentials to the Agent]_
+
+Status: PLANNED
+
+* Git push: the repository's configured push credential (technical user or the user's Git-host token from Token
+  Sheriff); never the MCP access token.
+* KMS, TSA, ticket system, issue tracker: the application's own credentials from `-ref` keys.
+* Tool results and errors are built from typed result objects that carry no credential field.
+* The integration suite greps every MCP response and every log line for the configured credential values; one match
+  fails the build.
+
+== Attribution
+_See Requirement link:../Requirements.adoc#CIFR-MCP-7[CIFR-MCP-7: Attribution]_
+
+Status: PLANNED
+
+Every commit caused by a tool carries the trailer values of link:authentication.adoc#_trailer_values[Trailer Values],
+including the agent client in the library trailer `Actor-Client`
+(link:../../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2: Identity Trailers]).
+
+== Limits
+_See Requirement link:../Requirements.adoc#CIFR-MCP-8[CIFR-MCP-8: Rate Limits]_
+
+Status: PLANNED
+
+Token bucket per (`pseudonym`, `client_id`): reads `mcp.rate-limits.read-per-minute` (default `120`), writes
+(`write_draft`, `discard_draft`, `save`, `request_release`) `mcp.rate-limits.write-per-minute` (default `20`). Exceeded:
+`429` with `Retry-After` in seconds.
+
+== Audit
+_See Requirement link:../Requirements.adoc#CIFR-MCP-9[CIFR-MCP-9: Audit]_
+
+Status: PLANNED
+
+One `INFO` record per tool call: `CISOS_FRIEND-<n>: MCP tool {tool} by {pseudonym} via {client} on {repository}:
+{outcome}`. Never logged: tokens, `sid`, DPoP proofs, document data, error details from upstream systems.

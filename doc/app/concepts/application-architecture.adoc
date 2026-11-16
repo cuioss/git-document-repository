@@ -1,0 +1,190 @@
+= Application Architecture
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../README.adoc[CISOs-Friend documentation] » Concepts
+
+An application that stores its data in someone else's Git server has a pleasant property: it owns no database, so it
+has no schema migration, no backup job and no connection pool to tune. It also has an unpleasant one: everything it
+knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend is the arrangement
+that keeps the pleasant property and contains the unpleasant one. Its build, runtime and test structure follow API
+Sheriff, so a contributor who knows one knows the other.
+
+== Shape
+
+One Quarkus application, compiled to a native image on Java 25, serves three surfaces from one process:
+
+* the *REST API* `/api/v1` and one Server-Sent Events stream for the web app;
+* the *MCP endpoint* for AI agents;
+* the *static web app*, served same-origin from a resource JAR.
+
+Behind the surfaces sits one layer of *application services*: categories, rights, signature levels, deadlines, the
+first login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same
+services with the same checks. Below the services sit the libraries of `git-document-repository`
+(link:../../concepts/module-structure.adoc[Module Structure]) and, under them, JGit.
+
+----
+ web app (SPA) ──► /api/v1 + SSE ─┐
+                                  ├─► application services ──► git-store, git-forms, git-signing, git-crypto,
+ AI agent ──────► /mcp ───────────┘        │                    git-timestamp, git-directory ──► JGit
+                                           │
+                                           └─► outbound (cui-http): TSA, KMS/Vault, Git host API, verinice.veo
+----
+
+The layering is enforced by ArchUnit rules in the test suite: no surface package reaches a library directly, and no
+service package knows JGit.
+
+== Maven Modules
+
+The reactor mirrors API Sheriff (parent `de.cuioss:cui-quarkus-parent`, the Quarkus BOM and the Token Sheriff BOM
+imported in the root `dependencyManagement`, `maven.compiler-plugin.release` = `25`).
+
+[cols="1,3"]
+|===
+|Module |Content
+
+|`cisos-friend`
+|The Quarkus application: surfaces, services, configuration, boot validation. Carries the `native` profile.
+
+|`categories`
+|The category definitions as resources: per category a JSON Schema, a template and a workflow. Tested on its own
+against the library's form engine; no Java code of a category
+(link:../adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005]).
+
+|`web-app`
+|The Svelte single-page application, built by `frontend-maven-plugin` into a resource JAR
+(link:web-app.adoc[Web App]).
+
+|`web-e2e`
+|Playwright end-to-end tests and the axe-core accessibility audit against the built application.
+
+|`integration-tests`
+|Builds the native image and the distroless container, starts a compose stack, runs the failsafe `*IT` suites.
+
+|`deployment`
+|The compose sample (link:deployment.adoc[Deployment]).
+|===
+
+A `benchmarks` module (k6, non-gating) follows once there is a performance question worth measuring.
+
+== Libraries
+
+[cols="1,3"]
+|===
+|Library |Use
+
+|`git-document-repository` modules
+|All persistence: drafts and saving, forms, keyring, signature, timestamps, directory.
+
+|`token-sheriff-client-quarkus`
+|The confidential client of the web login, step-up, logout.
+
+|`token-sheriff-validation-quarkus`
+|Bearer-token validation for the MCP endpoint (audience, scopes, optional DPoP).
+
+|`cui-http`
+|Every outbound HTTP call goes through `HttpHandler` and returns an `HttpResult`; resilient and ETag-aware adapters
+where a call is repeated (Git host API, TSA, KMS, veo). Inbound path, query and header values of the REST API, the MCP
+endpoint and the Git server's webhooks pass the `de.cuioss.http.security` validation pipelines before use.
+
+|`cui-java-tools`
+|`CuiLogger` with `LogRecord` constants for every message at INFO and above; the catalogue is documented in
+`LogMessages.adoc`.
+
+|Quarkus extensions
+|`quarkus-arc`, `quarkus-rest` with Jackson, `quarkus-smallrye-health`, `quarkus-micrometer-registry-prometheus`,
+`quarkus-smallrye-fault-tolerance`.
+|===
+
+Every further dependency is a decision of the owner.
+
+== Configuration
+
+Following API Sheriff, `application.properties` carries only Quarkus and runtime settings (ports, management
+interface, logging). The policy of the application lives in its own YAML, `cisos-friend.yaml`, validated against a
+bundled JSON Schema:
+
+* the repositories with alias, remote, confidentiality and retention class, and credential reference;
+* the mapping from identity-provider groups to rights per repository;
+* the enabled categories and, per category, the overrides of signature levels and deadlines;
+* the key source of the KEK, the timestamp authority, the mirror;
+* the fetch interval and the webhook secret reference.
+
+Deployment-bound values (URLs, secret paths) are placeholders `${NAME:-default}` resolved from the environment.
+Secrets are never values in the YAML, only references to mounted files or to the KMS. At boot an ordered list of
+validation rules checks the configuration and refuses to start on an error; the binary also validates a configuration
+offline (`--validate-config <dir>`).
+
+== Run-Time State
+
+Everything the application holds in memory is either derived from Git or deliberately volatile:
+
+[cols="1,2,2"]
+|===
+|State |Source |After a restart
+
+|In-memory index (dashboards, deadlines, search)
+|`main` and the open working branches of every repository
+|Rebuilt at start
+
+|Keyring mapping
+|The keyring in the `directory` repository, decrypted with the current KEK
+|Rebuilt at start
+
+|Drafts
+|`refs/drafts/<user>/…` in the local repository
+|Survive only on a persistent volume
+
+|Sessions of the web app
+|Server-side, holding the user's tokens
+|Lost; the user logs in again
+
+|Reminders and notifications
+|Computed from the index
+|Recomputed
+|===
+
+The index is refreshed after every save, by a webhook of the Git server, and by a periodic fetch as a fallback. Even
+hundreds of SAMM assessments with about ninety answers each are a few megabytes; the index needs no database.
+
+== Instances
+
+The default is *one instance* with a persistent volume for the repository directory. A draft lives on the instance
+that wrote it, so several instances need sticky sessions or a shared volume; the compare-and-swap of the library keeps
+concurrent saves safe either way, but each index is only as fresh as its last fetch. Webhooks keep that window short.
+
+== Native Image
+
+The native image follows API Sheriff: Mandrel builder on the JDK 25 line, distroless runtime image, a health probe
+built into the binary. JGit in a native image is the open risk of this architecture: its reflection, resource and
+service-loader use has to be registered, and the transport is restricted to HTTPS, which avoids the SSH stack. The
+first integration test builds the native image and runs a fetch, a save and a push against a local Git server before
+anything else depends on it.
+
+== Testing
+
+* *Unit*: JUnit 5, `cui-test-generator` for all test data, EasyMock for test doubles, `cui-test-value-objects` for the
+  contracts of value types, `cui-test-juli-logger` with `LogAsserts` for every `LogRecord`.
+* *Outbound HTTP*: `cui-test-mockwebserver-junit5` for the Git host API, the TSA and the KMS; HTTPS included.
+* *Inbound HTTP*: the adversarial generators of `cui-http-testing` (path, header, query attack databases) against the
+  REST API and the MCP endpoint.
+* *Architecture*: ArchUnit for the layering.
+* *Integration*: the native container in a compose stack with Keycloak, a Gitea as Git server and a timestamp
+  authority stub.
+* *Web*: Vitest for the components, Playwright with axe-core for the flows.
+
+== Open Questions
+
+. Verify that JGit (HTTPS transport, in-core writing, notes) runs in the native image without the JVM fallback.
+. Which Git host APIs are needed beyond Git itself (pull or merge requests for releases, webhook registration), and
+  for which hosts first.
+. Whether the categories module ships inside the application or as an overridable directory mounted at run time.
+
+== Related
+
+* link:deployment.adoc[Deployment], link:web-app.adoc[Web App], link:mcp-server.adoc[MCP Server]
+* link:../../concepts/module-structure.adoc[Module Structure] — the libraries
+* link:../adr/0001-CISOs-Friend_runs_as_a_Java_25_Quarkus_native_image_in_a_distroless_container.adoc[ADR-0001]

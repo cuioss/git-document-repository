@@ -1,0 +1,62 @@
+= ADR-0010: No database; the in-memory index is derived from Git
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Queries, dashboards and reporting-date views run on an in-memory index built from main and the open working branches at start and after every fetch; a database, if ever wanted, is a disposable cache.
+// tags: index, storage, database, queries
+// affects: git-store
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Evaluations need queries across documents. A database is the usual answer and the operating effort the store set out
+to avoid. The question is where queries run.
+
+*The decision:* the store builds an in-memory index from `main` and the open working branches. It builds the index at
+start and after every fetch. A periodic fetch or a webhook of the Git server refreshes it. A reporting date builds the
+index from a tag or from the commit of that date. If a database is ever wanted, it is a disposable cache, rebuilt from
+Git.
+
+See xref:../concepts/storage-engine.adoc#_reading_and_queries[Storage Engine, Reading and Queries].
+
+== Alternatives rejected
+
+=== A relational database as the primary store
+
+*Rejected because* it needs provisioning, backup and upgrades, and it duplicates history Git already keeps.
+
+=== A database as the query store, written beside Git
+
+*Rejected because* two writes per save need a distributed transaction or a reconciliation. The outbox can feed a cache,
+but the cache must never be the truth.
+
+== Consequences
+
+=== Properties of the design
+
+* Hundreds of documents with about ninety fields each fit in a few megabytes.
+* Losing the index loses nothing.
+
+=== Accepted costs
+
+* Start time grows with the number of documents.
+* Each instance's index is only as fresh as its last fetch.
+
+=== When this is revisited
+
+When the index no longer fits in memory or its build time delays start beyond what operators accept.
+
+== Links
+
+* xref:../concepts/storage-engine.adoc[Storage Engine]
+* xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+* xref:../Requirements.adoc#requirements-git-store[`git-store` requirements]

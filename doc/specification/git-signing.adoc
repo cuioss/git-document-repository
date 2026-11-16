@@ -1,0 +1,111 @@
+= git-document-repository: `git-signing`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-signing` (module `de.cuioss.git.document.signing`, not yet created, optional) signs commits, writes the identity
+and approval trailers, verifies passkey approvals and checks signatures. It depends on `git-store`. A WebAuthn
+verification library is open and needs the owner's approval. Rationale:
+xref:../concepts/identity-and-signing.adoc[Identity and Signing].
+
+== Commit Signature
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1: Commit Signature]_
+
+*Status:* PLANNED
+
+* The module implements JGit's signer interface _(unverified: `org.eclipse.jgit.lib.Signer` in recent versions)_ and
+  delegates the signing operation to a `SigningKeySource`.
+* `SigningKeySource` implementations: KMS, HSM (PKCS#11), key file. The application never holds the private key when
+  KMS or HSM is used.
+* `signing.format`: `ssh` or `gpg` (required). Whether the JGit version in use writes SSH signatures is to verify
+  _(unverified)_.
+
+== Identity Trailers
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2: Identity Trailers]_
+
+*Status:* PLANNED
+
+[cols="1,2,2"]
+|===
+|Trailer |Value |Source
+
+|`Actor` |pseudonym (`p-…`) |`git-crypto`
+|`Actor-Issuer` |issuer URL of the identity provider |token claim `iss`
+|`Auth-Time` |ISO 8601 UTC, seconds precision |token claim `auth_time`
+|`Auth-Context` |`acr` value; `amr` values comma-separated |token claims `acr`, `amr`
+|`Session` |`hmac:` + hex HMAC-SHA-256 of `sid` under a configured key |token claim `sid`
+|`Actor-Client` |OAuth client id of a delegated client; absent when the user acted directly |token claim `azp` or
+`client_id` of the delegated token
+|===
+
+The caller supplies the claims; the module never receives the access token. `sub` and `sid` are refused as trailer
+values.
+
+== Portable Approvals
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-3[GDR-SIGN-3: Portable Approvals]_
+
+*Status:* PLANNED
+
+----
+Release <collection>/<id>
+
+Approved-by: p-91c2d0a7e1b3 (role:ciso)
+Review: https://git.example/sec/register/pull/17
+----
+
+One `Approved-by` per approval; `Review` only when the release came through a pull or merge request. The caller
+supplies the approvals collected from the Git server.
+
+== Step-Up Evidence
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4: Step-Up Evidence (Level 2)]_
+
+*Status:* PLANNED
+
+Level 2 is met when `Auth-Context` contains an `amr` value from `signing.mfa-amr` (configured list, for example `mfa`,
+`otp`, `hwk`) or an `acr` value from `signing.mfa-acr`, and `now - Auth-Time <= signing.step-up-max-age` (ISO 8601
+duration, required).
+
+== Passkey Approvals
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5: Passkey Approvals (Level 3)]_
+
+*Status:* PLANNED
+
+[cols="1,3"]
+|===
+|Element |Specification
+
+|Registration file |`keys/webauthn.yaml`: per pseudonym a list of credential ids and COSE public keys with
+`registered` and optional `retired` dates; changed only by signed commits
+|Challenge |the raw 20-byte (SHA-1) or 32-byte (SHA-256) commit id
+|Acceptance |signature verifies with a registered, non-retired key; flags UP and UV set; RP id matches the configured
+`signing.rp-id`
+|Storage |note on the commit under `refs/notes/approvals`: YAML with pseudonym, credential id, authenticator data,
+client data JSON and signature, base64
+|===
+
+== Signature Verification
+
+_See Requirement link:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6: Signature Verification]_
+
+*Status:* PLANNED
+
+* `allowed_signers` at the repository root, in the format of Git's SSH signature verification (principal, options
+  `valid-after` / `valid-before`, public key).
+* `verify(ref)` walks the commits of the reference and returns those without a signature valid at their commit time.
+* CI without the application: with `signing.format = ssh`, `git -c gpg.ssh.allowedSignersFile=allowed_signers
+  verify-commit <id>` checks a commit with a stock git installation.

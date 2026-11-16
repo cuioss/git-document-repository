@@ -1,0 +1,69 @@
+= ADR-0007: Passkey approvals are stored as `git notes` on the approved commit
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: For traceability level 3 the browser signs the commit id with the user's passkey (WebAuthn challenge); the application verifies the assertion and stores it as a note under refs/notes/approvals.
+// tags: signing, passkey, webauthn, notes, approval
+// affects: git-signing, git-core
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Proposed
+
+== Decision
+
+Some approvals need a statement stronger than "the application confirms the authenticated user". The user should
+approve with a key only the user holds, without a Git account or a GPG key. The question is how such an approval is
+bound to a state of the repository.
+
+*The decision:* the application passes the commit id to WebAuthn as the challenge. The user's device signs it after
+user verification. The application verifies the assertion with the registered public key and stores it as a note on
+the commit under `refs/notes/approvals`. The push refspec carries `refs/notes/*`.
+
+See xref:../concepts/identity-and-signing.adoc#_level_3_approval_with_a_passkey[Identity and Signing, Level 3].
+
+== Alternatives rejected
+
+=== The passkey signs the commit itself
+
+*Rejected because* the commit id presupposes the finished commit. A signature inside the commit cannot cover the id
+it changes.
+
+=== An approval commit with the assertion as content
+
+*Rejected because* an approval commit changes the tip of the branch. The approval would then refer to a state that is
+no longer the tip, and a second approval would need a third commit.
+
+=== A qualified electronic signature for every approval
+
+*Rejected as the default because* the effort per approval is high. Level 4 stays available where the law demands it.
+
+== Consequences
+
+=== Properties of the design
+
+* The approval binds to exactly one state: the commit id covers content and history.
+* The server never holds the user's key.
+
+=== Accepted costs
+
+* It is no qualified signature.
+* The list of registered public keys must itself be versioned and signed.
+* Synchronised passkeys bind the key to an account, not to one device.
+* The flow has to be tried in a prototype first _(unverified)_.
+
+=== When this is revisited
+
+When the prototype shows that browsers or authenticators refuse the challenge format.
+
+== Links
+
+* xref:../concepts/identity-and-signing.adoc[Identity and Signing]
+* xref:0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006]
+* xref:../specification/git-signing.adoc[`git-signing` specification]

@@ -1,0 +1,125 @@
+= git-document-repository: `git-directory`
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../Specification.adoc[Back to Main Specification]
+
+== Overview
+
+_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
+
+*Status:* PLANNED
+
+`git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs and the
+directory of persons. It depends on `git-forms` and `git-crypto`; persons and catalog entries are schema-driven
+documents. Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
+
+== Catalogs
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-1[GDR-DIR-1: Catalogs]_
+
+*Status:* PLANNED
+
+[cols="1,2,1"]
+|===
+|Catalog |File |Id prefix
+
+|roles |`catalog/roles.yaml` (list) |`role:`
+|teams |`catalog/teams.yaml` (list; optional `parent`) |`team:`
+|services |`catalog/services/<id>.yaml` (one file per entry) |`service:`
+|===
+
+Common fields: `id` (required, immutable), `name` (required), `description`, `retired` (boolean, default `false`).
+Further catalogs are declared in configuration with file, id prefix and schema.
+
+== Service Catalog
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]_
+
+*Status:* PLANNED
+
+[cols="1,1,2"]
+|===
+|Field |Required |Semantics
+
+|`system` |no |`system:<id>`, the product above
+|`lifecycle` |yes |`planned`, `active`, `deprecated`, `retired`
+|`owner.team`, `owner.role` |yes |references into the team and role catalogs
+|`repositories` |no |list of repository URLs
+|`dependsOn` |no |`service:` or `external:` references
+|`protection-needs` |yes |`confidentiality`, `integrity`, `availability`: `normal`, `high`, `very-high`
+|`data-classes` |no |list of names
+|===
+
+`effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
+`dependsOn`; cycles are reported as an outcome.
+
+== Person Entries
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Entries]_
+
+*Status:* PLANNED
+
+`persons/<pseudonym>.enc`, encrypted with the person's DEK (`git-crypto`). Decrypted fields: `name` (required),
+`memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation). Additional fields
+need an explicit schema extension by the operator.
+
+== First Login
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login]_
+
+*Status:* PLANNED
+
+`login(claims)`:
+
+* known `sub` → the pseudonym and the entry;
+* unknown `sub` → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from the token,
+  memberships from IdP groups where mapped).
+
+`saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1.
+
+== Reference Resolution
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-5[GDR-DIR-5: Reference Resolution]_
+
+*Status:* PLANNED
+
+[cols="1,2"]
+|===
+|Call |Result
+
+|`resolve("team:payments")` |the catalog entry (also when retired)
+|`holders("role:security-champion", "team:payments")` |the pseudonyms with that membership
+|`person(pseudonym)` |the entry, or `FORMER_MEMBER` when the pseudonym was erased
+|===
+
+== Import from Backstage
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-6[GDR-DIR-6: Import from Backstage]_
+
+*Status:* PLANNED
+
+[cols="1,1"]
+|===
+|Backstage kind _(unverified)_ |Catalog
+
+|`Component` |service (`spec.system` → `system`, `spec.lifecycle` → `lifecycle`, `spec.owner` → `owner.team`,
+`spec.dependsOn` → `dependsOn`)
+|`System` |`system:` reference
+|`Group` |team (`spec.parent` → `parent`)
+|===
+
+The import matches by `metadata.name`; it updates changed fields, adds new entries and never deletes (a vanished entry
+is reported). Fields Backstage does not know (`protection-needs`, `data-classes`) are kept.
+
+== Periodic Confirmation
+
+_See Requirement link:../Requirements.adoc#GDR-DIR-7[GDR-DIR-7: Periodic Confirmation]_
+
+*Status:* PLANNED
+
+`directory.confirmation-interval` (ISO 8601 period, optional; absent disables). `dueForConfirmation(instant)` lists
+pseudonyms whose `confirmed` (or `since`) is older than the interval. Confirming sets `confirmed` to today.

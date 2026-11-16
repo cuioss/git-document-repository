@@ -1,0 +1,188 @@
+= CISOs-Friend: Configuration
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../Specification.adoc[Back to Main Specification]
+
+== Overview
+_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+
+Status: PLANNED
+
+Two sources: `application.properties` for Quarkus runtime settings, and `cisos-friend.yaml` for the policy of the
+application. Reasoning: link:../concepts/application-architecture.adoc#_configuration[Application Architecture,
+Configuration].
+
+== application.properties
+_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+
+Status: PLANNED
+
+[cols="1,1,2"]
+|===
+|Key |Default |Meaning
+
+|`quarkus.http.ssl-port`
+|`8443`
+|HTTPS listener
+
+|`quarkus.http.insecure-requests`
+|`redirect`
+|Plain HTTP redirects to HTTPS
+
+|`quarkus.management.enabled`
+|`true`
+|Management interface on its own port
+
+|`quarkus.management.port`
+|`9000`
+|Health and metrics
+
+|`cisos-friend.config.dir`
+|`config`
+|Directory holding `cisos-friend.yaml`
+|===
+
+== cisos-friend.yaml
+_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+
+Status: PLANNED
+
+Validated against `schema/cisos-friend.schema.json` (bundled). Top-level keys:
+
+[cols="1,1,3"]
+|===
+|Key |Required |Content
+
+|`repositories`
+|yes
+|List of repositories (see <<_repositories>>)
+
+|`rights`
+|yes
+|Map of identity-provider group → list of `{repository, actions}`; actions from `read`, `edit`, `approve`,
+`administer-catalogs`
+
+|`categories`
+|yes
+|Enabled categories; per category overrides of `signature-levels` and `deadlines`
+
+|`signing`
+|yes
+|`key-ref` (KMS key id or file path), `format` (`ssh` or `gpg`)
+
+|`keyring`
+|yes
+|`kek-source` (`kms`, `vault-transit`, `file`), `kek-ref`, `rotation-interval` (ISO 8601 duration, default `P1D`,
+maximum `P30D`)
+
+|`timestamp`
+|no
+|`tsa-url`, `trust-ref`
+
+|`mirror`
+|no
+|`url`, `credential-ref`
+
+|`mcp`
+|yes
+|`canonical-uri`, `authorization-servers`, `allowed-origins`, `rate-limits.read-per-minute` (default `120`),
+`rate-limits.write-per-minute` (default `20`), `dpop` per issuer (`off`, `accepted`, `required`; default `off`)
+
+|`web`
+|yes
+|`session.idle-timeout` (default `PT30M`), `session.max-lifetime` (default `PT8H`), `directory.confirm-interval`
+(default `P12M`), `information-text-ref`
+
+|`integrations`
+|no
+|`issue-tracker`, `ticket-system`, `verinice`, each with `url` and `credential-ref`
+|===
+
+Every key ending in `-ref` accepts a file path (`file:/run/secrets/...`) or a KMS key id (`kms:...`); no key accepts a
+secret value.
+
+Placeholders: `${NAME}` and `${NAME:-default}` in any string value, resolved from the environment before validation;
+an unresolved placeholder without default is a boot error.
+
+== Repositories
+_See Requirement link:../Requirements.adoc#CIFR-OPS-5[CIFR-OPS-5: Repository Modes and Refresh]_
+
+Status: PLANNED
+
+[cols="1,1,3"]
+|===
+|Field |Required |Meaning
+
+|`alias`
+|yes
+|Stable alias used in references (`isms-register`)
+
+|`remote`
+|yes
+|HTTPS URL of the remote, or `none` for local mode
+
+|`confidentiality`
+|yes
+|`public-internal`, `restricted`, `strongly-restricted`
+
+|`retention`
+|yes
+|Retention class name; `unlimited` or an ISO 8601 period
+
+|`push-credential`
+|no
+|`technical-user` (default) or `user-token`
+
+|`credential-ref`
+|for `technical-user`
+|Reference to the push credential
+
+|`webhook-secret-ref`
+|no
+|Reference to the HMAC secret of the Git server's push webhook
+
+|`fetch-interval`
+|no
+|ISO 8601 duration, default `PT5M`
+|===
+
+Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. The HMAC header of GitHub (`X-Hub-Signature-256`), GitLab
+(`X-Gitlab-Token`) and Gitea (`X-Gitea-Signature`) is verified against the referenced secret; a mismatch is answered
+with `401` and logged.
+
+== Boot Validation
+_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+
+Status: PLANNED
+
+An ordered list of validation rules runs before the application accepts requests. Each violation produces one `ERROR`
+record; any violation stops the boot.
+
+[cols="1,2"]
+|===
+|Rule |Refuses
+
+|Schema
+|Any document that does not validate against the bundled schema
+
+|Unique aliases
+|Two repositories with one alias
+
+|One retention class per repository
+|A category mapping two retention classes into one repository
+
+|Rights reference repositories
+|A rights entry naming an unknown alias
+
+|Rotation interval
+|`rotation-interval` above `P30D`
+
+|Canonical URI
+|`mcp.canonical-uri` that is not an absolute HTTPS URI without fragment
+|===
+
+Offline: `application --validate-config <dir>` runs the same rules and exits `0` (valid) or `1` (invalid).

@@ -1,0 +1,64 @@
+= ADR-0007: Repositories are cut by confidentiality and retention class
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: The application stores its documents in several repositories, each of one confidentiality class and one retention class (default: isms-core, isms-register, isms-incidents-<year>, samm-assessments, threat-models, directory); a retention period ends by deleting a whole repository.
+// tags: data-protection, gdpr, repositories, retention, rights
+// affects: cisos-friend, deployment
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Git grants rights per repository only and keeps every version. Personal data must be deletable after their retention
+period. Confidential registers must not be readable by everyone who reads a policy.
+
+*The decision:* the application cuts its data into repositories.
+
+* Every repository holds one confidentiality class and one retention class.
+* The default cut is `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`, `threat-models` and
+  `directory`. The cut is configuration.
+* A retention period ends by deleting the whole repository. No history is rewritten.
+* References across repositories use stable ids and are checked on save.
+
+The details are in link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout].
+
+== Alternatives rejected
+
+=== One repository for everything
+
+*Rejected because* read access would be all or nothing. Deleting one year of incident reports would mean rewriting the
+history of everything else.
+
+=== Rewriting history for erasure
+
+*Rejected because* rewriting breaks signatures, timestamps and every clone. It is expensive and leaves copies behind.
+
+== Consequences
+
+=== Properties of the design
+
+* Git server rights enforce confidentiality when pushing in the user's name.
+* Erasure by retention is a repository deletion.
+
+=== Accepted costs
+
+* Queries across repositories need an instance that may read all of them.
+* References across repositories can only be checked, not enforced by Git.
+
+=== When this is revisited
+
+* When rights finer than one repository become necessary.
+
+== Links
+
+* link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
+* link:../../concepts/data-protection.adoc[Data Protection] (library)

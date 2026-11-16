@@ -1,0 +1,71 @@
+= ADR-0004: Authentication is delegated to Token Sheriff, and the web app uses a server-side session
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: People log in through Token Sheriff's confidential client inside the application (backend-for-frontend shape); the browser holds only a session cookie; agents present bearer tokens validated by Token Sheriff; rights come from identity-provider groups.
+// tags: authentication, oidc, bff, session, token-sheriff
+// affects: cisos-friend, web-app
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+The application needs authenticated users, their claims for the signed trailers, step-up for approvals, and access
+rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of its own.
+
+*The decision:* authentication is delegated to Token Sheriff.
+
+* The application is a confidential client through `token-sheriff-client-quarkus`. It holds the tokens server-side.
+* The browser holds only an `HttpOnly`, `Secure`, `SameSite=Strict` session cookie.
+* Step-up for approvals uses RFC 9470 through the client.
+* Agents present bearer tokens that `token-sheriff-validation-quarkus` validates.
+* Rights come from identity-provider groups, mapped per repository. Directory roles grant nothing in the first
+  iteration.
+
+The details are in link:../concepts/authentication-and-identity.adoc[Authentication and Identity].
+
+== Alternatives rejected
+
+=== Tokens in the browser
+
+A public client in the SPA would hold access and refresh tokens. *Rejected because* any script injection could take
+them. Current browser-application guidance prefers a backend-for-frontend.
+
+=== API Sheriff as BFF in front of the application
+
+API Sheriff offers BFF variants. *Not chosen for the first iteration because* the application needs the claims and
+step-up results in its own process to write signed trailers. A second hop would have to forward them. It stays an
+option for organisations that run API Sheriff anyway.
+
+=== Device pairing as in pm-web-app
+
+*Rejected because* pairing identifies a device, not a person. The trailers need an authenticated person.
+
+== Consequences
+
+=== Properties of the design
+
+* No token reaches the browser.
+* One authentication component serves the web app and the MCP server.
+
+=== Accepted costs
+
+* Sessions are lost on restart. Users log in again.
+* Several instances need sticky sessions or a shared session store.
+
+=== When this is revisited
+
+* When the claims and step-up results can travel reliably from an API Sheriff BFF.
+
+== Links
+
+* link:../concepts/authentication-and-identity.adoc[Authentication and Identity]
+* Token Sheriff `doc/client` (CLIENT-1 to CLIENT-24)
