@@ -61,6 +61,8 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]
 |`data-classes` |no |list of names
 |===
 
+`dependsOn` keeps the spelling of Backstage, from which it is taken; the other fields are written in kebab-case.
+
 `effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
 `dependsOn`, transitively; a cycle is reported as the cycle outcome naming the services on it.
 

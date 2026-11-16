@@ -22,9 +22,6 @@ The module cut is described in xref:concepts/module-structure.adoc[Module Struct
 pre-implementation phase: the modules `git-core`, `git-worktrees` and `git-testing` are scaffolds, the others are not
 yet created.
 
-The groups `git-forms`, `git-crypto`, `git-signing`, `git-timestamp` and `git-directory` rest on ADRs with the status
-Proposed. Their requirements are provisional until those ADRs are accepted; each group names its ADRs.
-
 Out of scope for these libraries: the user interface, domain schemas, the OAuth flows and the identity provider, and
 integrations with issue trackers (see xref:concepts/git-as-document-persistence.adoc#_not_in_scope[Not in Scope]).
 
@@ -410,10 +407,6 @@ Specification: xref:specification/git-store.adoc[git-store]_
 [#requirements-git-forms]
 == `git-forms` Requirements
 
-NOTE: Provisional until
-xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011]
-is accepted.
-
 [#GDR-FORMS-1]
 === GDR-FORMS-1: Kinds of Documents as Configuration
 
@@ -512,10 +505,6 @@ Specification: xref:specification/git-forms.adoc[git-forms]_
 [#requirements-git-crypto]
 == `git-crypto` Requirements
 
-NOTE: Provisional until
-xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[ADR-0008]
-is accepted.
-
 [#GDR-CRYPTO-1]
 === GDR-CRYPTO-1: Envelope Encryption
 
@@ -608,11 +597,6 @@ xref:specification/git-crypto.adoc[git-crypto]_
 [#requirements-git-signing]
 == `git-signing` Requirements
 
-NOTE: Provisional until
-xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006] and
-xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007]
-are accepted.
-
 [#GDR-SIGN-1]
 === GDR-SIGN-1: Commit Signature
 
@@ -699,10 +683,6 @@ Specification: xref:specification/git-signing.adoc[git-signing]_
 [#requirements-git-timestamp]
 == `git-timestamp` Requirements
 
-NOTE: Provisional until
-xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009]
-is accepted.
-
 [#GDR-TSA-1]
 === GDR-TSA-1: Timestamp per State of `main`
 
@@ -738,10 +718,6 @@ _Concept: xref:concepts/evidence-and-companion-stores.adoc#_consistency_between_
 
 [#requirements-git-directory]
 == `git-directory` Requirements
-
-NOTE: Provisional until
-xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[ADR-0012]
-is accepted.
 
 [#GDR-DIR-1]
 === GDR-DIR-1: Catalogs

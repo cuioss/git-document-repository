@@ -40,9 +40,10 @@ Default `repositories` in the shipped `cisos-friend.yaml`:
 |===
 
 The retention classes and their periods are defined in `retention-classes`
-(link:configuration.adoc#_retention_classes[Configuration, Retention Classes]); the period of `incident-reports` is a
-placeholder until agreed with the data protection officer. Each category names its class; boot validation refuses a
-repository whose categories carry two retention classes (link:configuration.adoc#_boot_validation[Boot Validation]).
+(link:configuration.adoc#_retention_classes[Configuration, Retention Classes]); the period of `incident-reports` defaults
+to `P5Y`, and an organisation sets its own period with its data protection officer. Each category names its class;
+boot validation refuses a repository whose categories carry two retention classes
+(link:configuration.adoc#_boot_validation[Boot Validation]).
 `isms-incidents-<year>` is created on the first report of a year.
 
 == References
