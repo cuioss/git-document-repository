@@ -101,19 +101,19 @@ application in `doc/app/adr/` follow the same structure.
 
 |xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[0006]
 |The application signs every commit and records the user's claims as signed trailers
-|Proposed
+|Accepted
 
 |xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[0007]
 |Passkey approvals are stored as `git notes` on the approved commit
-|Proposed
+|Accepted
 
 |xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[0008]
 |The pseudonym mapping lies in an encrypted keyring in Git; erasure rotates the key-encryption key
-|Proposed
+|Accepted
 
 |xref:adr/0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[0009]
 |RFC 3161 timestamps anchor the history as `git notes`, written by a post-commit outbox
-|Proposed
+|Accepted
 
 |xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[0010]
 |No database; the in-memory index is derived from Git
@@ -121,11 +121,11 @@ application in `doc/app/adr/` follow the same structure.
 
 |xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[0011]
 |Documents are schema-driven YAML data with AsciiDoc fragments and generated output
-|Proposed
+|Accepted
 
 |xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[0012]
 |Directory roles are names only in the first iteration
-|Proposed
+|Accepted
 |===
 
 == Requirements and Specification

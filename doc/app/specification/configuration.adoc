@@ -209,7 +209,7 @@ Status: PLANNED
 |SAMM, threat models, ISMS documents and registers, directory
 
 |`incident-reports`
-|`P5Y` (placeholder until agreed with the data protection officer)
+|`P5Y` (default; an organisation sets its own period with its data protection officer)
 |Incident reports
 |===
 
