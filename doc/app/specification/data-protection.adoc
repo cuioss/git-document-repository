@@ -14,8 +14,10 @@ Status: PLANNED
 
 What the application configures and enforces on top of the library's keyring, pseudonyms and erasure. Reasoning:
 link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library contract:
-link:../../Requirements.adoc#GDR-CRYPTO-3[GDR-CRYPTO-3: Pseudonyms], link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4:
-Erasure by Key Rotation], link:../../Requirements.adoc#GDR-CRYPTO-6[GDR-CRYPTO-6: Personal Fields in Documents] and
+link:../../Requirements.adoc#GDR-CRYPTO-3[GDR-CRYPTO-3: Pseudonyms],
+link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4: Erasure by Key Rotation],
+link:../../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5: Evidence of Erasure],
+link:../../Requirements.adoc#GDR-CRYPTO-6[GDR-CRYPTO-6: Personal Fields in Documents] and
 link:../../Requirements.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
 
 == Repository Cut
@@ -37,19 +39,23 @@ Default `repositories` in the shipped `cisos-friend.yaml`:
 |`directory` |`public-internal` |`unlimited` |Catalogs, persons, keyring
 |===
 
-The retention period of `incident-reports` is a placeholder until agreed with the data protection officer. Boot
-validation refuses one repository with two retention classes (link:configuration.adoc#_boot_validation[Boot
-Validation]). `isms-incidents-<year>` is created on the first report of a year.
+The retention classes and their periods are defined in `retention-classes`
+(link:configuration.adoc#_retention_classes[Configuration, Retention Classes]); the period of `incident-reports` is a
+placeholder until agreed with the data protection officer. Each category names its class; boot validation refuses a
+repository whose categories carry two retention classes (link:configuration.adoc#_boot_validation[Boot Validation]).
+`isms-incidents-<year>` is created on the first report of a year.
 
 == References
 _See Requirement link:../Requirements.adoc#CIFR-DP-2[CIFR-DP-2: Cross-Repository References]_
 
 Status: PLANNED
 
-Reference syntax: `<alias-or-kind>:<path>[#<fragment>]` (`isms-register:risk/R-042`, `samm:assessment/<id>`,
-`service:payment-api`). On save every reference field (schema `x-reference: true`) is resolved against the index; an
-unresolved reference is a field error `REFERENCE_NOT_FOUND`. A reference into a repository the user may not read is
-reported as not found.
+Reference forms, as defined by the library: `<alias>:<kind>/<id>` for a document, where `<alias>` is the repository
+alias of `repositories` (`isms-register:risk/R-042`, `samm-assessments:assessment/<id>`), and `<catalog>:<id>` for a
+directory catalog entry (`service:payment-api`, `role:ciso`). The application may append `#<fragment>` to name a part
+of the target document (a practice, a threat); the existence check applies to the document. On save every reference
+field (schema `x-reference: true`) is resolved against the index; an unresolved reference is a field error
+`REFERENCE_NOT_FOUND`. A reference into a repository the user may not read is reported as not found.
 
 == Erasure
 _See Requirements:_
@@ -61,9 +67,13 @@ Status: PLANNED
 
 * Requests: `POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym; stored as pending in the
   `directory` repository.
-* Execution: at `keyring.rotation-interval` (default `P1D`) the library removes the pending entries, re-encrypts the
-  keyring with a new KEK version and the application requests destruction of the old version at the key source.
-* Evidence: the rotation commit message names the destroyed KEK version and the pseudonyms; the commit is timestamped.
+* Execution: at `keyring.rotation-interval` (default `P1D`) the application starts the library's erasure. The
+  library removes the pending entries, re-encrypts the keyring with a new KEK version and commits (and in remote mode
+  pushes) it; only after that succeeded does the library destroy the old KEK version at the key source
+  (link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4]). The application only configures the key source.
+* Evidence: the rotation commit names the erased pseudonyms and the KEK version pending destruction; a further commit
+  records the destroyed version (link:../../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5]). Both commits are
+  timestamped when a timestamp authority is configured.
 * Display: a pseudonym without keyring entry is shown as "former member".
 
 == Retention
@@ -71,13 +81,18 @@ _See Requirement link:../Requirements.adoc#CIFR-DP-4[CIFR-DP-4: Retention]_
 
 Status: PLANNED
 
-Daily job: for each repository with a period retention class, compute `end = created + period` (for
+Daily job: for each repository whose retention class has a period, compute `end = created + period` (for
 `isms-incidents-<year>`: 31 December of `<year>` + period). Expired repositories are listed in the *Due* lens of users
-with `administer-catalogs`. Deletion is a confirmed action that removes the local repository on the volume (the cache of a remote repository
-included) and, through the Git host API, the remote repository; it is logged and timestamped in `directory`. Backup
-copies of the Git server and of the volume are outside the application: the operator's duties (deployment concept)
-require their expiry to match the retention period. Before the end, entries can be marked
-`restricted: true` (Art. 18); restricted documents are readable only with `approve`.
+with `administer-catalogs`. Deletion is a confirmed action that removes the local repository on the volume (the cache
+of a remote repository included) and, through the Git host API of the repository's `host-type`, the remote
+repository; it is logged in `directory` and timestamped when a timestamp authority is configured. Backup
+copies of the Git server and of the volume are outside the application: the operator's duties
+(link:../concepts/deployment.adoc[Deployment]) require their expiry to match the retention period.
+
+Restriction of processing: before the end of the period, a document can be marked `processing-restricted: true`
+(GDPR Art. 18). This field is distinct from the confidentiality class `restricted` of a repository. It replaces
+erasure while a statutory retention obligation applies (GDPR Art. 17(3)(b), § 35(3) BDSG). A document marked this way
+is readable only with `approve`.
 
 == Personal Fields
 _See Requirement link:../Requirements.adoc#CIFR-DP-5[CIFR-DP-5: Personal Fields]_
@@ -85,8 +100,8 @@ _See Requirement link:../Requirements.adoc#CIFR-DP-5[CIFR-DP-5: Personal Fields]
 Status: PLANNED
 
 Schema fields with `"x-personal": true` carry a `subject` (pseudonym) and are stored as ciphertext produced by the
-library with that subject's data key. Fields with `"x-free-text": true` show the hint text `form.hint.no-personal-notes`
-from the catalogue.
+library with that subject's data encryption key (DEK). Fields with `"x-free-text": true` show the hint text
+`form.hint.no-personal-notes` from the catalogue.
 
 == Read-Access Events
 _See Requirement link:../Requirements.adoc#CIFR-DP-6[CIFR-DP-6: Read-Access Events]_
@@ -109,10 +124,15 @@ Status: PLANNED
 |Value |Behaviour
 
 |`kms`
-|Key versions and destruction through the KMS API (`cui-http`)
+|Key versions and destruction through the library's KMS key source. The KMS must destroy a single key version:
+link:https://cloud.google.com/kms/docs/destroy-restore[Google Cloud KMS] does, after a scheduled-for-destruction
+duration (default 30 days) that adds to the erasure delay.
+link:https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html[AWS KMS] keeps the key material of every
+rotation until the whole KMS key is deleted, so it cannot serve as KEK source this way; whether one KMS key per KEK
+version is supported is an open question
 
 |`vault-transit`
-|Key versions and destruction through Vault transit (`cui-http`)
+|Key versions and destruction through the library's Vault transit key source
 
 |`file`
 |KEK versions read from a mounted directory; destruction is a manual step; `WARN` record at every start

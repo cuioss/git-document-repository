@@ -14,8 +14,11 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs and the
-directory of persons. It depends on `git-forms` and `git-crypto`; persons and catalog entries are schema-driven
-documents. Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
+directory of persons. It depends on `git-forms` and `git-crypto`. Catalog entries are schema-driven documents; person
+entries are validated against a person schema like them but stored encrypted as a whole (`.enc`, Person Entries).
+Saving a person entry needs signature level 1 and therefore a provider of the `SignatureLevelVerifier` of
+`git-store` (`git-signing`) at run time; the static dependencies stay as above. Rationale:
+xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
 
 == Catalogs
 
@@ -30,10 +33,14 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-1[GDR-DIR-1: Catalogs]_
 |roles |`catalog/roles.yaml` (list) |`role:`
 |teams |`catalog/teams.yaml` (list; optional `parent`) |`team:`
 |services |`catalog/services/<id>.yaml` (one file per entry) |`service:`
+|systems |`catalog/systems.yaml` (list) |`system:`
+|external parties |`catalog/external.yaml` (list) |`external:`
 |===
 
-Common fields: `id` (required, immutable), `name` (required), `description`, `retired` (boolean, default `false`).
-Further catalogs are declared in configuration with file, id prefix and schema.
+Common fields: `id` (required, immutable; without the prefix, for example `payments`, referenced as `team:payments`),
+`name` (required), `description`, `retired` (boolean, default `false`). A service carries `lifecycle` as well;
+`lifecycle: retired` and `retired: true` are set together. Further catalogs are declared in configuration with file,
+id prefix and schema.
 
 == Service Catalog
 
@@ -45,7 +52,7 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]
 |===
 |Field |Required |Semantics
 
-|`system` |no |`system:<id>`, the product above
+|`system` |no |`system:<id>`, the product above (an entry of the system catalog)
 |`lifecycle` |yes |`planned`, `active`, `deprecated`, `retired`
 |`owner.team`, `owner.role` |yes |references into the team and role catalogs
 |`repositories` |no |list of repository URLs
@@ -55,7 +62,7 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]
 |===
 
 `effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
-`dependsOn`; cycles are reported as an outcome.
+`dependsOn`, transitively; a cycle is reported as the cycle outcome naming the services on it.
 
 == Person Entries
 
@@ -63,7 +70,8 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Entries]_
 
 *Status:* PLANNED
 
-`persons/<pseudonym>.enc`, encrypted with the person's DEK (`git-crypto`). Decrypted fields: `name` (required),
+`persons/<pseudonym>.enc`, the whole entry encrypted with the person's DEK (`git-crypto`). Decrypted fields, validated
+against the person schema: `name` (required),
 `memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation). Additional fields
 need an explicit schema extension by the operator.
 
@@ -81,7 +89,9 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login]_
 * unknown (issuer, `sub`) → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from
   the token, memberships from IdP groups where mapped).
 
-`saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1.
+`saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1; the evidence is
+checked by the `SignatureLevelVerifier` provider (`git-signing`), which must be present at run time. The entry is valid
+at once.
 
 == Reference Resolution
 
@@ -95,7 +105,9 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-5[GDR-DIR-5: Reference Resolu
 
 |`resolve("team:payments")` |the catalog entry (also when retired)
 |`holders("role:security-champion", "team:payments")` |the pseudonyms with that membership
-|`person(pseudonym)` |the entry, or `FORMER_MEMBER` when the pseudonym was erased
+|`resolve("system:payments-platform")`, `resolve("external:card-processor")` |the system or external entry
+|`person(pseudonym)` |the entry, or a former-member marker when the pseudonym was erased (its entry no longer
+decrypts)
 |===
 
 == Import from Backstage
@@ -104,18 +116,32 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-6[GDR-DIR-6: Import from Back
 
 *Status:* PLANNED
 
-[cols="1,1"]
+Backstage kinds and fields as described in its descriptor format
+(https://backstage.io/docs/features/software-catalog/descriptor-format):
+
+[cols="1,2"]
 |===
-|Backstage kind _(unverified)_ |Catalog
+|Backstage kind |Catalog
 
 |`Component` |service (`spec.system` → `system`, `spec.lifecycle` → `lifecycle`, `spec.owner` → `owner.team`,
 `spec.dependsOn` → `dependsOn`)
-|`System` |`system:` reference
+|`System` |system
 |`Group` |team (`spec.parent` → `parent`)
 |===
 
-The import matches by `metadata.name`; it updates changed fields, adds new entries and never deletes (a vanished entry
-is reported). Fields Backstage does not know (`protection-needs`, `data-classes`) are kept.
+* References: Backstage entity references are translated by kind: a `Group` → `team:<name>`, a `System` →
+  `system:<name>`, a `Component` → `service:<name>`. Only the namespace `default` is imported; a reference to
+  another namespace or to another kind (a `User` as owner, a `Resource` in `spec.dependsOn`) is reported and left
+  out.
+* Lifecycle: Backstage accepts any value; its well-known values are `experimental`, `production` and `deprecated`.
+  The mapping is configuration (`directory.backstage.lifecycle`); the default maps `production` → `active` and
+  `deprecated` → `deprecated`. An unmapped value is reported and leaves the field unchanged.
+* Matching: the import matches by `metadata.name`; it updates changed fields and never deletes (a vanished entry is
+  reported). Fields Backstage does not know (`owner.role`, `protection-needs`, `data-classes`) are kept.
+* New entries: a new service needs `owner.role`, `protection-needs` and a mapped `lifecycle`, which Backstage does not
+  supply. The import takes `owner.role` and `protection-needs` from the configured defaults
+  (`directory.backstage.defaults`); without them, or with an unmapped lifecycle, the new component is reported and
+  not created.
 
 == Periodic Confirmation
 

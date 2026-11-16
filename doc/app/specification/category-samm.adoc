@@ -47,17 +47,24 @@ Status: PLANNED
 |Per practice: `target` (0–3, in steps of the model), optional `due`
 |===
 
-Assessment ids: `<scope-id>-<yyyy>-q<n>` or a ULID when not unique. `subject` must resolve through the directory on every
-save; an unresolved subject is a field error.
+`<assessment-id>` is a ULID; it names the assessment directory, the working branch, the release tag and the link
+target (`samm-assessments:assessment/<assessment-id>`). A readable label such as `team-a 2026 Q4` is the field `title`
+of `assessment.yaml`, not an id. `subject` must resolve through the directory on every save; an unresolved subject is
+a field error.
 
 == Editing
 _See Requirement link:../Requirements.adoc#CIFR-SAMM-3[CIFR-SAMM-3: Joint Editing]_
 
 Status: PLANNED
 
-Workflow pattern: save often. Every save lands on `refs/heads/assessments/<assessment-id>` as one commit per changed
-practice file; conflicts are detected per practice file by blob id and resolved per question by the library's merge of
-YAML structures; a question changed on both sides is a `CONFLICT` naming the question.
+Workflow pattern: save often. Every save applies the draft's changes onto the tip of
+`refs/heads/assessments/<assessment-id>` as one commit (squash merge in core). Conflicts are detected per practice
+file by blob id: when another save changed the same practice file, `git-forms` compares the two versions per question;
+changes to different questions are combined and the save re-applied, and a question changed on both sides is a
+`CONFLICT` naming the question with both values. The draft stays unchanged.
+
+Transition `samm.submit`: `draft` → `in-review`, signature level 1, by a user with `edit`; it validates `required` of
+the schema. Saves stay possible in `in-review`.
 
 == Release
 _See Requirement link:../Requirements.adoc#CIFR-SAMM-4[CIFR-SAMM-4: Release]_
@@ -65,8 +72,11 @@ _See Requirement link:../Requirements.adoc#CIFR-SAMM-4[CIFR-SAMM-4: Release]_
 Status: PLANNED
 
 Transition `samm.release`: `in-review` → `released`, default signature level 2. Effect: merge into `main`, tag
-`assessment/<assessment-id>/v1`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`. Optional
-`release.via-pull-request: true` opens a pull or merge request; the library records its approval as trailer, or as a signed note when the Git server
+`assessments/<assessment-id>/v1`, `state: released`. Saves to a released assessment return `DOCUMENT_RELEASED`.
+
+With `categories.samm.release.via-pull-request: true`
+(link:configuration.adoc#_categories[Configuration, Categories]) `samm.submit` opens a pull or merge request, and
+approve (release) merges it. The library records the approval as trailer, or as a signed note when the Git server
 creates the merge.
 
 == Comparison
@@ -86,5 +96,7 @@ _See Requirement link:../Requirements.adoc#CIFR-SAMM-6[CIFR-SAMM-6: Targets and 
 
 Status: PLANNED
 
-Gap: practice score of the latest released assessment < `target`. Per gap the view offers "Create issue" (issue tracker
-integration) and "Create risk" (new draft in `isms-register` with a reference `samm:assessment/<id>#<practice>`).
+Gap: a practice whose score in a released assessment is below its `target`. The gaps are listed for every released
+assessment; the scope view shows those of the latest released assessment by default. Per gap the view offers "Create
+issue" (issue tracker integration) and "Create risk" (new draft in `isms-register` with a reference
+`samm-assessments:assessment/<id>#<practice>`).

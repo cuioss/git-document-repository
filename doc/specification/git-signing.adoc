@@ -14,9 +14,12 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-signing` (module `de.cuioss.git.document.signing`, not yet created, optional) signs commits, writes the identity
-and approval trailers, verifies passkey approvals and checks signatures. It depends on `git-store`. A WebAuthn
-verification library is open and needs the owner's approval. Rationale:
-xref:../concepts/identity-and-signing.adoc[Identity and Signing].
+and approval trailers, verifies passkey approvals and checks signatures. It depends on `git-store` and provides two
+of its service provider interfaces: `SignatureLevelVerifier` (evidence of a signature level for a transition) and
+`CommitTrailerContributor` (identity and approval trailers); see
+xref:git-store.adoc#_service_provider_interfaces[git-store, Service Provider Interfaces]. A WebAuthn verification
+library is open and needs the owner's approval. Rationale: xref:../concepts/identity-and-signing.adoc[Identity and
+Signing].
 
 == Commit Signature
 
@@ -24,12 +27,16 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1: Commit Signatu
 
 *Status:* PLANNED
 
-* The module implements JGit's signer interface _(unverified: `org.eclipse.jgit.lib.Signer` in recent versions)_ and
-  delegates the signing operation to a `SigningKeySource`.
+* The module implements JGit's signer interface `org.eclipse.jgit.lib.Signer` (since JGit 7.0) and delegates the
+  signing operation to a `SigningKeySource`.
 * `SigningKeySource` implementations: KMS, HSM (PKCS#11), key file. The application never holds the private key when
   KMS or HSM is used.
-* `signing.format`: `ssh` or `gpg` (required). Whether the JGit version in use writes SSH signatures is to verify
-  _(unverified)_.
+* `signing.format`: `ssh` or `openpgp` (required), the values of Git's `gpg.format` and of JGit's
+  `GpgConfig.GpgFormat`. JGit 7.8.0 ships a signer and a verifier for each format in separate artifacts:
+  `org.eclipse.jgit.ssh.apache` for `ssh` and `org.eclipse.jgit.gpg.bc` (Bouncy Castle) for `openpgp`, both in internal
+  packages and registered through `ServiceLoader`. Whether `git-signing` uses them, and therefore adds the artifact of
+  the configured format as a dependency, is open and needs the owner's approval.
+* Every selectable format is verifiable (Signature Verification).
 
 == Identity Trailers
 
@@ -41,17 +48,18 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2: Identity Trail
 |===
 |Trailer |Value |Source
 
-|`Actor` |pseudonym (`p-…`) |`git-crypto`
+|`Actor` |pseudonym (`p-…`) |the `PseudonymResolver` of `git-store` (provided by `git-crypto` or the application)
 |`Actor-Issuer` |issuer URL of the identity provider |token claim `iss`
 |`Auth-Time` |ISO 8601 UTC, seconds precision |token claim `auth_time`
-|`Auth-Context` |`acr` value; `amr` values comma-separated |token claims `acr`, `amr`
+|`Auth-Context` |`acr=<acr>; amr=<amr>,<amr>…` (for example `acr=urn:example:mfa; amr=pwd,otp`); a part is left out
+when its claim is absent |token claims `acr`, `amr`
 |`Session` |`hmac:` + hex HMAC-SHA-256 of `sid` under a configured key |token claim `sid`
 |`Actor-Client` |OAuth client id of a delegated client; absent when the user acted directly |token claim `azp` or
 `client_id` of the delegated token
 |===
 
 The caller supplies the claims; the module never receives the access token. `sub` and `sid` are refused as trailer
-values.
+values. The HMAC key of `Session` is a configured secret (see xref:error-model.adoc#_secrets[Error Model, Secrets]).
 
 == Portable Approvals
 
@@ -70,10 +78,33 @@ One `Approved-by` per approval; `Review` only when the release came through a pu
 supplies the approvals collected from the Git server.
 
 When the Git server creates the release merge (protected `main`), the merge commit is the server's and carries no
-signature of the application. The library then writes the same `Approved-by` and `Review` lines as a note on that merge
-commit under `refs/notes/approvals`, in a notes commit signed by the application. The note is written when a fetch
-shows the new tip of `main` (outbox consumer `approvals` of `git-store`); in remote mode the notes reference is pushed
-right after.
+signature of the application. The library then records the same approvals as an entry of `kind` `merge` in the note
+on that merge commit under `refs/notes/approvals`, in a notes commit signed by the application. The note is written
+when a fetch shows the new tip of `main` (outbox consumer `approvals` of `git-store`); in remote mode the notes
+reference is pushed right after, as a system commit with the technical user's credentials.
+
+A commit has at most one note under `refs/notes/approvals`: a YAML document with a list `approvals`. Each entry
+carries a `kind` (`merge` or `passkey`) and the fields of that kind; binary values are base64.
+
+[source,yaml]
+----
+approvals:
+  - kind: merge
+    approved-by:
+      - { actor: p-91c2d0a7e1b3, role: "role:ciso" }
+    review: https://git.example/sec/register/pull/17
+  - kind: passkey
+    actor: p-91c2d0a7e1b3
+    credential-id: <base64>
+    nonce: <base64>
+    authenticator-data: <base64>
+    client-data-json: <base64>
+    signature: <base64>
+----
+
+A writer reads the note, appends its entry and writes the note back in a new notes commit that moves
+`refs/notes/approvals` by compare-and-swap (`git-core` Notes); on a lost race it reads the new note and appends again.
+A second approval therefore never replaces the first.
 
 == Step-Up Evidence
 
@@ -97,13 +128,16 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5: Passkey Approv
 
 |Registration file |`keys/webauthn.yaml`: per pseudonym a list of credential ids and COSE public keys with
 `registered` and optional `retired` dates; changed only by signed commits
-|Challenge |SHA-256 over the raw commit id followed by a 16-byte random nonce; the nonce is issued for one approval,
-used once, and expires after `signing.challenge-ttl` (ISO 8601 duration, required)
+|Challenge |SHA-256 over the commit id as lowercase ASCII hex followed by a 16-byte (128-bit) random nonce, the same
+form of the commit id as the timestamp imprint of `git-timestamp`; the nonce is issued for one approval, used once,
+and expires after `signing.challenge-ttl` (ISO 8601 duration, required)
 |Acceptance |client data `type` is `webauthn.get`; client data `origin` is in `signing.allowed-origins`; client data
-`challenge` equals the issued challenge; the nonce is unused and not expired; signature verifies with a registered,
-non-retired key; flags UP and UV set; RP id hash matches the configured `signing.rp-id`
-|Storage |note on the commit under `refs/notes/approvals`: YAML with pseudonym, credential id, nonce, authenticator data,
-client data JSON and signature, base64. A verifier recomputes the challenge from the commit id and the nonce.
+`challenge` equals the issued challenge; the nonce is unused and not expired; the RP ID hash of the authenticator data
+matches the configured `signing.rp-id`; flags UP and UV set; the signature verifies with a key that is registered and
+not retired at the time of the approval. A later retirement leaves earlier approvals valid.
+|Storage |an entry of `kind` `passkey` in the note on the commit under `refs/notes/approvals` (Portable Approvals). A
+verifier recomputes the challenge from the commit id and the nonce, and checks the key against the version of
+`keys/webauthn.yaml` valid at the time of the notes commit.
 |===
 
 == Signature Verification
@@ -112,14 +146,21 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-6[GDR-SIGN-6: Signature Veri
 
 *Status:* PLANNED
 
-* `allowed_signers` at the repository root, in the format of Git's SSH signature verification (principal, options
-  `valid-after` / `valid-before`, public key).
+* Key files at the root of `main`, one per format; a signature passes when it verifies with a key of the file that
+  is valid at the commit time:
+** `ssh`: `allowed_signers`, in the format of Git's SSH signature verification (principal, options `valid-after` /
+   `valid-before`, public key).
+** `openpgp`: `allowed_keys.asc`, the ASCII-armored public keys; a key is valid between its creation time and its
+   expiry or revocation as recorded in the file.
 * Trust root: the verifier reads the application's signing keys from its own configuration (`signing.trust-root`), not
-  from the repository. A version of `allowed_signers` is trusted only when the commit that introduced it is signed by a
-  key the previous trusted version lists; the first version must be signed by a key of the trust root. A Git
+  from the repository. A version of a key file is trusted only when the commit that introduced it is signed by a key
+  the previous trusted version lists; the first version must be signed by a key of the trust root. A Git
   administrator who replaces the file therefore cannot make own keys trusted.
 * A merge commit the Git server created on `main` passes when both parents pass and an approval note signed by the
   application exists for it (Portable Approvals).
 * `verify(ref)` walks the commits of the reference and returns those without a signature valid at their commit time.
-* CI without the application: with `signing.format = ssh`, `git -c gpg.ssh.allowedSignersFile=allowed_signers
-  verify-commit <id>` checks a commit with a stock git installation.
+* CI without the application: `verify(ref)` needs only the repository and `signing.trust-root`, so a CI job can run
+  it without the application. With `signing.format = ssh`, `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`
+  also checks a single signature with a stock Git installation, but it applies no trust-root chain: it trusts the
+  given file as it is. A CI job using it must therefore take the file from a trusted source (the chain check above),
+  never from the commit under test.

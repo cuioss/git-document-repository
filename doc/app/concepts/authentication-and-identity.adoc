@@ -25,8 +25,11 @@ Token Sheriff provides authentication and the OAuth flows; this application take
 
 * *Web app*: the server is a confidential client of the identity provider through `token-sheriff-client-quarkus`
   (authorization code with PKCE `S256`, session-bound `state` and `nonce`, issuer check, optional PAR). The tokens stay
-  in the server; the browser holds only an `HttpOnly`, `Secure`, `SameSite` session cookie. This is the
-  backend-for-frontend shape Token Sheriff's client is built for.
+  in the server. During the login the browser holds a short-lived `HttpOnly`, `Secure`, `SameSite=Lax`
+  login-transaction cookie that binds `state` and `nonce` across the identity provider's callback; afterwards it
+  holds only the `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. This is the backend-for-frontend shape Token
+  Sheriff's client is built for; an API Sheriff BFF in front of the application was considered and not chosen
+  (ADR-0004, alternatives).
 * *MCP server*: AI agents present bearer access tokens. The server validates them with
   `token-sheriff-validation-quarkus` as an OAuth 2.1 resource server (link:mcp-server.adoc[MCP Server]).
 * *Logout* is RP-initiated and revokes the tokens the server holds.
@@ -116,12 +119,12 @@ working branch and release runs as a pull or merge request.
 Commits signed with the user's own Git key are not feasible server-side; the graded signature replaces them. One push
 per save keeps every push to the commits of exactly one user.
 
-[#_signature_levels_per_category_and_state]
-== Signature Levels per Category and State
+[#_signature_levels_per_transition]
+== Signature Levels per Transition
 
-The signature level is part of the workflow of each category, per state. The levels themselves are defined by the
-library (0: author field only; 1: application signature with trailers; 2: plus step-up MFA; 3: plus passkey approval;
-4: qualified electronic signature). The defaults of CISOs-Friend:
+The signature level is part of the workflow of each category and is configured per transition. The levels are
+defined by the library (0: author field only; 1: application signature with trailers; 2: plus step-up MFA; 3: plus
+passkey approval; 4: qualified electronic signature). The defaults of CISOs-Friend:
 
 [cols="2,1,3"]
 |===
@@ -145,11 +148,11 @@ library (0: author field only; 1: application signature with trailers; 2: plus s
 
 |Release of an incident response report
 |3
-|fingerprint or Windows Hello
+|one passkey confirmation (user verification on the device)
 
 |Approval of a policy or of the statement of applicability
 |3
-|fingerprint or Windows Hello
+|one passkey confirmation (user verification on the device)
 
 |Qualified electronic signature
 |4
@@ -161,17 +164,16 @@ configured assurance, it re-drives authorization with `acr_values` and `max_age`
 Sheriff's client) and verifies the result before it writes the approval.
 
 *Passkey (level 3)*: the web app registers the user's WebAuthn public key once; on approval the browser signs a
-fresh, single-use challenge bound to the commit id after user verification; the server checks ceremony type, origin,
-challenge and signature, and the library stores the assertion as a note. An AI agent can never perform a level 2 or level 3 approval; it hands the approval to the human
-(link:mcp-server.adoc[MCP Server]).
+fresh, single-use challenge bound to the commit id (a hash over the commit id and a server nonce) after user
+verification, with a key the server does not hold; the server checks ceremony type, origin, challenge and signature,
+and the library stores the assertion as a note. An AI agent can never perform a level 2 or level 3 approval; it hands
+the approval to the human (link:mcp-server.adoc[MCP Server]).
 
 == Open Questions
 
 . Clarify with Token Sheriff which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups reach the application,
   how the step-up for approvals is triggered, and whether Token Sheriff can hold versioned secrets (the KEK).
-. Whether groups arrive by token claim or by SCIM _(unverified)_.
-. Whether the web login runs in the application through `token-sheriff-client-quarkus` or in an API Sheriff BFF in
-  front of it (see ADR-0004, alternatives).
+. Whether groups arrive by token claim or by SCIM.
 . Token lifetimes and refresh of the Git hosts for pushing in the user's name (GitHub, GitLab, Gitea) _(unverified)_.
 
 == Related

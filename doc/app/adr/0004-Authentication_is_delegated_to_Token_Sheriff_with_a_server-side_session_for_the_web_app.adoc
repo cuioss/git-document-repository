@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: People log in through Token Sheriff's confidential client inside the application (backend-for-frontend shape); the browser holds only a session cookie; agents present bearer tokens validated by Token Sheriff; rights come from identity-provider groups.
+// summary: People log in through Token Sheriff's confidential client inside the application (backend-for-frontend shape); the browser holds a short-lived login-transaction cookie during the login and afterwards only a session cookie; agents present bearer tokens validated by Token Sheriff; rights come from identity-provider groups.
 // tags: authentication, oidc, bff, session, token-sheriff
 // affects: cisos-friend, web-app
 // supersedes:
@@ -24,7 +24,9 @@ rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of
 *The decision:* authentication is delegated to Token Sheriff.
 
 * The application is a confidential client through `token-sheriff-client-quarkus`. It holds the tokens server-side.
-* The browser holds only an `HttpOnly`, `Secure`, `SameSite=Strict` session cookie.
+* During the login the browser holds a short-lived `HttpOnly`, `Secure`, `SameSite=Lax` login-transaction cookie
+  that binds `state` and `nonce` across the identity provider's callback. Afterwards it holds only an `HttpOnly`,
+  `Secure`, `SameSite=Strict` session cookie.
 * Step-up for approvals uses RFC 9470 through the client.
 * Agents present bearer tokens that `token-sheriff-validation-quarkus` validates.
 * Rights come from identity-provider groups, mapped per repository. Directory roles grant nothing in the first
@@ -37,7 +39,9 @@ The details are in link:../concepts/authentication-and-identity.adoc[Authenticat
 === Tokens in the browser
 
 A public client in the SPA would hold access and refresh tokens. *Rejected because* any script injection could take
-them. Current browser-application guidance prefers a backend-for-frontend.
+them. The IETF guidance for browser-based applications (draft-ietf-oauth-browser-based-apps) strongly recommends the
+backend-for-frontend architecture for business applications, sensitive applications and applications that handle
+personal data.
 
 === API Sheriff as BFF in front of the application
 
@@ -69,3 +73,5 @@ option for organisations that run API Sheriff anyway.
 
 * link:../concepts/authentication-and-identity.adoc[Authentication and Identity]
 * Token Sheriff `doc/client` (CLIENT-1 to CLIENT-24)
+* https://datatracker.ietf.org/doc/draft-ietf-oauth-browser-based-apps/[OAuth 2.0 for Browser-Based Applications]
+  (draft-ietf-oauth-browser-based-apps, section 6.1)

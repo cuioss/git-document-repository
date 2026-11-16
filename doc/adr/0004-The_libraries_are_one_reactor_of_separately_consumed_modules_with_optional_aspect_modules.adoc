@@ -36,13 +36,15 @@ the modules above it. The dependency graph is in xref:../concepts/module-structu
 
 === One module to start, split later
 
-An earlier version of the study recommended one module.
+All aspects start in one module, which is split once the code grows.
 
 *Rejected because* three forces would split it later at a higher price: the foundation shared with
 `pm-provider-git`, optional dependencies that become mandatory in one module, and a layering that one module does not
 enforce.
 
 === One repository per module
+
+Every module lives in a repository of its own with its own release.
 
 *Rejected because* the modules change together while the store is young. Separate repositories would need a release
 per change and version alignment across them.

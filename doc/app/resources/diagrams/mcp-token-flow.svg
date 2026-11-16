@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- theme-handling: A (theme-neutral); diagram type: sequence -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 616"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 624"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">An AI agent obtains an audience-bound token and saves through the MCP server</title>
@@ -21,7 +21,7 @@
       .note-lbl     { font-size: 11px; fill: #6e7681; font-style: italic; }
       .activation   { stroke: #6e7681; stroke-width: 0.8; fill: #6e7681; opacity: 0.15; }
       .col-sub      { font-size: 11px; fill: #6e7681; text-anchor: middle; font-style: italic; }
-      .caption      { font-size: 12px; fill: #6e7681; text-anchor: middle; font-style: italic; }
+      .caption      { font-size: 11px; fill: #6e7681; text-anchor: middle; font-style: italic; }
     </style>
   </defs>
 
@@ -69,9 +69,10 @@
 
   <!-- authorization -->
   <line class="arrow" x1="100" y1="252" x2="320" y2="252" marker-end="url(#arrow)"/>
-  <text x="210" y="244" class="arrow-lbl">PKCE S256, resource = MCP URI</text>
+  <text x="210" y="230" class="arrow-lbl">PKCE S256,</text>
+  <text x="210" y="244" class="arrow-lbl">resource = MCP URI</text>
   <line class="arrow-return" x1="320" y1="282" x2="100" y2="282" marker-end="url(#arrow)"/>
-  <text x="210" y="274" class="arrow-lbl">access token, aud = MCP URI</text>
+  <text x="210" y="274" class="arrow-lbl">token, aud = MCP URI</text>
 
   <!-- authenticated call -->
   <line class="arrow" x1="100" y1="330" x2="535" y2="330" marker-end="url(#arrow)"/>

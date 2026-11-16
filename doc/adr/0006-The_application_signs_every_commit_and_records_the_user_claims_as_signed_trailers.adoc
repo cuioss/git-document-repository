@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: A technical user pushes; the application signs each commit with its own key through an exchangeable signer and writes pseudonym, issuer, auth time, auth context and a session HMAC as trailers; pushing with the user's token stays optional.
+// summary: A technical user pushes; the application signs each commit with its own key through an exchangeable signer and writes pseudonym, issuer, auth time, auth context, a session HMAC and, for a delegated client, its client id as trailers; pushing with the user's token stays optional.
 // tags: identity, signing, trailers, traceability
 // affects: git-signing, git-store
 // supersedes:
@@ -26,33 +26,48 @@ question is how the store records identity.
 * A technical user pushes by default.
 * The application signs every commit with its own key, through an exchangeable signer (KMS, HSM or key file).
 * The commit message carries trailers: `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time`, `Auth-Context` and
-  `Session` (an HMAC of the session id).
+  `Session` (an HMAC of the session id). A save that a delegated client performs on the user's behalf also carries
+  `Actor-Client` (the OAuth client id of that client).
 * On merge, approvals of a pull request become `Approved-by` and `Review` trailers of the release commit the
   application creates. When protected `main` forces the Git server to create the merge, the merge commit is the
   server's: the application then records the same approvals as a note on it under `refs/notes/approvals`, in a notes
   commit it signs, once a fetch shows the new tip of `main`.
+* A commit has one note under `refs/notes/approvals`: a YAML document with a list `approvals`. Each entry has a `kind`
+  (`merge` for approvals recorded on a server merge, `passkey` for
+  xref:0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007]) and its fields. A writer
+  reads the note, appends its entry and writes it back by compare-and-swap of the notes reference, so a second approval
+  never replaces the first.
 * Pushing with the user's token is an optional credentials strategy.
 
-This is level 1 of the graded traceability in xref:../concepts/identity-and-signing.adoc[Identity and Signing].
+This is signature level 1 in xref:../concepts/identity-and-signing.adoc[Identity and Signing].
 
 == Alternatives rejected
 
 === Push in each user's name only
+
+Every push uses the credentials of the user who made the change, and the Git server records who pushed.
 
 *Rejected as the default because* every user would need an account and rights on the Git server. The evidence would
 also lie in the server's audit log, not in the repository.
 
 === Commits signed with the user's own Git key
 
-*Rejected because* a server-side JGit push would need the user's private key. Commits created through the server's API
-are signed by the server and bind the store to one vendor.
+Each commit carries a signature made with a key of the user who made the change.
+
+*Rejected because* a server-side JGit push would need the user's private key. Creating the commits through a Git
+server's API instead binds the store to one vendor; whether and with which key such a server signs them depends on
+the vendor _(unverified)_.
 
 === `sub` and `sid` in clear text as trailers
+
+The trailers name the user by the identity provider's subject (`sub`) and session id (`sid`).
 
 *Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym is erasable
 through the keyring; the HMAC of `sid` still correlates with logs.
 
 === The author field only
+
+The commit's author field names the user, without trailers or a signature.
 
 *Rejected because* the author field is unchecked metadata. It makes no statement anyone can verify.
 

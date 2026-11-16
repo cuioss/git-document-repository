@@ -68,7 +68,7 @@ Status: PLANNED
 
 |`8443`
 |HTTPS
-|Web app, `/api/v1`, `/mcp`, `/.well-known/oauth-protected-resource`
+|Web app, `/api/v1`, `/mcp`, `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource`
 
 |`8080`
 |HTTP
@@ -86,9 +86,10 @@ Readiness checks, all required for `UP`:
 |Check |`UP` when
 
 |`repositories`
-|Every configured repository has been opened and, in remote mode, fetched once in this process or found as a valid
-local repository from an earlier fetch (start from the cache, see the degraded operation of the architecture
-specification); a remote repository without any local copy keeps readiness `DOWN`
+|Every configured repository is either fetched in this process or present as a valid local repository from an earlier
+fetch (start from the cache, see
+link:architecture-and-modules.adoc#_degraded_operation[Architecture and Modules, Degraded Operation]); a remote
+repository without a local copy keeps readiness `DOWN`. A later fetch failure does not drop readiness
 
 |`keyring`
 |The keyring was decrypted with the current KEK
@@ -110,10 +111,10 @@ Status: PLANNED
 |Secret |Mount or reference
 
 |TLS key and certificate
-|`/run/secrets/tls/{tls.key,tls.crt}`
+|`/run/secrets/tls/{tls.key,tls.crt}` (`quarkus.http.ssl.certificate.key-files`, `quarkus.http.ssl.certificate.files`)
 
 |OIDC client credential
-|`/run/secrets/oidc/client-secret` or a `private_key_jwt` key
+|`oidc.client-credential-ref`: the client secret or the `private_key_jwt` key
 
 |Git push credential
 |`credential-ref` per repository
@@ -121,12 +122,18 @@ Status: PLANNED
 |Commit-signing key
 |`signing.key-ref` (KMS key id recommended)
 
+|Session-HMAC key
+|`signing.session-hmac-key-ref`
+
 |KEK
 |`keyring.kek-ref`
 
 |Webhook secrets
 |`webhook-secret-ref` per repository
 |===
+
+Every reference uses one of the forms `file:`, `kms:` or `vault:`
+(link:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
 
 == Compose Sample
 _See Requirement link:../Requirements.adoc#CIFR-OPS-6[CIFR-OPS-6: Compose Sample]_
@@ -153,5 +160,5 @@ agent
 |RFC 3161 timestamp authority for tests
 |===
 
-Scripts in `scripts/`: `start-sample.sh`, `stop-sample.sh`, `check-sample.sh` (logs in as a test user, saves a SAMM
-draft, saves it, releases it with step-up, and verifies the tag in Gitea).
+Scripts in `scripts/`: `start-sample.sh`, `stop-sample.sh`, `check-sample.sh` (logs in as a test user, writes a SAMM
+draft, saves it explicitly, releases it with step-up, and verifies the release tag in Gitea).

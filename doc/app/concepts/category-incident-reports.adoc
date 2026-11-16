@@ -15,12 +15,14 @@ free text. This category replaces the report, not the handling.
 == Handling and Report Are Two Things
 
 * *Handling the incident* (alerting, coordination, escalation in real time) does not belong in Git. Chat, ticket
-  system and on-call service do that.
+  system, on-call service and Confluence do that.
 * *The report on the incident* (course, cause, impact, lessons, measures, notification duties) is a document with
-  structure, review and approval. It fits the Git approach very well.
+  structure, review and approval, the kind of document the schema-driven approach on Git is made for.
 
-The live phase therefore stays in Confluence, the chat or the ticket system; only the report moves into CISOs-Friend,
-ideally with an import of the timeline from the ticket or the chat. The decision is recorded in
+The live phase therefore stays in the chat, the ticket system, the on-call service and Confluence; only the report
+moves into CISOs-Friend. The application reads the ticket system and the chat to import the timeline into the report
+and writes nothing into them; measures are created as issues in the issue tracker and referenced by id. The decision
+is recorded in
 link:../adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_lives_in_Git.adoc[ADR-0008].
 
 == What a Form Gains over Confluence
@@ -48,11 +50,13 @@ runs already. That is why the live phase stays there.
 
 == The Deadline Clock
 
-The deadlines start at a point the report records: the time the organisation became aware of the incident. From that
-field and the classification (personal data affected, NIS2 applicable) the application computes the due times of the
-notifications and shows them in the form and on the dashboard. Deadlines are computed from the in-memory index;
-reminders are runtime state of the application, not persistence. A notification that was sent is a field with its
-time and its recipient; a missed deadline stays visible in the released report.
+The deadlines start at a point the report records: the time the organisation became aware of the incident (`aware-at`).
+From that field and the classification (personal data affected, NIS2 applicable) the application computes the due times
+of the notifications and shows them in the form and on the dashboard. The report also records when the incident began
+(`occurred-at`; where unknown, the first timeline entry) and when it was detected (`detected-at`); the time to detection
+is `detected-at` minus `occurred-at` and starts no deadline. Deadlines are computed from the in-memory index; reminders
+are runtime state of the application, not persistence. A notification that was sent is a field with its time and its
+recipient; a missed deadline stays visible in the released report.
 
 The affected services come from the service catalog, and with them their protection needs and data classes. The
 `dependsOn` graph of the catalog names the services an incident may have reached; the protection needs inherit by the
@@ -78,7 +82,8 @@ link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this 
 template and the workflow.
 
 Personal details in the narrative (a named employee who clicked a link) are a special case: the form offers a field
-encrypted with the data key of the data subject, and the UI warns against personal interview notes in free text.
+encrypted with the data encryption key (DEK) of the data subject, and the UI warns against personal interview notes in
+free text.
 
 == Existing Alternatives
 
@@ -96,7 +101,7 @@ encrypted with the data key of the data subject, and the UI warns against person
 
 |Netflix Dispatch
 |Open source incident management with Slack
-|Live phase; whether it is still actively maintained is not verified
+|Live phase; archived on GitHub (last push 2025-09-03) and no longer maintained
 
 |DFIR-IRIS _(unverified)_
 |Open source handling of security incidents (forensics), report templates
@@ -119,7 +124,7 @@ them to the ISMS, the threat models and the notification duties. The gap is the 
 . Draft the schema of incident response reports with the notification deadlines (GDPR Art. 33; NIS2 where it
   applies), after checking the deadlines and the applicability of NIS2.
 . Design the import of the timeline from the ticket system or the chat (which systems, pull or push).
-. Verify the state and licences of DFIR-IRIS, TheHive and Dispatch.
+. Verify the state and licences of DFIR-IRIS and TheHive.
 
 == Related
 

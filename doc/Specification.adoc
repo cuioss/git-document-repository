@@ -10,8 +10,9 @@
 _See Requirement link:Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
 
 This specification describes how the modules of `git-document-repository` realise the
-xref:Requirements.adoc[requirements]. The rationale lives in the concepts under xref:concepts/git-as-document-persistence.adoc[`doc/concepts/`]
-and the decisions under `doc/adr/`; neither is restated here.
+xref:Requirements.adoc[requirements]. The rationale lives in the concepts under
+xref:concepts/git-as-document-persistence.adoc[`doc/concepts/`] and the decisions under `doc/adr/`; neither is
+restated here.
 
 *Status of the whole specification:* PLANNED. `git-core`, `git-worktrees` and `git-testing` are scaffolds (a
 `pom.xml`, a `module-info.java` and a `@NullMarked` package each); the other modules are not created. Every section
@@ -34,7 +35,8 @@ repository, reading, notes, identity
 |Repository fixtures and the credential generator
 
 |xref:specification/git-store.adoc[git-store]
-|Repository registry, drafts, saving, release, identity per save, index, outbox, codecs
+|Repository registry, reference layout, drafts, saving, release, identity per save, index, outbox, codecs, service
+provider interfaces for the optional modules
 
 |xref:specification/git-forms.adoc[git-forms]
 |Kinds of documents, schema validation, data layout, generated output, workflow, deadlines, links, running numbers
@@ -43,7 +45,7 @@ repository, reading, notes, identity
 |Envelope encryption, pseudonyms, erasure by key rotation, personal fields
 
 |xref:specification/git-signing.adoc[git-signing]
-|Commit signature, trailers, approvals, passkeys, verification
+|Commit signature, identity trailers, approvals, step-up evidence, passkeys, verification
 
 |xref:specification/git-timestamp.adoc[git-timestamp]
 |RFC 3161 tokens as notes, verification, retry
@@ -60,24 +62,27 @@ repository, reading, notes, identity
 
 == Module Dependencies
 
-image::resources/diagrams/module-dependency-graph.svg[Module dependency graph of git-document-repository, align=center]
+image::resources/diagrams/module-dependency-graph.svg["Module dependency graph of git-document-repository: existing modules solid, planned modules dashed",align=center]
 
 The reactor dependencies are the edges of the graph above; its single source is
 xref:concepts/module-structure.adoc[Module Structure], and this page does not repeat them. The build check that
 enforces them is planned (xref:specification/testing.adoc[Testing]). The table lists only what the graph does not
-show, the third-party dependencies:
+show, the third-party dependencies. None of them is added yet; every one is planned and needs the owner's approval
+before it is added:
 
 [cols="1,3"]
 |===
-|Module |Third-party dependencies (each needs the owner's approval)
+|Module |Third-party dependencies (planned)
 
 |`git-core` |JGit
-|`git-worktrees` |–
-|`git-testing` |`cui-test-generator`, JUnit 5
-|`git-store` |–
-|`git-forms` |a YAML library, a JSON Schema validator, a template engine
-|`git-crypto` |an envelope-encryption library (candidate: Google Tink _(unverified)_)
-|`git-signing` |a WebAuthn verification library (open)
-|`git-timestamp` |an RFC 3161 client (open)
-|`git-directory` |–
+|`git-worktrees` |none beyond those of `git-core`
+|`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
+`cui-test-generator`, JUnit 5
+|`git-store` |none beyond those of `git-core`
+|`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
+|`git-crypto` |an envelope-encryption library (open; candidate: Google Tink _(unverified)_)
+|`git-signing` |a WebAuthn verification library (open); for signing and verifying the configured format possibly
+JGit's `org.eclipse.jgit.ssh.apache` (`ssh`) or `org.eclipse.jgit.gpg.bc` (`openpgp`) (open)
+|`git-timestamp` |an RFC 3161 client library (open)
+|`git-directory` |none beyond those of `git-forms` and `git-crypto`
 |===

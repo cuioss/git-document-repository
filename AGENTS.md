@@ -21,7 +21,7 @@ released together and consumed separately.
 
 | Module | Purpose | Depends on |
 |---|---|---|
-| `git-core` | Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing | - |
+| `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes | - |
 | `git-worktrees` | Linked working trees, commit from a working tree, working-tree status | `git-core` |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 

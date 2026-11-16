@@ -14,7 +14,9 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-testing` (module `de.cuioss.git.document.testing`) provides test support for consumers of the reactor. It is a
-regular artifact consumed in test scope; it depends on no other module of the reactor.
+regular artifact consumed in test scope; it depends on no other module of the reactor. Its third-party dependencies are
+JGit, declared directly because no reactor module brings it, `cui-test-generator` and JUnit 5; all are planned and need
+the owner's approval (see xref:../Specification.adoc#_module_dependencies[Module Dependencies]).
 
 == Repository Fixtures
 
@@ -27,7 +29,9 @@ _See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fix
 |Fixture |Contract
 
 |local repository |A bare repository in a temporary directory, created per test, deleted after it
-|in-memory repository |A JGit in-memory (DFS) repository _(unverified: `InMemoryRepository`)_; no file system
+|in-memory repository |A JGit in-memory (DFS) repository; no file system. JGit's
+`org.eclipse.jgit.internal.storage.dfs.InMemoryRepository` lives in an internal package (JGit 7.8.0): the fixture
+wraps it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type
 |local remote |A second bare repository reachable as a remote, for fetch and push tests
 |===
 

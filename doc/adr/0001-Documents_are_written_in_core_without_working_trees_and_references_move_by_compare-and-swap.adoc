@@ -23,8 +23,9 @@ same document. The question is how the server turns an edit into a commit.
 
 *The decision:* the store keeps no working tree. It writes blobs, trees and commits directly into the object database
 through an in-core index. It then moves the reference with a compare-and-swap: the reference moves only if it still
-points to the commit the change was built on. A writer that loses the race reloads and applies its operation again
-on the new state.
+points to the commit the change was built on. A save applies the draft's changes onto the current branch tip as one
+commit whose only parent is that tip: a squash merge in core. A writer that loses the race re-applies its operation
+onto the new tip (re-apply).
 
 The mechanism is described in xref:../concepts/storage-engine.adoc#_no_working_trees[Storage Engine, No Working
 Trees].
@@ -33,8 +34,9 @@ Trees].
 
 === One working tree per user and document
 
-Git allows one working tree per branch. A working tree per user and document multiplies disk use and file-system
-work. It also forces a checkout before every read.
+Each user and document gets a working tree of its own. By default Git checks a branch out in only one working tree
+at a time. A working tree per user and document multiplies disk use and file-system work. It also forces a checkout
+before every read.
 
 *Rejected because* the content is already in memory. Writing it to disk only to read it back into a commit adds cost
 and failure modes and gains nothing.
@@ -43,8 +45,9 @@ and failure modes and gains nothing.
 
 `pm-provider-git` uses linked working trees, because agents and build tools work on files.
 
-*Rejected because* no tool of the document store works on files. JGit also supports linked working trees only for
-reading _(unverified for later versions)_. `git-worktrees` stays available for consumers that need files.
+*Rejected because* no tool of the document store works on files. JGit 7.0 also supports linked working trees only for
+reading (https://projects.eclipse.org/projects/technology.jgit/releases/7.0.0[JGit 7.0 release notes]; later versions
+_unverified_). `git-worktrees` stays available for consumers that need files.
 
 === A lock per document instead of compare-and-swap
 
@@ -55,7 +58,7 @@ compare-and-swap needs no lock state. It needs only the expected old commit, whi
 
 === Textual merge of concurrent writers
 
-The losing writer could merge its commit textually into the winner's commit.
+The losing writer could merge its commit textually into the winner's commit instead of re-applying its operation.
 
 *Rejected because* a textual merge of YAML produces conflicts where none exist in the data. Re-applying the operation
 ("set file X to content Y") on the new state is exact. A real conflict is still reported per path.
@@ -65,7 +68,7 @@ The losing writer could merge its commit textually into the winner's commit.
 === Properties of the design
 
 * Any number of users and drafts exist at the same time without any disk state per user.
-* Concurrent writers are safe without locks.
+* Concurrent writers are safe without application-level locks.
 * Local and remote repositories use the same write path.
 
 === Accepted costs

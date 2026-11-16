@@ -21,13 +21,16 @@ _See Requirement link:../Requirements.adoc#CIFR-TM-1[CIFR-TM-1: Place of a Threa
 Status: PLANNED
 
 Per service entry, field `threat-model.place`: `service-repository` (variant A) or `central` (variant B, default).
+Variant A also requires `threat-model.repository`: the alias of the service repository that holds the model, which
+must be one of the repositories of the service entry; a service entry with variant A and without it is a catalog
+validation error.
 
 [cols="1,2,2"]
 |===
 |Variant |Location |Write path
 
 |A
-|`threat-model/` in the first repository the service entry names
+|`threat-model/` in the repository named by `threat-model.repository`
 |Branch `cisos-friend/threat-model/<model-id>`, then a pull or merge request through the Git host API
 
 |B
@@ -57,12 +60,14 @@ to its current head; this works the same in variant A and B, because the base al
 repository it is diffed in. A repository without a reviewed head (newly added to the service) makes the model `DUE`.
 A completed review writes the current heads as the new `reviewed-heads`.
 
-Default path set (`threat-models.detection.paths`): `**/openapi*.{yaml,yml,json}`, `**/*.proto`, `**/pom.xml`,
-`**/package.json`, `**/Dockerfile`, `**/*.tf`, `**/Chart.yaml`, `**/values*.yaml`.
+Default path set (`categories.threat-models.detection.paths`, link:configuration.adoc#_categories[Configuration,
+Categories]): `**/openapi*.{yaml,yml,json}`, `**/*.proto`, `**/pom.xml`, `**/package.json`, `**/Dockerfile`,
+`**/*.tf`, `**/Chart.yaml`, `**/values*.yaml`.
 
 Result: `CURRENT`, or `DUE` with the list of changed paths (or the protection-need change) and the due date
-`last-review + review-interval`, where `review-interval` defaults by highest protection need: `high` `P6M`, `normal`
-`P12M`, `low` `P24M`.
+`last-review + review-interval`. `review-interval` defaults by the service's highest protection need, one of the
+levels `normal`, `high`, `very-high` of the service catalog: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`
+(`categories.threat-models.review-intervals`).
 
 == Links
 _See Requirement link:../Requirements.adoc#CIFR-TM-4[CIFR-TM-4: Links and Evaluation]_
@@ -70,9 +75,12 @@ _See Requirement link:../Requirements.adoc#CIFR-TM-4[CIFR-TM-4: Links and Evalua
 Status: PLANNED
 
 * `meta.yaml` `service` is required and must resolve.
-* "Transfer to risk register": creates a draft risk in `isms-register` with reference `threat-model:<service>/<model>#<threat-id>`.
+* "Transfer to risk register": creates a draft risk in `isms-register` with the reference
+  `<alias>:threat-model/<model-id>#<threat-id>` (`<alias>`: `threat-models` in variant B, the service repository in
+  variant A).
 * "Create issue": through the issue-tracker integration; the issue id is stored on the countermeasure.
-* Evaluation view per service: number of open threats, untreated threats, days since `last-review`, detection result.
+* Evaluation view per service: number of open threats, untreated threats (without countermeasure and not transferred to
+  the risk register), days since `last-review`, detection result.
 
 == Recipes
 _See Requirement link:../Requirements.adoc#CIFR-TM-5[CIFR-TM-5: Recipes]_
@@ -81,4 +89,4 @@ Status: PLANNED
 
 A recipe is `categories/threat-models/recipes/<id>.yaml`: `title`, ordered `steps`, each with `title`, `guidance`
 (AsciiDoc fragment) and `fills` (JSON Pointer into `model.json`). The web app renders a recipe as `WizardPage`; the MCP
-server exposes the recipe text through `read_document` on the recipe.
+server exposes recipes through the tool `read_recipe` (link:mcp-server.adoc#_tools[MCP Server, Tools]).

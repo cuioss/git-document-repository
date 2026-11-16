@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: Intermediate saves are commits on refs/drafts/<user>/<document> in the server's repository; the push refspec never carries refs/drafts/*.
+// summary: Intermediate saves are commits on refs/drafts/<pseudonym>/<collection>/<id> in the server's repository; the push refspec never carries refs/drafts/*.
 // tags: storage, drafts, refspec, saving
 // affects: git-store
 // supersedes:
@@ -21,10 +21,12 @@ Accepted
 Users expect their unsaved work to survive a closed browser. They do not expect half-finished work to appear in the
 shared history. The question is where unsaved work lives.
 
-*The decision:* an intermediate save is a commit on the reference `refs/drafts/<user>/<document>` in the server's
-repository. An explicit save merges the draft in core into the document's working branch as one commit whose only
-parent is the branch tip, so no draft commit becomes reachable from a pushed reference. It then deletes the draft
-reference, unless a newer draft commit arrived meanwhile. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*`. It never carries `refs/drafts/*`.
+*The decision:* an intermediate save is a commit on the reference `refs/drafts/<pseudonym>/<collection>/<id>` in the
+server's repository; `<pseudonym>` is the user's pseudonym, `<collection>/<id>` names the document. An explicit save
+applies the draft's changes onto the current tip of the document's working branch as one commit whose only parent is
+that tip (a squash merge in core), so no draft commit becomes reachable from a pushed reference. It then deletes the
+draft reference, unless a newer draft commit arrived meanwhile. The push refspec carries `refs/heads/*`, the tags and
+`refs/notes/*`. It never carries `refs/drafts/*`.
 
 See xref:../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving].
 
@@ -32,29 +34,36 @@ See xref:../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, T
 
 === Drafts in browser storage
 
+The browser keeps the unsaved work in its local storage until the user saves.
+
 *Rejected because* a draft in the browser is lost with the device and invisible on another device. It also moves
 document content out of the server's control.
 
 === Drafts in a database table
+
+The server keeps the unsaved work in a table of a database beside the repository.
 
 *Rejected because* a table brings back the database the store avoids
 (xref:0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]).
 
 === Drafts pushed to the remote
 
-*Rejected as the default because* the remote would collect every abandoned draft of every user. An organisation that
-wants drafts secured can push them to restricted references of its own.
+The push refspec also carries `refs/drafts/*`, so the remote secures the drafts.
+
+*Rejected because* the remote would collect every abandoned draft of every user, and every reader of the remote would
+see half-finished work. Drafts are secured by the backup of the repository directory instead (see Accepted costs).
 
 == Consequences
 
 === Properties of the design
 
-* A user who logs in again finds the drafts under `refs/drafts/<user>/` and continues.
+* A user who logs in again finds the drafts under `refs/drafts/<pseudonym>/` and continues.
 * The shared history holds saved states only.
 
 === Accepted costs
 
-* Drafts are unsecured: a lost repository directory loses them. The directory needs persistent storage.
+* Drafts are unsecured: a lost repository directory loses them. The directory needs persistent storage and a
+  backup.
 * With several instances a draft lives on the instance that wrote it: one instance, sticky sessions or a shared
   volume.
 * Abandoned drafts need expiry and a garbage collection.

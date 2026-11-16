@@ -51,10 +51,12 @@ _See Requirement link:../Requirements.adoc#CIFR-NFR-6[CIFR-NFR-6: Native Image V
 
 Status: PLANNED
 
-Stack: `cisos-friend` (native image under test), Keycloak, Gitea, TSA stub. The first test class, `NativeGitRoundTripIT`,
-runs fetch, save, release and push against Gitea and verifies tag and signature; the failsafe configuration orders it
-first and the remaining suites are skipped when it fails. A second boot with an invalid configuration must fail
-(boot-validation smoke test).
+Stack: `cisos-friend` (native image under test), Keycloak, Gitea, TSA stub. The first test class,
+`NativeGitRoundTripIT`, runs fetch, save, release and push against Gitea and verifies tag and signature. It runs in
+its own failsafe execution `native-round-trip`, declared before the execution of the remaining suites, with both its
+`integration-test` and its `verify` goal bound to the `integration-test` phase. Maven runs executions of one phase in
+declaration order, so a failure of this class fails the build before the remaining suites start. A second boot with
+an invalid configuration must fail (boot-validation smoke test).
 
 == Performance
 _See Requirements:_
@@ -67,9 +69,13 @@ Status: PLANNED
 * Fixture: a generated `samm-assessments` repository with 1,000 assessments of 90 answers (`cui-test-generator`).
 * Index size: heap histogram after start, attributed to the index classes; must be < 100 MB.
 * Start: time from process start to readiness `UP` with local repositories present; must be ≤ 60 s.
-* Save latency: 1,000 sequential saves in local mode; p95 ≤ 500 ms.
+* Save latency, local mode: 1,000 sequential saves; p95 ≤ 500 ms.
+* Save latency, remote mode: 1,000 sequential saves against the Gitea of the integration stack. The save service
+  records the time spent in fetch and push per save (timer `cisos_friend_save_git_seconds`); the application's share
+  is the save duration minus that time; p95 ≤ 500 ms.
 
-These run in a non-gating `benchmarks` lane until the targets are confirmed.
+Provisional: targets confirmed by the prototype measurement; until then the checks run in a `benchmarks` lane whose
+results are reported, not gating.
 
 == Concurrency
 _See Requirement link:../Requirements.adoc#CIFR-NFR-3[CIFR-NFR-3: Concurrent Workshop]_

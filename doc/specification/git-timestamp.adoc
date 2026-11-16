@@ -19,17 +19,19 @@ Rationale: xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Comp
 
 == Timestamp per State of `main`
 
-_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per State of main]_
+_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per State of `main`]_
 
 *Status:* PLANNED
 
 * Registered as outbox consumer `timestamp` of `git-store`, subscribed to `main`; it handles every commit of `main`
   the outbox walk reaches, including merges the Git server performed, which the outbox sees through its fetch trigger.
-* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the ASCII hex commit id, `certReq = true`, a random
-  nonce.
+* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the commit id as lowercase ASCII hex (the same form as
+  the passkey challenge of `git-signing`), `certReq = true`, a random nonce.
 * Storage: the DER-encoded `TimeStampToken`, base64, as the note of the commit under `refs/notes/timestamps`.
-* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note. Only a successful push counts
-  as a successful call; a failed push leaves the outbox reference before the commit.
+* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note, on its own and with the
+  technical user's credentials (a system commit, see xref:git-store.adoc#_identity_per_save[git-store, Identity per
+  Save]). Only a successful push counts as a successful call; a failed push leaves the outbox reference before the
+  commit.
 * Retry: when the note already exists locally, the consumer pushes it and requests no new token, so the time the token
   proves never moves later.
 
@@ -49,7 +51,8 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-2[GDR-TSA-2: Timestamp Verifi
 *Status:* PLANNED
 
 `verify(commit)` reads the note, checks the token signature against `timestamp.trust`, and compares the message
-imprint with the commit id. Outcomes: valid (with the time), no token, imprint mismatch, signature invalid.
+imprint with the SHA-256 over the commit id as lowercase ASCII hex. Outcomes: success with the time, no token, imprint
+mismatch, signature invalid (see xref:error-model.adoc[Error Model]).
 
 == Unavailable Timestamp Authority
 

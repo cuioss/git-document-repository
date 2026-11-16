@@ -19,7 +19,7 @@ Accepted
 == Decision
 
 CISOs-Friend needs a runtime for one server process. The process serves a web app, a REST API and an MCP endpoint. It
-holds no database. The owner set the frame: Quarkus, native, Java 25, the CUI libraries, and the structure of API
+holds no database. The frame is given: Quarkus, native, Java 25, the CUI libraries, and the structure of API
 Sheriff.
 
 *The decision:* CISOs-Friend is one Quarkus application.
@@ -40,7 +40,7 @@ link:../concepts/deployment.adoc[Deployment].
 
 A JVM image starts slower and carries a larger attack surface. API Sheriff declined it for the same reasons.
 *Rejected because* the application has no workload that needs JIT warm-up, and one runtime shape across the
-organisation's Quarkus services is cheaper to operate.
+cuioss project's Quarkus services is cheaper to operate.
 
 === Java 21
 
@@ -68,7 +68,7 @@ validation and the confidential client. API Sheriff, the reference structure, is
 === When this is revisited
 
 * If JGit cannot run natively without disproportionate effort.
-* If the organisation's runtime baseline moves past Java 25.
+* If the runtime baseline of the cuioss project's Quarkus services moves past Java 25.
 
 == Links
 

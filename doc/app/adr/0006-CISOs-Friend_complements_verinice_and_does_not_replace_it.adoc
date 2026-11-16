@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: The ISMS category is a lean "ISMS as code" for development organisations; SAMM is the core; where verinice runs, released SAMM assessments are delivered to it as evidence through the veo REST API.
+// summary: The ISMS category is a lean "ISMS as code" for development organisations; SAMM is the core; where verinice runs, released SAMM assessments can be delivered to it as evidence through the veo REST API, a bridge that stays disabled by default until its shape is verified.
 // tags: positioning, isms, verinice, scope
 // affects: categories, cisos-friend
 // supersedes:
@@ -26,7 +26,9 @@ have matured over years. verinice is such a product, strong in BSI IT-Grundschut
 * *Core*: SAMM on Git.
 * *Extension*: a lean ISMS for development organisations: policies, statement-of-applicability extracts for secure
   development, risks from SAMM gaps, threat models and incident reports.
-* *Bridge*: released SAMM assessments are delivered to verinice.veo as evidence through its REST API.
+* *Bridge*: where verinice runs, released SAMM assessments can be delivered to verinice.veo as evidence through its
+  REST API. The bridge stays disabled by default until its shape is verified; whether it is part of the first
+  release is open (see the open questions of link:../concepts/category-isms.adoc#_open_questions[ISMS]).
 
 The comparison is in link:../concepts/category-isms.adoc[ISMS and the Comparison with verinice].
 

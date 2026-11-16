@@ -26,8 +26,8 @@ Status: PLANNED
 |Path |Content
 
 |`incidents/<id>/incident.yaml`
-|`aware-at`, `detected-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`, `nis2-applicable`,
-`affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
+|`occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
+`nis2-applicable`, `affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
 
 |`incidents/<id>/narrative/*.adoc`
 |`course.adoc`, `root-cause-analysis.adoc`, `lessons.adoc`
@@ -36,8 +36,14 @@ Status: PLANNED
 |Generated; never edited
 |===
 
-`<id>`: ULID file name; readable number `INC-<year>-<n>` assigned on save. CI check: `report.adoc` regenerated and
-compared byte for byte.
+`<id>`: a ULID, the name of the incident's directory; the readable number `INC-<year>-<n>` is assigned on save. CI
+check: `report.adoc` regenerated and compared byte for byte.
+
+Times:
+
+* `occurred-at`: when the incident began, if known; optional.
+* `detected-at`: when the incident was detected.
+* `aware-at`: when the organisation became aware of it; the start of the GDPR and NIS2 deadlines.
 
 == Deadlines
 _See Requirement link:../Requirements.adoc#CIFR-IR-2[CIFR-IR-2: Notification Deadlines]_
@@ -65,6 +71,12 @@ Status: PLANNED
 |`aware-at` + `PT72H`
 |`notifications.nis2-notification`
 
+|`nis2-intermediate-report`
+|`nis2-applicable: true` and a request of the CSIRT or competent authority recorded in
+`notifications.nis2-intermediate-reports[]` (`requested-at`, `due`)
+|The `due` the request names
+|`notifications.nis2-intermediate-reports[]` (one entry per request)
+
 |`nis2-final-report`
 |`nis2-applicable: true` and `resolved-at` ≤ notification `sent-at` + `P1M`
 |`notifications.nis2-notification.sent-at` + `P1M`
@@ -82,7 +94,8 @@ Status: PLANNED
 |===
 
 The final-report rules start only when the notification `sent-at` is recorded; before that only the early-warning and
-notification deadlines are shown. Source of the three NIS2 report deadlines: Directive (EU) 2022/2555, Art. 23(4)
+notification deadlines are shown. An intermediate report has no deadline of its own in the directive; it is due when
+the requesting authority says. Source of the NIS2 reports: Directive (EU) 2022/2555, Art. 23(4) points (a) to (e)
 _(unverified against the national transposition)_.
 
 A deadline is `MET` when its notification field holds `sent-at` ≤ due, `MISSED` otherwise after due, `OPEN` before.
@@ -111,15 +124,17 @@ _See Requirement link:../Requirements.adoc#CIFR-IR-5[CIFR-IR-5: Timeline Import]
 
 Status: PLANNED
 
-`TimelineImporter`: input a ticket id; output a list of `{at, author-role, text}` appended to `timeline` of the draft;
-the ticket id is added to `tickets`. The first shipped adapter is chosen with the first adopting organisation (open
-question of the concept). The application writes nothing into the ticket system.
+`TimelineImporter`: input a ticket id of the ticket system or a thread of the chat; output a list of
+`{at, author-role, text}` appended to `timeline` of the draft; the ticket id is added to `tickets`. The first shipped
+adapter is chosen with the first adopting organisation (open question of the concept). The application reads the
+ticket system and the chat and writes nothing into them; measures are created as issues in the issue tracker and
+referenced by id in `measures`.
 
 == Evaluation
 _See Requirement link:../Requirements.adoc#CIFR-IR-6[CIFR-IR-6: Evaluation across Incidents]_
 
 Status: PLANNED
 
-`GET /api/v1/reports/incidents?year=<y>`: per `category` the count, median of `detected-at − aware-at` (time to
-detection, from the first timeline entry when earlier), median of `resolved-at − detected-at`, and every
-`root-causes` value occurring in more than one released report of the year.
+`GET /api/v1/reports/incidents?year=<y>`: per `category` the count, median of `detected-at − occurred-at` (time to
+detection; without `occurred-at` the time of the first timeline entry is used), median of `resolved-at − detected-at`
+(time to resolution), and every `root-causes` value occurring in more than one released report of the year.

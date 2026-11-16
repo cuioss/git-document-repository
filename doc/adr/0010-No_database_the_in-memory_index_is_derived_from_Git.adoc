@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: Queries, dashboards and reporting-date views run on an in-memory index built from main and the open working branches at start and after every fetch; a database, if ever wanted, is a disposable cache.
+// summary: Queries, dashboards and reporting-date views run on an in-memory index built from main and the open working branches at start, after every save or release the store performs and, in remote mode, after every fetch; a reporting date builds an index from a tag or commit; a database, if ever wanted, is a disposable cache.
 // tags: index, storage, database, queries
 // affects: git-store
 // supersedes:
@@ -22,7 +22,8 @@ Evaluations need queries across documents. A database is the usual answer and th
 to avoid. The question is where queries run.
 
 *The decision:* the store builds an in-memory index from `main` and the open working branches. It builds the index at
-start, after every fetch, and after every save or release it performs itself, in local and in remote mode. A periodic fetch or a webhook of the Git server refreshes it. A reporting date builds the
+start and after every save or release it performs itself, in local and in remote mode. In remote mode it also builds
+it after every fetch; a periodic fetch or a webhook of the Git server triggers that fetch. A reporting date builds the
 index from a tag or from the commit of that date. If a database is ever wanted, it is a disposable cache, rebuilt from
 Git.
 
@@ -32,9 +33,13 @@ See xref:../concepts/storage-engine.adoc#_reading_and_queries[Storage Engine, Re
 
 === A relational database as the primary store
 
+The documents live in a relational database, and Git holds at most an export.
+
 *Rejected because* it needs provisioning, backup and upgrades, and it duplicates history Git already keeps.
 
 === A database as the query store, written beside Git
+
+Every save writes to Git and to a database that serves the queries.
 
 *Rejected because* two writes per save need a distributed transaction or a reconciliation. The outbox can feed a cache,
 but the cache must never be the truth.
@@ -43,7 +48,8 @@ but the cache must never be the truth.
 
 === Properties of the design
 
-* Hundreds of documents with about ninety fields each fit in a few megabytes.
+* The index is bounded by xref:../Requirements.adoc#GDR-NFR-1[GDR-NFR-1]: 500 documents with 90 fields each must
+  retain less than 16 MB of heap. The bound is a target until the test of GDR-NFR-1 measures it.
 * Losing the index loses nothing.
 
 === Accepted costs

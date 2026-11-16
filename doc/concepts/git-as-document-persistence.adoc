@@ -17,10 +17,10 @@ need verification before a decision rests on them.
 == The Problem
 
 Every additional database brings operating effort: provisioning, backup, restore tests, upgrades, access control.
-For an application whose content is a few thousand structured documents, that effort dominates the value of the
-store. The documents also need what a plain database does not give for free: a complete history with diffs, a
-release that freezes a state, an approval that survives as evidence, and a format a person can read without the
-application.
+For an application whose content is hundreds to a few thousand structured documents, that effort dominates the
+value of the store. The documents also need what a plain database does not give for free: a complete history with
+diffs, a release that freezes a state, an approval that survives as evidence, and a format a person can read
+without the application.
 
 Development organisations already operate exactly such a store. GitHub, GitLab, Gitea or Bitbucket keep history,
 enforce rights, review changes and are backed up. Reusing that server avoids the extra database.
@@ -43,8 +43,8 @@ of its own:
 |Primitive |Concept
 
 |*No working trees.* A branch is a reference, not a working area. Documents are written as blobs, trees and commits
-in memory; references move by compare-and-swap. Drafts are references per user; saving is a merge and a push. Local
-and remote repositories share one API.
+in memory; references move by compare-and-swap. Drafts are references per user; saving applies a draft as a squash
+merge in core and, in remote mode, pushes the result. Local and remote repositories share one API.
 |xref:storage-engine.adoc[The Storage Engine on Git]
 
 |*Identity by signature.* A technical user pushes; the application signs every commit and records the claims of the
@@ -73,8 +73,9 @@ How these primitives are cut into Maven modules is described in xref:module-stru
 
 == Existing Solutions
 
-No finished Java library provides this shape: drafts per user, merge on save, local or remote by configuration, and
-the same API for both. Building blocks and reference designs exist.
+No Java library known to this concept provides this shape: drafts per user, merge on save, local or remote by
+configuration, and the same API for both. None of the candidates surveyed below does. Building blocks and reference
+designs exist.
 
 [cols="1,2,1"]
 |===
@@ -82,7 +83,9 @@ the same API for both. Building blocks and reference designs exist.
 
 |JGit
 |Git in pure Java. Builds commits without a working tree (`ObjectInserter`, in-core `DirCache`), merges in core,
-updates references atomically; pluggable object storage (DFS, `InMemoryRepository`).
+updates references atomically; pluggable object storage (DFS, `InMemoryRepository`). `InMemoryRepository` lies in
+the internal package `org.eclipse.jgit.internal.storage.dfs`, which the JGit bundle exports only to its own friend
+bundles (checked in JGit 7.8.0); it carries no API stability promise, and `git-testing` builds on it.
 |Foundation
 
 |Gerrit NoteDb
@@ -103,7 +106,8 @@ optionally with a remote upstream.
 |Comparison only
 |===
 
-The pattern is proven by Gerrit and CrafterCMS. A reusable persistence library for it does not exist.
+Gerrit and CrafterCMS apply the pattern in their own products. A reusable persistence library for it is not known
+to this concept.
 
 == Why a Library of Its Own
 
@@ -120,8 +124,9 @@ underneath is generic, and every domain needs it identically. Separating it has 
   repositories (confidentiality and retention classes) with stable aliases.
 * *Writing*: in-core commits (blob, tree, commit) without working trees; compare-and-swap reference updates with retry;
   in-core merge; deterministic file content through a codec interface.
-* *Drafts and saving*: draft references per user and document; intermediate save; save as merge, compare-and-swap,
-  fetch, push and retry on rejection; conflict results per path; expiry and garbage collection of drafts.
+* *Drafts and saving*: draft references per user and document; intermediate save; save as squash merge in core,
+  compare-and-swap, fetch, push and re-apply on rejection; conflict results per path; expiry and garbage collection
+  of drafts.
 * *Identity*: author and committer per save; a credentials strategy per push (technical user or user token); commit
   trailers for approvals.
 * *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
@@ -138,7 +143,7 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * the OAuth flows and the identity provider (Token Sheriff; the libraries only consume credentials),
 * integrations with issue trackers and ticket systems.
 
-The client of the timestamp authority lives in the optional module `git-timestamp`, not in the store.
+The client of the timestamp authority lives in the optional module `git-timestamp`, not in `git-store`.
 
 == Risks and Limits
 
@@ -146,7 +151,8 @@ The client of the timestamp authority lives in the optional module `git-timestam
   uncritical; a high-frequency write load is not a case for this store.
 * *Several application instances* stay safe through compare-and-swap on push, but each in-memory index is only as
   fresh as its last fetch. Webhooks of the Git server shorten the gap.
-* *A conflict in the same file* is resolved per field of the YAML structure; a real conflict goes to the user.
+* *A conflict in the same file* is detected per path. `git-forms` resolves it per field of the YAML structure where
+  the changed fields differ; a real conflict goes to the user.
 * *Removing data from the history stays expensive.* The rules of xref:data-protection.adoc[Data Protection] keep
   personal data out of the history instead.
 * *The content API of the Git server* would be simpler than a clone, but binds to one vendor and runs into rate
@@ -165,7 +171,7 @@ the mechanisms; they do not certify them.
 . Prototype the store: concurrent saves against one branch, measuring conflicts and retries
   (see xref:storage-engine.adoc#_open_questions[Storage Engine, Open Questions]).
 . Draft the API of the modules together with the repository layout of the first consuming application.
-. JGit is not yet a dependency of this repository; adding it needs the owner's approval like every dependency.
+. Should JGit be added as a dependency of this repository? Like every dependency, it needs the owner's approval.
 
 == Related
 

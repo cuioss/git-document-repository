@@ -54,7 +54,7 @@ realised).
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
 |Technical user and user token, the application signature, trailers, graded traceability, passkey approvals
 
-|xref:concepts/data-protection.adoc[Data Protection]
+|xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
 |Pseudonymous history, the encrypted keyring, erasure by key rotation, repositories per class
 
 |xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
@@ -69,6 +69,11 @@ realised).
 
 [[_architecture_decisions]]
 == Architecture Decisions
+
+Every decision record has the same structure on purpose: _Status_; _Decision_, opening with the question and its
+context; _Alternatives rejected_, each with a one-sentence description and the reason; _Consequences_, split into
+_Properties of the design_, _Accepted costs_ and _When this is revisited_; and _Links_. The decision records of the
+application in `doc/app/adr/` follow the same structure.
 
 [cols="1,3,1"]
 |===
@@ -134,7 +139,7 @@ realised).
 . xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]
 . xref:concepts/storage-engine.adoc[The Storage Engine on Git]
 . xref:concepts/identity-and-signing.adoc[Identity and Signing]
-. xref:concepts/data-protection.adoc[Data Protection]
+. xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
 . xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 . xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 . xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]

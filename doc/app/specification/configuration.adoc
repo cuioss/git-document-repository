@@ -41,6 +41,14 @@ Status: PLANNED
 |`9000`
 |Health and metrics
 
+|`quarkus.http.ssl.certificate.files`
+|`/run/secrets/tls/tls.crt`
+|TLS certificate chain (PEM), mounted as a secret
+
+|`quarkus.http.ssl.certificate.key-files`
+|`/run/secrets/tls/tls.key`
+|TLS private key (PEM), mounted as a secret
+
 |`cisos-friend.config.dir`
 |`config`
 |Directory holding `cisos-friend.yaml`
@@ -66,13 +74,23 @@ Validated against `schema/cisos-friend.schema.json` (bundled). Top-level keys:
 |Map of identity-provider group → list of `{repository, actions}`; actions from `read`, `edit`, `approve`,
 `administer-catalogs`
 
+|`oidc`
+|yes
+|Web login through Token Sheriff: `issuer`, `client-id`, `client-credential-ref` (client secret, or the private key
+for `private_key_jwt`), `groups-claim` (default `groups`)
+
 |`categories`
 |yes
-|Enabled categories; per category overrides of `signature-levels` and `deadlines`
+|Enabled categories (see <<_categories>>)
+
+|`retention-classes`
+|yes
+|Map of retention class name → `unlimited` or an ISO 8601 period (see <<_retention_classes>>)
 
 |`signing`
 |yes
-|`key-ref` (KMS key id or file path), `format` (`ssh` or `gpg`)
+|`key-ref` (commit-signing key), `format` (`ssh` or `gpg`), `session-hmac-key-ref` (key of the session HMAC in the
+`Session` trailer, see link:authentication.adoc#_trailer_values[Trailer Values])
 
 |`keyring`
 |yes
@@ -99,14 +117,105 @@ maximum `P30D`)
 
 |`integrations`
 |no
-|`issue-tracker`, `ticket-system`, `verinice`, each with `url` and `credential-ref`
+|`issue-tracker`, `ticket-system`, `chat`, `verinice`, each with `url` and `credential-ref`
 |===
 
-Every key ending in `-ref` accepts a file path (`file:/run/secrets/...`) or a KMS key id (`kms:...`); no key accepts a
-secret value.
+Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
+
+* `file:/run/secrets/...`: a mounted file.
+* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, KEK with `kek-source: kms`).
+* `vault:<path>`: a Vault path; the transit key with `kek-source: vault-transit`
+  (`vault:transit/keys/<name>`), a secret of the key-value engine otherwise.
+
+The schema accepts for each key only the forms that fit it: `keyring.kek-ref` must match `keyring.kek-source`
+(`kms:` for `kms`, `vault:` for `vault-transit`, `file:` for `file`).
 
 Placeholders: `${NAME}` and `${NAME:-default}` in any string value, resolved from the environment before validation;
 an unresolved placeholder without default is a boot error.
+
+== Categories
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+* _link:../Requirements.adoc#CIFR-AUTH-5[CIFR-AUTH-5: Step-Up]_
+* _link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
+
+Status: PLANNED
+
+`categories` maps a category id (`samm`, `threat-models`, `incident-reports`, `isms`) to its settings. Every key
+except `retention-class` is optional and overrides the default of the category's `workflow.yaml`.
+
+[cols="1,1,3"]
+|===
+|Key |Default |Meaning
+
+|`enabled`
+|`true`
+|Whether the category is offered
+
+|`signature-levels`
+|from `workflow.yaml`
+|Map of transition → signature level (link:authentication.adoc#_signature_levels[Signature Levels])
+
+|`deadlines`
+|from `workflow.yaml`
+|Overrides of the category's deadline rules
+
+|`step-up.acr`
+|required when a transition of the category needs level 2 or higher
+|`acr` value that states multi-factor authentication (link:authentication.adoc#_step_up[Step-Up])
+
+|`step-up.max-age`
+|`PT5M`
+|Maximum age of `auth_time` for an approval
+
+|`release.via-pull-request`
+|`false`
+|Release opens a pull or merge request of the Git server instead of merging into `main` directly
+
+|`retention-class`
+|— (required)
+|Name of a retention class from `retention-classes`, for every document kind of the category
+
+|`kinds.<kind>.retention-class`
+|the category's
+|Retention class of one document kind, where it differs from the category's
+
+|`detection.paths`
+|see link:category-threat-models.adoc#_detection[Detection]
+|`threat-models` only: path set of the outdated-model detection (glob patterns)
+
+|`review-intervals`
+|`very-high` `P6M`, `high` `P12M`, `normal` `P24M`
+|`threat-models` only: review interval per highest protection need of the service
+|===
+
+== Retention Classes
+_See Requirements:_
+
+* _link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
+* _link:../Requirements.adoc#CIFR-DP-4[CIFR-DP-4: Retention]_
+
+Status: PLANNED
+
+`retention-classes` names each retention period once. The shipped configuration:
+
+[cols="1,1,2"]
+|===
+|Class |Period |Assigned to
+
+|`unlimited`
+|`unlimited`
+|SAMM, threat models, ISMS documents and registers, directory
+
+|`incident-reports`
+|`P5Y` (placeholder until agreed with the data protection officer)
+|Incident reports
+|===
+
+A category or kind names its class; a repository names the one class of everything stored in it (`retention` in
+<<_repositories>>). The retention job uses the period of the repository's class
+(link:data-protection.adoc#_retention[Data Protection, Retention]).
 
 == Repositories
 _See Requirement link:../Requirements.adoc#CIFR-OPS-5[CIFR-OPS-5: Repository Modes and Refresh]_
@@ -125,13 +234,18 @@ Status: PLANNED
 |yes
 |HTTPS URL of the remote, or `none` for local mode
 
+|`host-type`
+|for a remote
+|`github`, `gitlab` or `gitea`; selects the webhook authentication and the Git host API used for pull or merge
+requests and for the deletion of the remote repository
+
 |`confidentiality`
 |yes
 |`public-internal`, `restricted`, `strongly-restricted`
 
 |`retention`
 |yes
-|Retention class name; `unlimited` or an ISO 8601 period
+|Name of a retention class from `retention-classes` (<<_retention_classes>>)
 
 |`push-credential`
 |no
@@ -143,20 +257,21 @@ Status: PLANNED
 
 |`webhook-secret-ref`
 |no
-|Reference to the secret of the Git server's push webhook
+|Reference to the secret of the Git server's push webhook; without it the webhook endpoint is disabled for this alias
 
 |`fetch-interval`
 |no
 |ISO 8601 duration, default `PT5M`
 |===
 
-Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. Authentication follows the Git server:
+Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. Authentication follows `host-type`:
 
-* GitHub: HMAC-SHA-256 of the body in `X-Hub-Signature-256`, verified with the referenced secret.
-* Gitea: HMAC-SHA-256 of the body in `X-Gitea-Signature`, verified with the referenced secret.
-* GitLab: `X-Gitlab-Token` carries the secret itself; it is compared with the referenced secret in constant time.
+* `github`: HMAC-SHA-256 of the body in `X-Hub-Signature-256`, verified with the referenced secret.
+* `gitea`: HMAC-SHA-256 of the body in `X-Gitea-Signature`, verified with the referenced secret.
+* `gitlab`: `X-Gitlab-Token` carries the secret itself; it is compared with the referenced secret in constant time.
 
-A mismatch is answered with `401` and logged.
+A mismatch is answered with `401` and logged. For an alias without `webhook-secret-ref` (and for a repository in local
+mode) every webhook call is answered with `401`; the periodic fetch alone refreshes that repository.
 
 == Boot Validation
 _See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
@@ -176,8 +291,21 @@ record; any violation stops the boot.
 |Unique aliases
 |Two repositories with one alias
 
+|Known retention classes
+|A category, kind or repository naming a class that `retention-classes` does not define
+
 |One retention class per repository
-|A repository whose assigned categories, taken together across all categories, carry more than one retention class
+|A repository whose assigned categories and kinds, taken together across all categories, carry more than one
+retention class, or carry a class other than the repository's `retention`
+
+|Host type
+|A remote repository without `host-type`
+
+|Reference forms
+|A `-ref` value in a form its key does not accept (`keyring.kek-ref` not matching `keyring.kek-source`)
+
+|Step-up assurance
+|A category with a transition at level 2 or higher and no `step-up.acr`
 
 |Rights reference repositories
 |A rights entry naming an unknown alias

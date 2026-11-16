@@ -9,7 +9,7 @@ link:../README.adoc[CISOs-Friend documentation] » Concepts
 
 The web app is where a security officer releases an assessment and where a team spends a two-hour SAMM workshop. The
 first wants to see exactly what is being approved; the second wants the form out of the way. Neither wants to learn a
-new interface vocabulary, and the organisation already has one that works: the `pm-web-app` of `pm-mcp-clients`.
+new interface vocabulary, and the cuioss project already has one that works: the `pm-web-app` of `pm-mcp-clients`.
 CISOs-Friend takes its visuals and its technical UI structure from there and changes only what the domain and the
 authentication demand.
 
@@ -20,8 +20,9 @@ authentication demand.
 |Part |From `pm-web-app`
 
 |*Stack*
-|Svelte 5 with runes, SvelteKit with `adapter-static` as a pure single-page app (`ssr = false`, `prerender = false`),
-Vite, TypeScript in strict mode checked with `svelte-check`, ESLint and Prettier, stylelint for the token rules.
+|Svelte 5 with runes, SvelteKit with `adapter-static` as a pure single-page app (`ssr = false`, `prerender = false`,
+a `fallback` page that the Quarkus application serves for every route of the app), Vite, TypeScript in strict mode
+checked with `svelte-check`, ESLint and Prettier, stylelint for the token rules.
 
 |*Design tokens*
 |`src/styles/tokens.css`: type scale, 4 px spacing scale, radius, control sizes, z-index layers, motion and
@@ -118,8 +119,10 @@ The first login and the release of a document run as `WizardPage` flows.
 === Authentication
 
 `pm-web-app` pairs a device and sends a device secret as bearer token. CISOs-Friend does not: the browser never holds a
-token. The server is the confidential client of the identity provider (Token Sheriff) and keeps a server-side session;
-the browser holds an `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. State-changing requests carry an
+token. The server is the confidential client of the identity provider (Token Sheriff) and keeps a server-side session.
+During the login the browser holds a short-lived `HttpOnly`, `Secure`, `SameSite=Lax` login-transaction cookie that
+binds `state` and `nonce` across the identity provider's callback; afterwards it holds only the `HttpOnly`, `Secure`,
+`SameSite=Strict` session cookie. State-changing requests carry an
 anti-CSRF header the `ApiClient` adds. A `401` sends the user through the login and back to the same address; a
 step-up demand opens the identity provider's MFA prompt and returns to the approval
 (link:authentication-and-identity.adoc[Authentication and Identity]).
@@ -134,15 +137,17 @@ browser and in the server; the server's verdict wins. No category has a hand-wri
 === Drafts, Saving and Conflicts
 
 The form saves intermediate states automatically as drafts and shows "saved for you" versus "saved for everyone". The
-`ApiClient` sends the blob id it loaded with every save; a concurrent change of the same file returns a conflict that
-the form shows per field, with both values, and the draft is kept. Changes by others arrive over the event stream; a
+`ApiClient` sends the blob id it loaded with every save; a concurrent change of the same file returns a conflict for
+that file, and the draft is kept. The form shows the fields that differ, with both values; the field-level comparison
+comes from `git-forms`. Changes by others arrive over the event stream; a
 practice another assessor saved refreshes in place.
 
 === Review and Approval
 
 Release shows the diff against the last released state, generated from the YAML, not from the AsciiDoc output. The
 approve button names the signature level it needs. Level 2 triggers step-up; level 3 asks the browser's WebAuthn API to
-sign the commit id with the user's passkey (user verification required) and sends the assertion to the server. Passkey
+sign a single-use challenge bound to the commit id (a hash over the commit id and a server nonce) with the user's
+passkey (user verification required) and sends the assertion to the server. Passkey
 registration lives in the settings.
 
 === Brand
