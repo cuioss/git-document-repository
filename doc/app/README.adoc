@@ -79,7 +79,7 @@ positioning beside verinice.
 |Login through Token Sheriff, claims, first login, rights, push credentials, signature levels
 
 |link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
-|Repository cut, personal data per category, erasure concept, key source, what is agreed with the DPO
+|Repository cut, personal data per category, person directory, erasure concept, what is agreed with the DPO
 
 |link:concepts/application-architecture.adoc[Application Architecture]
 |Shape, modules, libraries, configuration, run-time state, native image, testing

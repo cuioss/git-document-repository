@@ -43,14 +43,14 @@ the last attempt
 |not found |reading, cache repository, in-core writing on a missing reference, pseudonym lookup
 |unserved |cache repository
 |ambiguous |identity resolution
-|invalid |schema validation, typed links, personal field without an encryption provider (`git-forms`)
+|invalid |schema validation, typed links, a person field without a known pseudonym (`git-forms`)
 |mismatch |check of the generated output (`git-forms`)
 |transition refused, level not met |workflow (`git-forms`, signature level evidence)
 |cycle |effective protection needs over `dependsOn` (`git-directory`)
-|undecryptable |`git-crypto`; also an erased person entry (`git-directory`)
-|key version missing |keyring at start: the key source has no key for the keyring's version (`git-crypto`)
 |entry required |first login and interrupted first login (`git-directory`)
-|incomplete |erasure whose commit, push or key destruction is still outstanding (`git-crypto`); release whose tag is
+|not supported, managed by source |a person directory whose source the operator maintains: saving an entry, erasing a
+pseudonym (`git-store`, `PersonDirectory`)
+|incomplete |erasure whose record is still outstanding (`git-directory`); release whose tag is
 still missing after `main` moved (`git-store`)
 |unavailable, refused |obtaining an anchor proof (`git-store` with a provider): the provider is unreachable, or
 `signed` refuses because its clock is behind; the subject stays pending
@@ -68,7 +68,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-2[GDR-GEN-2: Java Platform Mo
 *Status:* PLANNED (`module-info.java` and `@NullMarked` packages exist in the three scaffolds)
 
 * Module names: `de.cuioss.git.document.<suffix>` with suffix `core`, `worktrees`, `testing`, `store`, `forms`,
-  `crypto`, `signing`, `timestamp`, `directory`.
+  `signing`, `timestamp`, `directory`.
 * An `exports` directive is added together with the first public class of a package.
 * `org.jspecify` is `requires static`.
 
@@ -101,10 +101,11 @@ commit is link:../Requirements.adoc#GDR-NFR-3[GDR-NFR-3]. The table states where
 |access tokens, passwords |accepted as call parameters only; never stored, logged or put into a detail
 |technical push secret (`CredentialsStrategy` `technical`), `timestamp.credentials` |read from the application's
 configuration for the call; never logged, put into a detail or committed
-|KEK, DEKs, signing keys |held by the key source or in memory; never written in clear text
+|signing and anchor keys |held by the key source or in memory; never written in clear text
 |HMAC key of the `Session` trailer |configured secret, held in memory; never logged, put into a detail or committed
 |`sid` |only as HMAC in the `Session` trailer
-|`sub`, e-mail address, person name |only inside the encrypted keyring or the encrypted person entries
+|`sub`, e-mail address, person name |only inside the person directory (for `local` the files outside every
+repository), never in a repository
 |===
 
 Tests assert the rules with a JUL log capture (`cui-test-juli-logger`) and with checks of result details.

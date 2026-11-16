@@ -94,9 +94,9 @@ implements a port interface of `service`, and CDI injects the implementation
 |—
 |===
 
-The clients of the timestamp authority and of the key sources (KMS, Vault transit) belong to the libraries
-(`git-timestamp`, `git-crypto`); `service` configures them from `cisos-friend.yaml` and the application has no adapter
-of its own for them.
+The clients of the timestamp authority and of the KMS that holds the signing and anchor keys belong to the libraries
+(`git-timestamp`, `git-signing`), and so does the person directory (`git-directory`); `service` configures them from
+`cisos-friend.yaml` and the application has no adapter of its own for them.
 
 ArchUnit rules, planned for the unit lane:
 
@@ -117,7 +117,8 @@ Status: PLANNED
 |File |Content
 
 |`schema.json`
-|JSON Schema of the category's YAML documents; fields marked personal carry `"x-personal": true`
+|JSON Schema of the category's YAML documents; a field that names a person carries `"x-person": true` and holds a
+pseudonym
 
 |`template.adoc`
 |Template that generates the AsciiDoc output from YAML and fragments
@@ -161,9 +162,9 @@ Status: PLANNED
 |At start, per repository
 |Save, webhook, periodic fetch
 
-|Keyring mapping
-|At start
-|KEK rotation commit
+|Person directory (`local`)
+|At start, from the entry files
+|Own save of an entry, erasure
 
 |Pending approvals
 |From the index (open requests are documents)

@@ -8,7 +8,7 @@
 // adr-metadata
 // summary: git-document-repository is a multi-module reactor released together; the aspects of the document store are modules of their own, and each carries its own third-party dependencies.
 // tags: modules, layering, dependencies, release
-// affects: git-core, git-worktrees, git-testing, git-store, git-forms, git-crypto, git-signing, git-timestamp, git-directory
+// affects: git-core, git-worktrees, git-testing, git-store, git-forms, git-signing, git-timestamp, git-directory
 // supersedes:
 // end-adr-metadata
 
@@ -27,7 +27,7 @@ consumed separately:
 * `git-core`, `git-worktrees`, `git-testing` -- the JGit level;
 * `git-store` -- drafts, saving, index, outbox;
 * `git-forms` -- schema-driven documents;
-* `git-crypto`, `git-signing`, `git-timestamp`, `git-directory` -- optional aspects.
+* `git-signing`, `git-timestamp`, `git-directory` -- optional aspects.
 
 Each module carries its own third-party dependencies. A consumer of `git-core` alone pulls none of the dependencies of
 the modules above it. The dependency graph is in xref:../concepts/module-structure.adoc[Module Structure].

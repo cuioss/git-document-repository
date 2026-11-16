@@ -32,12 +32,12 @@ integrations with issue trackers (see xref:concepts/git-as-document-persistence.
 === GDR-GEN-1: Module Layering and Dependency Isolation
 
 * Once all planned modules exist, the reactor must consist of the modules `git-core`, `git-worktrees`, `git-testing`,
-  `git-store`, `git-forms`, `git-crypto`, `git-signing`, `git-timestamp` and `git-directory`, released together under
+  `git-store`, `git-forms`, `git-signing`, `git-timestamp` and `git-directory`, released together under
   one version. Until then it consists of the modules created so far, released the same way.
 * A module must depend only on the modules the dependency graph of the module structure allows; the build must fail
   when a module declares another dependency on a module of the reactor.
-* A consumer that depends on `git-core` alone must receive no third-party dependency of `git-forms`, `git-crypto`,
-  `git-signing`, `git-timestamp` or `git-directory` (verifiable with `mvn dependency:tree`).
+* A consumer that depends on `git-core` alone must receive no third-party dependency of `git-forms`, `git-signing`,
+  `git-timestamp` or `git-directory` (verifiable with `mvn dependency:tree`).
 * No public type of any module may carry a term of a domain (assessment, threat model, incident, risk register).
 
 _Concept: xref:concepts/module-structure.adoc[Module Structure] · Specification:
@@ -359,8 +359,8 @@ xref:specification/git-store.adoc[git-store]_
 * The credentials of a push must come from a credentials strategy chosen per push: technical user or the user's token.
 * A push of a save must carry only the commits of that save and the pending commits before it (earlier saves reported
   saved locally); apart from these, commits of different users must never be combined in one push.
-* Commits the store writes without a user's save (notes, keyring rotations) must not be combined with the commits of a
-  save and must be pushed with the technical user's credentials.
+* Commits the store writes without a user's save (notes, checkpoints, erasure records) must not be combined with the
+  commits of a save and must be pushed with the technical user's credentials.
 
 _Concept: xref:concepts/identity-and-signing.adoc[Identity and Signing] · Specification:
 xref:specification/git-store.adoc[git-store]_
@@ -450,6 +450,21 @@ xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
 
 _Concept: xref:concepts/evidence-and-companion-stores.adoc#_the_anchor[The Anchor] · Specification:
 xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
+
+[#GDR-STORE-15]
+=== GDR-STORE-15: Person Directory Interface
+
+* The store must define a service interface for a person directory: the pseudonym of an identity-provider issuer and
+  `sub`, created on first use; the entry of a pseudonym (name and memberships, pairs of team and role) or a marker for
+  a former member; the pseudonyms holding a role in a team; and the erasure of a pseudonym.
+* Exactly one provider must be active, chosen by configuration; a missing or ambiguous provider must stop the start of
+  the store. The author pseudonym of every save must come from it.
+* A pseudonym must be stable for the same issuer and `sub`. After an erasure the provider must no longer return the
+  person, issuer or `sub` for that pseudonym, and must resolve it as a former member.
+* The store must write no data it obtains from the provider into a repository except pseudonyms.
+
+_Concept: xref:concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory] ·
+Specification: xref:specification/git-store.adoc#_person_directory[git-store, Person Directory]_
 
 [#requirements-git-forms]
 == `git-forms` Requirements
@@ -548,98 +563,6 @@ xref:specification/git-forms.adoc[git-forms]_
 
 _Concept: xref:concepts/schema-driven-documents.adoc#_running_numbers_and_reporting_dates[Running Numbers] ·
 Specification: xref:specification/git-forms.adoc[git-forms]_
-
-[#requirements-git-crypto]
-== `git-crypto` Requirements
-
-[#GDR-CRYPTO-1]
-=== GDR-CRYPTO-1: Envelope Encryption
-
-* Every pseudonym must have its own data encryption key (DEK) per retention class, so that data under a retention
-  duty and erasable data never share a key.
-* The keyring (issuer, `sub` and the DEKs per pseudonym) must be encrypted with a versioned key-encryption key (KEK).
-* The KEK must come from an exchangeable key source and must never be written to a repository; <<GDR-NFR-3>> applies.
-
-_Concept: xref:concepts/data-protection.adoc#_an_encrypted_keyring_in_git[Encrypted Keyring] · Specification:
-xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-2]
-=== GDR-CRYPTO-2: Cryptographic Primitives
-
-* Encryption must use AES-256-GCM.
-* The repository path and the key version must be bound as associated data; a ciphertext moved to another path must
-  fail to decrypt.
-* Every encryption must use a fresh random nonce.
-
-_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
-xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-3]
-=== GDR-CRYPTO-3: Pseudonyms
-
-* The identity of a person in the keyring must be the pair of issuer and `sub`; a `sub` alone must never select an
-  entry.
-* For an issuer and `sub` without an entry the library must create a random pseudonym not derived from either.
-* The library must resolve a pseudonym to its issuer and `sub`, and an issuer and `sub` to its pseudonym; the latter
-  must be offered as a provider of the `PseudonymResolver` interface of `git-store`.
-
-_Concept: xref:concepts/data-protection.adoc#_keeping_personal_data_out_of_the_history[Keeping Personal Data out] ·
-Specification: xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-4]
-=== GDR-CRYPTO-4: Erasure by Key Rotation
-
-* Erasure must remove from the keyring the DEKs of the retention classes whose data must be erased (the whole entry
-  when no DEK is left), encrypt the keyring with KEK version n+1, record version n as pending destruction, and commit
-  it; in remote mode it must push the commit.
-* A retention class under a statutory retention duty must keep its DEK until its retention ends (restriction instead
-  of erasure, § 35(3) BDSG).
-* Only after the commit, and in remote mode the push, succeeded may the library ask the key source to destroy version n.
-* When the commit or the push fails, the erasure must report incomplete, and no KEK version may be destroyed.
-* A version recorded as pending destruction must be destroyed by the next erasure run or the next start, until the
-  destruction succeeds.
-* One rotation must erase any number of pseudonyms (batching).
-* Once version n is destroyed, no earlier version of the keyring may be decryptable with the keys the key source
-  still holds.
-
-_Concept: xref:concepts/data-protection.adoc#_erasing_a_person[Erasing a Person] · Specification:
-xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-5]
-=== GDR-CRYPTO-5: Evidence of Erasure
-
-* The rotation commit must name the erased pseudonyms (with the erased retention classes when an entry keeps a DEK)
-  and the KEK version pending destruction.
-* After the destruction succeeded, a further commit must record the destroyed version.
-* No commit may contain key material, and no commit may record a destruction that has not succeeded.
-
-_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
-xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-6]
-=== GDR-CRYPTO-6: Personal Fields in Documents
-
-* The module must provide the `FieldEncryptor` interface of `git-store`: it must encrypt a personal field with the
-  DEK of its data subject for the retention class of the field's document kind and decrypt it again; the stored value
-  must not contain the clear text.
-* After the erasure of that DEK, decrypting the field must fail with an outcome.
-
-_Concept: xref:concepts/data-protection.adoc#_keeping_personal_data_out_of_the_history[Keeping Personal Data out] ·
-Specification: xref:specification/git-crypto.adoc[git-crypto]_
-
-[#GDR-CRYPTO-7]
-=== GDR-CRYPTO-7: Keyring at Run Time
-
-* The keyring must be decrypted at start with the current KEK and held in memory.
-* A missing or wrong KEK must stop the start with an outcome naming the KEK version expected.
-* When a fetch or a reference update brings a new version of the keyring, the instance must reload it and drop the
-  removed DEKs before it serves the next decryption.
-
-NOTE: With several instances an erasure takes effect in each instance at the latest at its next fetch, so the erasure
-delay an operator states includes the fetch interval.
-
-_Concept: xref:concepts/data-protection.adoc#_what_has_to_be_done_right[What Has to Be Done Right] · Specification:
-xref:specification/git-crypto.adoc[git-crypto]_
 
 [#requirements-git-signing]
 == `git-signing` Requirements
@@ -792,14 +715,19 @@ _Concept: xref:concepts/directory-and-catalogs.adoc#_catalog_of_applications_and
 Specification: xref:specification/git-directory.adoc[git-directory]_
 
 [#GDR-DIR-3]
-=== GDR-DIR-3: Person Entries
+=== GDR-DIR-3: Local Person Directory
 
-* A person entry must hold the name, the memberships (pairs of team and role), the date `since` and the date of the
-  last confirmation `confirmed`, and no further field unless the operator extends the schema.
-* The whole entry must be encrypted with the DEK of the person (GDR-CRYPTO-1).
+* The module must provide the person directory `local` of `git-store` (<<GDR-STORE-15>>), the default provider.
+* A person entry must hold the pseudonym, the issuer and `sub`, the name, the memberships (pairs of team and role),
+  the date `since` and the date of the last confirmation `confirmed`, and no further field unless the operator extends
+  the schema.
+* Every entry must be a plain file of its own under the configured path, outside every repository; it must never be
+  committed or pushed.
+* A new pseudonym must be random (`p-` followed by at least 128 random bits) and must not be derivable from issuer or
+  `sub`.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_the_directory_of_persons[Directory of Persons] · Specification:
-xref:specification/git-directory.adoc[git-directory]_
+xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
 
 [#GDR-DIR-4]
 === GDR-DIR-4: First Login
@@ -807,17 +735,16 @@ xref:specification/git-directory.adoc[git-directory]_
 * For an issuer and `sub` without a pseudonym the module must create one and report that an entry is required.
 * For a known pseudonym without a saved entry (an interrupted first login) the module must report again that an entry
   is required.
-* Saving the entry must be a signed level-1 commit; the entry must be valid at once. Level 1 needs a provider of the
-  `SignatureLevelVerifier` interface (`git-signing`) at run time.
+* Saving the entry must write the file at once; the entry must be valid at once.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_first_login[First Login] · Specification:
-xref:specification/git-directory.adoc[git-directory]_
+xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
 
 [#GDR-DIR-5]
 === GDR-DIR-5: Reference Resolution
 
 * The module must resolve `role:`, `team:`, `service:`, `system:` and `external:` references to their entries, and a
-  role in a team to the persons holding it.
+  role in a team to the persons holding it, through the active person directory.
 * A pseudonym whose person was erased must resolve to a "former member" marker.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_what_it_means_for_the_architecture[Architecture] ·
@@ -841,6 +768,18 @@ Specification: xref:specification/git-directory.adoc[git-directory]_
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_staying_current[Staying Current] · Specification:
 xref:specification/git-directory.adoc[git-directory]_
+
+[#GDR-DIR-8]
+=== GDR-DIR-8: Erasure and Restriction
+
+* Erasure must delete the person's file at once; the pseudonym must then resolve to a former member.
+* Where the operator sets a restriction date, the entry must be kept until that date, hidden from every resolution
+  except the pseudonym's own former-member marker, and deleted when the date has passed.
+* Every erasure must be recorded as a system commit in the directory's repository that names the pseudonym and the
+  date, never the person.
+
+_Concept: xref:concepts/data-protection.adoc#_erasing_a_person[Data Protection, Erasing a Person] · Specification:
+xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
 
 [#requirements-non-functional]
 == Non-Functional Requirements
@@ -867,7 +806,7 @@ xref:specification/testing.adoc[Testing]_
 [#GDR-NFR-3]
 === GDR-NFR-3: Secrets
 
-* No token, password, private or secret key material, KEK, session id, `sub`, e-mail address or person name may
+* No token, password, private or secret key material, session id, `sub`, e-mail address or person name may
   appear in a result detail, an exception message, a log message or a commit.
 * Public keys (WebAuthn, `allowed_signers`) are not secrets and may be stored.
 
@@ -921,7 +860,7 @@ xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_client
 xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005]
 |xref:specification/git-testing.adoc[git-testing]
 
-|GDR-STORE-1 – GDR-STORE-14
+|GDR-STORE-1 – GDR-STORE-15
 |xref:concepts/storage-engine.adoc[Storage Engine],
 xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores],
 xref:concepts/data-protection.adoc[Data Protection],
@@ -930,6 +869,7 @@ xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
 xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003],
+xref:adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008],
 xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009],
 xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
 |xref:specification/git-store.adoc[git-store]
@@ -940,11 +880,6 @@ xref:concepts/identity-and-signing.adoc[Identity and Signing]
 |xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011],
 xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[ADR-0006]
 |xref:specification/git-forms.adoc[git-forms]
-
-|GDR-CRYPTO-1 – GDR-CRYPTO-7
-|xref:concepts/data-protection.adoc[Data Protection]
-|xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[ADR-0008]
-|xref:specification/git-crypto.adoc[git-crypto]
 
 |GDR-SIGN-1 – GDR-SIGN-7
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
@@ -958,11 +893,11 @@ xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_
 |xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
 |xref:specification/git-timestamp.adoc[git-timestamp]
 
-|GDR-DIR-1 – GDR-DIR-7
+|GDR-DIR-1 – GDR-DIR-8
 |xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs],
 xref:concepts/data-protection.adoc[Data Protection]
 |xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[ADR-0012],
-xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[ADR-0008]
+xref:adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008]
 |xref:specification/git-directory.adoc[git-directory]
 
 |GDR-NFR-1 – GDR-NFR-4

@@ -92,11 +92,6 @@ for `private_key_jwt`), `groups-claim` (default `groups`)
 |`key-ref` (commit-signing key), `format` (`ssh` or `gpg`), `session-hmac-key-ref` (key of the session HMAC in the
 `Session` trailer, see link:authentication.adoc#_trailer_values[Trailer Values])
 
-|`keyring`
-|yes
-|`kek-source` (`kms`, `vault-transit`, `file`), `kek-ref`, `rotation-interval` (ISO 8601 duration, default `P1D`,
-maximum `P30D`)
-
 |`anchor`
 |no
 |Anchoring of releases and checkpoints
@@ -120,6 +115,11 @@ active)
 |`session.idle-timeout` (default `PT30M`), `session.max-lifetime` (default `PT8H`), `directory.confirm-interval`
 (default `P12M`), `information-text-ref`
 
+|`directory`
+|no
+|The person directory (link:data-protection.adoc#_person_directory[Data Protection, Person Directory]):
+`persons.provider` (default `local`), `persons.path` (default `/app/data/persons`; only for `local`)
+
 |`integrations`
 |no
 |`issue-tracker`, `ticket-system`, `chat`, each with `url` and `credential-ref`
@@ -128,12 +128,11 @@ active)
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 
 * `file:/run/secrets/...`: a mounted file.
-* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, anchor key, KEK with `kek-source: kms`).
-* `vault:<path>`: a Vault path; the transit key with `kek-source: vault-transit`
-  (`vault:transit/keys/<name>`), a secret of the key-value engine otherwise.
+* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, anchor key).
+* `vault:<path>`: a secret of Vault's key-value engine.
 
-The schema accepts for each key only the forms that fit it: `keyring.kek-ref` must match `keyring.kek-source`
-(`kms:` for `kms`, `vault:` for `vault-transit`, `file:` for `file`).
+The schema accepts for each key only the forms that fit it: a key used for signing (`signing.key-ref`,
+`anchor.signed-key-ref`) accepts `kms:` and `file:`, every other key `file:` and `vault:`.
 
 Placeholders: `${NAME}` and `${NAME:-default}` in any string value, resolved from the environment before validation;
 an unresolved placeholder without default is a boot error.
@@ -307,7 +306,7 @@ retention class, or carry a class other than the repository's `retention`
 |A remote repository without `host-type`
 
 |Reference forms
-|A `-ref` value in a form its key does not accept (`keyring.kek-ref` not matching `keyring.kek-source`)
+|A `-ref` value in a form its key does not accept (`signing.key-ref` as `vault:`)
 
 |Step-up assurance
 |A category with a transition at level 2 or higher and no `step-up.acr`
@@ -315,8 +314,8 @@ retention class, or carry a class other than the repository's `retention`
 |Rights reference repositories
 |A rights entry naming an unknown alias
 
-|Rotation interval
-|`rotation-interval` above `P30D`
+|Person directory path
+|`directory.persons.path` inside the local directory of a repository
 
 |Canonical URI
 |`mcp.canonical-uri` that is not an absolute HTTPS URI without fragment

@@ -58,7 +58,7 @@ writes the identity of the logged-in user as *trailers* into the message, that s
 ----
 Update data/section-a.yaml
 
-Actor: p-7f3a9c                       ← pseudonym from the keyring
+Actor: p-7f3a9c                       ← pseudonym from the person directory
 Actor-Issuer: https://idp.example     ← who authenticated the user
 Auth-Time: 2026-11-12T14:03:11Z
 Auth-Context: mfa                     ← acr / amr of the token
@@ -96,8 +96,9 @@ What it does not show:
 In an OIDC token `sub` is the stable identifier of the user and `sid` the identifier of the session. Both are
 pseudonymous, hence personal identifiers, and they would stay in the history for good. Therefore:
 
-* *The own pseudonym from the keyring instead of `sub`.* The mapping pseudonym → `sub` lies in the keyring and is
-  erasable through the rotation of the key-encryption key (see xref:data-protection.adoc[Data Protection]).
+* *The own pseudonym from the person directory instead of `sub`.* The mapping pseudonym → `sub` lies in the person
+  directory outside Git and is erasable by deleting it (see
+  xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
 * *Only an HMAC of `sid`.* That suffices to correlate with logs. The `sid` is no access token, but it is not stored in
   clear text for good either.
 

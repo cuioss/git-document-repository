@@ -27,7 +27,8 @@ Status: PLANNED
 
 |`incidents/<id>/incident.yaml`
 |`occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
-`nis2-applicable`, `affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
+`data-subjects` (categories and approximate numbers of data subjects and records, no person), `nis2-applicable`,
+`affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
 
 |`incidents/<id>/narrative/*.adoc`
 |`course.adoc`, `root-cause-analysis.adoc`, `lessons.adoc`

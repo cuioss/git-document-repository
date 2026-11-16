@@ -59,10 +59,6 @@ in-core writing, compare-and-swap, in-core merge, notes
 (xref:schema-driven-documents.adoc[Schema-Driven Documents])
 |planned
 
-|`git-crypto` (optional)
-|Encrypted keyring, erasure by key rotation (xref:data-protection.adoc[Data Protection])
-|planned
-
 |`git-signing` (optional)
 |Commit signature, user claims, passkey approvals, signature check, the own timestamp as anchor provider
 (xref:identity-and-signing.adoc[Identity and Signing])
@@ -85,8 +81,8 @@ repository; its kinds of documents are configuration of `git-forms`.
 
 === Dependencies and Third-Party Isolation
 
-`git-worktrees` depends on `git-core` alone. `git-store` builds on `git-core`; `git-forms`, `git-crypto`,
-`git-signing` and `git-timestamp` build on `git-store`; `git-directory` builds on `git-forms` and `git-crypto`.
+`git-worktrees` depends on `git-core` alone. `git-store` builds on `git-core`; `git-forms`, `git-signing` and
+`git-timestamp` build on `git-store`; `git-directory` builds on `git-forms`.
 `git-testing` depends on no other module of the reactor; it declares JGit directly (planned), since its fixtures
 create JGit repositories.
 
@@ -96,23 +92,19 @@ interfaces are planned:
 
 * `SignatureLevelVerifier` (the evidence of a signature level for a transition) and `CommitTrailerContributor` (the
   actor and approval trailers) are provided by `git-signing`. Without a provider only signature level 0 is accepted.
-* `FieldEncryptor` (encrypting and decrypting a personal field with the data encryption key of the data subject) is
-  provided by `git-crypto`; `git-forms` interprets the schema marker `x-personal` and calls it.
-* `PseudonymResolver` (issuer and `sub` to pseudonym) is provided by `git-crypto`. Without `git-crypto` the
-  application provides one, so `git-signing` and `git-store` get the pseudonym of the author in either case.
+* `PersonDirectory` (issuer and `sub` to pseudonym, the person entries, holders of a role, erasure) is provided by
+  `git-directory` (`local`, the default) or by a provider for the operator's own source. Exactly one is active, so
+  `git-signing` and `git-store` get the pseudonym of the author in either case.
 * `AnchorProvider` (a proof that an object existed at a time) is provided by `git-signing` (`signed`, the own
   timestamp) and by `git-timestamp` (`rfc3161`). `git-store` decides what is anchored and stores the proofs; without
   an active provider it anchors nothing.
-* `git-directory` saves at signature level 1 and therefore needs a `SignatureLevelVerifier` provider, that is
-  `git-signing`, at run time. The static dependency graph above stays unchanged.
 * `git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules
   above it instead of hard-coding them.
 
 No module knows a term of a domain. The modules above `git-core` carry their own third-party dependencies (a YAML
-library, a JSON Schema validator and a template engine in `git-forms`, an envelope-encryption library in `git-crypto`,
-a WebAuthn verification library in `git-signing`, a timestamp client in `git-timestamp`), so a consumer of `git-core`
-alone pulls none of them. Every one of these dependencies, JGit
-included, needs the owner's approval before it is added.
+library, a JSON Schema validator and a template engine in `git-forms`, a WebAuthn verification library in `git-signing`,
+a timestamp client in `git-timestamp`), so a consumer of `git-core` alone pulls none of them. Every one of these
+dependencies, JGit included, needs the owner's approval before it is added.
 
 == The Foundation Modules
 
@@ -152,7 +144,7 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
   release a first version.
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
-. Add the aspect modules as the document store needs them: `git-store` first, then `git-signing`, `git-crypto`,
+. Add the aspect modules as the document store needs them: `git-store` first, then `git-signing`,
   `git-timestamp`, `git-forms`, `git-directory`. They change nothing for the clients of the foundation.
 
 == Open Questions

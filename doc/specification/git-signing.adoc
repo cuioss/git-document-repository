@@ -48,7 +48,8 @@ _See Requirement link:../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2: Identity Trail
 |===
 |Trailer |Value |Source
 
-|`Actor` |pseudonym (`p-…`) |the `PseudonymResolver` of `git-store` (provided by `git-crypto` or the application)
+|`Actor` |pseudonym (`p-…`)
+|the `PersonDirectory` of `git-store` (`local` of `git-directory` or an operator's provider)
 |`Actor-Issuer` |issuer URL of the identity provider |token claim `iss`
 |`Auth-Time` |ISO 8601 UTC, seconds precision |token claim `auth_time`
 |`Auth-Context` |`acr=<acr>; amr=<amr>,<amr>…` (for example `acr=urn:example:mfa; amr=pwd,otp`); a part is left out

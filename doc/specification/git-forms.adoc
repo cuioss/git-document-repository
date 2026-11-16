@@ -55,9 +55,9 @@ _See Requirement link:../Requirements.adoc#GDR-FORMS-2[GDR-FORMS-2: Schema Valid
 * Validation runs before every save of the data file.
 * A failure returns the invalid outcome with one entry per violation: JSON Pointer of the field and message.
 * The schema file is plain JSON Schema; the dialect is open (see the concept's open questions).
-* A field marked `x-personal` is encrypted and decrypted through the `FieldEncryptor` of `git-store` (provided by
-  `git-crypto`, see xref:git-crypto.adoc#_personal_fields_in_documents[git-crypto, Personal Fields in Documents]);
-  without a provider the save of such a document returns the invalid outcome.
+* Documents hold no personal data beyond pseudonyms; there is no encrypted field type. A field that names a person
+  holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory` of `git-store` (see
+  xref:git-store.adoc#_person_directory[git-store, Person Directory]).
 
 == Data Layout
 

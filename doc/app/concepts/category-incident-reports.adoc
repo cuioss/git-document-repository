@@ -51,7 +51,7 @@ link:../adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_live
 . *Links*: an incident creates risks in the ISMS register, measures as issues and, where it applies, a review of the
   threat model of the affected service.
 . *Data protection and confidentiality*: a repository per year with a retention period (`isms-incidents-2026`),
-  personal details encrypted through the keyring, read access for a small circle
+  no personal details in the report (they stay in the ticket system), read access for a small circle
   (link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
 
 Where Confluence is better: joint live editing and commenting, familiarity for non-technical participants, and it
@@ -91,9 +91,12 @@ customers is generated from it as well. The mechanism is the library's
 link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
 template and the workflow.
 
-Personal details in the narrative (a named employee who clicked a link) are a special case: the form offers a field
-encrypted with the data encryption key (DEK) of the data subject, and the UI warns against personal interview notes in
-free text.
+Personal details in the narrative (a named employee who clicked a link) do not go into the report. The narrative names
+roles and pseudonyms ("a member of `team:payments`"); the details stay in the ticket, referenced by its id, and the UI
+warns against personal details and interview notes in free text. For a personal data breach the report records the
+categories and approximate number of data subjects and records, which is what the notification to the supervisory
+authority asks for (GDPR Art. 33(3)(a), link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU)
+2016/679]).
 
 == Existing Alternatives
 

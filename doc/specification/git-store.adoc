@@ -14,9 +14,9 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, identity per save, the in-memory index, the post-commit outbox and the anchoring. It depends on
-`git-core` only and defines the service provider interfaces through which the optional modules contribute without a
-dependency of `git-store` on them (see Service Provider Interfaces). Rationale:
+saving, release, identity per save, the in-memory index, the post-commit outbox, the anchoring and the person directory
+interface. It depends on `git-core` only and defines the service provider interfaces through which the optional modules
+contribute without a dependency of `git-store` on them (see Service Provider Interfaces). Rationale:
 xref:../concepts/storage-engine.adoc[Storage Engine].
 
 == Repository Registry
@@ -213,15 +213,15 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per
 |===
 |Element |Value
 
-|author |the caller's pseudonym (`p-<random>`), e-mail field empty
+|author |the caller's pseudonym (`p-<random>`) from the person directory (see Person Directory), e-mail field empty
 |committer |the technical user configured per repository
 |credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
 |===
 
-A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that
-reported saved locally, see Save); apart from these, commits of different users are never combined in one push.
-Commits the store writes without a user's save (notes, keyring rotations) are never combined with the commits of a save
-and are pushed separately with the technical user's credentials.
+A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that reported
+saved locally, see Save); apart from these, commits of different users are never combined in one push. Commits the store
+writes without a user's save (notes, checkpoints, erasure records) are never combined with the commits of a save and are
+pushed separately with the technical user's credentials.
 
 == In-Memory Index
 
@@ -359,6 +359,49 @@ It runs from CI without the application, given the providers' trust configuratio
 
 A provider named in `anchor.providers` but not found by `ServiceLoader` fails the start of the store.
 
+== Person Directory
+
+_See Requirement link:../Requirements.adoc#GDR-STORE-15[GDR-STORE-15: Person Directory Interface]_
+
+*Status:* PLANNED
+
+Rationale: xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory].
+
+[source,java]
+----
+public interface PersonDirectory {
+
+    /** The provider id, matched against directory.persons.provider. */
+    String id();
+
+    /** The pseudonym of an identity-provider subject, created on first use; entry-required while none is saved. */
+    LoginResult login(PersonClaims claims);
+
+    /** The entry of a pseudonym, or the former-member marker when it was erased or is restricted. */
+    PersonResult person(Pseudonym pseudonym);
+
+    /** The pseudonyms holding a role in a team. */
+    List<Pseudonym> holders(CatalogId role, CatalogId team);
+
+    /** Saves the entry the user entered; providers whose source is maintained elsewhere return not-supported. */
+    SaveResult saveEntry(Pseudonym pseudonym, PersonEntry entry);
+
+    /** Erases a pseudonym at once, or restricts it until the given date; may return managed-by-source. */
+    ErasureResult erase(Pseudonym pseudonym, @Nullable LocalDate restrictUntil);
+}
+----
+
+* `PersonClaims` carries the issuer, the `sub`, the name and the groups of the login token; a `sub` is unique only
+  within its issuer, so the pair is the key.
+* Providers: `local` (xref:git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]), the
+  default. A provider for the operator's own source (the identity provider's user directory, SCIM, LDAP) reads names
+  and memberships from that source, returns not-supported from `saveEntry`, and managed-by-source from `erase`,
+  because the operator erases there. Such a provider keeps its own mapping of issuer and `sub` to pseudonym.
+* `directory.persons.provider` names the active provider (default `local`). No provider, a named provider that
+  `ServiceLoader` does not find, or two providers with the same id stop the start of the store.
+* The store calls `login` for the author of a save and writes nothing it obtains from the provider into a repository
+  except the pseudonym.
+
 == Codecs
 
 _See Requirement link:../Requirements.adoc#GDR-STORE-11[GDR-STORE-11: Deterministic Content through Codecs]_
@@ -385,10 +428,8 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 |`SignatureLevelVerifier` |Checks the evidence of a signature level for a workflow transition; without a provider
 only level 0 is accepted |`git-signing`
 |`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
-|`FieldEncryptor` |Encrypts and decrypts a personal field with the data encryption key (DEK) of the data subject
-for the retention class of the field's document kind |`git-crypto`
-|`PseudonymResolver` |Maps issuer and `sub` to a pseudonym; without `git-crypto` the application provides one
-|`git-crypto`
+|`PersonDirectory` |Pseudonyms, person entries, holders of a role in a team, erasure (see Person Directory); exactly
+one provider is active |`git-directory` (`local`, the default), or a provider for the operator's own source
 |`AnchorProvider` |Obtains and verifies a proof that an object existed at a time (see Anchoring); several providers
 may be active |`git-signing` (`signed`), `git-timestamp` (`rfc3161`)
 |===

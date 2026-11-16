@@ -92,14 +92,15 @@ link:architecture-and-modules.adoc#_degraded_operation[Architecture and Modules,
 repository without a local copy keeps readiness `DOWN`. A local-mode repository (`remote: none`) counts once its local
 repository opens and its index is built. A later fetch failure does not drop readiness
 
-|`keyring`
-|The keyring was decrypted with the current KEK
+|`persons`
+|The person directory was loaded (for `local`: every entry file under `directory.persons.path` read)
 
 |`index`
 |The index was built for every repository
 |===
 
-Volume: `/app/data` holds the local repositories. It is mounted from a persistent volume; the image declares no
+Volume: `/app/data` holds the local repositories and the entries of the `local` person directory
+(`/app/data/persons`). It is mounted from a persistent volume; the image declares no
 volume.
 
 == Secrets
@@ -128,9 +129,6 @@ Status: PLANNED
 
 |Session-HMAC key
 |`signing.session-hmac-key-ref`
-
-|KEK
-|`keyring.kek-ref`
 
 |Webhook secrets
 |`webhook-secret-ref` per repository

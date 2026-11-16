@@ -49,8 +49,9 @@ logged-in user as trailers. Approvals can be raised to MFA or a passkey signatur
 optional.
 |xref:identity-and-signing.adoc[Identity and Signing]
 
-|*Data protection without a further store.* The pseudonym mapping lies in Git in an encrypted keyring; erasure
-rotates the key-encryption key and destroys the old one. Repositories are cut by confidentiality and retention class.
+|*Data protection by keeping personal data out of Git.* Git holds pseudonyms and stable ids only; names and the
+mapping to the login lie in a pluggable person directory outside Git, where erasure is a deletion. Repositories are cut
+by confidentiality and retention class.
 |xref:data-protection.adoc[Data Protection]
 
 |*Evidence.* Releases and periodic checkpoints are anchored through pluggable providers (an own signed timestamp,
@@ -62,7 +63,7 @@ index) or lives in a system the organisation already runs.
 approval, deadlines and links. A kind of document becomes configuration of one generic layer.
 |xref:schema-driven-documents.adoc[Schema-Driven Documents]
 
-|*Master data.* A directory of persons (encrypted) and catalogs of roles, teams and services that every document
+|*Master data.* A directory of persons (outside Git) and catalogs of roles, teams and services that every document
 refers to by stable ids.
 |xref:directory-and-catalogs.adoc[Directory and Catalogs]
 |===

@@ -112,7 +112,7 @@ The application supplies these values to the library's trailer schema:
 |Value |Source
 
 |Pseudonym
-|Keyring lookup of the pair (`iss`, `sub`); created on first login
+|Person directory lookup of the pair (`iss`, `sub`); created on first login
 
 |Issuer
 |`iss`
@@ -222,12 +222,14 @@ _See Requirement link:../Requirements.adoc#CIFR-DIR-1[CIFR-DIR-1: First Login]_
 
 Status: PLANNED
 
-. After login the server asks the library for the person of (`iss`, `sub`). The outcome entry-required (no pseudonym
-  yet, which the library then creates, or a pseudonym without a saved entry from an interrupted first login) makes it
-  answer every `/api/v1` request outside the allow-list below with `FIRST_LOGIN_REQUIRED`, until the entry is saved.
+. With the `local` person directory: after login the server asks the library for the person of (`iss`, `sub`). The
+  outcome entry-required (no pseudonym yet, which the library then creates, or a pseudonym without a saved entry from
+  an interrupted first login) makes it answer every `/api/v1` request outside the allow-list below with
+  `FIRST_LOGIN_REQUIRED`, until the entry is saved.
 . `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
 . The form shows the text referenced by `web.information-text-ref`.
-. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves at level 1.
+. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry in the person
+  directory; it creates no commit.
 
 Allow-list during the first login, exactly the requests the form and the shell need:
 

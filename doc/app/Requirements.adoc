@@ -32,8 +32,9 @@ referenced, never restated:
 |Schemas, templates, workflows, deterministic serialisation, running numbers, generated output
 |link:../Requirements.adoc#requirements-git-forms[`git-forms` requirements]
 
-|Keyring, pseudonyms, erasure by KEK rotation, crypto-shredding
-|link:../Requirements.adoc#requirements-git-crypto[`git-crypto` requirements]
+|Person directory interface: pseudonyms, persons outside Git, erasure
+|link:../Requirements.adoc#GDR-STORE-15[GDR-STORE-15],
+link:../Requirements.adoc#requirements-git-directory[`git-directory` requirements]
 
 |Commit signature, trailer schema, signature levels, passkey approval notes, signature check
 |link:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
@@ -79,8 +80,11 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-GEN-3]
 === CIFR-GEN-3: No Database of Its Own
 
-* The application must persist durable state only in Git repositories (remote, or local in local mode).
-* The in-memory index, the keyring mapping and computed reminders must be rebuilt from Git at start; a restart test
+* The application must persist durable state only in Git repositories (remote, or local in local mode), with one
+  exception: the entries of the `local` person directory, which lie outside every repository so that they can be
+  erased (link:../adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[library
+  ADR-0008]).
+* The in-memory index and computed reminders must be rebuilt from Git at start; a restart test
   must show identical dashboard results before and after restart.
 * The application must not configure a datasource.
 * Concept: link:concepts/application-architecture.adoc[Application Architecture].
@@ -298,19 +302,20 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-DIR-1]
 === CIFR-DIR-1: First Login
 
-* A user without a saved directory entry (no pseudonym yet, or a pseudonym from an interrupted first login) must be
-  shown the first-login form before any other view; the restriction must hold until the entry is saved.
+* With the `local` person directory, a user without a saved directory entry (no pseudonym yet, or a pseudonym from an
+  interrupted first login) must be shown the first-login form before any other view; the restriction must hold until
+  the entry is saved. With a person directory for the organisation's own source there is no first-login form.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
 * The form must show the configured information text (GDPR Art. 13) before the save button.
-* The saved entry must be valid immediately and signed at signature level 1.
+* The saved entry must be valid immediately; it must be stored in the person directory, never in a repository.
 * Concept: link:concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login].
 * Specification: link:specification/authentication.adoc#_first_login[Authentication, First Login].
 
 [#CIFR-DIR-2]
 === CIFR-DIR-2: Keeping the Entry Current
 
-* A user must be able to change the own entry at any time.
+* With the `local` person directory, a user must be able to change the own entry at any time.
 * The application must ask for confirmation of the entry after a configurable interval, default 12 months.
 * Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
 
@@ -326,7 +331,8 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-DIR-4]
 === CIFR-DIR-4: Former Members
 
-* After the erasure of a person, documents must show the pseudonym as "former member".
+* After the erasure of a person, or once the organisation's source no longer knows the person, documents must show the
+  pseudonym as "former member".
 * Specification: link:specification/data-protection.adoc#_erasure[Data Protection, Erasure].
 
 == Functional Requirements: Authentication and Identity
@@ -579,10 +585,12 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Specification: link:specification/data-protection.adoc#_references[Data Protection, References].
 
 [#CIFR-DP-3]
-=== CIFR-DP-3: Erasure Batching
+=== CIFR-DP-3: Erasure
 
-* Erasure requests must be collected and executed by KEK rotation at a configurable interval, default daily; boot
-  validation must refuse an interval longer than 30 days.
+* With the `local` person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
+  the erasure must take effect at once, or at a restriction date the user sets where a statutory retention duty
+  applies.
+* Every erasure must be recorded in the `directory` repository by pseudonym and date, never by person.
 * Specification: link:specification/data-protection.adoc#_erasure[Data Protection, Erasure].
 
 [#CIFR-DP-4]
@@ -595,11 +603,12 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Specification: link:specification/data-protection.adoc#_retention[Data Protection, Retention].
 
 [#CIFR-DP-5]
-=== CIFR-DP-5: Personal Fields
+=== CIFR-DP-5: No Personal Details in Documents
 
-* Fields marked personal in a schema must be stored encrypted with the data subject's key.
-* Fields marked free text in a schema must show a hint that personal interview notes do not belong there.
-* Specification: link:specification/data-protection.adoc#_personal_fields[Data Protection, Personal Fields].
+* A field that names a person must store a pseudonym picked from the person directory, never a name.
+* Fields marked free text in a schema must show a hint that personal details and interview notes do not belong there
+  but in the ticket system.
+* Specification: link:specification/data-protection.adoc#_personal_details[Data Protection, Personal Details].
 
 [#CIFR-DP-6]
 === CIFR-DP-6: Read-Access Events
@@ -609,11 +618,12 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 * Specification: link:specification/data-protection.adoc#_read_access_events[Data Protection, Read-Access Events].
 
 [#CIFR-DP-7]
-=== CIFR-DP-7: Key Source
+=== CIFR-DP-7: Person Directory
 
-* The KEK source must be configurable as KMS, Vault transit or mounted file; with a mounted file the application must
-  log a warning at every start.
-* Specification: link:specification/data-protection.adoc#_key_source[Data Protection, Key Source].
+* The person directory provider must be configurable; the default must be `local`, with its path on the persistent
+  volume outside every repository.
+* Boot validation must refuse a `local` path inside a repository directory.
+* Specification: link:specification/data-protection.adoc#_person_directory[Data Protection, Person Directory].
 
 == Operational Requirements
 
@@ -639,9 +649,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 
 * The application must serve HTTPS on 8443 and the management interface (readiness, liveness, metrics) on 9000.
 * Readiness must report `UP` only when every configured repository is either fetched in this process or present as a
-  valid local repository from an earlier fetch, the keyring is decrypted and the index built; a local-mode repository
-  (`remote: none`) must count once its local repository opens and its index is built; a remote repository without a
-  local copy must keep readiness `DOWN`, and a later fetch failure must not drop readiness.
+  valid local repository from an earlier fetch, the person directory is loaded and the index built; a local-mode
+  repository (`remote: none`) must count once its local repository opens and its index is built; a remote repository
+  without a local copy must keep readiness `DOWN`, and a later fetch failure must not drop readiness.
 * Specification: link:specification/deployment.adoc#_ports_and_probes[Deployment, Ports and Probes].
 
 [#CIFR-OPS-4]
@@ -758,7 +768,7 @@ link:concepts/application-architecture.adoc[Application Architecture]
 |ADR-0005, ADR-0008
 |link:specification/category-incident-reports.adoc[Incident Reports]
 
-|CIFR-ISMS-1–6
+|CIFR-ISMS-1–5
 |link:concepts/category-isms.adoc[ISMS]
 |ADR-0005, ADR-0006
 |link:specification/category-isms.adoc[ISMS]

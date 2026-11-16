@@ -67,7 +67,7 @@ configured under `[repository.signing]` (link:https://docs.gitea.com/administrat
 The trailers name the user by the identity provider's subject (`sub`) and session id (`sid`).
 
 *Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym is erasable
-through the keyring; the HMAC of `sid` still correlates with logs.
+through the person directory; the HMAC of `sid` still correlates with logs.
 
 === The author field only
 

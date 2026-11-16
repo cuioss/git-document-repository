@@ -13,12 +13,11 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 
 *Status:* PLANNED
 
-`git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs and the
-directory of persons. It depends on `git-forms` and `git-crypto`. Catalog entries are schema-driven documents; person
-entries are validated against a person schema like them but stored encrypted as a whole (`.enc`, Person Entries).
-Saving a person entry needs signature level 1 and therefore a provider of the `SignatureLevelVerifier` of
-`git-store` (`git-signing`) at run time; the static dependencies stay as above. Rationale:
-xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
+`git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs in Git and
+provides the default person directory `local` of `git-store` (see xref:git-store.adoc#_person_directory[git-store,
+Person Directory]). It depends on `git-forms`. Catalog entries are schema-driven documents in the directory's
+repository; person entries are validated against a person schema like them but kept outside every repository (Local
+Person Directory). Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
 
 == Catalogs
 
@@ -66,34 +65,48 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]
 `effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
 `dependsOn`, transitively; a cycle is reported as the cycle outcome naming the services on it.
 
-== Person Entries
+== Local Person Directory
 
-_See Requirement link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Entries]_
-
-*Status:* PLANNED
-
-`persons/<pseudonym>.enc`, the whole entry encrypted with the person's DEK (`git-crypto`). Decrypted fields, validated
-against the person schema: `name` (required),
-`memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation). Additional fields
-need an explicit schema extension by the operator.
-
-== First Login
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login]_
+_See Requirements link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Local Person Directory],
+link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login],
+link:../Requirements.adoc#GDR-DIR-8[GDR-DIR-8: Erasure and Restriction]_
 
 *Status:* PLANNED
+
+The provider `local` of `PersonDirectory`, active when `directory.persons.provider` is `local` (the default).
+
+* Storage: `directory.persons.path` (required for `local`), a directory on the application's persistent volume outside
+  every repository. One file per person, `<pseudonym>.yaml`, written atomically (write to a temporary file, then
+  rename); file mode `0600`. Fields, validated against the person schema: `pseudonym`, `issuer`, `sub`, `name`
+  (required), `memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation),
+  `restricted-until` (date, set only by a restriction). Additional fields need an explicit schema extension by the
+  operator.
+* At start the provider reads every file into memory: an index by (issuer, `sub`) and by pseudonym, and the
+  memberships for `holders`. Only one instance may use a path.
+* Pseudonym: `p-` followed by 26 characters of Crockford base32 over 128 random bits from `SecureRandom`; never
+  derived from issuer or `sub`.
 
 `login(claims)`:
 
 * known (issuer, `sub`) with a saved entry → the pseudonym and the entry;
 * known (issuer, `sub`) without a saved entry (an interrupted first login) → the pseudonym and the outcome
   entry-required with a prefill, as below;
-* unknown (issuer, `sub`) → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from
-  the token, memberships from IdP groups where mapped).
+* unknown (issuer, `sub`) → a new pseudonym, a file holding only pseudonym, issuer and `sub`, and the outcome
+  entry-required with a prefill (`name` from the token, memberships from IdP groups where mapped).
 
-`saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1; the evidence is
-checked by the `SignatureLevelVerifier` provider (`git-signing`), which must be present at run time. The entry is valid
-at once.
+`saveEntry(pseudonym, entry)` validates against the person schema and writes the file; the entry is valid at once.
+
+`erase(pseudonym, restrictUntil)`:
+
+* without `restrictUntil`: deletes the file, then writes the erasure record;
+* with `restrictUntil`: sets `restricted-until`; until that date the entry resolves as a former member and serves only
+  `restricted(pseudonym)`, the call through which the operator answers a statutory request. A daily task deletes the
+  entries whose date has passed and writes their erasure records.
+* Erasure record: a system commit on `main` of the directory's repository (pushed with the technical user's
+  credentials, see xref:git-store.adoc#_identity_per_save[git-store, Identity per Save]) that changes
+  `erasures.yaml`, one line per erasure: pseudonym and date. It names no person.
+
+Backups of `directory.persons.path` belong to the operator, whose erasure concept sets their expiry.
 
 == Reference Resolution
 
@@ -108,8 +121,8 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-5[GDR-DIR-5: Reference Resolu
 |`resolve("team:payments")` |the catalog entry (also when retired)
 |`holders("role:security-champion", "team:payments")` |the pseudonyms with that membership
 |`resolve("system:payments-platform")`, `resolve("external:card-processor")` |the system or external entry
-|`person(pseudonym)` |the entry, or a former-member marker when the pseudonym was erased (its entry no longer
-decrypts)
+|`person(pseudonym)` |the entry from the active person directory, or a former-member marker when the pseudonym was
+erased or is restricted
 |===
 
 == Import from Backstage

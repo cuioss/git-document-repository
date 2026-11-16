@@ -26,7 +26,7 @@ released together and consumed separately.
 | `git-worktrees` | Linked working trees, commit from a working tree, working-tree status | `git-core` |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 
-Planned but not yet created: `git-store`, `git-forms`, `git-crypto`, `git-signing`, `git-timestamp`,
+Planned but not yet created: `git-store`, `git-forms`, `git-signing`, `git-timestamp`,
 `git-directory` (see `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** the modules are scaffolds. Each has a `pom.xml`, a `module-info.java` and a `@NullMarked`
@@ -61,7 +61,7 @@ These follow the conventions of the foundation code that moves into this reposit
 - Logging with `CuiLogger` and a `LogRecord` holder per module.
 - Tests: JUnit 5, `cui-test-generator` for test data, EasyMock for test doubles.
 - Third-party dependencies stay out of the lower modules: a consumer of `git-core` alone must pull none of
-  the dependencies of `git-forms`, `git-crypto` or `git-timestamp`.
+  the dependencies of `git-forms`, `git-signing` or `git-timestamp`.
 - **Never add a dependency without the owner's approval**, JGit included.
 - Documentation is AsciiDoc; Javadoc on every public type and method.
 - Every source file carries the license header; `-Ppre-commit` maintains it. `inceptionYear` in the root pom

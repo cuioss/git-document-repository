@@ -107,8 +107,8 @@ Status: PLANNED
 |`array` of objects |`DataTable` with row editor
 |`$ref` to a catalog (`x-catalog: service`) |`CatalogPicker`
 |`x-asciidoc: true` |`AsciiDocField` with server-rendered preview
-|`x-personal: true` |Field marked personal; stored encrypted with the data subject's data encryption key (DEK)
-(link:data-protection.adoc#_personal_fields[Data Protection, Personal Fields])
+|`x-person: true` |`PersonPicker` over the person directory; stores the pseudonym
+(link:data-protection.adoc#_personal_details[Data Protection, Personal Details])
 |`x-free-text: true` |Hint `form.hint.no-personal-notes` shown with the field
 |===
 

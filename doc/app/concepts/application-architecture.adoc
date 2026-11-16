@@ -23,14 +23,14 @@ One Quarkus application, compiled to a native image on Java 25, serves three sur
 * the *MCP endpoint* for AI agents;
 * the *static web app*, served same-origin from a resource JAR.
 
-Behind the surfaces sits one layer of *application services*: categories, rights, signature levels, deadlines, the
-first login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same
-services with the same checks. Below the services sit the libraries of `git-document-repository`
-(link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which
-reaches the Git server through JGit over HTTPS. The clients of the KMS or Vault (key source of the keyring) and of the
-timestamp authority live in the libraries, in `git-crypto` and `git-timestamp`; the application only supplies their
-configuration. The application's own outbound calls, to the Git host API, the issue tracker, the ticket system and
-the chat, go through integration adapters on `cui-http`.
+Behind the surfaces sits one layer of *application services*: categories, rights, signature levels, deadlines, the first
+login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same services
+with the same checks. Below the services sit the libraries of `git-document-repository`
+(link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which reaches
+the Git server through JGit over HTTPS. The clients of the KMS (signing and anchor keys) and of the timestamp authority
+live in the libraries, in `git-signing` and `git-timestamp`, and so does the person directory, in `git-directory`; the
+application only supplies their configuration. The application's own outbound calls, to the Git host API, the issue
+tracker, the ticket system and the chat, go through integration adapters on `cui-http`.
 
 ----
  browser ──► static web app (resource JAR, same origin)
@@ -40,8 +40,7 @@ the chat, go through integration adapters on `cui-http`.
                                   │ calls, configuration
                                   └─► ┌─ git-document-repository ───────────┐
                                       │ git-store, git-forms, git-directory │
-                                      │ git-signing                         │
-                                      │ git-crypto                          │ ──► KMS or Vault
+                                      │ git-signing                         │ ──► KMS or Vault
                                       │ git-timestamp                       │ ──► timestamp authority
                                       │ git-core ──► JGit                   │ ──► Git server (HTTPS)
                                       └─────────────────────────────────────┘
@@ -91,7 +90,7 @@ A `benchmarks` module (k6, non-gating) follows once there is a performance quest
 |Library |Use
 
 |`git-document-repository` modules
-|All persistence: drafts and saving, forms, keyring, signature, timestamps, directory.
+|All persistence: drafts and saving, forms, signature, anchoring, directory and the person directory.
 
 |`token-sheriff-client-quarkus`
 |The confidential client of the web login, step-up, logout.
@@ -129,7 +128,7 @@ bundled JSON Schema:
 * the repositories with alias, remote, confidentiality and retention class, and credential reference;
 * the mapping from identity-provider groups to rights per repository;
 * the enabled categories and, per category, the overrides of signature levels and deadlines;
-* the key source of the KEK, the timestamp authority, the mirror;
+* the person directory provider, the anchor providers and keys, the timestamp authority, the mirror;
 * the fetch interval and the webhook secret reference.
 
 Deployment-bound values (URLs, secret paths) are placeholders `${NAME:-default}` resolved from the environment.
@@ -149,9 +148,9 @@ Everything the application holds in memory is either derived from Git or deliber
 |`main` and the open working branches of every repository
 |Rebuilt at start
 
-|Keyring mapping
-|The keyring in the `directory` repository, decrypted with the current KEK
-|Rebuilt at start
+|Person directory (`local`)
+|The entry files under `directory.persons.path` on the volume
+|Read at start; lost with the volume unless backed up
 
 |Drafts
 |`refs/drafts/<user>/…` in the local repository

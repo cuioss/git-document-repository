@@ -5,11 +5,11 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-Every document needs an owner, an assessor, a responsible team or an affected service. Writing names into documents
-puts personal data into the history; writing free text puts "Payments", "payments team" and "Team Payment" into three
-documents that mean the same thing. This concept describes the master data every document refers to: a small,
-encrypted directory of persons and the catalogs of roles, teams, systems, services and external parties, all
-referenced by stable ids.
+Every document needs an owner, an assessor, a responsible team or an affected service. Writing names into documents puts
+personal data into the history; writing free text puts "Payments", "payments team" and "Team Payment" into three
+documents that mean the same thing. This concept describes the master data every document refers to: the catalogs of
+roles, teams, systems, services and external parties, kept in Git, and a small directory of persons, kept outside Git,
+all referenced by stable ids.
 
 == Scope of the First Iteration
 
@@ -25,7 +25,7 @@ A later iteration may derive rights from roles; it then needs a confirmation of 
 
 == Layout
 
-The directory gets a repository of its own:
+The catalogs get a repository of its own; the persons do not live in it:
 
 ----
 directory (repository)
@@ -34,14 +34,13 @@ directory (repository)
   catalog/systems.yaml          ← catalog of products or systems above the services, not personal, plain text
   catalog/external.yaml         ← catalog of external parties (suppliers, providers), not personal, plain text
   catalog/services/<id>.yaml    ← one file per application or service, not personal, plain text
-  persons/<pseudonym>.enc       ← one entry per person, encrypted with the person's data encryption key (DEK)
-  keys/keyring.enc              ← per pseudonym issuer, `sub` and one DEK per retention class, encrypted with the KEK
+  erasures.yaml                 ← erased pseudonyms with their date, no person
 ----
 
-The catalogs are widely readable; the entries of persons are encrypted anyway. One file per person and per service
-keeps concurrent saves free of conflicts; the small catalogs of roles, teams, systems and external parties change
-rarely. The keyring and its
-erasure by key rotation are described in xref:data-protection.adoc[Data Protection].
+The catalogs are widely readable and hold no personal data. One file per service keeps concurrent saves free of
+conflicts; the small catalogs of roles, teams, systems and external parties change rarely. The entries of persons lie
+in the person directory outside Git, described in
+xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory].
 
 == Catalogs of Roles and Teams
 
@@ -135,7 +134,7 @@ it is an open question. Therefore:
 
 [source,yaml]
 ----
-# persons/<pseudonym>.enc, decrypted
+# entry of the local person directory, outside every repository
 name: Erika Example
 memberships:                     # role per team, not global
   - team: team:payments
@@ -150,19 +149,20 @@ different role in each, and assignments almost always ask for "role X in team Y"
 
 === First Login
 
-. The login yields the issuer, the `sub` and usually the name. The directory finds no pseudonym for that issuer and
-  `sub` in the keyring, creates one and asks the application to show the entry form.
+. The login yields the issuer, the `sub` and usually the name. The person directory finds no pseudonym for that issuer
+  and `sub`, creates a random one and asks the application to show the entry form.
 . The form is prefilled with the name from the token. Team and role are picked from the catalogs; a missing entry can
   be requested for the catalog.
-. Saving is a signed commit (signature level 1, see xref:identity-and-signing.adoc[Identity and Signing]); the entry
-  is valid at once. The directory therefore needs `git-signing` at run time, which provides the evidence of the
-  signature levels.
+. Saving writes the entry to the person directory; it is valid at once. It is no commit: the entry never enters
+  Git.
 . Later the user changes the own entry through the same form.
 
 The catalogs are xref:schema-driven-documents.adoc[schema-driven documents]: form, workflow and validation come from
-`git-forms`, so they need no mechanism of their own. The entries of persons use the same form and workflow, but they
-are encrypted: the schema validates them in the application before encryption, a CI pipeline sees only ciphertext,
-and no readable output is generated for them.
+`git-forms`, so they need no mechanism of their own. The entries of persons use the same form and schema, but no
+workflow and no generated output, because they never enter a repository.
+
+With a person directory for the operator's own source (identity provider, SCIM, LDAP) there is no entry form: names
+and memberships come from that source, and the operator maintains them there.
 
 === Staying Current
 
@@ -179,13 +179,13 @@ Self-entered data age: teams change and nobody updates. Hence:
 === Data Protection of the Directory
 
 * *The whole entry is personal*, not only the name: pseudonym, team and role together often identify a person ("CISO
-  in team X"). The whole entry is therefore encrypted with the DEK of the person; the catalogs are not personal.
+  in team X"). The whole entry therefore stays in the person directory, outside Git; the catalogs are not personal.
 * *Data minimisation*: name, team and role only. Phone or e-mail only where they are really needed; the e-mail comes
   from the token anyway.
 * *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
   directory is for and how long it is kept.
-* *Leaving*: the entry is erased through the rotation of the key-encryption key. Documents keep the pseudonym and show
-  "former member"; because responsibilities in documents run through roles (`owner: role:…`), they stay understandable.
+* *Leaving*: the entry is deleted from the person directory. Documents keep the pseudonym and show "former member";
+  because responsibilities in documents run through roles (`owner: role:…`), they stay understandable.
 
 == What It Means for the Architecture
 
@@ -193,9 +193,9 @@ Self-entered data age: teams change and nobody updates. Hence:
   `team:`, `system:`, `service:` and `external:` to persons and entries, whether or not the identity provider delivers
   groups.
 * Every kind of document needs it, so it is a shared part, not one kind among others.
-* Persons, roles, teams and services are free of any domain, and the directory builds on `git-store`, `git-crypto` and
-  `git-forms`, and needs `git-signing` at run time for signature level 1; it is therefore the module `git-directory`
-  (see xref:module-structure.adoc[Module Structure]).
+* Persons, roles, teams and services are free of any domain, and the directory builds on `git-store` and
+  `git-forms`; it is therefore the module `git-directory` (see xref:module-structure.adoc[Module Structure]), which
+  also provides the default person directory `local`.
 * Which catalogs exist is configuration; further catalogs (suppliers, locations) cost little.
 
 [[_later_iterations]]

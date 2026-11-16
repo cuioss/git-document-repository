@@ -35,8 +35,8 @@ it a restart loses every unsaved draft.
 |Authentication of people and agents; groups; step-up.
 
 |*KMS or Vault*
-|The key-encryption key of the keyring and, preferably, the commit-signing key and the anchor key of the own
-timestamp, which anchors releases and daily checkpoints by default.
+|Preferably the commit-signing key and the anchor key of the own timestamp, which anchors releases and daily
+checkpoints by default.
 
 |*Timestamp authority* (optional)
 |RFC 3161 timestamps of releases and checkpoints, for organisations that need a proof independent of their own
@@ -97,9 +97,6 @@ The release follows the cuioss release process of the application repository; pu
 |Commit-signing key
 |KMS or HSM; the application signs through its interface and never sees the key. A key file is the weakest variant.
 
-|KEK of the keyring
-|KMS or Vault transit; a mounted file only for evaluation.
-
 |TLS server certificate and key
 |Mounted files.
 
@@ -129,11 +126,11 @@ The integration tests use the same topology with additional variants.
   mode the volume backup covers everything.
 . Let backups expire with the retention period of the repository they contain: deleting an expired repository in the
   application does not reach copies in backups.
-. Keep the KEK versioned in the KMS and let the rotation destroy old versions; never copy the KEK into a backup by
-  hand.
+. Let backups of the person directory (`/app/data/persons`) expire within the erasure period the organisation
+  publishes: an erased person must not survive in a backup longer than that.
 . Watch the readiness probe: the application is ready once every configured repository is either fetched in this
-  process or present as a valid local repository from an earlier fetch, the keyring is decrypted and the index is
-  built; a local-mode repository (`remote: none`) counts once its local repository opens and its index is built. A
+  process or present as a valid local repository from an earlier fetch, the person directory is loaded and the index
+  is built; a local-mode repository (`remote: none`) counts once its local repository opens and its index is built. A
   remote repository without a local copy keeps it not ready; a later fetch failure does not make it unready.
 . Register the commit-signing key with the bot account if the Git server shall show commits as "Verified".
 . Route the application's security events into the SIEM.
@@ -150,5 +147,5 @@ The integration tests use the same topology with additional variants.
 
 * link:application-architecture.adoc[Application Architecture]
 * link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the repository cut and the
-  KEK source
+  person directory
 * link:../../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] — timestamps and mirror

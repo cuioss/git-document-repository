@@ -64,7 +64,7 @@ validation
 |CIFR-ISMS
 
 |link:specification/data-protection.adoc[Data Protection]
-|Repository cut, references, erasure, retention, personal fields, read-access events, key source
+|Repository cut, references, erasure, retention, personal details, read-access events, person directory
 |CIFR-DP, CIFR-DIR-4
 
 |link:specification/testing.adoc[Testing]
