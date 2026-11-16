@@ -9,7 +9,7 @@
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">Git, the post-commit outbox and the three classes of companion stores</title>
-  <desc  id="desc">Git holds documents, registers, the directory, approval trailers, notes for approvals and timestamps, and the outbox progress references. After every reference update, successful push or fetch that moves a subscribed branch, the outbox walks the new commits of that branch oldest first, idempotently by commit hash, and feeds the derived store (the in-memory index, read by search and dashboards; volatile and rebuildable) and the assuring stores (RFC 3161 timestamps and an optional mirror). Complementary systems such as the identity provider, ticket system, Vault or KMS and the SIEM are only referenced by id and never fed with Git content; they and the reference edge are drawn dashed.</desc>
+  <desc  id="desc">Git holds documents, registers, the directory, approval trailers, notes for approvals and anchor proofs, checkpoints, and the outbox progress references. After every reference update, successful push or fetch that moves a subscribed branch, the outbox walks the new commits of that branch oldest first, idempotently by commit hash, and feeds the derived store (the in-memory index, read by search and dashboards; volatile and rebuildable) and the assuring stores (anchor proofs of releases and checkpoints, and an optional mirror). Complementary systems such as the identity provider, ticket system, Vault or KMS and the SIEM are only referenced by id and never fed with Git content; they and the reference edge are drawn dashed.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="9" markerHeight="9" orient="auto">
@@ -42,7 +42,7 @@
   <text x="150" y="164" class="item-c">directory</text>
   <text x="150" y="194" class="item-c">approval trailers</text>
   <text x="150" y="224" class="item-c">notes: approvals</text>
-  <text x="150" y="254" class="item-c">notes: timestamps</text>
+  <text x="150" y="254" class="item-c">notes: anchor proofs</text>
   <text x="150" y="284" class="item-c">refs/meta/outbox/*</text>
   <text x="400" y="32" class="hdr">Outbox</text>
   <text x="400" y="50" class="sub">after every save, push or moving fetch</text>
@@ -59,7 +59,7 @@
   <text x="710" y="134" class="sub">volatile, rebuildable; search and dashboards read it</text>
   <rect class="stroke" x="560" y="168" width="300" height="88" rx="6" ry="6"/>
   <text x="710" y="196" class="hdr">assuring</text>
-  <text x="710" y="218" class="item-c">RFC 3161 timestamps · mirror</text>
+  <text x="710" y="218" class="item-c">anchor proofs · mirror</text>
   <text x="710" y="238" class="sub">outside the Git administrator's control</text>
   <rect class="stroke-d" x="560" y="272" width="300" height="88" rx="6" ry="6"/>
   <text x="710" y="300" class="hdr">complementary</text>

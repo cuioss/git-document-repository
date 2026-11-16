@@ -53,8 +53,9 @@ optional.
 rotates the key-encryption key and destroys the old one. Repositories are cut by confidentiality and retention class.
 |xref:data-protection.adoc[Data Protection]
 
-|*Evidence.* RFC 3161 timestamps stored as `git notes` anchor the history externally. Every other store beside Git is
-either derived from it (the index) or lives in a system the organisation already runs.
+|*Evidence.* Releases and periodic checkpoints are anchored through pluggable providers (an own signed timestamp,
+RFC 3161 timestamps), the proofs stored as `git notes`. Every other store beside Git is either derived from it (the
+index) or lives in a system the organisation already runs.
 |xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 
 |*One shape for all documents.* A schema, YAML data with AsciiDoc free text, generated AsciiDoc output, review and
@@ -131,8 +132,9 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
   index interface the domain fills.
 * *Post-commit processing*: an outbox over the new commits, idempotent by commit hash, with its progress kept in a
-  reference; the hook for timestamps, mirror and index.
-* *Notes*: reading and writing `git notes` for timestamps, approvals and other annotations.
+  reference; the hook for mirror and index.
+* *Anchoring*: releases and periodic checkpoints anchored through a provider interface, the proofs as notes.
+* *Notes*: reading and writing `git notes` for anchor proofs, approvals and other annotations.
 * *Results instead of exceptions* for the expected outcomes (saved, conflict, rejected, credentials expired).
 
 === Not in Scope
@@ -142,7 +144,8 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * the OAuth flows and the identity provider (Token Sheriff; the libraries only consume credentials),
 * integrations with issue trackers and ticket systems.
 
-The client of the timestamp authority lives in the optional module `git-timestamp`, not in `git-store`.
+The anchor providers live in the optional modules: the own timestamp in `git-signing`, the client of an RFC 3161
+timestamp authority in `git-timestamp`; `git-store` only defines their interface.
 
 == Risks and Limits
 

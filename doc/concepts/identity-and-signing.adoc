@@ -200,9 +200,11 @@ directory; who may approve is a matter of access, not of the catalog of roles.
    database, its own signing key or a key listed in `TRUSTED_SSH_KEYS`
    (link:https://docs.gitea.com/administration/signing[Gitea Docs]). The key of the technical user is therefore
    registered with its account, under the committer email the application writes.
-. *Combine with RFC 3161 timestamps.* The external timestamp proves that a signed commit existed before a point in
-  time. If the signing key is compromised or expires later, older commits stay credible; only commits after the time
-  of compromise are suspect (see xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]).
+. *Combine with an anchor.* An anchor proof for a release or a checkpoint proves that the signed commits it reaches
+  existed before a point in time: the own timestamp, signed with an anchor key separate from the commit-signing key,
+  or an RFC 3161 timestamp from an independent authority. If the commit-signing key is compromised or expires later,
+  older commits stay credible; only commits not reached by a proof from before the compromise are suspect (see
+  xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]).
 . *Separate responsibilities.* When the Git administration and the operation of the application (or of the KMS) lie
   with different people, a forgery needs both, and auditors can be shown that separation.
 . *JGit.* Signing runs through an own implementation of JGit's signer interface `org.eclipse.jgit.lib.Signer`
@@ -240,7 +242,7 @@ organisations whose users have Git accounts anyway.
 ====
 Levels 1 and 2 rest entirely on the application: whoever controls the running application and its signing key can
 sign in anyone's name. Level 3 adds a key the server does not hold, but the application still keeps the list of
-registered public keys. A timestamp does not expose such a forgery; it only keeps the commits timestamped before a
+registered public keys. An anchor does not expose such a forgery; it only keeps the commits anchored before a
 compromise credible. The levels raise the cost of a forgery; they do not make the application a neutral notary.
 ====
 

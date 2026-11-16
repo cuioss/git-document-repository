@@ -168,10 +168,10 @@ Record destruction of KEK v7
 Kek-Destroyed: 7
 ----
 
-No key material appears in either commit; no commit records a destruction that has not succeeded. Both commits are
-made on `main` of the directory's repository; when `git-timestamp` is present, its consumer anchors them like every
-other commit of `main`. They are system commits: pushed on their own with the technical user's credentials (see
-xref:git-store.adoc#_identity_per_save[git-store, Identity per Save]).
+No key material appears in either commit; no commit records a destruction that has not succeeded. Both commits are made
+on `main` of the directory's repository; where anchoring is configured, the next checkpoint anchors them (see
+xref:git-store.adoc#_anchoring[git-store, Anchoring]). They are system commits: pushed on their own with the technical
+user's credentials (see xref:git-store.adoc#_identity_per_save[git-store, Identity per Save]).
 
 == Personal Fields in Documents
 

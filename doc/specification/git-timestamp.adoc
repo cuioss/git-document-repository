@@ -13,36 +13,27 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 
 *Status:* PLANNED
 
-`git-timestamp` (module `de.cuioss.git.document.timestamp`, not yet created, optional) anchors the history with RFC
-3161 timestamps. It depends on `git-store`; its RFC 3161 client library is open and needs the owner's approval.
-Rationale: xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
+`git-timestamp` (module `de.cuioss.git.document.timestamp`, not yet created, optional) provides the anchor provider
+`rfc3161` of `git-store`'s `AnchorProvider` (see xref:git-store.adoc#_anchoring[git-store, Anchoring]): proofs from an
+external RFC 3161 timestamp authority, for organisations that need a proof independent of their own operation. It is
+the variant of the own timestamp `signed` of xref:git-signing.adoc#_own_timestamp[`git-signing`]; both can be active
+at once. Which commits are anchored, the notes, their push and the retry belong to `git-store`. It depends on
+`git-store`; its RFC 3161 client library is open and needs the owner's approval. Rationale:
+xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
 
-== Timestamp per State of `main`
+== RFC 3161 Provider
 
-_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per State of `main`]_
+_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: RFC 3161 Anchor Provider]_
 
 *Status:* PLANNED
 
-* Registered as outbox consumer `timestamp` of `git-store`, subscribed to `main`; it handles every commit of `main`
-  the outbox walk reaches, including merges the Git server performed, which the outbox sees through its fetch trigger.
-* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the commit id as lowercase ASCII hex (the same form as
-  the passkey challenge of `git-signing`), `certReq = true`, a random nonce.
-* Storage: the DER-encoded `TimeStampToken`, base64, as the note of the commit under `refs/notes/timestamps`; one
-  token per line. A note normally holds one token; it holds more when instances obtained tokens for the same commit
-  and their notes were merged (see Push).
-* Remote mode: the consumer pushes `refs/notes/timestamps` right after writing the note, on its own and with the
-  technical user's credentials (a system commit, see xref:git-store.adoc#_identity_per_save[git-store, Identity per
-  Save]). Only a successful push counts as a successful call; a failed push leaves the outbox reference before the
-  commit.
-* Retry: when the note already exists locally, the consumer pushes it and requests no new token, so the time the token
-  proves never moves later.
-* Push: before every push of `refs/notes/timestamps` the consumer fetches the remote notes reference and merges the
-  local notes into it, with JGit's `NoteMapMerger` (`org.eclipse.jgit.notes`; base: the merge base of the two notes
-  commits) and a note merger of this module: for a commit with a note on both sides the merged note keeps every
-  distinct token, duplicates removed. It commits the merged notes (parents: the local and the fetched notes commit),
-  moves the local reference by compare-and-swap and pushes with lease, the expected remote id being the fetched one.
-  On a rejection it repeats from the fetch, up to the configured number of attempts (`save.max-attempts` of
-  `git-store`).
+* Provider id: `rfc3161`; its notes reference is `refs/notes/anchors/rfc3161`.
+* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the object id as lowercase ASCII hex (the same form as
+  the passkey challenge of `git-signing`), `certReq = true`, a random nonce. The previous proof the store passes is not
+  used.
+* Proof: the DER-encoded `TimeStampToken`.
+* An unreachable authority or an error response returns the outcome unavailable or failed; `git-store` keeps the
+  subject pending and retries.
 
 [cols="1,2"]
 |===
@@ -53,22 +44,15 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: Timestamp per St
 |`timestamp.credentials` |optional; for authorities that require authentication
 |===
 
+An authority run inside the organisation counts as independent only when it lies under a responsibility other than
+the Git administration and the application's operation; otherwise it proves no more than `signed`.
+
 == Timestamp Verification
 
 _See Requirement link:../Requirements.adoc#GDR-TSA-2[GDR-TSA-2: Timestamp Verification]_
 
 *Status:* PLANNED
 
-`verify(commit)` reads the note and checks every token in it: the token signature against `timestamp.trust`, and the
-message imprint against the SHA-256 over the commit id as lowercase ASCII hex. Outcomes: success with the earliest time
-a valid token proves, no token, imprint mismatch, signature invalid (see xref:error-model.adoc[Error Model]).
-
-== Unavailable Timestamp Authority
-
-_See Requirement link:../Requirements.adoc#GDR-TSA-3[GDR-TSA-3: Unavailable Timestamp Authority]_
-
-*Status:* PLANNED
-
-The consumer runs after the save; a failure never changes the outcome of the save. A failed request leaves the outbox
-reference of `timestamp` before the commit, so the next run retries it. `pending()` lists the commits of `main`
-without a token.
+`verify` checks the token signature against `timestamp.trust` and the message imprint against the SHA-256 over the
+object id as lowercase ASCII hex. Outcomes: the time the token proves, imprint mismatch, signature invalid (see
+xref:error-model.adoc[Error Model]).

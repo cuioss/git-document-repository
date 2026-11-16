@@ -35,10 +35,13 @@ it a restart loses every unsaved draft.
 |Authentication of people and agents; groups; step-up.
 
 |*KMS or Vault*
-|The key-encryption key of the keyring and, preferably, the commit-signing key.
+|The key-encryption key of the keyring and, preferably, the commit-signing key and the anchor key of the own
+timestamp, which anchors releases and daily checkpoints by default.
 
 |*Timestamp authority* (optional)
-|RFC 3161 timestamps of every new state of `main`.
+|RFC 3161 timestamps of releases and checkpoints, for organisations that need a proof independent of their own
+operation (link:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
+Anchor]).
 
 |*SIEM*
 |Read-access and security events of the application.
@@ -112,7 +115,7 @@ one:
 * `cisos-friend` on `${CISOS_FRIEND_IMAGE}` with a named volume;
 * Keycloak as identity provider with a realm for people (web login) and a client registration for an MCP client;
 * Gitea as Git server with the repositories of the default cut and a webhook to the application;
-* a timestamp-authority stub;
+* a timestamp-authority stub for the RFC 3161 variant;
 * start and stop scripts and a check script that logs in, saves a draft and releases it.
 
 The integration tests use the same topology with additional variants.
@@ -137,7 +140,8 @@ The integration tests use the same topology with additional variants.
 
 == Open Questions
 
-. Which timestamp authority (qualified under eIDAS or internal) the sample and the first organisation use.
+. Whether the first organisation needs the RFC 3161 variant beside the own timestamp, and which timestamp authority
+  (qualified under eIDAS, or internal under another responsibility).
 . Whether a Helm chart is shipped beside the compose sample.
 . Sizing of the volume and memory for the expected number of repositories and documents (to be measured in the
   prototype).

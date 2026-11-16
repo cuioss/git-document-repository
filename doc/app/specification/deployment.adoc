@@ -123,6 +123,9 @@ Status: PLANNED
 |Commit-signing key
 |`signing.key-ref` (KMS key id recommended)
 
+|Anchor key of the own timestamp
+|`anchor.signed-key-ref` (a KMS key of its own, ideally under the security team's key policy)
+
 |Session-HMAC key
 |`signing.session-hmac-key-ref`
 
@@ -158,7 +161,8 @@ agent
 |Git server with the repositories of the default cut and push webhooks to the application
 
 |`tsa-stub`
-|RFC 3161 timestamp authority for tests
+|RFC 3161 timestamp authority for the integration tests of the provider `rfc3161`; the sample itself anchors with the
+own timestamp `signed`
 |===
 
 Scripts in `scripts/`: `start-sample.sh`, `stop-sample.sh`, `check-sample.sh` (logs in as a test user, writes a SAMM

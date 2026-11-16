@@ -74,7 +74,7 @@ Status: PLANNED
   (link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4]). The application only configures the key source.
 * Evidence: the rotation commit names the erased pseudonyms and the KEK version pending destruction; a further commit
   records the destroyed version (link:../../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5]). Both commits are
-  timestamped when a timestamp authority is configured.
+  anchored by the next checkpoint while anchoring is active (by default daily, with the own timestamp).
 * Display: a pseudonym without keyring entry is shown as "former member".
 
 == Retention
@@ -86,7 +86,7 @@ Daily job: for each repository whose retention class has a period, compute `end 
 `isms-incidents-<year>`: 31 December of `<year>` + period). Expired repositories are listed in the *Due* lens of users
 with `administer-catalogs`. Deletion is a confirmed action that removes the local repository on the volume (the cache
 of a remote repository included) and, through the Git host API of the repository's `host-type`, the remote
-repository; it is logged in `directory` and timestamped when a timestamp authority is configured. Backup
+repository; it is logged in `directory` and anchored by the next checkpoint while anchoring is active. Backup
 copies of the Git server and of the volume are outside the application: the operator's duties
 (link:../concepts/deployment.adoc[Deployment]) require their expiry to match the retention period.
 

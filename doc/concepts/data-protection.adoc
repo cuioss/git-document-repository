@@ -96,9 +96,9 @@ crypto-shredding run on one technique.
   but then every rotation is a manual operating step.
 * *Batch erasures.* Rotate daily, for example, not per erasure. The GDPR asks for an answer without undue delay and
   within one month at the latest (Art. 12(3)); the maximal delay belongs in the operator's erasure concept.
-* *Evidence of erasure.* A commit "KEK v7 destroyed on …, concerns pseudonyms X, Y" (without the key), anchored with
-  an RFC 3161 timestamp like every new state of `main` (see xref:evidence-and-companion-stores.adoc[Evidence and
-  Companion Stores]).
+* *Evidence of erasure.* A commit "KEK v7 destroyed on …, concerns pseudonyms X, Y" (without the key), anchored by
+  the next checkpoint where anchoring is configured (see xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence
+  and Companion Stores, The Anchor]).
 * *No home-made cryptography.* AES-256-GCM as authenticated encryption, with the path and the key version as associated
   data so that no blob can be swapped; random nonces, never reused. Google Tink (Java,
   link:https://github.com/tink-crypto/tink-java/releases/tag/v1.24.0[release 1.24.0] of 16 October 2026) provides

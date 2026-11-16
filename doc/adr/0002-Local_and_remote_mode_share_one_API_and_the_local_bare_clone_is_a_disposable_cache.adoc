@@ -32,7 +32,7 @@ remote.
   (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]), the outbox progress references,
   and the commits saved locally and notes whose push is pending. Deleting the clone loses them. The outbox then walks
   the subscribed branches again; its idempotency by commit hash
-  (xref:0009-RFC_3161_timestamps_anchor_the_history_as_git_notes_written_by_a_post-commit_outbox.adoc[ADR-0009])
+  (xref:0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009])
   skips commits whose result is already pushed.
 
 A local repository becomes a remote one with one push. See

@@ -117,7 +117,7 @@ newer draft commit arrived meanwhile
 
 image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save: squash merge in core, compare-and-swap, fetch, push and re-apply on rejection",align=center]
 
-Draft references are not pushed. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*` (timestamps,
+Draft references are not pushed. The push refspec carries `refs/heads/*`, the tags and `refs/notes/*` (anchor proofs,
 approvals), never `refs/drafts/*`. The library never pushes drafts; an organisation that wants them secured backs up
 the repository directory (see xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]). A user who logs
 in again finds the drafts under `refs/drafts/<user>/` and continues.
