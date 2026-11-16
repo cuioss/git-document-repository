@@ -89,26 +89,3 @@ Status: PLANNED
 
 A control's `evidence` list accepts `samm-assessments:assessment/<id>` references; the reference must name a released
 assessment (release tag `assessments/<id>/v1` exists).
-
-== verinice Bridge
-_See Requirement link:../Requirements.adoc#CIFR-ISMS-6[CIFR-ISMS-6: verinice.veo Bridge]_
-
-Status: PLANNED
-
-Enabled by `integrations.verinice`. On `samm.release` the outbox delivers the released assessment (scope, date, model
-version, scores per practice, link to the release tag) to the veo REST API through `cui-http`. The target veo object
-type is an open question.
-
-* Write path: the released assessment stays immutable. The returned object id goes into the bridge record
-  `bridge/verinice.yaml` of the `samm-assessments` repository (one entry per release tag: tag, veo object id,
-  delivered-at), saved by the application as an ordinary level-1 save.
-* Idempotency: before a create the bridge looks up the bridge record for the release tag; with an entry it updates
-  that veo object. Without an entry it searches veo for an object carrying the release tag as external reference and
-  adopts it when found; only then does it create one, with the release tag as external reference. veo has no field
-  dedicated to an external reference, and its custom aspects are not filterable; the element lists
-  (`GET /domains/{domainId}/<elements>`) filter by `name`, `abbreviation`, `description`, `designator` and others
-  (https://github.com/SerNet/verinice-veo/blob/master/veo-rest/src/main/java/org/veo/rest/DocumentInDomainController.java[DocumentInDomainController]).
-  The bridge therefore writes the release tag into the element's `abbreviation` (at most 255 characters) and searches
-  with `?abbreviation=<release tag>`. That filter matches a case-insensitive substring
-  (https://github.com/SerNet/verinice-veo/blob/master/veo-persistence/src/main/java/org/veo/persistence/access/query/QueryFunctions.java[QueryFunctions]),
-  so the bridge adopts only an object whose `abbreviation` equals the release tag exactly.

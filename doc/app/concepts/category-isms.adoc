@@ -136,7 +136,7 @@ user's name
 === Positioning
 
 From this comparison follows the positioning: CISOs-Friend complements verinice and does not compete with it as a
-complete ISMS. Core, extension and bridge are listed in
+complete ISMS. Core and extension are listed in
 link:cisos-friend-overview.adoc#_positioning[Overview, Positioning]; the decision is
 link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
 
@@ -144,11 +144,6 @@ link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[
 
 . Verify the verinice statements (approval, licence of veo, catalogue coverage) with a demo instance.
 . Which registers ship in the first ISMS iteration (risks and controls first; suppliers and nonconformities later).
-. The shape of the veo bridge: which veo object type receives a released SAMM assessment. veo has no field dedicated
-  to an external reference, but its element lists filter by `abbreviation`; the bridge carries the release tag there
-  for an idempotent delivery
-  (link:../specification/category-isms.adoc#_verinice_bridge[Specification, verinice Bridge]). The bridge is
-  disabled by default; the released assessment itself is never changed by it.
 
 == Related
 
