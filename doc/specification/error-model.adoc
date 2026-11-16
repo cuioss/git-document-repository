@@ -104,8 +104,8 @@ configuration for the call; never logged, put into a detail or committed
 |signing and anchor keys |held by the key source or in memory; never written in clear text
 |HMAC key of the `Session` trailer |configured secret, held in memory; never logged, put into a detail or committed
 |`sid` |only as HMAC in the `Session` trailer
-|`sub`, e-mail address, person name |only inside the person directory (for `local` the files outside every
-repository), never in a repository
+|`sub`, e-mail address, person name |`sub` only as the subject hash of the person entry; the name only in the person
+entry; never in a commit, a document or a log
 |===
 
 Tests assert the rules with a JUL log capture (`cui-test-juli-logger`) and with checks of result details.

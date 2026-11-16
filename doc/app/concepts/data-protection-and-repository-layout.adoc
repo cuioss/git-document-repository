@@ -13,16 +13,16 @@ read the other, and the incident report that must be deleted after its retention
 history with it. CISOs-Friend turns both properties into advantages by cutting its data into repositories by
 confidentiality and by retention period.
 
-The mechanisms underneath (pseudonymous commits, the person directory outside Git with erasure by deletion, the
-registry of repositories with stable aliases, references across repositories) belong to the library and are described
-in link:../../concepts/data-protection.adoc[Data Protection]. This page states what the
+The mechanisms underneath (pseudonymous commits, the pluggable person directory with its entries in Git by default,
+erasure, the registry of repositories with stable aliases, references across repositories) belong to the library and
+are described in link:../../concepts/data-protection.adoc[Data Protection]. This page states what the
 application configures on top of them and what it has to agree with the organisation.
 
 This is a technical design, not legal advice.
 
 == The Repository Cut
 
-image::../resources/diagrams/repository-cut.svg["Six repositories by confidentiality and retention: isms-core widely readable, isms-register restricted, isms-incidents per year strongly restricted with retention, samm-assessments for development and security, threat-models restricted, directory with plain catalogs only, persons outside Git",align=center]
+image::../resources/diagrams/repository-cut.svg["Six repositories by confidentiality and retention: isms-core widely readable, isms-register restricted, isms-incidents per year strongly restricted with retention, samm-assessments for development and security, threat-models restricted, directory with plain catalogs and person entries under pseudonyms",align=center]
 
 [cols="2,3,2"]
 |===
@@ -49,8 +49,9 @@ image::../resources/diagrams/repository-cut.svg["Six repositories by confidentia
 |Restricted
 
 |`directory`
-|Catalogs of roles, teams, systems, services and external parties, and the record of erasures; no persons
-|Everyone
+|Catalogs of roles, teams, systems, services and external parties; the person entries (name and memberships under a
+pseudonym) and the record of erasures
+|Everyone in the organisation
 |===
 
 Threat models that live in the applications' own repositories (variant A of
@@ -97,7 +98,7 @@ system, referenced by ticket id. The yearly repository is deleted after the rete
 |Owners by role (`owner: role:it-security-lead`), not by person.
 
 |Directory
-|No person in Git. Names and memberships lie in the person directory outside Git (see below and
+|Name and memberships of each person in one entry under a pseudonym; the login only as a hash (see below and
 link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs]).
 |===
 
@@ -111,16 +112,18 @@ CISOs-Friend uses the library's person directory
 (link:../../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]) and chooses
 the provider by configuration:
 
-* *`local`, the default.* Each person enters name, team and role at the first login
-  (link:authentication-and-identity.adoc[Authentication and Identity]); the entry lies as a plain file on the
-  application's persistent volume, outside every repository. Nothing else is needed.
-* *The organisation's own source.* Where persons and groups are maintained centrally (the identity provider's user
-  directory, SCIM, LDAP), a provider reads them from there; there is no entry form, and the organisation keeps and
-  erases the personal data in that source. Which such provider ships first is an open question of the library.
+* *`git`, the default.* Each person enters name, team and role at the first login
+  (link:authentication-and-identity.adoc[Authentication and Identity]); the entry is saved under its pseudonym in the
+  `directory` repository, with the login only as a hash. An organisation that wants a smaller circle of readers for
+  the persons and their history configures a repository of their own for them.
+* *The organisation's own source.* Where persons and groups are maintained centrally (for example LDAP), a provider
+  for that source plugs into the library's extension point; there is no entry form, no name enters Git, and the
+  organisation keeps and erases the personal data in that source. Which such provider ships first is an open question
+  of the library.
 
 == The Erasure Concept
 
-With the `local` directory an erasure deletes the person's entry at once; the application turns this into an
+With the default directory an erasure deletes the person's entry in a commit; the application turns this into an
 operational concept:
 
 * *On request or on leaving*: a user with `administer-catalogs` erases a pseudonym in the *Due* lens; the deletion is
@@ -128,13 +131,14 @@ operational concept:
   roles, they stay understandable.
 * *Restriction instead of erasure*: during a statutory retention period (GDPR Art. 17(3)(b) for the retention
   obligation; § 35(3) BDSG) that covers the attribution of a person's commits, for example the approvals of incident
-  reports, the erasure sets a restriction date: the entry is hidden from every view and deleted on that date. At the
+  reports, the erasure sets a restriction date: the entry is hidden from every view and erased on that date. At the
   end of the period the repository of that retention class is deleted as well.
-* *Evidence of erasure*: the directory's repository records the erased pseudonym and the date, never the person; the
-  next checkpoint anchors that record.
-* *Copies*: the backups of the volume and logs that pair a pseudonym with a login expire within the period the
-  organisation publishes in its erasure concept. The GDPR asks for an answer without undue delay and within one month
-  at the latest (Art. 12(3)).
+* *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
+  anchors it.
+* *History*: the history of the persons' repository keeps the earlier versions of the entry, as comparable systems
+  keep theirs (link:../../concepts/data-protection.adoc#_how_comparable_systems_handle_erasure[Data Protection, How
+  Comparable Systems Handle Erasure]). The GDPR asks for an answer without undue delay and within one month at the
+  latest (Art. 12(3)); the erasure commit is effective at once.
 * *With the organisation's own source* the application erases nothing itself; it shows the pseudonym as "former
   member" once the source no longer knows the person.
 
@@ -143,9 +147,9 @@ operational concept:
 The application cannot settle these; they are agreed per organisation before go-live:
 
 . Pseudonymisation as the protection of commit authors.
-. Erasure by deleting the person directory's entry: the pseudonym stays in the history and is personal data while
-  anything can still link it to the person (the entry, its backups, logs). The expiry of those copies, and whether the
-  pseudonym then counts as anonymous, are agreed here.
+. Erasure by deleting the person entry in a commit: the history of the persons' repository keeps its earlier versions.
+  Whether that suffices, or whether the organisation plugs in its own source instead, and who may read the persons'
+  repository, are agreed here.
 . The retention classes and their periods (incident reports, ISMS registers, audit reports).
 . The legal basis and the information text of the directory (legitimate interest or employee data protection). The
   general clause of the German rule, § 26(1) sentence 1 BDSG, is disputed since the CJEU held on 30 March 2023
@@ -161,7 +165,7 @@ The application cannot settle these; they are agreed per organisation before go-
 == Open Questions
 
 . Agree the points above with the data protection officer of the first adopting organisation.
-. Whether the first adopting organisation uses the `local` directory or its own source.
+. Whether the first adopting organisation uses the default directory in Git or its own source.
 
 == Related
 

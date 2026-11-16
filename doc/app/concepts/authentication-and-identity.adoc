@@ -69,8 +69,8 @@ approval that requires step-up.
 == First Login
 
 The person directory is a library interface (link:../../concepts/directory-and-catalogs.adoc[Directory and
-Catalogs]); the application supplies the flow and the form. The first login below applies to the default `local`
-directory; with a directory for the organisation's own source the person already exists there, and there is no form.
+Catalogs]); the application supplies the flow and the form. The first login below applies to the default directory
+(`git`); with a directory for the organisation's own source the person already exists there, and there is no form.
 
 . The login yields the issuer, `sub` and usually the name. The application finds no saved entry for that pair
   (issuer and `sub`; a `sub` is unique only within its issuer), creates a pseudonym if none exists yet, and shows the
@@ -81,8 +81,8 @@ directory; with a directory for the organisation's own source the person already
   requested for the catalog.
 . The form carries the *information duty* under GDPR Art. 13: what the directory is for, what it holds (name, team and
   role only), how long it is kept, and the legal basis agreed with the data protection officer.
-. Saving writes the entry to the person directory, outside every repository; it is valid at once. There is no
-  pending state in the first iteration, because roles are names only and grant nothing.
+. Saving is a signed commit at level 1; the entry is valid at once. There is no pending state in the first iteration,
+  because roles are names only and grant nothing.
 . Later the user changes the own entry in the same form. A periodic confirmation ("Is your team still right?") opens
   the form yearly or on the first login after a reorganisation.
 
@@ -159,6 +159,10 @@ passkey approval; 4: qualified electronic signature). The defaults of CISOs-Frie
 |Transition |Level |Effort for the user
 
 |Every intermediate save and every save
+|1
+|none
+
+|First-login entry, change of the own directory entry
 |1
 |none
 

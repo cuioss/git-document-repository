@@ -148,9 +148,9 @@ Everything the application holds in memory is either derived from Git or deliber
 |`main` and the open working branches of every repository
 |Rebuilt at start
 
-|Person directory (`local`)
-|The entry files under `directory.persons.path` on the volume
-|Read at start; lost with the volume unless backed up
+|Person directory (`git`)
+|The person entries in the persons' repository (by default `directory`)
+|Rebuilt at start
 
 |Drafts
 |`refs/drafts/<user>/…` in the local repository

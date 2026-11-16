@@ -126,8 +126,6 @@ The integration tests use the same topology with additional variants.
   mode the volume backup covers everything.
 . Let backups expire with the retention period of the repository they contain: deleting an expired repository in the
   application does not reach copies in backups.
-. Let backups of the person directory (`/app/data/persons`) expire within the erasure period the organisation
-  publishes: an erased person must not survive in a backup longer than that.
 . Watch the readiness probe: the application is ready once every configured repository is either fetched in this
   process or present as a valid local repository from an earlier fetch, the person directory is loaded and the index
   is built; a local-mode repository (`remote: none`) counts once its local repository opens and its index is built. A

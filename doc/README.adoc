@@ -55,7 +55,7 @@ realised).
 |Technical user and user token, the application signature, trailers, graded traceability, passkey approvals
 
 |xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
-|Pseudonymous history, the person directory outside Git, erasure, repositories per class
+|Pseudonymous history, the pluggable person directory, erasure, repositories per class
 
 |xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
 |Derived, complementary and assuring stores, anchoring of releases and checkpoints, the post-commit outbox
@@ -64,7 +64,7 @@ realised).
 |Schema, data and generated output, workflow, deadlines, links, running numbers
 
 |xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
-|Catalogs of roles, teams and services, the directory of persons outside Git, Backstage alignment
+|Catalogs of roles, teams and services, the directory of persons under pseudonyms, Backstage alignment
 |===
 
 == Clients
@@ -121,8 +121,8 @@ application in `doc/app/adr/` follow the same structure.
 |Passkey approvals are stored as `git notes` on the approved commit
 |Accepted
 
-|xref:adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[0008]
-|Personal data stays out of Git; a pluggable person directory keeps it
+|xref:adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[0008]
+|Commits name pseudonyms; a pluggable person directory keeps persons in Git by default
 |Accepted
 
 |xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[0009]

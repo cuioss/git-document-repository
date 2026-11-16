@@ -393,14 +393,15 @@ public interface PersonDirectory {
 
 * `PersonClaims` carries the issuer, the `sub`, the name and the groups of the login token; a `sub` is unique only
   within its issuer, so the pair is the key.
-* Providers: `local` (xref:git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]), the
-  default. A provider for the operator's own source (the identity provider's user directory, SCIM, LDAP) reads names
-  and memberships from that source, returns not-supported from `saveEntry`, and managed-by-source from `erase`,
-  because the operator erases there. Such a provider keeps its own mapping of issuer and `sub` to pseudonym.
-* `directory.persons.provider` names the active provider (default `local`). No provider, a named provider that
+* Providers: `git` (xref:git-directory.adoc#_person_directory_in_git[git-directory, Person Directory in Git]), the
+  default, which keeps the entries in a repository. A provider for the operator's own source (LDAP, SCIM, the identity
+  provider's user directory) is an extension point: it reads names and memberships from that source, returns
+  not-supported from `saveEntry`, and managed-by-source from `erase`, because the operator erases there. Such a
+  provider keeps its own mapping of issuer and `sub` to pseudonym, and no name enters Git.
+* `directory.persons.provider` names the active provider (default `git`). No provider, a named provider that
   `ServiceLoader` does not find, or two providers with the same id stop the start of the store.
-* The store calls `login` for the author of a save and writes nothing it obtains from the provider into a repository
-  except the pseudonym.
+* The store calls `login` for the author of a save. Outside the provider's own entries it writes nothing it obtains
+  from the provider into a repository except the pseudonym.
 
 == Codecs
 
@@ -429,7 +430,7 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 only level 0 is accepted |`git-signing`
 |`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
 |`PersonDirectory` |Pseudonyms, person entries, holders of a role in a team, erasure (see Person Directory); exactly
-one provider is active |`git-directory` (`local`, the default), or a provider for the operator's own source
+one provider is active |`git-directory` (`git`, the default), or a provider for the operator's own source
 |`AnchorProvider` |Obtains and verifies a proof that an object existed at a time (see Anchoring); several providers
 may be active |`git-signing` (`signed`), `git-timestamp` (`rfc3161`)
 |===

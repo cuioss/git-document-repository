@@ -14,10 +14,11 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 *Status:* PLANNED
 
 `git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs in Git and
-provides the default person directory `local` of `git-store` (see xref:git-store.adoc#_person_directory[git-store,
-Person Directory]). It depends on `git-forms`. Catalog entries are schema-driven documents in the directory's
-repository; person entries are validated against a person schema like them but kept outside every repository (Local
-Person Directory). Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
+provides the default person directory `git` of `git-store` (see xref:git-store.adoc#_person_directory[git-store,
+Person Directory]). It depends on `git-forms`. Catalog entries and person entries are schema-driven documents; person
+entries are saved directly on `main`, without a release workflow (Person Directory in Git). Saving a person entry needs
+signature level 1 and therefore a provider of the `SignatureLevelVerifier` of `git-store` (`git-signing`) at run time;
+the static dependencies stay as above. Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
 
 == Catalogs
 
@@ -65,48 +66,54 @@ _See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]
 `effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
 `dependsOn`, transitively; a cycle is reported as the cycle outcome naming the services on it.
 
-== Local Person Directory
+== Person Directory in Git
 
-_See Requirements link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Local Person Directory],
+_See Requirements link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Directory in Git],
 link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login],
 link:../Requirements.adoc#GDR-DIR-8[GDR-DIR-8: Erasure and Restriction]_
 
 *Status:* PLANNED
 
-The provider `local` of `PersonDirectory`, active when `directory.persons.provider` is `local` (the default).
+The provider `git` of `PersonDirectory`, active when `directory.persons.provider` is `git` (the default).
 
-* Storage: `directory.persons.path` (required for `local`), a directory on the application's persistent volume outside
-  every repository. One file per person, `<pseudonym>.yaml`, written atomically (write to a temporary file, then
-  rename); file mode `0600`. Fields, validated against the person schema: `pseudonym`, `issuer`, `sub`, `name`
-  (required), `memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation),
-  `restricted-until` (date, set only by a restriction). Additional fields need an explicit schema extension by the
-  operator.
-* At start the provider reads every file into memory: an index by (issuer, `sub`) and by pseudonym, and the
-  memberships for `holders`. Only one instance may use a path.
+* Repository: `directory.persons.repository`, a repository alias of the registry; default the directory's repository.
+  An organisation that wants a smaller circle of readers for the persons and their history names a repository of its
+  own.
+* Entry: `persons/<pseudonym>.yaml`, validated against the person schema: `subject` (the subject hash, required),
+  `name` (required), `memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last
+  confirmation), `restricted-until` (date, set only by a restriction). Additional fields need an explicit schema
+  extension by the operator.
+* Subject hash: SHA-256 over the UTF-8 bytes of the issuer, a line feed (`0x0A`) and the `sub`, as lowercase hex.
+  Issuer and `sub` are never written to the repository.
 * Pseudonym: `p-` followed by 26 characters of Crockford base32 over 128 random bits from `SecureRandom`; never
   derived from issuer or `sub`.
+* At start and after every fetch that moves `main` of the persons' repository the provider reads the entries into
+  memory: an index by subject hash and by pseudonym, and the memberships for `holders`.
 
 `login(claims)`:
 
-* known (issuer, `sub`) with a saved entry → the pseudonym and the entry;
-* known (issuer, `sub`) without a saved entry (an interrupted first login) → the pseudonym and the outcome
+* known subject hash with a saved entry → the pseudonym and the entry;
+* known subject hash without a saved entry (an interrupted first login) → the pseudonym and the outcome
   entry-required with a prefill, as below;
-* unknown (issuer, `sub`) → a new pseudonym, a file holding only pseudonym, issuer and `sub`, and the outcome
-  entry-required with a prefill (`name` from the token, memberships from IdP groups where mapped).
+* unknown subject hash → a new pseudonym, held in memory until the entry is saved, and the outcome entry-required with
+  a prefill (`name` from the token, memberships from IdP groups where mapped).
 
-`saveEntry(pseudonym, entry)` validates against the person schema and writes the file; the entry is valid at once.
+An interrupted first login whose pseudonym was never saved gets a new pseudonym at the next login; nothing refers to
+the old one, because no save happened under it.
+
+`saveEntry(pseudonym, entry)` validates against the person schema and saves the entry with its subject hash on `main`
+of the persons' repository with signature level 1; the evidence is checked by the `SignatureLevelVerifier` provider
+(`git-signing`), which must be present at run time. The entry is valid at once.
 
 `erase(pseudonym, restrictUntil)`:
 
-* without `restrictUntil`: deletes the file, then writes the erasure record;
+* without `restrictUntil`: one system commit on `main` (pushed with the technical user's credentials, see
+  xref:git-store.adoc#_identity_per_save[git-store, Identity per Save]) deletes `persons/<pseudonym>.yaml` and adds
+  the line `<pseudonym> <date>` to `erasures.yaml`. It names no person;
 * with `restrictUntil`: sets `restricted-until`; until that date the entry resolves as a former member and serves only
-  `restricted(pseudonym)`, the call through which the operator answers a statutory request. A daily task deletes the
-  entries whose date has passed and writes their erasure records.
-* Erasure record: a system commit on `main` of the directory's repository (pushed with the technical user's
-  credentials, see xref:git-store.adoc#_identity_per_save[git-store, Identity per Save]) that changes
-  `erasures.yaml`, one line per erasure: pseudonym and date. It names no person.
-
-Backups of `directory.persons.path` belong to the operator, whose erasure concept sets their expiry.
+  `restricted(pseudonym)`, the call through which the operator answers a statutory request. A daily task erases the
+  entries whose date has passed.
+* The history of the repository keeps the earlier versions of the entry; erasure never rewrites it.
 
 == Reference Resolution
 

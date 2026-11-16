@@ -32,7 +32,7 @@ referenced, never restated:
 |Schemas, templates, workflows, deterministic serialisation, running numbers, generated output
 |link:../Requirements.adoc#requirements-git-forms[`git-forms` requirements]
 
-|Person directory interface: pseudonyms, persons outside Git, erasure
+|Person directory interface: pseudonyms, person entries in Git by default, erasure
 |link:../Requirements.adoc#GDR-STORE-15[GDR-STORE-15],
 link:../Requirements.adoc#requirements-git-directory[`git-directory` requirements]
 
@@ -80,10 +80,7 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-GEN-3]
 === CIFR-GEN-3: No Database of Its Own
 
-* The application must persist durable state only in Git repositories (remote, or local in local mode), with one
-  exception: the entries of the `local` person directory, which lie outside every repository so that they can be
-  erased (link:../adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[library
-  ADR-0008]).
+* The application must persist durable state only in Git repositories (remote, or local in local mode).
 * The in-memory index and computed reminders must be rebuilt from Git at start; a restart test
   must show identical dashboard results before and after restart.
 * The application must not configure a datasource.
@@ -302,20 +299,20 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-DIR-1]
 === CIFR-DIR-1: First Login
 
-* With the `local` person directory, a user without a saved directory entry (no pseudonym yet, or a pseudonym from an
-  interrupted first login) must be shown the first-login form before any other view; the restriction must hold until
-  the entry is saved. With a person directory for the organisation's own source there is no first-login form.
+* With the default person directory (`git`), a user without a saved directory entry (no pseudonym yet, or a pseudonym
+  from an interrupted first login) must be shown the first-login form before any other view; the restriction must hold
+  until the entry is saved. With a person directory for the organisation's own source there is no first-login form.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
 * The form must show the configured information text (GDPR Art. 13) before the save button.
-* The saved entry must be valid immediately; it must be stored in the person directory, never in a repository.
+* The saved entry must be valid immediately and signed at signature level 1.
 * Concept: link:concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login].
 * Specification: link:specification/authentication.adoc#_first_login[Authentication, First Login].
 
 [#CIFR-DIR-2]
 === CIFR-DIR-2: Keeping the Entry Current
 
-* With the `local` person directory, a user must be able to change the own entry at any time.
+* With the default person directory, a user must be able to change the own entry at any time.
 * The application must ask for confirmation of the entry after a configurable interval, default 12 months.
 * Specification: link:specification/authentication.adoc#_directory_flows[Authentication, Directory Flows].
 
@@ -587,10 +584,11 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-DP-3]
 === CIFR-DP-3: Erasure
 
-* With the `local` person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
+* With the default person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
   the erasure must take effect at once, or at a restriction date the user sets where a statutory retention duty
   applies.
-* Every erasure must be recorded in the `directory` repository by pseudonym and date, never by person.
+* Every erasure must delete the person entry in a commit that records the pseudonym and the date, never the person;
+  it must not rewrite history.
 * Specification: link:specification/data-protection.adoc#_erasure[Data Protection, Erasure].
 
 [#CIFR-DP-4]
@@ -620,9 +618,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-DP-7]
 === CIFR-DP-7: Person Directory
 
-* The person directory provider must be configurable; the default must be `local`, with its path on the persistent
-  volume outside every repository.
-* Boot validation must refuse a `local` path inside a repository directory.
+* The person directory provider must be configurable; the default must be `git`, with the person entries in the
+  `directory` repository or in another configured repository.
+* Boot validation must refuse a persons' repository that is not configured in `repositories`.
 * Specification: link:specification/data-protection.adoc#_person_directory[Data Protection, Person Directory].
 
 == Operational Requirements

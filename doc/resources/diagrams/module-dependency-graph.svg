@@ -37,7 +37,7 @@
   <!-- layer 1 -->
   <rect class="planned" x="90" y="40" width="160" height="60" rx="6" ry="6"/>
   <text x="170" y="62" class="item-b">git-directory</text>
-  <text x="170" y="78" class="sub">catalogs · local persons</text>
+  <text x="170" y="78" class="sub">catalogs · persons</text>
   <text x="170" y="92" class="sub">optional module</text>
 
   <!-- layer 2 -->

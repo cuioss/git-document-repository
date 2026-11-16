@@ -96,8 +96,8 @@ What it does not show:
 In an OIDC token `sub` is the stable identifier of the user and `sid` the identifier of the session. Both are
 pseudonymous, hence personal identifiers, and they would stay in the history for good. Therefore:
 
-* *The own pseudonym from the person directory instead of `sub`.* The mapping pseudonym → `sub` lies in the person
-  directory outside Git and is erasable by deleting it (see
+* *The own pseudonym from the person directory instead of `sub`.* The person entry links the pseudonym to the login
+  only through a hash of issuer and `sub`, and is erased by a commit (see
   xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
 * *Only an HMAC of `sid`.* That suffices to correlate with logs. The `sid` is no access token, but it is not stored in
   clear text for good either.

@@ -103,7 +103,7 @@ signature level an approval needs and which deadline is due is decided once, in 
 
 |`git-document-repository`
 |The libraries: storage engine with drafts and saving, schema-driven documents, commit signature, anchoring,
-directory, person directory outside Git. Concepts in link:../../concepts/module-structure.adoc[Module Structure].
+directory with persons under pseudonyms. Concepts in link:../../concepts/module-structure.adoc[Module Structure].
 
 |Token Sheriff
 |Authentication and the OAuth flows: the confidential client for the web login (`token-sheriff-client-quarkus`) and the

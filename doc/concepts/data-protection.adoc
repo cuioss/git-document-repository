@@ -6,9 +6,9 @@
 :source-highlighter: highlight.js
 
 Git is built to forget nothing; the GDPR insists on the right to be forgotten. Declaring the persistence "not
-deletable" does not exempt it. This concept describes how the libraries keep personal data out of the history
-altogether, where the personal data live instead, and how cutting data into repositories turns Git's coarse rights
-into an advantage.
+deletable" does not exempt it. This concept describes how the libraries confine personal data to one small place, how
+a person is erased there, what an operator does who needs more, and how cutting data into repositories turns Git's
+coarse rights into an advantage.
 
 This is a technical assessment, not legal advice.
 
@@ -21,14 +21,14 @@ period; afterwards storage limitation (Art. 5(1)(e)) requires deletion. Under Ge
 stands against erasure, restriction of processing replaces erasure for that period (§ 35(3) BDSG).
 
 Commits themselves are personal data when the author is a named person. Rewriting history to remove one person breaks
-every clone, every signature and every anchor proof. The design therefore keeps personal data out of the history
-instead of removing them later
-(xref:../adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008]).
+every clone, every signature and every anchor proof. The design therefore keeps names out of commits and documents and
+confines them to the person directory
+(xref:../adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008]).
 
-== What Must Be Erasable Never Enters Git
+== Pseudonyms in Commits and Documents
 
-* *Pseudonymous commits.* The author is a random pseudonym (`p-<random>`); the mapping to the person lies in the person
-  directory outside Git (next section).
+* *Pseudonymous commits.* The author is a random pseudonym (`p-<random>`); the person directory (next section) maps it
+  to the person.
 * *Roles instead of persons* in documents (`owner: role:it-security-lead`); the directory resolves the role
   (see xref:directory-and-catalogs.adoc[Directory and Catalogs]).
 * *Pseudonyms and ids instead of personal details.* A field that names a person holds a pseudonym. Details of affected
@@ -37,67 +37,76 @@ instead of removing them later
 * *Repositories per retention period* (last section): after the period the whole repository is deleted; no history
   is rewritten.
 
-What remains in Git are pseudonyms, stable ids of catalog entries and references into other systems. References keep
-working after an erasure: an erased pseudonym resolves to "former member", and responsibilities that run through roles
-stay understandable.
+References keep working after an erasure: an erased pseudonym resolves to "former member", and responsibilities that
+run through roles stay understandable.
 
 == The Person Directory
 
-The person directory holds what Git must not: the mapping of an identity-provider issuer and `sub` to a pseudonym (a
-`sub` is unique only within its issuer), the person's name and memberships (pairs of team and role). `git-store`
-defines it as the service interface `PersonDirectory`; exactly one provider is active, chosen by configuration, like
-the providers of the anchor (see
+The person directory holds the mapping of an identity-provider login to a pseudonym, and the person's name and
+memberships (pairs of team and role). `git-store` defines it as the service interface `PersonDirectory`; exactly one
+provider is active, chosen by configuration, like the providers of the anchor (see
 xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]).
 
 [cols="1,2,2"]
 |===
-|Provider |Where the personal data live |Who erases them
+|Provider |Where names and memberships live |Erasure
 
-|`local` (`git-directory`), the default
-|One plain file per person on the application's persistent volume, outside every repository, never versioned and
-never pushed. The pseudonym is random; the entry is entered by the user at the first login and kept current by the
-user
-|The library, by deleting the file; the operator, for the backups of the volume
+|`git` (`git-directory`), the default
+|One plain YAML entry per person, `persons/<pseudonym>.yaml`, in a configured repository, by default the directory's.
+The entry carries no issuer and no `sub`, only the SHA-256 hash of both, through which the login finds it. The user
+enters name, team and role at the first login and keeps them current
+|A commit deletes the entry and records pseudonym and date; the repository's history keeps the earlier versions
 
-|A provider for the operator's own source (identity provider's user directory, SCIM, LDAP)
+|A provider for the operator's own source (an extension point, for example LDAP, SCIM or the identity provider's user
+directory)
 |In that source; the application reads names and memberships and keeps them in memory only. The provider keeps its own
-mapping of issuer and `sub` to pseudonym
-|The operator, in that source; the provider reports that erasure is managed there
+mapping of login to pseudonym; no name enters Git
+|In that source, by the operator; the provider reports that erasure is managed there
 |===
 
-A provider for the operator's source suits an organisation that already maintains persons and groups centrally: the
-directory then stays as current as that source, and erasure follows the operator's existing processes. Which such
-provider ships first is open.
+=== How Comparable Systems Handle Erasure
+
+Systems with a history keep it and erase the current record:
+
+* *verinice veo* keeps every earlier revision of a deleted element in its history service; a hard deletion adds a
+  revision without content, and only deleting a whole tenant removes its revisions
+  (link:https://github.com/SerNet/verinice-veo-history[verinice-veo-history], `MessageSubscriber.kt` and
+  `RevisionJpaRepo.kt`, checked at commit `ffc00ad329` of 3 November 2026).
+* *GitLab* moves the contributions of a deleted user to a placeholder account, the Ghost User; Git commits keep the
+  deleted user's name (link:https://docs.gitlab.com/user/profile/account/delete_account[GitLab: Delete users]).
+* *GitHub Enterprise Server* likewise associates the issues, pull requests and comments of a deleted user with a ghost
+  account
+  (link:https://docs.github.com/en/enterprise-server@3.18/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/deleting-users-from-your-instance[GitHub
+  Enterprise Server: Deleting users]).
+
+The default provider follows this practice and narrows it: names lie only in the person entries of one repository,
+not in every commit, and the login identifier is stored only as a hash.
 
 === Erasing a Person
 
-With the `local` provider erasure is a deletion, effective at once:
+With the default provider:
 
-. The entry of the person is deleted: pseudonym mapping, issuer, `sub`, name and memberships.
+. One commit deletes the person's entry and records the pseudonym and the date in `erasures.yaml`; it names no person.
 . Where a statutory retention duty applies to the attribution of the person's commits (for example the approvals in
   incident reports under a retention period), the operator sets a restriction date instead: until then the entry is
-  hidden from every view and serves only requests the operator answers; then it is deleted (restriction instead of
-  erasure, § 35(3) BDSG).
-. The erasure is recorded in the directory's repository by pseudonym and date, never by person.
+  hidden from every view and serves only requests the operator answers; then it is erased as above (restriction
+  instead of erasure, § 35(3) BDSG).
+. The pseudonym stays in the history and resolves to "former member".
 
-The pseudonym stays in the history and resolves to "former member". It stays personal data while anything can still
-link it to the person: the mapping, its backups, and logs that pair a pseudonym with a login. The erasure concept of
-the operator therefore sets the expiry of the volume's backups and of such logs. Whether a pseudonym counts as
-anonymous once every link is gone is agreed by each operator with their data protection officer; the EDPB's draft
-guidelines on anonymisation ask whether anyone could still re-identify "with means reasonably likely to be used"
-(link:https://www.edpb.europa.eu/system/files/2026-07/edpb_guidelines_202602_anonymisation_v1_en_0.pdf[EDPB
-Guidelines 02/2026 on Anonymisation, version 1.0 for public consultation]).
+The erasure removes the entry from the current state and from every view of the application. The history of the
+persons' repository keeps the earlier versions, in every clone and every backup of the Git server. Whoever may read
+that repository may read them, which is why an organisation can give the person entries a repository of their own
+with a small circle of readers. Whether this suffices is agreed by each operator with their data protection officer.
+An operator who needs erasure without history plugs in a provider for a source that offers it.
 
 === What Has to Be Done Right
 
-* *Back up the volume, and let the backups expire.* The `local` directory is as durable as the volume. A lost volume
-  loses the mappings: a returning user gets a new pseudonym and the old one resolves to "former member". Backups that
-  outlive the erasure period undo erasures.
-* *Answer within the deadline.* The GDPR asks for an answer without undue delay and within one month at the latest
-  (Art. 12(3)); a deletion is effective at once, the expiry of backups and logs sets the real delay.
-* *One instance per directory path.* The `local` directory is held in memory by the instance that owns the path;
-  several instances need a provider with a shared source.
+* *Hash, not `sub`.* The entry stores the SHA-256 over issuer and `sub`. A random `sub` cannot be recovered from it; a
+  `sub` an attacker can guess, such as an e-mail address, can be found by hashing candidates. Where the identity
+  provider uses such a `sub`, the persons' repository deserves a small circle of readers.
 * *Data minimisation.* Name and memberships only; the e-mail comes from the token when needed and is not stored.
+* *Answer within the deadline.* The GDPR asks for an answer without undue delay and within one month at the latest
+  (Art. 12(3)); the erasure commit is effective at once.
 
 == Repositories per Confidentiality and Retention Class
 
@@ -127,9 +136,9 @@ into separate repositories; the concrete cut is the decision of the application.
 
 [CAUTION]
 ====
-Keeping personal data out of Git moves the erasure problem to the person directory and its backups. A backup of the
-volume, or a log that pairs a pseudonym with a login, that survives the erasure period undoes the erasure. The
-libraries delete at once; only the operator can make the copies disappear.
+With the default provider an erased entry stays in the history of the persons' repository, as a deleted element stays
+in the history of comparable systems. The libraries confine names to one repository and keep the login identifier
+hashed; an operator who must erase without history plugs in a provider for a source that can.
 ====
 
 == Open Questions
@@ -139,10 +148,10 @@ libraries delete at once; only the operator can make the copies disappear.
 
 == Related
 
-* xref:../adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008]
+* xref:../adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008]
   -- the decision.
 * xref:../specification/git-store.adoc#_person_directory[`git-store`, Person Directory] and
-  xref:../specification/git-directory.adoc#_local_person_directory[`git-directory`, Local Person Directory] -- the
+  xref:../specification/git-directory.adoc#_person_directory_in_git[`git-directory`, Person Directory in Git] -- the
   specifications.
 
 == Sources

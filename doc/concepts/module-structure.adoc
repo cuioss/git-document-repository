@@ -93,7 +93,7 @@ interfaces are planned:
 * `SignatureLevelVerifier` (the evidence of a signature level for a transition) and `CommitTrailerContributor` (the
   actor and approval trailers) are provided by `git-signing`. Without a provider only signature level 0 is accepted.
 * `PersonDirectory` (issuer and `sub` to pseudonym, the person entries, holders of a role, erasure) is provided by
-  `git-directory` (`local`, the default) or by a provider for the operator's own source. Exactly one is active, so
+  `git-directory` (`git`, the default) or by a provider for the operator's own source. Exactly one is active, so
   `git-signing` and `git-store` get the pseudonym of the author in either case.
 * `AnchorProvider` (a proof that an object existed at a time) is provided by `git-signing` (`signed`, the own
   timestamp) and by `git-timestamp` (`rfc3161`). `git-store` decides what is anchored and stores the proofs; without

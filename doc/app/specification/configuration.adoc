@@ -118,7 +118,8 @@ active)
 |`directory`
 |no
 |The person directory (link:data-protection.adoc#_person_directory[Data Protection, Person Directory]):
-`persons.provider` (default `local`), `persons.path` (default `/app/data/persons`; only for `local`)
+`persons.provider` (default `git`), `persons.repository` (alias of the repository holding the person entries; default
+`directory`; only for `git`)
 
 |`integrations`
 |no
@@ -315,7 +316,7 @@ retention class, or carry a class other than the repository's `retention`
 |A rights entry naming an unknown alias
 
 |Person directory path
-|`directory.persons.path` inside the local directory of a repository
+|`directory.persons.repository` naming an alias that `repositories` does not configure
 
 |Canonical URI
 |`mcp.canonical-uri` that is not an absolute HTTPS URI without fragment

@@ -461,7 +461,8 @@ xref:specification/git-store.adoc#_anchoring[git-store, Anchoring]_
   the store. The author pseudonym of every save must come from it.
 * A pseudonym must be stable for the same issuer and `sub`. After an erasure the provider must no longer return the
   person, issuer or `sub` for that pseudonym, and must resolve it as a former member.
-* The store must write no data it obtains from the provider into a repository except pseudonyms.
+* Outside the provider's own entries, the store must write no data it obtains from the provider into a repository
+  except pseudonyms.
 
 _Concept: xref:concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory] ·
 Specification: xref:specification/git-store.adoc#_person_directory[git-store, Person Directory]_
@@ -715,19 +716,19 @@ _Concept: xref:concepts/directory-and-catalogs.adoc#_catalog_of_applications_and
 Specification: xref:specification/git-directory.adoc[git-directory]_
 
 [#GDR-DIR-3]
-=== GDR-DIR-3: Local Person Directory
+=== GDR-DIR-3: Person Directory in Git
 
-* The module must provide the person directory `local` of `git-store` (<<GDR-STORE-15>>), the default provider.
-* A person entry must hold the pseudonym, the issuer and `sub`, the name, the memberships (pairs of team and role),
-  the date `since` and the date of the last confirmation `confirmed`, and no further field unless the operator extends
-  the schema.
-* Every entry must be a plain file of its own under the configured path, outside every repository; it must never be
-  committed or pushed.
+* The module must provide the person directory `git` of `git-store` (<<GDR-STORE-15>>), the default provider.
+* A person entry must be the file `persons/<pseudonym>.yaml` in a configured repository, by default the directory's.
+* An entry must hold the subject hash, the name, the memberships (pairs of team and role), the date `since` and the
+  date of the last confirmation `confirmed`, and no further field unless the operator extends the schema.
+* The subject hash must be the SHA-256 over the issuer, a line feed and the `sub`, in lowercase hex; issuer and `sub`
+  must never be written to a repository in clear text.
 * A new pseudonym must be random (`p-` followed by at least 128 random bits) and must not be derivable from issuer or
   `sub`.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_the_directory_of_persons[Directory of Persons] · Specification:
-xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
+xref:specification/git-directory.adoc#_person_directory_in_git[git-directory, Person Directory in Git]_
 
 [#GDR-DIR-4]
 === GDR-DIR-4: First Login
@@ -735,10 +736,11 @@ xref:specification/git-directory.adoc#_local_person_directory[git-directory, Loc
 * For an issuer and `sub` without a pseudonym the module must create one and report that an entry is required.
 * For a known pseudonym without a saved entry (an interrupted first login) the module must report again that an entry
   is required.
-* Saving the entry must write the file at once; the entry must be valid at once.
+* Saving the entry must be a signed level-1 save on `main` of the persons' repository; the entry must be valid at
+  once. Level 1 needs a provider of the `SignatureLevelVerifier` interface (`git-signing`) at run time.
 
 _Concept: xref:concepts/directory-and-catalogs.adoc#_first_login[First Login] · Specification:
-xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
+xref:specification/git-directory.adoc#_person_directory_in_git[git-directory, Person Directory in Git]_
 
 [#GDR-DIR-5]
 === GDR-DIR-5: Reference Resolution
@@ -772,14 +774,14 @@ xref:specification/git-directory.adoc[git-directory]_
 [#GDR-DIR-8]
 === GDR-DIR-8: Erasure and Restriction
 
-* Erasure must delete the person's file at once; the pseudonym must then resolve to a former member.
+* Erasure must delete the person's entry in one commit that also records the pseudonym and the date in `erasures.yaml`
+  of the same repository, never the person; the pseudonym must then resolve to a former member.
 * Where the operator sets a restriction date, the entry must be kept until that date, hidden from every resolution
-  except the pseudonym's own former-member marker, and deleted when the date has passed.
-* Every erasure must be recorded as a system commit in the directory's repository that names the pseudonym and the
-  date, never the person.
+  except the pseudonym's own former-member marker, and erased as above when the date has passed.
+* Erasure must never rewrite the history.
 
 _Concept: xref:concepts/data-protection.adoc#_erasing_a_person[Data Protection, Erasing a Person] · Specification:
-xref:specification/git-directory.adoc#_local_person_directory[git-directory, Local Person Directory]_
+xref:specification/git-directory.adoc#_person_directory_in_git[git-directory, Person Directory in Git]_
 
 [#requirements-non-functional]
 == Non-Functional Requirements
@@ -869,7 +871,7 @@ xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001],
 xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002],
 xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003],
-xref:adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008],
+xref:adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008],
 xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009],
 xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]
 |xref:specification/git-store.adoc[git-store]
@@ -897,7 +899,7 @@ xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_
 |xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs],
 xref:concepts/data-protection.adoc[Data Protection]
 |xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[ADR-0012],
-xref:adr/0008-Personal_data_stays_out_of_Git_and_a_pluggable_person_directory_keeps_it.adoc[ADR-0008]
+xref:adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008]
 |xref:specification/git-directory.adoc[git-directory]
 
 |GDR-NFR-1 – GDR-NFR-4

@@ -15,7 +15,7 @@ Status: PLANNED
 What the application configures and enforces on top of the library's person directory, pseudonyms and erasure.
 Reasoning: link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library
 contract: link:../../Requirements.adoc#GDR-STORE-15[GDR-STORE-15: Person Directory Interface],
-link:../../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Local Person Directory],
+link:../../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Directory in Git],
 link:../../Requirements.adoc#GDR-DIR-8[GDR-DIR-8: Erasure and Restriction] and
 link:../../Requirements.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
 
@@ -35,7 +35,7 @@ Default `repositories` in the shipped `cisos-friend.yaml`:
 |`isms-incidents-<year>` |`strongly-restricted` |`incident-reports` (default `P5Y`) |Incident reports
 |`samm-assessments` |`public-internal` |`unlimited` |SAMM
 |`threat-models` |`restricted` |`unlimited` |Threat models (variant B)
-|`directory` |`public-internal` |`unlimited` |Catalogs, record of erasures; no persons
+|`directory` |`public-internal` |`unlimited` |Catalogs, person entries under pseudonyms, record of erasures
 |===
 
 The retention classes and their periods are defined in `retention-classes`
@@ -68,9 +68,9 @@ Status: PLANNED
 * Request: `POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym and, where a statutory
   retention duty applies, `restrict-until` (a date). The application calls the library's erasure of the active person
   directory (link:../../Requirements.adoc#GDR-DIR-8[GDR-DIR-8]).
-* `local`: without `restrict-until` the entry is deleted at once; with it, the entry is hidden and deleted on that date
-  by the library's daily task. The library records the erasure in `erasures.yaml` of the `directory` repository by
-  pseudonym and date; the next checkpoint anchors the record while anchoring is active.
+* `git`: without `restrict-until` one commit deletes the entry and records pseudonym and date in `erasures.yaml` of the
+  persons' repository; with it, the entry is hidden and erased on that date by the library's daily task. The history
+  keeps the earlier versions; the next checkpoint anchors the erasure commit while anchoring is active.
 * A provider for the organisation's own source returns managed-by-source; the application answers `409` with the
   problem type `managed-by-source` and names no person.
 * Display: an erased or restricted pseudonym is shown as "former member".
@@ -124,11 +124,10 @@ Status: PLANNED
 |===
 |Value |Behaviour
 
-|`local` (default)
-|Entries as plain files under `directory.persons.path` (default `/app/data/persons`, on the persistent volume beside
-the local repositories, never inside one); first-login form and own-entry changes as in
-link:authentication.adoc#_first_login[Authentication, First Login]. Boot validation refuses a path inside a repository
-directory.
+|`git` (default)
+|Entries `persons/<pseudonym>.yaml` in the repository named by `directory.persons.repository` (default `directory`),
+saved on `main` at signature level 1; first-login form and own-entry changes as in
+link:authentication.adoc#_first_login[Authentication, First Login].
 
 |the id of a provider for the organisation's own source
 |Names and memberships from that source; no first-login form; erasure in that source

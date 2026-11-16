@@ -162,9 +162,9 @@ Status: PLANNED
 |At start, per repository
 |Save, webhook, periodic fetch
 
-|Person directory (`local`)
-|At start, from the entry files
-|Own save of an entry, erasure
+|Person directory (`git`)
+|At start, from the persons' repository
+|Fetch that moves its `main`, own save of an entry, erasure
 
 |Pending approvals
 |From the index (open requests are documents)

@@ -93,14 +93,13 @@ repository without a local copy keeps readiness `DOWN`. A local-mode repository 
 repository opens and its index is built. A later fetch failure does not drop readiness
 
 |`persons`
-|The person directory was loaded (for `local`: every entry file under `directory.persons.path` read)
+|The person directory was loaded (for `git`: the entries of the persons' repository read into memory)
 
 |`index`
 |The index was built for every repository
 |===
 
-Volume: `/app/data` holds the local repositories and the entries of the `local` person directory
-(`/app/data/persons`). It is mounted from a persistent volume; the image declares no
+Volume: `/app/data` holds the local repositories. It is mounted from a persistent volume; the image declares no
 volume.
 
 == Secrets

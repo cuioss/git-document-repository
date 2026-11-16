@@ -23,8 +23,7 @@ Every store beside Git falls into one of three classes:
 
 . *Derived*: rebuildable from Git at any time (index, search, dashboards). Local, volatile, no backup.
 . *Complementary*: data that must not be in Git because it is mutable, deletable or personal. It belongs in a system
-  the organisation already operates, not in a new store. The one exception is the default person directory: plain
-  files on the application's volume, for organisations whose user directory the application cannot read.
+  the organisation already operates, not in a new store.
 . *Assuring*: an independent append-only proof about Git ("these commits existed at this time"). It must lie
   outside the control of the Git administrator.
 
@@ -44,10 +43,10 @@ independent proof is needed
 |none
 
 |Personal, deletable data
-|The person directory outside Git: by default plain files on the application's volume, erased by deletion, or the
-operator's own user directory (see xref:data-protection.adoc#_the_person_directory[Data Protection]); operational
-details in the ticket system
-|none; the volume the application has anyway, or the operator's existing directory
+|Names only in the person directory: by default its entries in a repository under pseudonyms, erased by a commit
+whose history keeps earlier versions, or the operator's own user directory (see
+xref:data-protection.adoc#_the_person_directory[Data Protection]); operational details in the ticket system
+|none
 
 |Read-access log (who read a confidential document, logins)
 |The organisation's existing logging or SIEM (ISO/IEC 27001:2022, Annex A control 8.15 Logging)
@@ -153,10 +152,11 @@ Git comes first; everything else follows and is derived from Git.
 
 The truth then sorts as follows:
 
-* *Git*: documents, registers, the directory, approval trailers and notes, checkpoints and anchor proofs as notes.
+* *Git*: documents, registers, the directory with the person entries, approval trailers and notes, checkpoints and
+  anchor proofs as notes.
 * *Derived*: index and search, volatile and rebuildable.
-* *Complementary*: the identity provider (authentication, groups), the person directory (names, memberships), the
-  issue and ticket system (operations), Vault or KMS (keys), the SIEM (read-access log).
+* *Complementary*: the identity provider (authentication, groups), an operator's own person directory where one is
+  plugged in, the issue and ticket system (operations), Vault or KMS (keys), the SIEM (read-access log).
 * *Assuring*: the anchor proofs (own timestamp, RFC 3161 timestamps), optionally a mirror.
 
 [CAUTION]
