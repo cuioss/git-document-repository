@@ -10,8 +10,6 @@ thousand documents for dozens of users cannot afford one checked-out directory p
 describes how the store reads and writes documents in Git without any working tree: one API for local and remote
 repositories, drafts and saving, multiple users, and the in-memory index.
 
-Statements marked _(unverified)_ come from general knowledge and were not checked against a current source.
-
 == Overview
 
 image::../resources/diagrams/storage-engine-overview.svg["The application server writes through the in-process repository layer into a local bare repository that synchronises with the remote Git server",align=center]
@@ -38,7 +36,7 @@ with one push of the local repository.
 A Git branch is no working area; it is a *reference*, a pointer to a commit. Any number of references can exist for
 any number of users at the same time. A working tree is a checked-out state on disk, and only one exists per branch.
 
-`pm-provider-git` needs linked working trees because agents and build tools work on files on disk; JGit 7.0 added
+Clients whose agents and build tools work on files on disk need linked working trees; JGit 7.0 added
 read support for linked working trees; JGit 7.8.0 still has no command that creates one. The
 document store holds the content in memory anyway, so it writes blobs, trees and commits directly into the object
 database and then moves the reference.
@@ -77,8 +75,17 @@ try (ObjectInserter ins = repo.newObjectInserter();
 }
 ----
 
-The JGit calls in the sketch are not yet verified against the JGit version in use _(unverified)_. The author,
-committer, trailers and signature are described in xref:identity-and-signing.adoc[Identity and Signing].
+Every class, method and constant of the sketch exists with the signature used in JGit 7.8.0, checked against the
+jar and the sources of tag
+link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r[`v7.8.0.202609011348-r`];
+`content` is a `byte[]` (`ObjectInserter.insert(int, byte[])`). `DirCache.read(ObjectReader, AnyObjectId)` returns
+"a new cache which has no backing store file"
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCache.java[`DirCache.java`]).
+`RefUpdate.update(RevWalk)` takes the lock, reads the reference again and returns `LOCK_FAILURE` when it no longer
+equals the expected old id
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[`RefUpdate.updateImpl`]).
+The sketch itself is not compiled or run. The author, committer, trailers and signature are described in
+xref:identity-and-signing.adoc[Identity and Signing].
 
 === Compare-and-Swap
 
@@ -120,9 +127,18 @@ Conditions:
 * *Persistent storage.* The repository directory needs persistent storage, for example a persistent volume in a
   container platform. Without it every restart, not only a crash, loses all unsaved drafts.
 * *Instances.* With several application instances a draft lives on the instance that wrote it: run one instance, use
-  sticky sessions, or share a volume. JGit takes a lock file for every reference update; whether that keeps the
-  compare-and-swap safe across several JVMs on a shared network volume (NFS semantics, references cached per JVM) is
-  _(unverified)_ and has to be tested before such a deployment.
+  sticky sessions, or share a volume. In JGit 7.8.0 every reference update creates the lock file `<ref>.lock` and
+  resolves the reference again after taking it; the per-JVM cache is reused only if the file's attributes are
+  unchanged
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/RefDirectoryUpdate.java[`RefDirectoryUpdate.tryLock`]).
+  The javadoc names `core.supportsAtomicCreateNewFile = false`, read from the user-level Git configuration, as the
+  setting that creates the lock file atomically also on NFS, through a hard-link check; the default `true` calls
+  `Files.createFile` only
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/FS_POSIX.java[`FS_POSIX.createNewFileAtomic`]).
+  `core.trustLooseRefStat = AFTER_OPEN` refreshes the cached file attributes of a reference before it is read
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/CoreConfig.java[`CoreConfig.TrustStat`]).
+  Whether a given network volume honours these guarantees has to be tested before such a deployment (see
+  <<_open_questions>>).
 * *Expiry.* Abandoned drafts expire after a configured period; a garbage collection removes their objects.
 * *Real conflicts.* A conflict is detected per path: the same file changed in parallel. Resolving it per field of
   the YAML structure is the task of `git-forms`. On a conflict nothing is pushed, the draft reference is kept unchanged
@@ -186,10 +202,10 @@ days, not for a stream of transactions.
 == Open Questions
 
 . Prototype concurrent saves against one branch, measuring conflicts and retries.
-. Verify the JGit API used in the sketch (`DirCache.read`, `DirCacheEditor`, in-core merge, `RefUpdate` results) and the
-  `git notes` support (`NoteMap`) against the JGit version in use.
-. Push and fetch with token credentials against GitHub, GitLab and Gitea; token lifetimes and refresh of the hosts
-  _(unverified)_.
+. Test the compare-and-swap of several JVMs on one shared network volume, with
+  `core.supportsAtomicCreateNewFile = false` and `core.trustLooseRefStat = AFTER_OPEN`, before such a deployment.
+. Push and fetch with token credentials against GitHub, GitLab and Gitea; determine the token lifetimes each host
+  grants and how a token is refreshed.
 
 == Related
 

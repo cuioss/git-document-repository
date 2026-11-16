@@ -37,8 +37,9 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |Generators and fixtures: local and in-memory repositories, a local remote.
 |===
 
-The modules are scaffolded; the code is taken over from `pm-provider-git` in a later step (see
-link:doc/concepts/module-structure.adoc[Module Structure]). The aspect modules (`git-store`, `git-forms`, `git-crypto`, `git-signing`,
+The modules are scaffolded; the foundation code is taken over from its first client in a later step (see
+link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
+The aspect modules (`git-store`, `git-forms`, `git-crypto`, `git-signing`,
 `git-timestamp`, `git-directory`) follow as the document store needs them.
 
 === Maven Coordinates

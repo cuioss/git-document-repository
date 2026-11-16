@@ -45,6 +45,6 @@ _See Requirement link:../Requirements.adoc#GDR-TEST-2[GDR-TEST-2: Credential Gen
 
 *Status:* PLANNED
 
-`GitCredentialGenerator` and `GitGenerators` move from the test artifact `pm-provider-git:tests`. They implement the
+`GitCredentialGenerator` and `GitGenerators` implement the
 `cui-test-generator` contract and produce transport credentials (user and token) for tests; values are random and
 never real secrets.

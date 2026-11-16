@@ -152,8 +152,14 @@ The application cannot settle these; they are agreed per organisation before go-
   controller as long as the key exists; after the destruction the remaining ciphertext is in common practice in effect
   anonymous, but this is not settled.
 . The retention classes and their periods (incident reports, ISMS registers, audit reports).
-. The legal basis and the information text of the directory (legitimate interest or employee data protection; the
-  German rule § 26 BDSG is disputed since a judgment of the CJEU of 2023 _(unverified)_).
+. The legal basis and the information text of the directory (legitimate interest or employee data protection). The
+  general clause of the German rule, § 26(1) sentence 1 BDSG, is disputed since the CJEU held on 30 March 2023
+  (C-34/21) that national employment rules which do not meet Art. 88(2) GDPR must be disregarded unless they form a
+  legal basis under another article of the GDPR
+  (link:https://curia.europa.eu/site/upload/docs/application/pdf/2023-03/cp230054en.pdf[CJEU press release
+  No 54/23]); the ruling concerned a Hessian rule whose wording largely matches it
+  (link:https://www.gleisslutz.com/de/know-how/unanwendbarkeit-nationaler-generalklauseln-des-beschaeftigtendatenschutzes[Gleiss
+  Lutz, 26 April 2023]).
 . Where the read-access log lives: who read a confidential risk is logged to the organisation's existing logging or
   SIEM (ISO 27001 A.8.15), not stored in Git.
 

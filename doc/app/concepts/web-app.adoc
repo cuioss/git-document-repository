@@ -157,7 +157,15 @@ CISOs-Friend has its own brand mark; it keeps the token contract and the palette
 == Security of the Page
 
 * A strict Content Security Policy without `unsafe-inline` for scripts; the SvelteKit bootstrap script is allowed by
-  hash _(unverified: the exact mechanism with `adapter-static` has to be confirmed)_.
+  hash. With `kit.csp.mode` `'hash'` (or `'auto'`, which uses hashes for prerendered pages) SvelteKit adds the
+  SHA-256 hash of every inline script it generates
+  (link:https://svelte.dev/docs/kit/configuration#csp[SvelteKit configuration, `csp`]). The `adapter-static`
+  fallback page is rendered as a prerendered page, so the policy is written into it as a
+  `<meta http-equiv="content-security-policy">` tag
+  (link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/core/postbuild/fallback.js[`fallback.js`],
+  link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/runtime/server/page/render.js[`render.js`],
+  `@sveltejs/kit` 3.2.0). A `<meta>` policy ignores `frame-ancestors`, `report-uri` and `sandbox`; the Quarkus
+  application sends these as a response header.
 * No third-party origin: fonts, icons and scripts come from the application.
 * AsciiDoc previews and generated reports are rendered by the server and sanitised; the browser never renders raw
   user HTML.
@@ -165,7 +173,6 @@ CISOs-Friend has its own brand mark; it keeps the token contract and the palette
 
 == Open Questions
 
-. The CSP mechanism for the SvelteKit bootstrap script under `adapter-static`.
 . Whether the AsciiDoc preview runs server-side only or with a sanitising client renderer.
 . Which `pm-web-app` components move into a shared component package instead of being copied.
 

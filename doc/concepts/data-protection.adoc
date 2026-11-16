@@ -10,8 +10,7 @@ deletable" does not exempt it. This concept describes how the libraries keep per
 pseudonym mapping can lie in Git and still be erased, and how cutting data into repositories turns Git's coarse rights
 into an advantage.
 
-This is a technical assessment, not legal advice. Statements marked _(unverified)_ come from general knowledge and
-were not checked against a current source.
+This is a technical assessment, not legal advice.
 
 == The Problem
 
@@ -101,8 +100,13 @@ crypto-shredding run on one technique.
   an RFC 3161 timestamp like every new state of `main` (see xref:evidence-and-companion-stores.adoc[Evidence and
   Companion Stores]).
 * *No home-made cryptography.* AES-256-GCM as authenticated encryption, with the path and the key version as associated
-  data so that no blob can be swapped; random nonces, never reused. Google Tink (Java) provides envelope encryption and
-  KMS integration _(unverified)_; it would be a deliberate dependency decision.
+  data so that no blob can be swapped; random nonces, never reused. Google Tink (Java,
+  link:https://github.com/tink-crypto/tink-java/releases/tag/v1.24.0[release 1.24.0] of 16 October 2026) provides
+  envelope encryption in
+  link:https://github.com/tink-crypto/tink-java/blob/main/src/main/java/com/google/crypto/tink/aead/KmsEnvelopeAead.java[`KmsEnvelopeAead`]
+  and, for Java, KMS integrations for AWS KMS and Google Cloud KMS; its HashiCorp Vault integration exists only for Go
+  (link:https://developers.google.com/tink/key-management-overview[Tink: Key management overview]). It would be a
+  deliberate dependency decision.
 * *Longevity.* The ciphertext stays in Git for good, in every clone and every backup of the Git server. Hence AES-256,
   not AES-128, as a reserve against future attacks, quantum computers included. After the erasure the protection rests
   entirely on the destruction of the KEK.
@@ -114,16 +118,33 @@ crypto-shredding run on one technique.
 
 Legally, encrypted data stay personal data for the controller as long as the key exists: encryption is a protective
 measure, not an erasure. Whether the remaining ciphertext counts as anonymous after the destruction of the KEK is
-not settled _(unverified)_; every operator agrees it with their data protection officer.
+not settled. The EDPB states that after deletion of the key encrypted data are unintelligible "at least until the
+algorithm is broken", that encrypted personal data are still personal data, and that even state-of-the-art
+encryption is "overtaken by time" when the ciphertext is kept indefinitely
+(link:https://www.edpb.europa.eu/system/files/2026-07/edpb_guidelines_202502_blockchain_v2_en.pdf[EDPB Guidelines
+02/2025 on blockchain technologies, version 2.0 of 7 July 2026], para. 51). Its draft guidelines on anonymisation
+call encryption "by its very nature, intended to be reversible" and require assessing whether anyone with access
+could still decrypt "with means reasonably likely to be used", for example by cryptanalysis
+(link:https://www.edpb.europa.eu/system/files/2026-07/edpb_guidelines_202602_anonymisation_v1_en_0.pdf[EDPB
+Guidelines 02/2026 on Anonymisation, version 1.0 for public consultation], para. 91). Neither declares the
+destruction of a key to be an erasure; every operator agrees it with their data protection officer.
 
 The result: no further store. Everything lies in Git; outside it lies one secret, the KEK, not a data store. Operators
 manage secrets anyway.
 
 == Repositories per Confidentiality and Retention Class
 
-Git servers grant read rights per repository only; protected branches narrow write rights per branch, not read
-rights _(unverified for every Git server)_. Cutting the data into repositories *by confidentiality* turns that into an
-advantage; cutting them *by retention period* solves deletion. The store therefore manages a *registry of
+GitHub, GitLab and Forgejo grant read rights per repository: roles are assigned per repository or project
+(link:https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization[GitHub],
+link:https://docs.gitlab.com/user/permissions/[GitLab],
+link:https://forgejo.org/docs/latest/user/repo-permissions/[Forgejo]). The protected branches of GitHub and GitLab
+restrict pushing, merging, force pushing and deletion, not reading
+(link:https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches[GitHub],
+link:https://docs.gitlab.com/user/project/repository/branches/protected/[GitLab]). Gerrit is the exception: its
+`Read` permission is granted per reference, so a branch can be hidden
+(link:https://gerrit-review.googlesource.com/Documentation/access-control.html[Gerrit access controls]).
+None of the four documents a read restriction per path. Cutting the data into repositories *by confidentiality* turns
+that into an advantage; cutting them *by retention period* solves deletion. The store therefore manages a *registry of
 repositories*, each with a stable alias, a confidentiality class and an optional retention period. A typical cut puts
 widely readable policies, restricted registers and strongly restricted records of one year (with a retention period)
 into separate repositories; the concrete cut is the decision of the application.

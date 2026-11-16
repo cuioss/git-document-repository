@@ -16,8 +16,6 @@ _See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fix
 * JUnit 5, test data from `cui-test-generator`, test doubles with EasyMock.
 * Every module tests against the fixtures of `git-testing`: in-memory repositories for logic, local repositories and
   a local remote for transport, fetch and push. No test needs network access.
-* Tests move with the classes taken over from `pm-provider-git` (see
-  xref:../concepts/module-structure.adoc#_what_moves_where[Module Structure, What Moves Where]).
 * Build: `./mvnw clean verify`; CI runs on Java 21 and 25.
 
 == Layering Checks
@@ -60,4 +58,4 @@ _See Requirement link:../Requirements.adoc#GDR-NFR-4[GDR-NFR-4: Native Image]_
 
 Each module ships the reflection and resource metadata it needs under
 `META-INF/native-image/de.cuioss/<artifactId>/`. The native verification runs in a consuming application's native
-build (the first is the `pm-mcpd` build named in the module structure); a native test lane in this repository is open.
+build; a native test lane in this repository is open.

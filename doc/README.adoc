@@ -9,8 +9,8 @@
 Git repository, reached through JGit in memory and without working trees, as the persistence of an application in
 which users maintain versioned documents. The modules are released together and consumed separately.
 
-This directory holds the design documentation of the libraries. Statements marked _(unverified)_ come from general
-knowledge and were not checked against a current source.
+This directory holds the design documentation of the libraries. Every statement about an external product, standard
+or law cites the source it was checked against.
 
 [NOTE]
 ====
@@ -46,7 +46,7 @@ realised).
 |Problem, assumptions, existing solutions, scope of the libraries, risks and limits
 
 |xref:concepts/module-structure.adoc[Module Structure]
-|The reactor, module dependencies, the foundation shared with `pm-provider-git`, the order of work
+|The reactor, module dependencies, the foundation modules, the order of work
 
 |xref:concepts/storage-engine.adoc[The Storage Engine on Git]
 |Local and remote mode, no working trees, compare-and-swap, drafts and saving, visibility, the in-memory index
@@ -65,6 +65,20 @@ realised).
 
 |xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
 |Catalogs of roles, teams and services, the encrypted directory of persons, Backstage alignment
+|===
+
+== Clients
+
+Clients of the libraries that need a description of their own are documented in `doc/clients/`. They are not part of
+the design of the libraries.
+
+[cols="1,3"]
+|===
+|Client |Content
+
+|xref:clients/pm-mcp-core.adoc[`pm-mcp-core`]
+|The first client of the foundation: the origin of the foundation code in `pm-provider-git`, what moves where, what
+changes in `pm-mcp-core`, the order of the switch-over
 |===
 
 [[_architecture_decisions]]
@@ -95,8 +109,8 @@ application in `doc/app/adr/` follow the same structure.
 |The libraries are one reactor of separately consumed modules, with optional aspect modules
 |Accepted
 
-|xref:adr/0005-The_JGit_foundation_is_extracted_from_pm-provider-git_and_shared_with_it.adoc[0005]
-|The JGit foundation is extracted from `pm-provider-git` and shared with it
+|xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[0005]
+|The JGit foundation is a library of its own, shared with its clients
 |Accepted
 
 |xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[0006]

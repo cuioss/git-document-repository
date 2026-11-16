@@ -96,11 +96,24 @@ Status: PLANNED
 The final-report rules start only when the notification `sent-at` is recorded; before that the early-warning and
 notification deadlines are shown, and the deadline of every requested intermediate report, which applies whether or
 not the notification was sent. An intermediate report has no deadline of its own in the directive; it is due when
-the requesting authority says. Source of the NIS2 reports: Directive (EU) 2022/2555, Art. 23(4) points (a) to (e)
-_(unverified against the national transposition)_.
+the requesting authority says. Source of the NIS2 reports:
+https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4) points (a) to (e): early
+warning within 24 hours and incident notification within 72 hours of becoming aware of the significant incident,
+intermediate report upon request, final report not later than one month after the submission of the notification,
+and for an incident ongoing then a progress report at that time and the final report within one month of its
+handling. For a trust service provider the second subparagraph of Art. 23(4) sets the notification itself at
+24 hours; an installation for one configures `nis2-notification` with `PT24H`.
+
+The German transposition, https://www.gesetze-im-internet.de/bsig_2025/__32.html[§ 32 BSIG] (BSI-Gesetz of
+2 December 2025, BGBl. 2025 I Nr. 301, in force since 6 December 2025), has the same 24-hour, 72-hour and one-month
+deadlines and the intermediate report on request of the BSI (§ 32(1) Nos. 1 to 4). After a progress report it sets no
+period: the final report is due once the handling is completed (§ 32(2)). For Germany the
+`nis2-final-report-after-handling` deadline is therefore an internal target taken from the directive, not a
+statutory one.
 
 A deadline is `MET` when its notification field holds `sent-at` ≤ due, `MISSED` otherwise after due, `OPEN` before.
-The NIS2 deadlines are configuration and are verified before the first release _(unverified)_.
+The NIS2 deadlines are configuration; the shipped values are those of Art. 23(4) above, so a transposition with other
+periods is covered by configuration without a code change.
 
 == Workflow
 _See Requirement link:../Requirements.adoc#CIFR-IR-3[CIFR-IR-3: Mandatory Fields]_

@@ -29,8 +29,9 @@ The ISMS artefacts sort into three groups:
 . *Documents, very well suited*: policies, scope, risk methodology, statement of applicability, internal audit and
   management review reports. Rarely changed, approval-centred, diffable.
 . *Registers, well suited*, with the pattern of link:category-samm.adoc[SAMM] (one file per entry, in-memory index,
-  compare-and-swap): risks, controls, suppliers, nonconformities, and the assets that are no applications. A
-  mid-sized ISMS is expected to hold at most a few thousand entries _(estimate, unverified)_.
+  compare-and-swap): risks, controls, suppliers, nonconformities, and the assets that are no applications. The
+  in-memory index rests on the design assumption that a mid-sized ISMS holds at most a few thousand register
+  entries; the prototype measures index build time and memory at that size.
 . *Operational data, referenced instead of stored*: tasks and deadlines (issue tracker of the Git server or Jira), the
   live handling of incidents (ticket system; the report on an incident is a schema-driven document, see
   link:category-incident-reports.adoc[Incident Response Reports]), training records per employee (learning platform or
@@ -92,7 +93,11 @@ shipped, only own wording and numbers
 
 |Versioning, diff, reporting dates
 |Native and complete
-|Rather status and release attributes on objects than a full history with diff _(unverified)_
+|veo keeps every change of an object as a version: the History sidebar shows and restores earlier versions
+(https://github.com/SerNet/verinice-veo-web-documentation/blob/main/docs/en/manual/objects.md[veo manual, Objects]),
+and the veo-history service returns all revisions of a resource and the one current at a point in time
+(https://github.com/SerNet/verinice-veo-history[verinice-veo-history]); the History section of the manual names no
+comparison between versions
 
 |Approval, four eyes
 |Pull request review, protected branches, commit trailers, graded signatures up to passkeys
@@ -137,11 +142,13 @@ link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[
 
 == Open Questions
 
-. Verify the verinice statements (versioning, approval, licence of veo, catalogue coverage) with a demo instance.
+. Verify the verinice statements (approval, licence of veo, catalogue coverage) with a demo instance.
 . Which registers ship in the first ISMS iteration (risks and controls first; suppliers and nonconformities later).
-. The shape of the veo bridge: which veo object type receives a released SAMM assessment, and whether veo offers a
-  searchable external reference for an idempotent delivery. Until that is verified, the bridge stays disabled by
-  default; the released assessment itself is never changed by it.
+. The shape of the veo bridge: which veo object type receives a released SAMM assessment. veo has no field dedicated
+  to an external reference, but its element lists filter by `abbreviation`; the bridge carries the release tag there
+  for an idempotent delivery
+  (link:../specification/category-isms.adoc#_verinice_bridge[Specification, verinice Bridge]). The bridge is
+  disabled by default; the released assessment itself is never changed by it.
 
 == Related
 

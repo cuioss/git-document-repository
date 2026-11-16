@@ -11,8 +11,6 @@ documents that mean the same thing. This concept describes the master data every
 encrypted directory of persons and the catalogs of roles, teams, systems, services and external parties, all
 referenced by stable ids.
 
-Statements marked _(unverified)_ come from general knowledge and were not checked against a current source.
-
 == Scope of the First Iteration
 
 * *Roles are names only.* They describe who is responsible or the contact for something; no right is derived from
@@ -114,16 +112,19 @@ Fields taken from Backstage keep its spelling (`dependsOn`); the fields of the o
 
 === Alignment with Backstage and Import
 
-Many development organisations already keep such a catalog. The Backstage software catalog holds its entries as
-`catalog-info.yaml` in the repository of each service, with the kinds Component, System, API, Resource, Group and
-User _(unverified)_; the principle "the description lives in the service's repository" matches the one file per
+Many development organisations already keep such a catalog. The Backstage software catalog holds its entries in
+descriptor files in the repository of each service, by recommendation named `catalog-info.yaml`, with the kinds
+Component, Template, API, Group, User, Resource, System, Domain and Location
+(link:https://backstage.io/docs/features/software-catalog/descriptor-format[Backstage: Descriptor Format of Catalog
+Entities]); the principle "the description lives in the service's repository" matches the one file per
 service of this catalog. Operations often keep a CMDB (i-doit, iTop, ServiceNow); whether entries are imported from
 it is an open question. Therefore:
 
 * *The schema leans on Backstage*: the same terms and, where possible, the same fields (`system`, `lifecycle`,
   `owner`, `dependsOn`), so that entries can be mapped. The mapping is not one to one: Backstage names a single owner
-  entity where this catalog names a team and a role, and its lifecycle values differ from `planned`, `active`,
-  `deprecated` and `retired` _(unverified)_.
+  entity where this catalog names a team and a role, and its lifecycle values differ: Backstage names the well-known
+  values `experimental`, `production` and `deprecated` and accepts any other value (same source); this catalog uses
+  `planned`, `active`, `deprecated` and `retired`.
 * *Import*: where Backstage exists, components and systems are imported and kept in sync; groups map onto the team
   catalog. The own catalog adds only what is missing: protection needs, data classes, links to security documents.
 * *Where nothing exists*, the own catalog is the source of truth.
@@ -167,8 +168,12 @@ and no readable output is generated for them.
 
 Self-entered data age: teams change and nobody updates. Hence:
 
-* where the identity provider delivers groups or departments (possibly by SCIM _(unverified)_), they are taken over
-  and prefill the form;
+* where the identity provider delivers groups or departments, they are taken over and prefill the form; SCIM 2.0
+  defines a `Group` resource and the `department` attribute of the enterprise user extension
+  (link:https://www.rfc-editor.org/rfc/rfc7643#section-4.2[RFC 7643, sections 4.2 and 4.3]), and Microsoft Entra ID,
+  for example, provisions users and groups to an application's SCIM endpoint
+  (link:https://learn.microsoft.com/en-us/entra/identity/app-provisioning/use-scim-to-provision-users-and-groups[Microsoft
+  Entra ID: SCIM provisioning]);
 * a periodic confirmation, yearly or on the first login after a reorganisation: "Is your team still right?"
 
 === Data Protection of the Directory
@@ -214,8 +219,17 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 . Align the schema of the service catalog with the Backstage descriptor format and prototype the import.
 . Decide whether service entries are also imported from a CMDB (i-doit, iTop, ServiceNow).
 . The legal basis of the directory (legitimate interest or employee data protection) is agreed by each operator with
-  their data protection officer; the German rule on employee data protection (§ 26 BDSG) is disputed since a judgment
-  of the CJEU of 2023 _(unverified)_.
+  their data protection officer. The German rule on employee data protection
+  (link:https://www.gesetze-im-internet.de/bdsg_2018/__26.html[§ 26 BDSG]) is in force, but its general clause in
+  § 26(1) sentence 1 is disputed: the CJEU held on 30 March 2023 (C-34/21, _Hauptpersonalrat der Lehrerinnen und
+  Lehrer_) that national rules which do not meet the conditions of Art. 88(2) GDPR are no "more specific rules" and
+  must be disregarded unless they form a legal basis under another article of the GDPR
+  (link:https://curia.europa.eu/site/upload/docs/application/pdf/2023-03/cp230054en.pdf[CJEU press release
+  No 54/23]). The ruling concerned § 23(1) sentence 1 HDSIG of Hesse, whose wording largely matches § 26(1)
+  sentence 1 BDSG; legal commentary concludes that the federal rule is likely to fail the same test, so that
+  processing in private employment rests regularly on Art. 6(1)(b) GDPR
+  (link:https://www.gleisslutz.com/de/know-how/unanwendbarkeit-nationaler-generalklauseln-des-beschaeftigtendatenschutzes[Gleiss
+  Lutz, 26 April 2023]).
 
 == Related
 

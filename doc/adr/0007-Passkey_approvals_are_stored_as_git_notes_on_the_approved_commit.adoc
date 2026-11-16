@@ -70,7 +70,13 @@ Every approval is a qualified electronic signature (level 4).
 * It is not a qualified electronic signature under eIDAS (Regulation (EU) No 910/2014).
 * The list of registered public keys must itself be versioned and signed.
 * Synchronised passkeys bind the key to an account, not to one device.
-* The flow has to be tried in a prototype first _(unverified)_.
+* The flow is not a standardised WebAuthn mechanism: Web Authentication Level 3
+  (link:https://www.w3.org/TR/webauthn-3/[W3C Recommendation, 25 August 2026]) defines no transaction-confirmation
+  extension, the Level 1 extensions `txAuthSimple` and `txAuthGeneric` were removed for lack of implementations
+  (link:https://github.com/w3c/webauthn/issues/1386[w3c/webauthn#1386]), and
+  link:https://www.w3.org/TR/secure-payment-confirmation/[Secure Payment Confirmation] covers payments only. The
+  authenticator does not show the commit; the user approves what the web app shows. A prototype has to show that
+  browsers and authenticators accept the derived challenge before the decision is implemented.
 
 === When this is revisited
 

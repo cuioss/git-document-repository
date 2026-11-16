@@ -16,8 +16,11 @@ _See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering 
 `git-crypto` (module `de.cuioss.git.document.crypto`, not yet created, optional) holds the encrypted keyring, the
 pseudonyms and the erasure by key rotation. It depends on `git-store` and provides two of its service provider
 interfaces, `PseudonymResolver` and `FieldEncryptor` (see xref:git-store.adoc#_service_provider_interfaces[git-store,
-Service Provider Interfaces]). The envelope-encryption library is open (candidate: Google Tink _(unverified)_) and needs
-the owner's approval. Rationale: xref:../concepts/data-protection.adoc[Data Protection].
+Service Provider Interfaces]). The envelope-encryption library is open and needs the owner's approval. The candidate
+is Google Tink for Java (link:https://github.com/tink-crypto/tink-java/releases/tag/v1.24.0[release 1.24.0]), which
+provides envelope encryption with a KMS-held key-encryption key in `KmsEnvelopeAead` and Java KMS integrations for AWS
+KMS and Google Cloud KMS (link:https://developers.google.com/tink/key-management-overview[Tink: Key management
+overview]). Rationale: xref:../concepts/data-protection.adoc[Data Protection].
 
 Every person has one data encryption key (DEK) per retention class; the keyring that holds the DEKs is encrypted with
 a key-encryption key (KEK) held by a key source outside Git. The retention class of a document kind is the `retention`
@@ -54,8 +57,13 @@ Envelope format (all integers big-endian):
 |`ciphertext` |rest |AES-256-GCM output including the 16-byte tag
 |===
 
-Whether the chosen envelope-encryption library can produce and read this format, or prescribes its own, is open
-_(unverified)_; the table is adapted with that choice.
+Tink prescribes its own wire format (link:https://developers.google.com/tink/wire-format[Tink: Wire format]): an AEAD
+ciphertext is `prefix || IV || ciphertext || tag`, where the prefix is empty or 5 bytes (version byte `0x01` and the
+4-byte key id of the keyset), and a `KmsEnvelopeAead` ciphertext is a 4-byte big-endian length of the encrypted DEK,
+the encrypted DEK and the AEAD payload. The key id is a random non-zero integer
+(link:https://github.com/tink-crypto/tink-java/blob/main/src/main/java/com/google/crypto/tink/internal/Util.java[`Util.randKeyId`]),
+not an ascending version. If Tink is chosen, the table above is replaced by Tink's format and the KEK version is
+recorded outside the ciphertext.
 
 Key source interface:
 

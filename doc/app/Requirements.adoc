@@ -134,6 +134,9 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-SAMM-5]
 === CIFR-SAMM-5: Comparison over Time
 
+* Scores must be computed as the OWASP SAMM toolbox of the assessment's model version computes them: answer values
+  from the model's answer sets, a stream score as the sum of its answers, a practice score as the average of its
+  streams, business function and overall scores as averages, without rounding.
 * The application must compare any two released assessments of one scope and show the score difference per business
   function, practice and stream.
 * A comparison across SAMM model versions must map practices by id and mark every question whose text or presence
@@ -167,8 +170,8 @@ link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation]
 [#CIFR-TM-2]
 === CIFR-TM-2: Open Format
 
-* A threat model must be stored in an open format that OWASP Threat Dragon can open: Threat Dragon JSON, or Open
-  Threat Model, which Threat Dragon converts on import (since v2.2.0); the choice is an open decision.
+* A threat model must be stored in an open format: Threat Dragon JSON, which OWASP Threat Dragon opens and edits, or
+  Open Threat Model, which Threat Dragon v2.6.2 exports but does not import; the choice is an open decision.
 * Diagrams must be stored as data; images must be generated.
 * Specification: link:specification/category-threat-models.adoc#_format[Threat Models, Format].
 
