@@ -17,18 +17,26 @@ package de.cuioss.git.document.testing;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Parameter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.util.SystemReader;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -38,6 +46,7 @@ import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.api.parallel.Isolated;
 
 @DisplayName("Local repository fixture")
 class LocalRepositoryExtensionTest {
@@ -136,6 +145,118 @@ class LocalRepositoryExtensionTest {
                 () -> assertTrue(thrown.getMessage().contains("@LocalRepository"), "The message names the annotation"),
                 () -> assertTrue(thrown.getMessage().contains(Repository.class.getName()),
                         "The message names the expected type"));
+    }
+
+    /**
+     * A creation that fails after the temporary directory exists: the directory is deleted again and the failure
+     * names the annotation. JGit reads the user configuration and the platform through its replaceable
+     * {@link SystemReader}, so a reader that fails at one of these points drives the failure; it is installed for the
+     * one call only, and the class runs isolated from every other test because the reader is global.
+     */
+    @Nested
+    @Isolated
+    @DisplayName("Failed creation of the bare repository")
+    class FailedCreation {
+
+        private static final String FAILURE_PREFIX = "@LocalRepository could not create a bare repository in ";
+
+        @Test
+        @DisplayName("Should delete the directory when the repository cannot be constructed")
+        void shouldDeleteDirectoryWhenRepositoryCannotBeConstructed() {
+            var thrown = createBareRepositoryWith(new UnreadableUserConfiguration(SystemReader.getInstance()));
+
+            assertAll("failure before the repository exists",
+                    () -> assertInstanceOf(IOException.class, thrown.getCause(),
+                            "The checked failure of JGit is the cause"),
+                    () -> assertInstanceOf(ConfigInvalidException.class, thrown.getCause().getCause(),
+                            "JGit reports the unreadable user configuration"),
+                    () -> assertFalse(Files.exists(failedDirectory(thrown)), "The temporary directory is deleted"));
+        }
+
+        @Test
+        @DisplayName("Should close the repository and delete its directory on an unchecked failure of the creation")
+        void shouldRollBackOnUncheckedFailureOfCreation() {
+            var reader = new FailingPlatformQuery(SystemReader.getInstance());
+
+            var thrown = createBareRepositoryWith(reader);
+
+            assertAll("failure while the repository is created",
+                    () -> assertInstanceOf(IllegalStateException.class, thrown.getCause(),
+                            "The unchecked failure of JGit is the cause"),
+                    () -> assertTrue(reader.failed, "The creation reached the failing platform query"),
+                    () -> assertFalse(Files.exists(failedDirectory(thrown)),
+                            "The directory, already holding the repository's files, is deleted"));
+        }
+
+        private static ParameterResolutionException createBareRepositoryWith(SystemReader reader) {
+            var previous = SystemReader.getInstance();
+            SystemReader.setInstance(reader);
+            try {
+                if (reader instanceof FailingPlatformQuery failing) {
+                    // armed only now: installing the reader queries the platform itself
+                    failing.armed = true;
+                }
+                return assertThrows(ParameterResolutionException.class,
+                        () -> LocalRepositoryExtension.createBareRepository(LocalRepository.class));
+            } finally {
+                SystemReader.setInstance(previous);
+            }
+        }
+
+        private static Path failedDirectory(ParameterResolutionException thrown) {
+            var message = thrown.getMessage();
+            assertTrue(message.startsWith(FAILURE_PREFIX), "The failure names the annotation: " + message);
+            return Path.of(message.substring(FAILURE_PREFIX.length()));
+        }
+    }
+
+    /**
+     * A system reader whose user configuration cannot be loaded, so that JGit fails to construct the repository.
+     */
+    static final class UnreadableUserConfiguration extends SystemReader.Delegate {
+
+        UnreadableUserConfiguration(SystemReader delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public FileBasedConfig openUserConfig(Config parent, FS fs) {
+            return new FileBasedConfig(parent, new File("unreadable-gitconfig"), fs) {
+
+                @Override
+                public void load() throws ConfigInvalidException {
+                    throw new ConfigInvalidException("The user configuration is unreadable");
+                }
+
+                @Override
+                public boolean isOutdated() {
+                    return true;
+                }
+            };
+        }
+    }
+
+    /**
+     * A system reader whose platform query fails once armed, which JGit asks while it creates the repository's files.
+     */
+    static final class FailingPlatformQuery extends SystemReader.Delegate {
+
+        volatile boolean armed;
+
+        volatile boolean failed;
+
+        FailingPlatformQuery(SystemReader delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public boolean isMacOS() {
+            if (armed) {
+                failed = true;
+                throw new IllegalStateException("The platform cannot be queried");
+            }
+            return super.isMacOS();
+        }
     }
 
     /**

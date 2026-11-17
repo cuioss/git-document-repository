@@ -21,9 +21,14 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.cuioss.git.document.testing.LocalRepositoryExtensionTest.ExtensionContextResolver;
+import de.cuioss.git.document.testing.LocalRepositoryExtensionTest.ReflectedParameter;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import java.lang.reflect.Parameter;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.lib.Constants;
@@ -31,8 +36,13 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ParameterResolutionException;
+import org.junit.jupiter.api.extension.ParameterResolver;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 @DisplayName("In-memory repository fixture")
 @EnableGeneratorController
@@ -40,6 +50,14 @@ class InMemoryRepositoryExtensionTest {
 
     /** Objects inserted by earlier repetitions, which a fresh repository must not hold. */
     private static final List<ObjectId> EARLIER_OBJECTS = new CopyOnWriteArrayList<>();
+
+    /** Repositories handed to the constructor fixture, which must differ per test. */
+    private static final List<Repository> CONSTRUCTOR_REPOSITORIES = new CopyOnWriteArrayList<>();
+
+    @RegisterExtension
+    static final ParameterResolver EXTENSION_CONTEXT = new ExtensionContextResolver();
+
+    private final InMemoryRepositoryExtension extension = new InMemoryRepositoryExtension();
 
     private long directoriesCreatedBefore;
 
@@ -91,5 +109,67 @@ class InMemoryRepositoryExtensionTest {
                 () -> assertNull(repository.getDirectory(), "The in-memory repository has no directory"),
                 () -> assertEquals(directoriesCreatedBefore, TemporaryDirectories.createdCount(),
                         "Resolving the parameter created no temporary directory"));
+    }
+
+    /**
+     * A test class with the default per-method lifecycle whose constructor receives the fixture: every test gets its
+     * own repository.
+     */
+    @Nested
+    @DisplayName("Constructor fixture of a per-method test class")
+    class ConstructorFixture {
+
+        private final Repository repository;
+
+        ConstructorFixture(@InMemory Repository repository) {
+            this.repository = repository;
+        }
+
+        @RepeatedTest(2)
+        @DisplayName("Should provide every test its own repository")
+        void shouldProvideEveryTestItsOwnRepository() {
+            assertFalse(CONSTRUCTOR_REPOSITORIES.stream().anyMatch(earlier -> earlier == repository),
+                    "No other test received this repository");
+            CONSTRUCTOR_REPOSITORIES.add(repository);
+        }
+    }
+
+    @Test
+    @DisplayName("Should not support a Repository parameter without the annotation")
+    void shouldNotSupportUnannotatedParameter(ExtensionContext context) throws Exception {
+        var unannotated = new ReflectedParameter(signatureParameter(0), 0);
+
+        assertFalse(extension.supportsParameter(unannotated, context),
+                "The parameter type alone does not select the fixture");
+    }
+
+    @Test
+    @DisplayName("Should reject an annotated parameter of another type")
+    void shouldRejectAnnotatedParameterOfAnotherType(ExtensionContext context) throws Exception {
+        var wrongType = new ReflectedParameter(signatureParameter(1), 1);
+
+        var thrown = assertThrows(ParameterResolutionException.class,
+                () -> extension.resolveParameter(wrongType, context));
+
+        assertAll("failure message",
+                () -> assertTrue(thrown.getMessage().contains("@InMemory"), "The message names the annotation"),
+                () -> assertTrue(thrown.getMessage().contains(Repository.class.getName()),
+                        "The message names the expected type"));
+    }
+
+    /**
+     * Supplies the reflected parameters for the direct calls of the extension; never invoked.
+     *
+     * @param unannotated a repository parameter without the annotation
+     * @param wrongType   an annotated parameter of a type the fixture does not provide
+     */
+    @SuppressWarnings("unused")
+    static void signature(Repository unannotated, @InMemory String wrongType) {
+        // only the parameters are read, by reflection
+    }
+
+    static Parameter signatureParameter(int index) throws NoSuchMethodException {
+        return InMemoryRepositoryExtensionTest.class.getDeclaredMethod("signature", Repository.class, String.class)
+                .getParameters()[index];
     }
 }
