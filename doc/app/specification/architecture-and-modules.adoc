@@ -49,7 +49,8 @@ Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:c
 
 |`categories`
 |jar (resources only)
-|`categories/<category>/schema.json`, `template.adoc`, `workflow.yaml` per category; the catalog declarations
+|`categories/<category>/kinds.yaml` and, per kind of document, `<kind>/schema.json`, `<kind>/template.adoc` and
+`<kind>/workflow.yaml`; the catalog declarations
 (xref:directory.adoc#CIFR-DIR-4[CIFR-DIR-4]) and the threat-model recipes
 (xref:category-threat-models.adoc#CIFR-TM-5[CIFR-TM-5])
 
@@ -80,8 +81,10 @@ Reactor order: `categories`, `web-app`, `cisos-friend`, `web-e2e`, `integration-
 [#CIFR-GEN-1]
 == CIFR-GEN-1: Categories as Configuration
 
-* Each category (SAMM, threat models, incident reports, ISMS) must be defined by a JSON Schema, an AsciiDoc template
-  and a workflow; the only code of a category is a named extension point for behaviour a schema cannot express.
+* Each category (SAMM, threat models, incident reports, ISMS) must be defined as one or more kinds of documents of
+  the library (xref:../../specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]), each with a JSON Schema, an
+  AsciiDoc template where the kind has generated output, and a workflow; the only code of a category is a named
+  extension point for behaviour a schema cannot express.
 * Adding a category must require no Java source change: a test category supplied as resources only must pass create,
   save, release and generated output in the integration tests.
 
@@ -89,16 +92,23 @@ Reactor order: `categories`, `web-app`, `cisos-friend`, `web-e2e`, `integration-
 |===
 |File |Content
 
-|`schema.json`
-|JSON Schema of the category's YAML documents; a field that names a person carries `"x-person": true` and holds a
+|`kinds.yaml`
+|The library's `kinds` configuration for the kinds of the category: kind id, repository alias, collection, the
+optional numbering, and the three files below
+
+|`<kind>/schema.json`
+|JSON Schema of the kind's YAML documents; a field that names a person carries `"x-person": true` and holds a
 pseudonym
 
-|`template.adoc`
-|Template that generates the AsciiDoc output from YAML and fragments
+|`<kind>/template.adoc`
+|Template that generates the AsciiDoc output from YAML and fragments; optional for a numbered kind
 
-|`workflow.yaml`
-|States, transitions, deadlines as data, repository alias
+|`<kind>/workflow.yaml`
+|States, transitions, deadlines as data
 |===
+
+The kinds: `scope` and `assessment` (SAMM), `threat-model`, `incident`, the four document types of
+xref:category-isms.adoc#CIFR-ISMS-1[CIFR-ISMS-1] and `risk` (ISMS).
 
 Besides the category definitions, the `categories` module carries the catalog declarations
 (xref:directory.adoc#CIFR-DIR-4[CIFR-DIR-4]) and the threat-model recipes `categories/threat-models/recipes/<id>.yaml`
@@ -152,8 +162,10 @@ no discarding of a draft, and `request_release`. An agent can only request a rel
 |===
 
 Commit signing, anchoring and the person directory belong to the libraries; `service` configures them from
-`cisos-friend.yaml`, and the application has no adapter of its own for them. The application makes no outbound call
-of its own besides Git and the identity provider.
+`cisos-friend.yaml`. Its only adapters are the key source behind `kms:` references, a provider of the library's
+`SigningKeySource` (xref:../../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]), and the resolution of
+`vault:` references. Outbound calls go to the Git server, the identity provider, the KMS or Vault and, with the anchor
+provider `rfc3161`, the timestamp authority; there is no other.
 
 ArchUnit rules of the unit lane: no class outside `service` depends on a `git-document-repository` package;
 `web` and `mcp` do not depend on each other. Every MCP tool delegates to exactly one service method; for a tool with
@@ -220,7 +232,7 @@ xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GE
 
 |Index
 |At start, per repository
-|Save, periodic fetch
+|Save, release, periodic fetch
 
 |Person directory (`git`)
 |At start, from the persons' repository

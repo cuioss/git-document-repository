@@ -92,6 +92,8 @@ The integration tests use the same topology with additional variants.
   (xref:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]).
 . When the application lists a repository whose retention period has ended, delete the remote repository on the Git
   server, and let backups expire with the same period: deleting the repository in the application reaches neither.
+. Create the remote repository of every configured alias, the incident repository of each new year included, and add
+  it to `repositories`; the application creates no repository on the Git server.
 . Protect `main` of every repository on the Git server so that only the technical user may push to it and nobody may
   force-push; the application cannot verify this setting
   (xref:authentication-and-identity.adoc#_the_git_credential[Authentication and Identity, The Git Credential]).

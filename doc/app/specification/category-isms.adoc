@@ -17,15 +17,17 @@ xref:../concepts/category-isms.adoc[ISMS]. Repositories: `isms-core` (documents)
 
 [cols="1,2"]
 |===
-|Document type |Path in `isms-core`
+|Document type (kind) |Path in `isms-core`
 
-|Policy |`policies/<id>/`
-|Scope |`scope/`
-|Internal audit report |`audits/<year>/<id>/`
-|Management review |`management-reviews/<year>/`
+|Policy (`policy`) |`policies/<ulid>/`
+|Scope (`isms-scope`) |`scope/<ulid>/`
+|Internal audit report (`audit-report`) |`audits/<ulid>/`
+|Management review (`management-review`) |`management-reviews/<ulid>/`
 |===
 
-Each type is a schema-driven document with YAML data, AsciiDoc fragments and generated output.
+Each type is a per-document kind in the library's layout
+(xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]) with YAML data, AsciiDoc fragments and generated
+output; the year of an audit or a review is a field, not a part of the path.
 
 [#CIFR-ISMS-2]
 == CIFR-ISMS-2: Risk Register

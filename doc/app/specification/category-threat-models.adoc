@@ -12,9 +12,10 @@ xref:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat
 [#CIFR-TM-1]
 == CIFR-TM-1: Place of a Threat Model
 
-* Every threat model must be stored in the central repository `threat-models`, at
-  `services/<service-id>/<model-id>/`, and saved and released like every other document. `<model-id>` is the
-  document's ULID, unique across all services, so a reference needs no service id.
+* Every threat model must be stored in the central repository `threat-models` as a document of the per-document kind
+  `threat-model` in the library's layout (xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]), at
+  `models/<ulid>/`, and saved and released like every other document. The service is a field of the document, not a
+  part of its path, so a reference needs no service id and a renamed service moves no file.
 
 [#CIFR-TM-2]
 == CIFR-TM-2: Open Format
@@ -24,9 +25,10 @@ xref:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat
 
 Files of a threat model:
 
-* `model.json`: the threat model in the chosen format. The category schema validates the parts the application reads;
-  unknown fields are preserved on write.
-* `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`.
+* `models/<ulid>/document.yaml`: `service`, `owner` (`role:`), `state`, `last-review`.
+* `models/<ulid>/model.json`: the threat model in the chosen format. The kind's schema validates the parts the
+  application reads; unknown fields are preserved on write. The library's layout knows YAML data and AsciiDoc
+  fragments only; how it carries this file is an open question of the concept.
 
 The candidate formats are Threat Dragon JSON, the file format OWASP Threat Dragon saves and opens
 (link:https://github.com/OWASP/threat-dragon/blob/v2.6.2/td.vue/src/service/save.js[`td.vue/src/service/save.js` of
@@ -40,7 +42,7 @@ concept (xref:../concepts/category-threat-models.adoc#_open_questions[Threat Mod
 * A threat model must be due for review one review interval after its last review; the interval must follow the
   highest of the service's effective protection needs.
 
-The intervals are deadline data of the category's `workflow.yaml`: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`,
+The intervals are deadline data of the kind's `workflow.yaml`: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`,
 applied to the highest of the three effective protection needs (confidentiality, integrity, availability) of the
 service (xref:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]). A completed
 review sets `last-review`.
@@ -55,7 +57,7 @@ review sets `last-review`.
 Transfer, issues and evaluation:
 
 * "Transfer to risk register" creates a draft risk in `isms-register` with the reference
-  `threat-models:threat-model/<model-id>#<threat-id>`.
+  `threat-models:threat-model/<ulid>#<threat-id>`.
 * A countermeasure records the ids of its issues, entered by the user or the agent.
 * Evaluation per service: open threats, untreated threats (without countermeasure and not transferred to the risk
   register), days since `last-review`, review due date.

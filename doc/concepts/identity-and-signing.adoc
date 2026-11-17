@@ -79,7 +79,7 @@ In OpenID Connect `sub` is the identifier of the user, "locally unique and never
 (link:https://openid.net/specs/openid-connect-core-1_0.html#IDToken[OpenID Connect Core 1.0, section 2]), and `sid`
 the identifier of a session
 (link:https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0,
-section 2.4]). Neither names the person, but each relates to exactly one: under the GDPR a person who can be
+section 2.1]). Neither names the person, but each relates to exactly one: under the GDPR a person who can be
 identified by reference to an online identifier is identifiable (Art. 4(1)), and data that can be attributed to a
 person with additional information remain personal data (Recital 26). In the history they would stay for good. The
 trailer therefore carries the own pseudonym from the

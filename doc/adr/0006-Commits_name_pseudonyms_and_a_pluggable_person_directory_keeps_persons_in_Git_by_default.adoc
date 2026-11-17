@@ -106,8 +106,8 @@ Erasure rewrites every commit that contains the person's entry.
 === Accepted costs
 
 * With the default provider, the history of the persons' repository keeps earlier versions of an erased entry, as
-  comparable systems keep theirs. The erasure removes the entry from the current state, from every view of the
-  application and from every new clone's working view; it does not remove it from the history.
+  comparable systems keep theirs. The erasure removes the entry from the current state and from every view of the
+  application; it does not remove it from the history.
 * Who may read the persons' repository may read its history; an organisation that wants a smaller circle gives the
   person entries a repository of their own with restricted readers.
 * Documents cannot hold personal details; a report that needs them refers to the system that holds them.

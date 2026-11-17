@@ -67,8 +67,8 @@ additional operation. That gap is the place of this category.
 
 == Where a Threat Model Lives
 
-Every threat model lives in the central repository `threat-models`, under its service, and is saved and released like
-every other document. The application writes into no repository of a development team, so it needs no pull request
+Every threat model lives in the central repository `threat-models`, names its service in a field, and is saved and
+released like every other document. The application writes into no repository of a development team, so it needs no pull request
 through a Git host API and no write right there, and the repository can be restricted to the readers threat models
 call for. Keeping a model beside the code would make an outdated model detectable from the diffs of the code; that
 detection is deferred (see <<_open_questions>>).
@@ -101,6 +101,9 @@ Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 
 . Decide the threat model format (OTM or Threat Dragon JSON). Teams that edit in Threat Dragon need its JSON, or a
   Threat Dragon release that imports OTM (see <<_existing_tools>>).
+. How the model file fits the library's document layout, which knows YAML data and AsciiDoc fragments
+  (xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]): a declared split with a JSON codec, or the
+  model stored as YAML, which OTM allows and Threat Dragon JSON does not.
 . Which recipes ship with the application, and whether a recipe is itself a schema-driven document.
 . Deferred: detection of an outdated model from the diffs of the service's repositories since the last review.
 

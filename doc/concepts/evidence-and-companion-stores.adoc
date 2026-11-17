@@ -80,8 +80,9 @@ Not every commit, but two kinds of subject:
 * *Releases*: the commit of every release tag, right after the tag exists. Releases are the states an auditor asks
   for.
 * *Checkpoints*: at most once per interval (default one day) and only when something changed, the store writes a
-  checkpoint commit that lists every pushed reference with its object id, chained to the previous checkpoint and tagged
-  `refs/tags/checkpoints/<n>`. Because Git is hash-chained, one proof for a checkpoint proves every commit reachable
+  checkpoint commit that lists every pushed reference with its object id (the checkpoint tags and the anchor notes
+  excepted), chained to the previous checkpoint and tagged `refs/tags/checkpoints/<n>`.
+  Because Git is hash-chained, one proof for a checkpoint proves every commit reachable
   from the references it lists, and every earlier checkpoint.
 
 The proofs are `git notes` on the anchored commit under `refs/notes/anchors/<provider>`, so they travel with the

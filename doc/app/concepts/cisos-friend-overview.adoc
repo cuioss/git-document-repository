@@ -50,10 +50,10 @@ deadlines.
 |xref:category-isms.adoc[ISMS]
 |===
 
-All four share one shape: a schema per category, YAML data with AsciiDoc free text, generated AsciiDoc output, review
+All four share one shape: a schema per kind of document, YAML data with AsciiDoc free text, generated AsciiDoc output, review
 and approval, deadlines and typed links. The shape is the library's
-xref:../../concepts/schema-driven-documents.adoc[schema-driven documents]; a category is configuration of it (schema,
-template, workflow, repository), not code. A further category, such as exception approvals, supplier assessments or
+xref:../../concepts/schema-driven-documents.adoc[schema-driven documents]; a category is one or more kinds of documents, each configuration of it
+(schema, template, workflow, repository), not code. A further category, such as exception approvals, supplier assessments or
 access reviews, is therefore configuration as well.
 
 The categories hang together through master data: the persons, roles and teams of the library's

@@ -71,9 +71,7 @@ Two rules hold for every configuration:
 References across repositories have the form `<alias>:<kind>/<id>`, where the alias is the repository's stable alias
 from the registry (`isms-register:risk/R-042`, `samm-assessments:assessment/<ulid>`); entries of the directory's
 catalogs are referenced as `<catalog>:<id>` (`service:payment-api`, `role:ciso`). The application checks on save that
-the target exists. One repository for everything would make read access all or nothing, and deleting one year of
-incident
-reports would mean rewriting the history of everything else; that is why the data are cut.
+the target exists.
 
 == Personal Data in the Categories
 
@@ -150,6 +148,9 @@ The application cannot settle these; they are agreed per organisation before go-
 
 . Agree the points above with the data protection officer of the first adopting organisation.
 . Whether the first adopting organisation uses the default directory in Git or its own source.
+. How the kind `incident` addresses one repository per year: the library binds a kind to one repository alias
+  (xref:../../specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]), so the cut needs a kind entry per year or an
+  alias pattern in the library.
 . Deferred: restriction of processing instead of erasure while a statutory retention duty covers the attribution of a
   person's commits.
 

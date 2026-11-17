@@ -63,8 +63,9 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 * *Stable ids instead of names.* Documents refer to `role:security-champion` and `team:payments`; renaming an entry
   breaks no reference.
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to a retired team.
-* *Changes are signed saves.* A new or renamed entry is a save through the catalog's workflow, like every other
-  document; which users may change a catalog is the application's decision.
+* *Changes are signed saves.* A new or renamed entry is validated against the catalog's schema and saved in a signed
+  commit; which users may change a catalog is the application's decision. Whether the change also passes a review and
+  a release is open (see <<_open_questions>>).
 * *Further catalogs are configuration.* An application declares its own catalogs (for example of its services) with a
   file, an id prefix and a schema; references of the form `<catalog>:<id>` resolve the same way.
 
@@ -134,6 +135,10 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 
 == Open Questions
 
+. Whether a catalog change is saved directly on `main`, like a person entry, or on a working branch with review and
+  release. The list files `catalog/roles.yaml` and `catalog/teams.yaml` follow neither document layout of
+  xref:../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3], so `git-directory` has to declare their layout
+  either way.
 . Which legal basis does the directory rest on, legitimate interest or employee data protection? Each operator
   settles this with their data protection officer; the library cannot. The German rule on employee data protection
   (link:https://www.gesetze-im-internet.de/bdsg_2018/__26.html[§ 26 BDSG]) is in force, but its general clause in

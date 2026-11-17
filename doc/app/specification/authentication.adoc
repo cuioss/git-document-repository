@@ -154,8 +154,9 @@ returns `RELEASE_REQUESTED`, and a user completes the release in the web app wit
 * The application must reach every Git server only as the technical user configured per repository.
 * The application must merge every release itself and push it as the technical user.
 
-Per repository: `credential-ref`, the credential of the technical user (a deploy key or a bot account token); there is
-no other kind of Git credential. A refused push returns `REJECTED` and the draft stays.
+Per repository: `credential-ref`, the credential of the technical user, an access token of a bot account used over HTTPS
+(xref:../../specification/git-core.adoc#GDR-CORE-2[GDR-CORE-2] admits no SSH remote, so an SSH deploy key is not
+usable); there is no other kind of Git credential. A refused push returns `REJECTED` and the draft stays.
 
 Protecting `main` is a duty of the operator, not of the application: the operator configures the Git server so that
 only the technical user may push to `main` and nobody may force-push. The application cannot verify this setting.
