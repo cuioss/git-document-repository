@@ -37,7 +37,8 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |Generators and fixtures: local and in-memory repositories, a local remote.
 |===
 
-The modules are scaffolded; the foundation code is taken over from its first client in a later step (see
+`git-core` and `git-worktrees` are scaffolded, and `git-testing` holds its credential generator and its repository
+fixtures; the foundation code of `git-core` and `git-worktrees` is taken over from its first client in a later step (see
 link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
 The aspect modules (`git-store`, `git-forms`, `git-timestamp`,
 `git-directory`) follow as the document store needs them.

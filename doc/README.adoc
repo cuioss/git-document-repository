@@ -108,8 +108,9 @@ application in `doc/app/adr/` follow the same structure.
 == Specification
 
 One document per module. Each lists the module's requirements (prefix `GDR`, numbered per group without gaps) as
-sections, each with its "must" statements first and the design that realises them after. No requirement is
-implemented yet; the modules are scaffolds.
+sections, each with its "must" statements first and the design that realises them after.
+xref:specification/git-testing.adoc#GDR-TEST-1[GDR-TEST-1] and xref:specification/git-testing.adoc#GDR-TEST-2[GDR-TEST-2]
+are implemented; `git-core` and `git-worktrees` are scaffolds, and every other requirement is planned.
 
 [cols="1,3"]
 |===

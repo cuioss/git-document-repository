@@ -111,8 +111,10 @@ policy, a file read at that commit.
 
 The tests move with the classes they test. Test classes that cover both sides (`JGitOperationsTest`,
 `GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces; the
-exact split follows from reading them. The history of the moved files is carried over, for example by filtering the
-source repository down to these paths, so authorship and blame survive.
+exact split follows from reading them. The history of the files that move into `git-core` and `git-worktrees` is
+carried over, for example by filtering the source repository down to these paths, so authorship and blame survive.
+The generator that `git-testing` takes is a plain copy without history; its commit names `pm-mcp-core`, the source
+path and the commit it was copied from.
 
 [cols="1,2"]
 |===
@@ -153,8 +155,9 @@ the size.
 
 == Order of the Switch-Over
 
-. Fill `git-core`, `git-worktrees` and `git-testing`: move the classes and their tests, with history; build and
-  release a first version.
+. Fill `git-core`, `git-worktrees` and `git-testing`: move the classes and their tests into `git-core` and
+  `git-worktrees` with history, and copy the generator into `git-testing` without history (its commit names the
+  source); build and release a first version.
 . Work package in `pm-mcp-core`: switch `pm-provider-git` onto the two modules and reduce it to facade, adapter and
   digest, with the changes listed above.
 

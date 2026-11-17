@@ -4,9 +4,10 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-testing` (module `de.cuioss.git.document.testing`, a scaffold) provides test support for consumers of the
-reactor. It is a regular artifact consumed in test scope and depends on no other module of the reactor; its
-third-party dependencies are listed in xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. Rationale:
+`git-testing` (module `de.cuioss.git.document.testing`) provides test support for consumers of the reactor. It is a
+regular artifact consumed in test scope and depends on no other module of the reactor. It declares JGit,
+`cui-test-generator` and JUnit Jupiter in compile scope, so that a consumer that adds `git-testing` in test scope
+receives them with it; the third-party dependencies are listed in xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. Rationale:
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules].
 
 [#GDR-TEST-1]
@@ -16,16 +17,27 @@ xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure,
   fetch and push tests.
 * The fixtures must work without network access and must clean up every directory they create.
 
-[cols="1,3"]
-|===
-|Fixture |Contract
+Each fixture is a JUnit Jupiter `ParameterResolver` registered by a qualifier annotation. A fixture is selected by
+its annotation on the test parameter, never by the parameter type alone, so the fixtures combine in one test: a test
+method can take a `@LocalRepository Repository`, an `@InMemory Repository` and a `@Remote LocalRemote` side by side,
+and each annotated parameter receives a fixture of its own. The annotation registers its extension, so no
+`@ExtendWith` is needed.
 
-|local repository |A bare repository in a temporary directory, created per test, deleted after it
-|in-memory repository |A JGit in-memory repository of JGit's DFS (distributed file system) storage
+[cols="1,1,1,3"]
+|===
+|Fixture |Annotation |Extension |Contract
+
+|local repository |`@LocalRepository` |`LocalRepositoryExtension` |A bare repository in a temporary directory, created
+per annotated parameter, closed and deleted when the test ends, also when it fails
+|in-memory repository |`@InMemory` |`InMemoryRepositoryExtension` |A JGit in-memory repository of JGit's DFS
+(distributed file system) storage
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/dfs/package-info.java[JGit 7.8.0, package `dfs`]: "Distributed file system based repository storage").
 JGit's `org.eclipse.jgit.internal.storage.dfs.InMemoryRepository` lives in that internal package: the fixture wraps
-it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type
-|local remote |A second bare repository addressed by a `file:` URL, which the remote policy local only admits
+it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type. No directory is
+created; the repository is closed when the test ends
+|local remote |`@Remote` |`LocalRemoteExtension` |A `LocalRemote` record holding a second bare repository and the
+`file:` URL (`URIish`) it is reached by, which the remote policy local only admits; closed and deleted when the test
+ends, also when it fails
 |===
 
 [#GDR-TEST-2]
@@ -33,5 +45,11 @@ it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on
 
 * The module must provide a `cui-test-generator` generator for transport credentials.
 
-The planned `GitCredentialGenerator` and `GitGenerators` are to produce a user and a token for tests; the values must
-be random and never real secrets.
+* The generated values must be random and never real secrets.
+
+`GitCredentialGenerator` produces `GitCredential` values for tests. `GitCredential` is a record holding a user name
+and a token as plain values; the token is a `char[]`, so a caller can clear it after use. Equality compares the user
+name and the content of the token, and `toString()` masks the token and never renders it. `GitGenerators` registers
+the generators of the module in one place: the factory method `GitGenerators.credentials()` returns a fresh
+`GitCredentialGenerator` and is the method that
+`@TypeGeneratorFactorySource(factoryClass = GitGenerators.class, factoryMethod = "credentials")` names.
