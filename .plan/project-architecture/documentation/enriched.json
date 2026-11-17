@@ -1,0 +1,82 @@
+{
+  "best_practices": [],
+  "generation": {
+    "by": "architecture",
+    "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+  },
+  "insights": [],
+  "internal_dependencies": [],
+  "key_dependencies": [],
+  "key_dependencies_reasoning": "",
+  "key_packages": {
+    "doc/adr": {
+      "description": "Architectural decision records."
+    },
+    "doc/app": {
+      "description": "Documentation of the CISOs-Friend application (CIFR); self-contained, moves to its own repository later."
+    },
+    "doc/concepts": {
+      "description": "Concept documents describing the architecture; read before changing it, each ends with its open questions."
+    },
+    "doc/specification": {
+      "description": "One specification per module stating the GDR requirements together with their design."
+    }
+  },
+  "purpose": "documentation",
+  "purpose_reasoning": "build_systems=documentation, only .adoc/.svg files",
+  "responsibility": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR), plus the self-contained CISOs-Friend application docs (prefix CIFR) in doc/app.",
+  "responsibility_reasoning": "source: AGENTS.md Project section and doc/ layout",
+  "skills_by_profile": {
+    "documentation": {
+      "defaults": [
+        {
+          "description": "AsciiDoc formatting, validation, link verification, and template creation",
+          "skill": "pm-documents:ref-asciidoc"
+        },
+        {
+          "description": "Content quality, tone analysis, organization standards, and review orchestration",
+          "skill": "pm-documents:ref-documentation"
+        },
+        {
+          "description": "Narrative styles for technical documentation \u2014 tone, voice, and arc for the engineering-narrative style",
+          "skill": "pm-documents:ref-narrative-styles"
+        },
+        {
+          "description": "SVG diagram authoring standards \u2014 visual language, theme handling, AsciiDoc embedding, per-diagram-type patterns",
+          "skill": "pm-documents:ref-svg-diagrams"
+        },
+        {
+          "description": "Manage Architectural Decision Records with CRUD operations and AsciiDoc formatting",
+          "skill": "plan-marshall:manage-adr"
+        },
+        {
+          "description": "Manage Interface specifications with CRUD operations and AsciiDoc formatting",
+          "skill": "pm-documents:manage-interface"
+        }
+      ]
+    },
+    "implementation": {
+      "defaults": [
+        {
+          "description": "AsciiDoc formatting, validation, link verification, and template creation",
+          "skill": "pm-documents:ref-asciidoc"
+        },
+        {
+          "description": "Content quality, tone analysis, organization standards, and review orchestration",
+          "skill": "pm-documents:ref-documentation"
+        },
+        {
+          "description": "Narrative styles for technical documentation \u2014 tone, voice, and arc for the engineering-narrative style",
+          "skill": "pm-documents:ref-narrative-styles"
+        },
+        {
+          "description": "SVG diagram authoring standards \u2014 visual language, theme handling, AsciiDoc embedding, per-diagram-type patterns",
+          "skill": "pm-documents:ref-svg-diagrams"
+        }
+      ]
+    }
+  },
+  "skills_by_profile_reasoning": "documentation: doc directory, build_systems=documentation; operator confirmed with optionals",
+  "tips": [],
+  "type": "module"
+}
