@@ -107,7 +107,7 @@ rejected (xref:../../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3])
 (<<CIFR-CONF-2>>)
 
 |`anchor`
-|no
+|yes
 |Anchoring of releases and checkpoints
 (xref:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
 `provider` (`signed`, the default, `rfc3161`, or `none`, which switches anchoring off), `checkpoint-interval`

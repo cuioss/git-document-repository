@@ -54,7 +54,9 @@ sources in <<CIFR-IR-2>>).
 * The deadline rules must be data of the category's workflow, not code; due times must be shown in the form and in
   the *Due* lens, and a missed due time must stay visible in the released report.
 
-Each row is one entry of `deadlines` in `workflow.yaml`. `when` names a field that must be `true` or present, or
+Each row is one entry of `deadlines` in `workflow.yaml`. The rules go beyond the three deadline forms of
+xref:../../specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6]; extending them is an open question of
+xref:../../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents, Open Questions]. `when` names a field that must be `true` or present, or
 compares two times; the due time is a date field plus a period, and a deadline whose date field is still empty is
 `OPEN`; the deadline is `MET` when one of its `met-by` fields holds `sent-at` ≤ due, `MISSED` after due otherwise,
 `OPEN` before; a `met-by` entry with `while-unresolved` counts only when `resolved-at` is absent or later than the due

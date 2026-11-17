@@ -20,15 +20,17 @@ xref:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat
 [#CIFR-TM-2]
 == CIFR-TM-2: Open Format
 
-* A threat model must be stored as one JSON file in an open, published threat-model format.
+* A threat model must be stored as one file in an open, published threat-model format.
 * Diagrams must be stored as data; images must be generated.
 
 Files of a threat model:
 
 * `models/<ulid>/document.yaml`: `service`, `owner` (`role:`), `state`, `last-review`.
-* `models/<ulid>/model.json`: the threat model in the chosen format. The kind's schema validates the parts the
-  application reads; unknown fields are preserved on write. The library's layout knows YAML data and AsciiDoc
-  fragments only; how it carries this file is an open question of the concept.
+* `models/<ulid>/model.yaml` or `model.json`: the threat model in the chosen format. The kind's schema validates the
+  parts the application reads; unknown fields are preserved on write. The serialisation is decided with the format:
+  xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3] stores structured data as YAML, which OTM allows;
+  Threat Dragon JSON needs a JSON file in the layout, which the library does not offer yet. Both are open questions
+  of the concept.
 
 The candidate formats are Threat Dragon JSON, the file format OWASP Threat Dragon saves and opens
 (link:https://github.com/OWASP/threat-dragon/blob/v2.6.2/td.vue/src/service/save.js[`td.vue/src/service/save.js` of
@@ -42,10 +44,13 @@ concept (xref:../concepts/category-threat-models.adoc#_open_questions[Threat Mod
 * A threat model must be due for review one review interval after its last review; the interval must follow the
   highest of the service's effective protection needs.
 
-The intervals are deadline data of the kind's `workflow.yaml`: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`,
-applied to the highest of the three effective protection needs (confidentiality, integrity, availability) of the
-service (xref:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]). A completed
-review sets `last-review`.
+The intervals are data of the kind, not code: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`, applied to the highest
+of the three effective protection needs (confidentiality, integrity, availability) of the service
+(xref:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]) and counted from `last-review`, which a completed review sets. The
+deadline rules of xref:../../specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6] cannot express this yet: none
+selects a period by a value of a referenced catalog entry or counts from a date field. The rule the library needs is
+an open question of
+xref:../../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents, Open Questions].
 
 [#CIFR-TM-4]
 == CIFR-TM-4: Links and Evaluation
@@ -69,5 +74,5 @@ Transfer, issues and evaluation:
   part of the model it fills.
 
 A recipe is `categories/threat-models/recipes/<id>.yaml`: `title`, ordered `steps`, each with `title`, `guidance`
-(AsciiDoc fragment) and `fills` (JSON Pointer into `model.json`). The web app renders a recipe as `WizardPage`; the MCP
+(AsciiDoc fragment) and `fills` (JSON Pointer into the model file). The web app renders a recipe as `WizardPage`; the MCP
 server exposes recipes through the tool `read_recipe` (xref:mcp-server.adoc#CIFR-MCP-6[MCP Server, CIFR-MCP-6]).
