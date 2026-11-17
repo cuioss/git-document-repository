@@ -84,8 +84,8 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     public Object resolveParameter(ParameterContext parameterContext, ExtensionContext extensionContext) {
         LocalRepositoryExtension.requireType(parameterContext, InMemory.class, Repository.class);
         Repository repository = new InMemoryRepository(new DfsRepositoryDescription("in-memory-" + UUID.randomUUID()));
-        AutoCloseable closing = repository::close;
-        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext), closing);
+        // Repository is an AutoCloseable, so the store closes it itself
+        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext), repository);
         return repository;
     }
 }
