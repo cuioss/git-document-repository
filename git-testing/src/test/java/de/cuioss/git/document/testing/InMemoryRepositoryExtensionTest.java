@@ -95,7 +95,7 @@ class InMemoryRepositoryExtensionTest {
 
     @Test
     @DisplayName("Should create no temporary directory")
-    void shouldCreateNoDirectory(@InMemory Repository repository) throws Exception {
+    void shouldCreateNoDirectory(@InMemory Repository repository) {
         assertAll("no directory",
                 () -> assertNull(repository.getDirectory(), "The in-memory repository has no directory"),
                 () -> assertEquals(temporaryDirectoriesBefore, fixtureDirectories(),

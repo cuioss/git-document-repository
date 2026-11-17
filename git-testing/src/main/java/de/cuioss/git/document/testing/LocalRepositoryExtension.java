@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.util.List;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.ParameterContext;
@@ -108,8 +109,8 @@ public final class LocalRepositoryExtension implements ParameterResolver {
     }
 
     /**
-     * Creates a bare repository in a fresh temporary directory. A directory created before a failure is deleted
-     * again.
+     * Creates a bare repository in a fresh temporary directory. A repository and a directory created before a
+     * failure, an unchecked one included, are closed and deleted again.
      *
      * @param annotation the qualifier annotation the repository is created for, named in a failure
      * @return the repository together with its directory, closed and deleted by {@link TemporaryRepository#close()}
@@ -123,24 +124,36 @@ public final class LocalRepositoryExtension implements ParameterResolver {
             throw new ParameterResolutionException(
                     "@" + annotation.getSimpleName() + " could not create a temporary directory", e);
         }
+        Repository repository = null;
         try {
-            Repository repository = new FileRepositoryBuilder().setGitDir(directory.toFile()).setBare().build();
-            try {
-                repository.create(true);
-            } catch (IOException e) {
-                repository.close();
-                throw e;
-            }
+            repository = new FileRepositoryBuilder().setGitDir(directory.toFile()).setBare().build();
+            repository.create(true);
             return new TemporaryRepository(repository, directory);
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             var failure = new ParameterResolutionException(
                     "@" + annotation.getSimpleName() + " could not create a bare repository in " + directory, e);
-            try {
-                TemporaryDirectories.delete(directory);
-            } catch (IOException deletionFailure) {
-                failure.addSuppressed(deletionFailure);
-            }
+            rollBack(repository, directory, failure);
             throw failure;
+        }
+    }
+
+    /**
+     * Closes a repository created before a failure and deletes its directory. A failure to delete the directory is
+     * added to the failure being propagated as a suppressed exception.
+     *
+     * @param repository the repository created before the failure, or {@code null} when none was constructed
+     * @param directory  the directory created for the repository
+     * @param failure    the failure that is propagated after the rollback
+     */
+    private static void rollBack(@Nullable Repository repository, Path directory,
+            ParameterResolutionException failure) {
+        if (repository != null) {
+            repository.close();
+        }
+        try {
+            TemporaryDirectories.delete(directory);
+        } catch (IOException deletionFailure) {
+            failure.addSuppressed(deletionFailure);
         }
     }
 

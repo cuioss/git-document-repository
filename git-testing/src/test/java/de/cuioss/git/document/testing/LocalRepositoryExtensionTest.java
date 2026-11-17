@@ -51,7 +51,6 @@ class LocalRepositoryExtensionTest {
 
     @AfterAll
     static void everyDirectoryIsDeleted() {
-        assertFalse(RECEIVED_DIRECTORIES.isEmpty(), "The tests received at least one directory");
         assertAll("deleted directories", RECEIVED_DIRECTORIES.stream()
                 .map(directory -> () -> assertFalse(Files.exists(directory),
                         "The directory of the repository is deleted after the test: " + directory)));

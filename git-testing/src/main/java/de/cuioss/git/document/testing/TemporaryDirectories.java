@@ -55,9 +55,6 @@ final class TemporaryDirectories {
      * @throws IOException if an entry of the tree cannot be deleted
      */
     static void delete(Path directory) throws IOException {
-        if (!Files.exists(directory)) {
-            return;
-        }
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
 
             @Override
