@@ -24,7 +24,7 @@ awareness.
 
 |`incidents/<id>/incident.yaml`
 |`occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
-`data-subjects` (categories and approximate numbers of data subjects and records, no person), `nis2-applicable`,
+`data-subjects` (categories and approximate numbers of data subjects and records, no person), `nis2-significant`,
 `affected-services`, `protection-needs`, `notifications`, `measures` (with issue ids), `timeline`, `tickets` (ids),
 `root-causes`
 
@@ -44,15 +44,18 @@ the organisation became aware of it, the start of the GDPR and NIS2 deadlines.
 
 * When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
   plus 72 hours.
-* When the report is marked NIS2-applicable, the application must compute an early warning (awareness +24 hours), a
-  notification (awareness +72 hours), every intermediate report an authority requested, and the final report one
-  month after the notification was sent, or a progress report then and the final report one month after resolution.
+* When the report is marked as a significant incident under NIS2 (`nis2-significant`), the application must compute
+  an early warning (awareness +24 hours), a notification (awareness +72 hours), every intermediate report an authority
+  requested, and the final report one month after the notification was sent. For an incident not resolved by then, a
+  progress report meets that deadline instead, and the final report is due one month after resolution.
 * The deadline rules must be data of the category's workflow, not code; due times must be shown in the form and in
   the *Due* lens, and a missed due time must stay visible in the released report.
 
-Each row is one entry of `deadlines` in `workflow.yaml`. `when` names a field that must be `true` or present; the due
-time is a date field plus a period; the deadline is `MET` when one of its `met-by` fields holds `sent-at` ≤ due,
-`MISSED` after due otherwise, `OPEN` before. A field pointer with `*` yields one deadline per array element.
+Each row is one entry of `deadlines` in `workflow.yaml`. `when` names a field that must be `true` or present, or
+compares two times; the due time is a date field plus a period, and a deadline whose date field is still empty is
+`OPEN`; the deadline is `MET` when one of its `met-by` fields holds `sent-at` ≤ due, `MISSED` after due otherwise,
+`OPEN` before; a `met-by` entry with `while-unresolved` counts only when `resolved-at` is absent or later than the due
+time. A field pointer with `*` yields one deadline per array element.
 
 [cols="2,2,2,2"]
 |===
@@ -64,12 +67,12 @@ time is a date field plus a period; the deadline is `MET` when one of its `met-b
 |`notifications.supervisory-authority`
 
 |`nis2-early-warning`
-|`nis2-applicable`
+|`nis2-significant`
 |`aware-at` + `PT24H`
 |`notifications.nis2-early-warning`
 
 |`nis2-notification`
-|`nis2-applicable`
+|`nis2-significant`
 |`aware-at` + `PT72H`
 |`notifications.nis2-notification`
 
@@ -78,13 +81,13 @@ time is a date field plus a period; the deadline is `MET` when one of its `met-b
 |its `due`
 |that entry
 
-|`nis2-final-or-progress-report`
+|`nis2-final-report`
 |`notifications.nis2-notification.sent-at`
 |`notifications.nis2-notification.sent-at` + `P1M`
-|`notifications.nis2-final-report`, `notifications.nis2-progress-report`
+|`notifications.nis2-final-report`, or `notifications.nis2-progress-report` with `while-unresolved`
 
 |`nis2-final-report-after-handling`
-|`notifications.nis2-progress-report.sent-at`
+|`notifications.nis2-notification.sent-at` + `P1M` has passed and `resolved-at` is empty or later
 |`resolved-at` + `P1M`
 |`notifications.nis2-final-report`
 |===

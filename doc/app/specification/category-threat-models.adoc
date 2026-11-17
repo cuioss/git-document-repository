@@ -13,7 +13,8 @@ link:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat
 == CIFR-TM-1: Place of a Threat Model
 
 * Every threat model must be stored in the central repository `threat-models`, at
-  `services/<service-id>/<model-id>/`, and saved and released like every other document.
+  `services/<service-id>/<model-id>/`, and saved and released like every other document. `<model-id>` is the
+  document's ULID, unique across all services, so a reference needs no service id.
 
 [#CIFR-TM-2]
 == CIFR-TM-2: Open Format

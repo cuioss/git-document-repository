@@ -47,7 +47,7 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 [source,yaml]
 ----
 # catalog/roles.yaml
-- id: role:security-champion
+- id: security-champion
   name: Security Champion
   description: Contact for security in the team
 ----
@@ -55,7 +55,7 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 [source,yaml]
 ----
 # catalog/teams.yaml
-- id: team:payments
+- id: payments
   name: Payments
   parent: team:platform          # optional, for hierarchies
 ----

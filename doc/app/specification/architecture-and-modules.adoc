@@ -107,7 +107,9 @@ The only extension point is `ScoreCalculator` (SAMM scores), a named CDI interfa
 * Every operation offered by the MCP server must be executed by the same application service as the web app's
   equivalent operation, with the same rights check, schema validation and step-up check.
 * For every MCP tool, a test must show that the web-app request and the tool call with the same user and input
-  produce the same outcome (success, validation error, conflict, forbidden).
+  produce the same outcome (success, validation error, conflict, forbidden). The one exception is completing a
+  release: it needs step-up, so the MCP server always ends it with `STEP_UP_REQUIRED`
+  (link:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
 [cols="1,2,2"]
 |===

@@ -24,8 +24,8 @@ Every repository has a remote: the organisation's Git server or, on a single ser
 repository addressed by its path. The store works on a bare clone of it
 (xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]).
 
-* Every save fetches and pushes. A commit lands on the clone's branch only after the remote accepted it, so the clone
-  never holds a saved state the remote lacks.
+* Every explicit save fetches and pushes; intermediate saves stay in the clone. A commit lands on the clone's branch
+  only after the remote accepted it, so the clone never holds a saved state the remote lacks.
 * The clone is a cache: a new clone restores every pushed state. Beyond that it holds only the drafts, which are lost
   with it.
 * When the remote cannot be reached, a save fails and the draft keeps the work.
@@ -104,9 +104,9 @@ file.
 releases of the document; no release tag ever moves. The release of an entry of a numbered collection merges that
 entry's path from the collection branch into `main` (a path-level merge in core). The store merges every release
 itself and pushes it as the technical user; `main` and the tags are protected on the Git server so that only the
-technical user may push to `main` and nobody may force-push. A four-eyes approval is a transition of the document's
-workflow, approved by a second user in the application (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven
-Documents]).
+technical user may push to `main` and nobody may force-push. An approval is a transition of the document's
+workflow (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). The library enforces no four-eyes
+rule; an organisation that wants one gives the right to approve to other people than the right to edit.
 
 == Reading and Queries
 

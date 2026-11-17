@@ -192,7 +192,8 @@ HSM the application never holds the private key. Whether the store uses JGit's S
 [#GDR-STORE-13]
 == GDR-STORE-13: Identity Trailers
 
-* Every commit of a save or release must carry the trailers below.
+* Every commit of a save or release must carry the trailers below, filled from the user who acted. Commits the store
+  writes without a user's action (checkpoints) and notes carry none.
 * No trailer may contain an OIDC `sub` or `sid` in clear text.
 
 [cols="1,2,2"]
@@ -264,9 +265,11 @@ The due check runs after every push and fetch and every `anchor.retry-interval`.
 * A verification must check every stored proof and list every reference a checkpoint lists whose object id is no
   longer reachable from that reference (or, for a tag, no longer its target), and every missing checkpoint number.
 
-The pending subjects are derived from the Git state: the release commits and checkpoints without a note of the
-provider. The store passes the provider its latest proof as `previous`: the note on the newest anchored checkpoint or
-release. `verifyAnchors()` walks the checkpoint chain and the release tags and runs from CI without the application.
+The pending subjects are derived from the Git state: the release commits and checkpoints without a note of the provider
+in the remote's notes reference as of the last fetch. A subject with a local note that the remote lacks needs only the
+push of that note. The store passes the provider its latest proof as `previous`: the note on the newest anchored
+checkpoint or release. `verifyAnchors()` walks the checkpoint chain and the release tags and runs from CI without the
+application.
 
 [#GDR-STORE-18]
 == GDR-STORE-18: Own Timestamp
@@ -308,8 +311,9 @@ pipeline keep a copy outside Git. A single proof can be checked with a stock Ope
   pseudonyms holding a role in a team; saving an entry; and the erasure of a pseudonym.
 * Exactly one provider must be active, named by `directory.persons.provider` (default `git`). The author pseudonym of
   every save must come from it.
-* A pseudonym must be stable for the same issuer and `sub`. After an erasure the provider must no longer return the
-  person for that pseudonym and must resolve it as a former member.
+* A pseudonym must be stable for the same issuer and `sub` as long as its entry exists. After an erasure the provider
+  must no longer return the person for that pseudonym and must resolve it as a former member; a later login with the
+  same issuer and `sub` is a first login and receives a new pseudonym, which is not linked to the erased one.
 * Outside the provider's own entries, the store must write no data it obtains from the provider into a repository
   except pseudonyms.
 

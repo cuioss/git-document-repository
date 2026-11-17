@@ -93,7 +93,7 @@ its file and schema: `catalog/services/<id>.yaml` (one file per entry), `catalog
 |Field |Required |Semantics
 
 |`system` |no |`system:<id>`, the product above
-|`lifecycle` |yes |`planned`, `active`, `deprecated`, `retired`; `retired` and `retired: true` are set together
+|`lifecycle` |yes |`planned`, `active`, `deprecated`; a retired service has `retired: true` like every catalog entry
 |`owner.team`, `owner.role` |yes |references into the team and role catalogs
 |`repositories` |no |list of repository URLs
 |`dependsOn` |no |`service:` or `external:` references
@@ -126,10 +126,12 @@ Entities]):
 |===
 
 * Entity references are translated by kind (`Group` → `team:<name>`, `System` → `system:<name>`, `Component` →
-  `service:<name>`); only the namespace `default` is imported, and any other reference is reported and left out.
-* Lifecycle: Backstage accepts any value; its well-known values are `experimental`, `production` and `deprecated`
-  (same source). The mapping is `directory.backstage.lifecycle`, by default `production` → `active` and `deprecated`
-  → `deprecated`; an unmapped value is reported and leaves the field unchanged.
+  `service:<name>`); only the namespace `default` is imported. A reference of another kind (for example a `Resource` in
+  `spec.dependsOn`) or another namespace is reported in the import result and left out.
+* Lifecycle: Backstage accepts any value; its well-known values are `experimental`, `production` and `deprecated` (same
+  source). The mapping is `directory.backstage.lifecycle`, by default `production` → `active` and `deprecated` →
+  `deprecated`; an unmapped value is reported and leaves the field of an existing service unchanged; a new service with
+  an unmapped value is reported and not created.
 * Matching by `metadata.name`; fields Backstage does not know (`owner.role`, `protection-needs`, `data-classes`) are
   kept. A new service takes `owner.role` and `protection-needs` from `directory.backstage.defaults`; without them it is
   reported and not created.

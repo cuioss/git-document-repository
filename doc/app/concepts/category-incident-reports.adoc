@@ -63,14 +63,15 @@ resolution is an internal target. The German thresholds in https://www.gesetze-i
 BSIG] are at least 50 employees, or an annual turnover and a balance sheet total each above EUR 10 million, for the
 entity types of Anlagen 1 and 2.
 
-The deadlines start at a point the report records: the time the organisation became aware of the incident
-(`aware-at`). From that field and the classification (personal data affected, NIS2 applicable) the application
-computes the due times and shows them in the form and on the dashboard. The rules are data of the category's workflow,
-so another period (a trust service provider, a transposition that differs) is a change of configuration, not of code.
-The report also records when the incident began (`occurred-at`) and when it was detected (`detected-at`); neither
-starts a deadline. Deadlines are computed from the in-memory index; reminders are runtime state of the application,
-not persistence. A notification that was sent is a field with its time and its recipient; a missed deadline stays
-visible in the released report.
+The first deadlines start at a point the report records: the time the organisation became aware of the incident
+(`aware-at`). The final NIS2 report runs from the notification that was sent, or, for an incident still ongoing then,
+from its resolution (`resolved-at`). From these times and the classification (personal data affected, significant
+incident under NIS2) the application computes the due times and shows them in the form and on the dashboard. The rules
+are data of the category's workflow, so another period (a trust service provider, a transposition that differs) is a
+change of configuration, not of code. The report also records when the incident began (`occurred-at`) and when it was
+detected (`detected-at`); neither starts a deadline. Deadlines are computed from the in-memory index; reminders are
+runtime state of the application, not persistence. A notification that was sent is a field with its time and its
+recipient; a missed deadline stays visible in the released report.
 
 The affected services come from the link:service-catalog.adoc[service catalog]; the protection needs of the incident
 are the maximum over their effective protection needs, which already include what the services depend on.

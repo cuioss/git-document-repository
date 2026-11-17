@@ -104,8 +104,9 @@ A request is permitted only if one of the user's groups maps the action on the t
 == CIFR-AUTH-3: Signed Commits and Identity Trailers
 
 * Every commit must be signed by the application; there must be no unsigned commit and no other kind of signature.
-* Every commit must carry the user's pseudonym, never the `sub`, and the issuer, the authentication time and the
-  authentication context in the library's trailers.
+* Every commit of a user's save or release, an erasure included, must carry that user's pseudonym, never the `sub`,
+  and the issuer, the authentication time and the authentication context in the library's trailers. Checkpoint
+  commits, which the library writes without a user's action, carry no identity trailers.
 
 [cols="1,2"]
 |===

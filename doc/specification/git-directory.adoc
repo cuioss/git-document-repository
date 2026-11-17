@@ -38,7 +38,9 @@ Common fields: `id` (required, immutable, without the prefix: `payments` is refe
 * An entry must hold the subject hash, the name, the memberships (pairs of team and role), the date `since` and the
   date of the last confirmation `confirmed`, and no further field unless the operator extends the schema.
 * The subject hash must be the SHA-256 over the UTF-8 bytes of the issuer, a line feed and the `sub`, in lowercase
-  hex; issuer and `sub` must never be written to a repository.
+  hex; the entry must hold neither issuer nor `sub`, and `sub` must never be written to a repository. The issuer is
+  not personal and appears in the `Actor-Issuer` trailer of every save
+  (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]).
 * A new pseudonym must be `p-` followed by 26 characters of Crockford base32 over 128 random bits from
   `SecureRandom`, never derived from issuer or `sub`.
 
@@ -76,9 +78,11 @@ and nothing refers to the old one, because no save happened under it.
 == GDR-DIR-6: Erasure
 
 * Erasure must delete the person's entry in one commit on `main` that also adds the line `<pseudonym> <date>` to
-  `erasures.yaml` of the same repository and names no person; the pseudonym must then resolve to a former member.
+  `erasures.yaml` of the same repository and names the erased person only by pseudonym; the pseudonym must then
+  resolve to a former member.
 * Erasure must never rewrite the history.
 
-The erasure commit is a system commit pushed with the technical user's credential. The history of the repository keeps
+The erasure commit is a save of the administrator who erases, with that administrator's trailers
+(xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]). The history of the repository keeps
 the earlier versions of the entry; see xref:../concepts/data-protection.adoc#_erasing_a_person[Data Protection,
 Erasing a Person].

@@ -88,8 +88,9 @@ the verifier anyway. Taken from configuration, they cannot be replaced by whoeve
 
 The trailers name the user by the identity provider's subject (`sub`) and session id (`sid`).
 
-*Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym is erasable
-through the person directory.
+*Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym stays as
+well, but erasure in the person directory removes its current entry; earlier versions of the entry remain in the
+history of the persons' repository (see ADR-0006).
 
 === The author field only
 

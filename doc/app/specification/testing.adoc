@@ -57,9 +57,10 @@ checks run in a `benchmarks` lane whose results are reported, not gating.
 [#CIFR-NFR-3]
 == CIFR-NFR-3: Concurrent Workshop
 
-* Twenty users saving different practices of one assessment concurrently, ten saves each, must lose no save.
+* Fifteen users saving the fifteen different practices of one assessment concurrently, ten saves each, must lose no
+  save.
 
-Twenty virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 200
+Fifteen virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 150
 changes must be present on the working branch and every save result must be `SAVED` after the library's retries.
 
 [#CIFR-NFR-4]

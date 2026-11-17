@@ -127,7 +127,8 @@ The test runs the writers as threads against a local remote of `git-testing`.
 == GDR-NFR-3: Secrets
 
 * No token, password, private or secret key material, session id, `sub`, e-mail address or person name may appear in
-  a result detail, an exception message, a log message or a commit.
+  a result detail, an exception message, a log message or the metadata of a commit (author, committer, message,
+  trailers); the person entry of the `git` directory is the one file that holds a name.
 * Public keys (commit-signing and anchor keys) are no secrets and may be stored.
 
 [cols="1,2"]
@@ -138,7 +139,7 @@ The test runs the writers as threads against a local remote of `git-testing`.
 read from the application's configuration for the call; never stored, logged, committed or put into a detail
 |signing and anchor keys |held by the key source or in memory; never written in clear text
 |`sub`, e-mail address, person name |`sub` only as the subject hash of the person entry; the name only in the person
-entry; never in a commit, a document or a log
+entry; never in the metadata of a commit (author, committer, message, trailers), a document or a log
 |===
 
 Tests assert the rules with a JUL log capture (`cui-test-juli-logger`) and with checks of result details.

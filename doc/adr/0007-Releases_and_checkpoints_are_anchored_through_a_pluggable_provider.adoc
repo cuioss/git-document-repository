@@ -42,8 +42,8 @@ without making an external service a requirement.
 ** `rfc3161` (`git-timestamp`), the alternative with an external timestamp authority, for organisations that need a
    proof independent of their own operation.
 * The proofs are stored as notes on the anchored commit under `refs/notes/anchors/<provider>`, so they travel with
-  the repository, and are pushed right after they are written. Which subjects still lack a proof is derived from the
-  notes, so a failed push or a restart loses nothing.
+  the repository, and are pushed right after they are written. Which subjects still lack a pushed proof is derived
+  from the remote's notes after each fetch, so a proof whose push failed is pushed again and a restart loses nothing.
 
 See xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
 

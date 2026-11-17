@@ -81,8 +81,9 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 Every commit is signed the same way. What differs between a save and an approval is the authentication behind it:
 every release, and so every approval, requires *step-up*, a renewed authentication with MFA shortly before. The
 application writes the `acr` / `amr` and the time of that authentication into the signed trailers, and the statement
-becomes "… and the user confirmed this very approval with MFA". The effort for the user is one MFA confirmation per
-approval; saves need none (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
+becomes "… and the user had authenticated with MFA no longer than `step-up.max-age` before this approval". Several
+approvals within that period can rest on the same authentication; the trailers do not bind the MFA to one approval.
+The effort for the user is at most one MFA confirmation per approval; saves need none (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
 iteration an approval needs no particular role of the directory; who may approve is a matter of access, not of the
 catalog of roles.
 

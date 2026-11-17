@@ -43,7 +43,8 @@ xref:identity-and-signing.adoc[Identity and Signing])
 |none
 
 |Personal, deletable data
-|Names only in the person directory (see xref:data-protection.adoc#_the_person_directory[Data Protection]);
+|Names only in the person directory, where erasure removes the current entry but not its earlier versions (see
+xref:data-protection.adoc#_the_person_directory[Data Protection]);
 operational details in the ticket system
 |none
 

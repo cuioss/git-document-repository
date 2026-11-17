@@ -26,7 +26,7 @@ id: payment-api
 name: Payment API
 description: Payment processing for the web shop
 system: system:webshop                 # optional: the product or system above
-lifecycle: active                      # planned | active | deprecated | retired
+lifecycle: active                      # planned | active | deprecated
 owner:
   team: team:payments
   role: role:service-owner             # responsibility by role, not by person

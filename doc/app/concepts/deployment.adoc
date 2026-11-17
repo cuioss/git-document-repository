@@ -43,7 +43,8 @@ checkpoints.
 |===
 
 Every repository has a remote. For an evaluation on one server the remote can be a local bare repository outside the
-volume; the code path is the same, and a Git server can take over later with one push.
+volume, on storage that survives a replacement of the container and is included in the backups. The code path is the
+same, and a Git server can take over later with one push.
 
 == The Image
 

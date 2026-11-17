@@ -50,7 +50,9 @@ read is reported as not found.
 == CIFR-DP-3: Erasure
 
 * With the default person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
-  the erasure must take effect at once.
+  the erasure must take effect at once. The application runs as one instance
+  (link:../concepts/application-architecture.adoc#_one_instance[Application Architecture, One Instance]), so no
+  other process keeps showing the person.
 * Every erasure must delete the person entry in a commit that records the pseudonym and the date, never the person;
   it must not rewrite history.
 
@@ -65,8 +67,10 @@ type `managed-by-source` and names no person.
 
 * The application must list the repositories whose retention period has ended to users with the right *administer
   catalogs*; it must not rewrite history.
-* On a confirmed deletion the application must remove its local repository on the volume and stop serving the
-  repository; the remote repository and backup copies are deleted by the operator.
+* On a confirmed deletion the application must remove its local repository on the volume, stop serving the
+  repository and exclude it from the periodic fetch (link:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]), also after a
+  restart, until the operator removes it from the configuration; the remote repository and backup copies are deleted
+  by the operator.
 
 A daily job computes `end = created + retention` (for `isms-incidents-<year>`: 31 December of the year + retention)
 and lists expired repositories in the *Due* lens. The deletion is logged in `directory` and anchored by the next

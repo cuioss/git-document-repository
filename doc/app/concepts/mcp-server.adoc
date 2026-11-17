@@ -123,8 +123,8 @@ the token, is recorded in the audit log only (see <<_open_questions>>).
 * *Audit*: every tool call is logged with a `LogRecord`: pseudonym, client id, tool, repository, outcome. Token
   material, session ids and document content are never logged. The records reach the SIEM.
 * *Content is data*: document text returned to an agent may contain instructions written by anyone with write access.
-  The server treats every write the agent sends as untrusted input: schema validation, rights check, step-up,
-  exactly as for a human.
+  The server treats every write the agent sends as untrusted input: schema validation and rights check, exactly as
+  for a human. A release needs step-up, which an agent cannot perform, so an agent only requests it.
 
 [CAUTION]
 ====

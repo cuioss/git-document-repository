@@ -77,7 +77,8 @@ their definitions in the `categories` module only
 
 |`step-up`
 |yes
-|`acr` (the `acr` value that states multi-factor authentication), `amr` (list of `amr` values accepted instead),
+|`acr` (the `acr` value that states multi-factor authentication), `amr` (list of `amr` values accepted instead,
+default `mfa`; a single method such as `otp` is not multi-factor),
 `max-age` (default `PT5M`) (link:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4])
 
 |`signing`

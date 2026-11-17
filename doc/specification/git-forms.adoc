@@ -123,7 +123,8 @@ state.
 |===
 |Key |Semantics
 
-|`step-up.amr` |`amr` values that denote multi-factor authentication, for example `mfa`, `otp`, `hwk`
+|`step-up.amr` |`amr` values that denote multi-factor authentication, default `mfa`; a single method such as `otp`
+or `hwk` is no multi-factor authentication (https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176])
 |`step-up.acr` |`acr` values that denote multi-factor authentication
 |`step-up.max-age` |required; ISO 8601 duration, for example `PT5M`
 |===
