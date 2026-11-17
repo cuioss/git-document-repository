@@ -8,14 +8,15 @@ Claude Code specifics.
 `git-document-repository` holds base libraries for _Git as the Persistence of Versioned Documents_: a
 server-side Git repository (reached through JGit, in memory, without working trees) as the persistence of an
 application in which users maintain versioned documents. The documentation index is
-[`doc/README.adoc`](doc/README.adoc): concepts in `doc/concepts/`, decisions in `doc/adr/`, requirements in
-`doc/Requirements.adoc` (prefix `GDR`) and the specification in `doc/Specification.adoc` and `doc/specification/`.
+[`doc/README.adoc`](doc/README.adoc): concepts in `doc/concepts/`, decisions in `doc/adr/`, and the specification in
+`doc/specification/`, one document per module, which states the requirements (prefix `GDR`, numbered without gaps)
+together with their design.
 Read the concepts before changing the architecture. Every statement about an external product, standard or law cites
 the source it was checked against; do not add unverified statements.
 
 `doc/app/` documents the application built on these libraries, CISOs-Friend (prefix `CIFR`). It moves to its own
 repository later: keep it self-contained, and link from it into the library documentation only to concepts and
-requirements, never the other way round except from the index.
+specifications, never the other way round except from the index.
 
 The repository is a multi-module Maven reactor (group `de.cuioss`, parent `cui-java-parent`): the modules are
 released together and consumed separately.
@@ -26,8 +27,8 @@ released together and consumed separately.
 | `git-worktrees` | Linked working trees, commit from a working tree, working-tree status | `git-core` |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 
-Planned but not yet created: `git-store`, `git-forms`, `git-crypto`, `git-signing`, `git-timestamp`,
-`git-directory` (see `doc/concepts/module-structure.adoc` for the order and the dependency graph).
+Planned but not yet created: `git-store`, `git-forms`, `git-timestamp`, `git-directory` (see
+`doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** the modules are scaffolds. Each has a `pom.xml`, a `module-info.java` and a `@NullMarked`
 package, and no classes yet. The `exports` directive is missing on purpose: javac rejects exporting a package
@@ -61,7 +62,7 @@ These follow the conventions of the foundation code that moves into this reposit
 - Logging with `CuiLogger` and a `LogRecord` holder per module.
 - Tests: JUnit 5, `cui-test-generator` for test data, EasyMock for test doubles.
 - Third-party dependencies stay out of the lower modules: a consumer of `git-core` alone must pull none of
-  the dependencies of `git-forms`, `git-crypto` or `git-timestamp`.
+  the dependencies of `git-store`, `git-forms` or `git-timestamp`.
 - **Never add a dependency without the owner's approval**, JGit included.
 - Documentation is AsciiDoc; Javadoc on every public type and method.
 - Every source file carries the license header; `-Ppre-commit` maintains it. `inceptionYear` in the root pom

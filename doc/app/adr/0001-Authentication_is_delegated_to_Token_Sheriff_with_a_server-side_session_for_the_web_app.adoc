@@ -1,4 +1,4 @@
-= ADR-0004: Authentication is delegated to Token Sheriff, and the web app uses a server-side session
+= ADR-0001: Authentication is delegated to Token Sheriff, and the web app uses a server-side session
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
@@ -18,7 +18,7 @@ Accepted
 
 == Decision
 
-The application needs authenticated users, their claims for the signed trailers, step-up for approvals, and access
+The application needs authenticated users, their claims for the signed trailers, step-up for releases, and access
 rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of its own.
 
 *The decision:* authentication is delegated to Token Sheriff.
@@ -27,10 +27,9 @@ rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of
 * During the login the browser holds a short-lived `HttpOnly`, `Secure`, `SameSite=Lax` login-transaction cookie
   that binds `state` and `nonce` across the identity provider's callback. Afterwards it holds only an `HttpOnly`,
   `Secure`, `SameSite=Strict` session cookie.
-* Step-up for approvals uses RFC 9470 through the client.
+* Step-up for releases uses RFC 9470 through the client.
 * Agents present bearer tokens that `token-sheriff-validation-quarkus` validates.
-* Rights come from identity-provider groups, mapped per repository. Directory roles grant nothing in the first
-  iteration.
+* Rights come from identity-provider groups, mapped per repository. Directory roles grant nothing.
 
 The details are in link:../concepts/authentication-and-identity.adoc[Authentication and Identity].
 
@@ -63,7 +62,7 @@ option for organisations that run API Sheriff anyway.
 === Accepted costs
 
 * Sessions are lost on restart. Users log in again.
-* Several instances need sticky sessions or a shared session store.
+* The application runs as one instance; a second instance would need a shared session store.
 
 === When this is revisited
 

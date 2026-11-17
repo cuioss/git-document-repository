@@ -14,7 +14,7 @@ follows API Sheriff.
 
 == What Runs Where
 
-image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint and services on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server, the KMS, the timestamp authority, the issue tracker, and the ticket system and chat, and passes log records to the SIEM",align=center]
+image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint and services on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server and the KMS, and passes log records to the SIEM",align=center]
 
 [cols="1,3"]
 |===
@@ -25,43 +25,26 @@ image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend conta
 separate port.
 
 |*Persistent volume*
-|The local repositories: in remote mode a disposable cache plus the drafts, in local mode the source of truth. Without
-it a restart loses every unsaved draft.
+|The local repositories, a cache that can be deleted and fetched again, and the drafts. Without it a restart loses
+every unsaved draft.
 
-|*Git server* (GitHub, GitLab, Gitea, Bitbucket)
-|Source of truth and backup in remote mode; protected branches and tags; webhooks to the application.
+|*Git server* (GitHub, GitLab, Gitea)
+|Source of truth and backup; protected branches and tags.
 
 |*Identity provider* with Token Sheriff
 |Authentication of people and agents; groups; step-up.
 
 |*KMS or Vault*
-|The key-encryption key of the keyring and, preferably, the commit-signing key and the anchor key of the own
-timestamp, which anchors releases and daily checkpoints by default.
-
-|*Timestamp authority* (optional)
-|RFC 3161 timestamps of releases and checkpoints, for organisations that need a proof independent of their own
-operation (link:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
-Anchor]).
+|Preferably the commit-signing key and the anchor key of the own timestamp, which anchors releases and daily
+checkpoints.
 
 |*SIEM*
 |Read-access and security events of the application.
-
-|*Issue tracker*
-|Measures: the application creates them as issues and refers to them by id.
-
-|*Ticket system and chat*
-|The live handling of incidents; the application reads the timeline for the incident report and writes nothing into
-them.
 |===
 
-== Modes
-
-* *Remote* (recommended): the Git server is the source of truth; the volume holds a cache that can be deleted and
-  re-cloned, and the drafts.
-* *Local*: no remote; the bare repositories on the volume are the source of truth and the operator backs up the
-  directory. Suitable for evaluation. A remote can be added later with one push.
-
-Both modes run the same code; the configuration of each repository names its remote or `none`.
+Every repository has a remote. For an evaluation on one server the remote can be a local bare repository outside the
+volume, on storage that survives a replacement of the container and is included in the backups. The code path is the
+same, and a Git server can take over later with one push.
 
 == The Image
 
@@ -79,33 +62,15 @@ Following API Sheriff:
 
 The release follows the cuioss release process of the application repository; publishing the image is part of it.
 
+[#_configuration_and_secrets]
 == Configuration and Secrets
 
-[cols="1,3"]
-|===
-|Item |How it reaches the container
-
-|`cisos-friend.yaml` and the category overrides
-|Mounted configuration directory, validated at boot and offline (`--validate-config`).
-
-|URLs, client ids
-|Environment variables, referenced as placeholders in the YAML.
-
-|Git push credential (technical user)
-|Mounted secret file or KMS reference.
-
-|Commit-signing key
-|KMS or HSM; the application signs through its interface and never sees the key. A key file is the weakest variant.
-
-|KEK of the keyring
-|KMS or Vault transit; a mounted file only for evaluation.
-
-|TLS server certificate and key
-|Mounted files.
-
-|OIDC client credential
-|Mounted secret file, or `private_key_jwt` key material.
-|===
+`cisos-friend.yaml` is a mounted configuration directory, validated at boot and offline (`--validate-config`); URLs
+and client ids come from environment variables, referenced as placeholders. Secrets (the Git credential of the
+technical user, the TLS key, the OIDC client credential) are mounted files or Vault references. The commit-signing key
+and the anchor key are best kept in a KMS or HSM: the application signs through its interface and never sees the key;
+a key file is the weakest variant. The full list is in link:../specification/deployment.adoc#_secrets[Deployment,
+Secrets].
 
 == Compose Sample
 
@@ -114,33 +79,26 @@ one:
 
 * `cisos-friend` on `${CISOS_FRIEND_IMAGE}` with a named volume;
 * Keycloak as identity provider with a realm for people (web login) and a client registration for an MCP client;
-* Gitea as Git server with the repositories of the default cut and a webhook to the application;
-* a timestamp-authority stub for the RFC 3161 variant;
+* Gitea as Git server with the repositories of the default cut;
 * start and stop scripts and a check script that logs in, saves a draft and releases it.
 
 The integration tests use the same topology with additional variants.
 
+[#_operating_duties]
 == Operating Duties
 
-. In remote mode the Git server's backup covers every pushed state. Drafts are never pushed, and commits saved
-  locally while the Git server was unreachable (`SAVED_LOCALLY`) are not pushed yet; both stay on the volume: back the
-  volume up as well, otherwise losing it loses them
-  (link:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]). In local
-  mode the volume backup covers everything.
-. Let backups expire with the retention period of the repository they contain: deleting an expired repository in the
-  application does not reach copies in backups.
-. Keep the KEK versioned in the KMS and let the rotation destroy old versions; never copy the KEK into a backup by
-  hand.
-. Watch the readiness probe: the application is ready once every configured repository is either fetched in this
-  process or present as a valid local repository from an earlier fetch, the keyring is decrypted and the index is
-  built; a local-mode repository (`remote: none`) counts once its local repository opens and its index is built. A
-  remote repository without a local copy keeps it not ready; a later fetch failure does not make it unready.
+. The Git server's backup covers every saved state. Drafts are never pushed; they stay on the volume: back the volume
+  up as well, otherwise losing it loses them
+  (link:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]).
+. When the application lists a repository whose retention period has ended, delete the remote repository on the Git
+  server, and let backups expire with the same period: deleting the repository in the application reaches neither.
+. Watch the readiness probe (link:../specification/deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]).
 . Register the commit-signing key with the bot account if the Git server shall show commits as "Verified".
 . Route the application's security events into the SIEM.
 
 == Open Questions
 
-. Whether the first organisation needs the RFC 3161 variant beside the own timestamp, and which timestamp authority
+. Whether the first organisation needs an RFC 3161 timestamp authority instead of the own timestamp, and which one
   (qualified under eIDAS, or internal under another responsibility).
 . Whether a Helm chart is shipped beside the compose sample.
 . Sizing of the volume and memory for the expected number of repositories and documents (to be measured in the
@@ -150,5 +108,5 @@ The integration tests use the same topology with additional variants.
 
 * link:application-architecture.adoc[Application Architecture]
 * link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the repository cut and the
-  KEK source
-* link:../../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] — timestamps and mirror
+  person directory
+* link:../../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] — anchoring

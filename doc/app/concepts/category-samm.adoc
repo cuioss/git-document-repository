@@ -59,16 +59,12 @@ what is not yet saved. The UI remembers the blob id it loaded, like an ETag, and
 same practice file. Two assessors on different practices never conflict. Two on the same practice get a conflict for
 that practice file; the form shows the differing questions with both values, and they decide.
 
-The alternative pattern, _private until submitted_, is available for single assessors who want to work longer before
-others see the changes. The pattern is a property of the category's workflow, not of the user.
-
 == Release, Comparison and Targets
 
 * *Release* merges the assessment branch into `main` and creates the library's release tag `<collection>/<id>/v<n>`,
   here `assessments/<id>/v1`: an assessment is released once, so `n` is always 1. Protected branches and tags of the
-  Git server make it immutable. Optionally, release opens a pull or merge request whose review is the four-eyes
-  approval. The signature level is configured per transition of the category's workflow (level 2 for the release
-  by default, see link:authentication-and-identity.adoc#_signature_levels_per_transition[Signature Levels]).
+  Git server make it immutable. The application merges the release itself; the signed release commit names the
+  releasing user, who confirms the release with step-up (see link:authentication-and-identity.adoc#_step_up[Step-Up]).
 * *Scores* are computed as the OWASP SAMM toolbox computes them, so they stay comparable with toolbox results and the
   SAMM benchmark. The model has one question per activity, 90 in all (15 practices, 2 streams each, 3 maturity
   levels), and each answer carries the value of the model's answer set: 0, 0.25, 0.5 or 1
@@ -83,13 +79,11 @@ others see the changes. The pattern is a property of the category's workflow, no
   activities declared not applicable, because the results would no longer compare with the benchmark
   (https://owaspsamm.org/blog/the-not-applicable-question/[SAMM blog, 2023-02-28]); the application accepts only the
   answers of the model's answer sets, which contain no not-applicable answer.
-* *Comparison* reads two released tags from the in-memory index and shows the score difference per practice and
-  stream. Dashboards, trends and heat maps over hundreds of assessments come from the same index.
+* *Comparison* reads two released tags of the same model version from the in-memory index and shows the score
+  difference per practice and stream. Dashboards and trends over hundreds of assessments come from the same index.
 * *Targets* in `targets.yaml` name the target maturity per practice. A gap between the released score and the target
-  becomes a measure: an issue in the issue tracker, and optionally a risk in the ISMS register
-  (link:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
-* *Model versions*: an assessment keeps the model version it was taken with. A comparison across model versions maps
-  practices by id and marks questions that changed.
+  can become a risk in the ISMS register (link:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
+* *Model versions*: an assessment keeps the model version it was taken with.
 
 == Links to the Other Categories
 
@@ -99,12 +93,14 @@ others see the changes. The pattern is a property of the category's workflow, no
 * A released assessment is evidence for the secure-development controls of ISO 27001 (Annex A 8.25 ff.) by a reference
   to its tag.
 * An ISMS product, verinice for example, refers to a released assessment by its release tag; the application delivers
-  nothing into it (link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]).
+  nothing into it (link:cisos-friend-overview.adoc#_positioning[Overview, Positioning]).
 
 == Open Questions
 
 . Draft the repository schema of SAMM (the JSON Schema of `assessment.yaml`, `answers/*.yaml`, `targets.yaml`).
 . How the SAMM model YAML is pinned and updated (vendored copy in the repository or a fetched release).
+. Deferred: a comparison across SAMM model versions (mapping practices by id and marking changed questions).
+. Deferred: the pattern _private until submitted_ for single assessors, beside _save often_.
 
 == Related
 

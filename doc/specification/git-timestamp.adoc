@@ -1,39 +1,25 @@
 = git-document-repository: `git-timestamp`
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-xref:../Specification.adoc[Back to Main Specification]
-
-== Overview
-
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
-
 `git-timestamp` (module `de.cuioss.git.document.timestamp`, not yet created, optional) provides the anchor provider
-`rfc3161` of `git-store`'s `AnchorProvider` (see xref:git-store.adoc#_anchoring[git-store, Anchoring]): proofs from an
-external RFC 3161 timestamp authority, for organisations that need a proof independent of their own operation. It is
-the variant of the own timestamp `signed` of xref:git-signing.adoc#_own_timestamp[`git-signing`]; both can be active
-at once. Which commits are anchored, the notes, their push and the retry belong to `git-store`. It depends on
-`git-store`; its RFC 3161 client library is open and needs the owner's approval. Rationale:
-xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+`rfc3161` of `git-store` (xref:git-store.adoc#GDR-STORE-15[GDR-STORE-15]): proofs from an external RFC 3161 timestamp
+authority, for organisations that need a proof independent of their own operation. It is the alternative to the own
+timestamp `signed` of `git-store`. It depends on `git-store`; its RFC 3161 client library is open and needs the
+owner's approval. Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion
+Stores, The Anchor].
 
-== RFC 3161 Provider
+[#GDR-TSA-1]
+== GDR-TSA-1: RFC 3161 Anchor Provider
 
-_See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: RFC 3161 Anchor Provider]_
+* For an object id the provider must obtain an RFC 3161 timestamp token from the configured timestamp authority.
+* The module must contain no decision about which commits are anchored and no handling of notes or pushes.
 
-*Status:* PLANNED
-
-* Provider id: `rfc3161`; its notes reference is `refs/notes/anchors/rfc3161`.
-* Request: `TimeStampReq` with `messageImprint` = SHA-256 over the object id as lowercase ASCII hex (the same form as
-  the passkey challenge of `git-signing`), `certReq = true`, a random nonce. The previous proof the store passes is not
-  used.
-* Proof: the DER-encoded `TimeStampToken`.
-* An unreachable authority or an error response returns the outcome unavailable or failed; `git-store` keeps the
-  subject pending and retries.
+The request is a `TimeStampReq` with `messageImprint` = SHA-256 over the object id as lowercase ASCII hex,
+`certReq = true` and a random nonce; the previous proof is not used. The proof is the DER-encoded `TimeStampToken`. An
+unreachable authority or an error response returns unavailable or failed; `git-store` keeps the subject pending.
 
 [cols="1,2"]
 |===
@@ -47,12 +33,8 @@ _See Requirement link:../Requirements.adoc#GDR-TSA-1[GDR-TSA-1: RFC 3161 Anchor 
 An authority run inside the organisation counts as independent only when it lies under a responsibility other than
 the Git administration and the application's operation; otherwise it proves no more than `signed`.
 
-== Timestamp Verification
+[#GDR-TSA-2]
+== GDR-TSA-2: Timestamp Verification
 
-_See Requirement link:../Requirements.adoc#GDR-TSA-2[GDR-TSA-2: Timestamp Verification]_
-
-*Status:* PLANNED
-
-`verify` checks the token signature against `timestamp.trust` and the message imprint against the SHA-256 over the
-object id as lowercase ASCII hex. Outcomes: the time the token proves, imprint mismatch, signature invalid (see
-xref:error-model.adoc[Error Model]).
+* The module must verify a stored token against the object id and `timestamp.trust`, and report the time the token
+  proves, or imprint mismatch or signature invalid.

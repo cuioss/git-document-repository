@@ -4,7 +4,7 @@
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">The service catalog as the hub the four categories hang on</title>
-  <desc id="desc">The service catalog sits in the centre as the hub; each entry carries owner team and role, repositories, dependsOn, protection needs and data classes. On the left the directory resolves the teams and roles named in the hub to persons. On the right four categories refer to service entries: a SAMM assessment takes a team, a service or the organisation as its scope; a threat model belongs to one service and uses its repositories to detect that it is outdated; an incident report names the affected services and inherits their protection needs; the ISMS treats applications as assets and hangs risks and controls on them.</desc>
+  <desc id="desc">The service catalog sits in the centre as the hub; each entry carries owner team and role, repositories, dependsOn, protection needs and data classes. On the left the library's directory resolves the teams and roles named in the hub to persons. On the right four categories refer to service entries: a SAMM assessment takes a team, a service or the organisation as its scope; a threat model belongs to one service and falls due for review by its protection needs; an incident report names the affected services and takes the maximum of their protection needs; the ISMS hangs risks on them.</desc>
 
   <defs>
     <style>
@@ -43,18 +43,18 @@
 
   <rect class="stroke" x="664" y="152" width="212" height="88" rx="6"/>
   <text x="770" y="184" class="hdr">threat models</text>
-  <text x="770" y="204" class="sub">one per service; repositories</text>
-  <text x="770" y="220" class="sub">detect an outdated model</text>
+  <text x="770" y="204" class="sub">one per service; review due</text>
+  <text x="770" y="220" class="sub">by protection needs</text>
 
   <rect class="stroke" x="664" y="264" width="212" height="88" rx="6"/>
   <text x="770" y="296" class="hdr">incident reports</text>
-  <text x="770" y="316" class="sub">affected services, inherited</text>
-  <text x="770" y="332" class="sub">protection needs</text>
+  <text x="770" y="316" class="sub">affected services; their</text>
+  <text x="770" y="332" class="sub">highest protection needs</text>
 
   <rect class="stroke" x="664" y="376" width="212" height="88" rx="6"/>
   <text x="770" y="408" class="hdr">ISMS</text>
-  <text x="770" y="428" class="sub">applications as assets;</text>
-  <text x="770" y="444" class="sub">risks and controls on them</text>
+  <text x="770" y="428" class="sub">risks on services</text>
+  <text x="770" y="444" class="sub">in the risk register</text>
 
   <!-- connectors -->
   <line class="conn" x1="200" y1="256" x2="272" y2="256"/>

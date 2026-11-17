@@ -1,0 +1,83 @@
+= ADR-0002: Every repository has a remote, and the local bare clone is a disposable cache
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Every repository of the store has a remote, a Git server or, on a single server, a local bare repository; the remote is the source of truth, and the store works on a bare clone that holds nothing pushed state lacks except the drafts.
+// tags: storage, remote, configuration, cache
+// affects: git-core, git-store
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Most operators run the application against the Git server they already operate; some run it on a single server
+without one. The question is whether these are two modes with two code paths or one.
+
+*The decision:* every repository has a remote, and there is one code path.
+
+* The remote is a Git server or, on a single server, a local bare repository addressed by its path. It is the source
+  of truth and is backed up.
+* The store works on a bare clone of the remote. Every save fetches and pushes; a commit lands on the clone's branch
+  only after the remote accepted it.
+* The clone is a cache: a new clone restores every pushed state. Beyond that it holds only the drafts
+  (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]); deleting it loses them and
+  nothing else.
+* When the remote cannot be reached, a save fails and the draft keeps the work.
+
+See xref:../concepts/storage-engine.adoc#_one_remote_one_code_path[Storage Engine, One Remote, One Code Path].
+
+== Alternatives rejected
+
+=== A local mode without a remote
+
+The bare repository on the server's disk is the source of truth, and the store writes it directly.
+
+*Rejected because* it is a second path through every save, release and anchoring, with its own failure cases. A local
+bare repository as the remote gives the single-server setup with the same code.
+
+=== Saving locally when the remote is unreachable
+
+The clone keeps saves that could not be pushed and pushes them later, replaying them onto a remote that moved
+meanwhile.
+
+*Rejected because* it makes the clone a second source of truth that needs a backup, and the replay needs kept
+conflicting commits and resets of the local branch. The draft already keeps the work until the remote is back.
+
+=== The content API of the Git server instead of a clone
+
+GitHub and GitLab offer REST APIs that create commits without a clone.
+
+*Rejected because* the API binds the store to one vendor and runs into rate limits. A JGit clone works with every Git
+server.
+
+== Consequences
+
+=== Properties of the design
+
+* One write path, tested against a local remote of `git-testing`.
+* No `git` installation is needed; JGit clones the repositories.
+
+=== Accepted costs
+
+* Every save pays a fetch and a push, also on a single server.
+* No save is possible while the remote is unreachable.
+* The clone needs persistent storage for the drafts.
+
+=== When this is revisited
+
+When the latency of fetch and push per save becomes unacceptable in measurement, or when saving during an outage of
+the Git server becomes a requirement.
+
+== Links
+
+* xref:../concepts/storage-engine.adoc[Storage Engine]
+* xref:../specification/git-core.adoc#GDR-CORE-3[GDR-CORE-3] and
+  xref:../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]

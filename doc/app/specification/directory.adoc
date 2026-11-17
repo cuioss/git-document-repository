@@ -1,0 +1,143 @@
+= CISOs-Friend: Directory and Catalogs
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:source-highlighter: highlight.js
+
+link:../README.adoc[CISOs-Friend documentation] » Specification
+
+The person directory as the application configures it, the first login, the catalogs and the service catalog the
+application adds to the library's catalogs. Reasoning:
+link:../concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login] and
+link:../concepts/service-catalog.adoc[Service Catalog]. Library contract:
+link:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19: Person Directory Interface] and
+link:../../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2: Person Directory in Git].
+
+[#CIFR-DIR-1]
+== CIFR-DIR-1: Person Directory
+
+* The person directory provider must be configurable; the default must be `git`, with the person entries in the
+  `directory` repository or in another configured repository.
+* Boot validation must refuse a persons' repository that is not configured in `repositories`.
+
+[cols="1,2"]
+|===
+|`directory.persons.provider` |Behaviour
+
+|`git` (default)
+|Entries `persons/<pseudonym>.yaml` in the repository named by `directory.persons.repository` (default `directory`),
+saved on `main` and signed like every commit; first login and own-entry changes as below
+
+|the id of a provider for the organisation's own source
+|Names and memberships from that source; no first-login form; erasure in that source
+|===
+
+[#CIFR-DIR-2]
+== CIFR-DIR-2: First Login
+
+* With the default person directory, a user without a saved entry must be shown the first-login form before any other
+  view; the restriction must hold until the entry is saved. With a person directory for the organisation's own source
+  there is no first-login form.
+* The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
+  role must be picked from the catalogs.
+* The form must show the configured information text (GDPR Art. 13) before the save button.
+* The saved entry must be valid immediately and signed by the application.
+
+. After login the server asks the library for the person of (`iss`, `sub`). The outcome entry-required makes it answer
+  every `/api/v1` request outside the allow-list below with `FIRST_LOGIN_REQUIRED`, until the entry is saved. A
+  pseudonym is kept only once the entry is saved; a user who leaves the form unsaved gets a new one at the next login.
+. `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
+. The form shows the text referenced by `web.information-text-ref`.
+. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry.
+
+Allow-list during the first login, exactly the requests the form and the shell need: `GET` and
+`PUT /api/v1/directory/me`; `GET /api/v1/catalogs/team` and `GET /api/v1/catalogs/role`; `GET /api/v1/session` (the
+anti-CSRF token) and `GET /api/v1/messages` (the texts); `POST /api/v1/auth/logout` and the login endpoints. The MCP
+endpoint answers a tool call of such a user with the tool error `FIRST_LOGIN_REQUIRED`.
+
+[#CIFR-DIR-3]
+== CIFR-DIR-3: Keeping the Entry Current
+
+* With the default person directory, a user must be able to change the own entry at any time.
+* The application must ask for confirmation of the entry after a configurable interval, default 12 months.
+
+The own entry is changed with `PUT /api/v1/directory/me`. When the entry's last confirmation is older than
+`directory.confirmation-interval`, the next login shows the form with "Is this still right?"; confirming writes the
+confirmation date.
+
+[#CIFR-DIR-4]
+== CIFR-DIR-4: Catalogs
+
+* Besides the library's catalogs of roles and teams, the application must keep the catalogs of services
+  (`service:`), systems (`system:`) and external parties (`external:`).
+* Catalog entries must be created or changed only by users with the right *administer catalogs*, through the
+  application.
+* A catalog entry must be retired, never deleted; documents referring to a retired entry must show it as retired.
+
+The three catalogs are declared to the library's catalog mechanism as resources of the `categories` module, each with
+its file and schema: `catalog/services/<id>.yaml` (one file per entry), `catalog/systems.yaml` and
+`catalog/external.yaml` (lists), all in the `directory` repository. `PUT /api/v1/catalogs/{catalog}/{id}` requires
+`administer-catalogs`; `DELETE` is not offered; retiring sets `retired: true`.
+
+[#CIFR-DIR-5]
+== CIFR-DIR-5: Service Catalog
+
+* A service entry must support the fields `id`, `name`, `description`, `system`, `lifecycle`, `owner` (team and role),
+  `repositories`, `dependsOn`, `protection-needs` and `data-classes`.
+* The application must compute the effective protection needs of a service per dimension (confidentiality,
+  integrity, availability) as the maximum over the service and every service reachable through `dependsOn`,
+  transitively; a cycle must be reported, naming the services on it.
+
+[cols="1,1,2"]
+|===
+|Field |Required |Semantics
+
+|`system` |no |`system:<id>`, the product above
+|`lifecycle` |yes |`planned`, `active`, `deprecated`; a retired service has `retired: true` like every catalog entry
+|`owner.team`, `owner.role` |yes |references into the team and role catalogs
+|`repositories` |no |list of repository URLs
+|`dependsOn` |no |`service:` or `external:` references
+|`protection-needs` |yes |`confidentiality`, `integrity`, `availability`: `normal`, `high`, `very-high`
+|`data-classes` |no |list of names
+|===
+
+`dependsOn` keeps the spelling of Backstage, from which it is taken; the other fields are written in kebab-case.
+
+[#CIFR-DIR-6]
+== CIFR-DIR-6: Import from Backstage
+
+* The application must import Backstage `Component`, `System` and `Group` descriptors into the catalogs of services,
+  systems and teams.
+* A repeated import must update changed entries and must not duplicate or delete entries.
+
+`POST /api/v1/catalogs/import/backstage` (right `administer-catalogs`) takes the descriptor documents in the request
+body; the application fetches nothing from Backstage. Kinds and fields as in the Backstage descriptor format
+(link:https://backstage.io/docs/features/software-catalog/descriptor-format[Backstage: Descriptor Format of Catalog
+Entities]):
+
+[cols="1,2"]
+|===
+|Backstage kind |Catalog
+
+|`Component` |service (`spec.system` → `system`, `spec.lifecycle` → `lifecycle`, `spec.owner` → `owner.team`,
+`spec.dependsOn` → `dependsOn`)
+|`System` |system
+|`Group` |team (`spec.parent` → `parent`)
+|===
+
+* Entity references are translated by kind (`Group` → `team:<name>`, `System` → `system:<name>`, `Component` →
+  `service:<name>`); only the namespace `default` is imported. A reference of another kind (for example a `Resource` in
+  `spec.dependsOn`) or another namespace is reported in the import result and left out.
+* Lifecycle: Backstage accepts any value; its well-known values are `experimental`, `production` and `deprecated` (same
+  source). The mapping is `directory.backstage.lifecycle`, by default `production` → `active` and `deprecated` →
+  `deprecated`; an unmapped value is reported and leaves the field of an existing service unchanged; a new service with
+  an unmapped value is reported and not created.
+* Matching by `metadata.name`; fields Backstage does not know (`owner.role`, `protection-needs`, `data-classes`) are
+  kept. A new service takes `owner.role` and `protection-needs` from `directory.backstage.defaults`; without them it is
+  reported and not created.
+
+[#CIFR-DIR-7]
+== CIFR-DIR-7: Former Members
+
+* After the erasure of a person, or once the organisation's source no longer knows the person, documents must show the
+  pseudonym as "former member".

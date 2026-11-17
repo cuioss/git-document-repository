@@ -13,7 +13,7 @@ This document collects everything that concerns this client: why the foundation 
 `pm-provider-git`, what moves where, what changes in `pm-mcp-core`, and the order of the switch-over. The library
 documentation does not depend on it; the foundation itself is described in
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules]. The decision
-is xref:../adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005].
+is xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[ADR-0004].
 
 == A Shared Foundation with `pm-provider-git`
 
@@ -170,6 +170,6 @@ Coupling two life cycles is the price of the shared foundation. A contract chang
 
 == Related
 
-* xref:../adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005] -- the
+* xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[ADR-0004] -- the
   shared foundation.
 * xref:../concepts/module-structure.adoc[Module Structure] -- the modules of the libraries and their dependencies.

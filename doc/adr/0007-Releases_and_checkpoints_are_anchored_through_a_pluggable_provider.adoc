@@ -1,0 +1,127 @@
+= ADR-0007: Releases and checkpoints are anchored through a pluggable provider
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Anchoring is pluggable through the service interface AnchorProvider of git-store, with at most one active provider. The store anchors the commit of every release tag and a periodic checkpoint of all pushed references and stores the proofs as notes under refs/notes/anchors/<provider>. git-store provides an own signed timestamp (signed) on a best-effort basis; git-timestamp provides RFC 3161 (rfc3161) as the alternative with an external authority.
+// tags: evidence, anchor, timestamp, rfc3161, notes, spi
+// affects: git-store, git-timestamp
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Git's hash chain is only as trustworthy as the people who can force-push. A proof that a state existed at a time can
+come from the operator's own key or from an external authority; only the external one is independent of the operator,
+and it is a further service the operator has to run or buy. The question is how the store anchors the history
+without making an external service a requirement.
+
+*The decision:*
+
+* *Anchoring is pluggable.* `git-store` defines the service interface `AnchorProvider`: obtain a proof for an object
+  id, and verify a stored proof. At most one provider is active, named by configuration; without one the store anchors
+  nothing.
+* *What is anchored* is decided by `git-store`, the same for every provider:
+** the commit of every release tag, right after the tag exists;
+** a *checkpoint* at most once per configured interval (default one day), and only when a pushed reference changed
+   since the previous one. A checkpoint is a commit whose tree lists every pushed reference with its object id; its
+   parent is the previous checkpoint, and it is tagged `refs/tags/checkpoints/<n>`. Anchoring a checkpoint proves
+   every commit reachable from the references it lists, and every earlier checkpoint.
+* *Two providers ship with the libraries:*
+** `signed` (`git-store`), an own timestamp on a best-effort basis: a statement of object id, time, sequence number
+   and the hash of the previous proof, signed with an anchor key of its own, never the commit-signing key. It refuses
+   to sign when its clock is behind its previous proof, and it writes every proof as a log record, so the operator's
+   log pipeline keeps a copy outside Git. It needs no service beyond a key source.
+** `rfc3161` (`git-timestamp`), the alternative with an external timestamp authority, for organisations that need a
+   proof independent of their own operation.
+* The proofs are stored as notes on the anchored commit under `refs/notes/anchors/<provider>`, so they travel with
+  the repository, and are pushed right after they are written. Which subjects still lack a pushed proof is derived
+  from the remote's notes after each fetch, so a proof whose push failed is pushed again and a restart loses nothing.
+
+See xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+
+== Alternatives rejected
+
+=== An external timestamp authority as the only anchor
+
+Every deployment anchors its history with RFC 3161 tokens from a timestamp authority it has to name.
+
+*Rejected because* it adds an external service, and in many networks an exception for outbound traffic, to every
+deployment, also to those for which a proof by their own key is enough. It stays available as the provider `rfc3161`.
+
+=== An anchor for every commit of `main`
+
+Every new commit of `main` is anchored on its own.
+
+*Rejected because* with an external authority it makes one call per commit, which a qualified timestamp service
+charges for, and ties the pace of saving to that service. A checkpoint proves every commit it reaches; releases, the
+states an auditor asks for, are still anchored one by one.
+
+=== The commit signature as the own timestamp
+
+The signed committer time of each commit serves as its timestamp; no further proof is written.
+
+*Rejected because* the commit-signing key signs whatever time the signing host claims, and whoever holds that key can
+sign a back-dated commit. A separate anchor key, a monotonic chain of proofs and a copy in the log pipeline make a
+back-dated proof detectable; a commit signature alone does not.
+
+=== Several active providers at once
+
+The own timestamp and RFC 3161 run side by side.
+
+*Rejected because* every subject then has several proofs to obtain, push, retry and verify, for a gain only few
+deployments need. One provider per deployment keeps one rule for every service interface of the store.
+
+=== Public transparency logs (Sigstore/Rekor)
+
+Every new commit is recorded in a transparency log such as the public Rekor instance of Sigstore.
+
+*Rejected as a provider shipped with the libraries because* the entries of a public log are public, and internal
+compliance data must not leave the organisation.
+
+=== Proofs in a database or a second store
+
+The proofs, or a copy of every commit, are kept beside the repository.
+
+*Rejected because* the proof would not travel with the repository, and a copy under the control of the same operator
+adds no independent proof.
+
+== Consequences
+
+=== Properties of the design
+
+* A deployment anchors its history without an external service; one that needs an independent proof chooses
+  `rfc3161`.
+* The proof travels with the repository and is verifiable without the application.
+* A later compromise of the commit-signing key devalues only the commits not reached by a release or checkpoint
+  anchored before the compromise.
+
+=== Accepted costs
+
+* A `signed` proof is not independent of the operator who holds the anchor key and the clock, and it is no qualified
+  electronic timestamp. Its value rests on the separation of the anchor key from the Git administration and on the
+  copy in the log pipeline.
+* Between two checkpoints a commit that is no release is proven only at the time of the next checkpoint.
+* With `rfc3161` the timestamp authority is a dependency at run time; the store retries when it is unreachable and
+  never fails a save for it.
+* A proof shows existence; it cannot restore a removed state. Notes and checkpoint tags can be removed together with
+  the history by whoever can rewrite it; detecting that needs the log copy, a mirror or an archive under another
+  responsibility.
+
+=== When this is revisited
+
+When a qualified timestamp service becomes mandatory, when a deployment needs both kinds of proof, or when the
+checkpoint interval proves too coarse for an audit.
+
+== Links
+
+* xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
+* xref:../specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15 – GDR-STORE-18] -- anchoring and the own timestamp
+* xref:../specification/git-timestamp.adoc[`git-timestamp` specification] -- the RFC 3161 provider

@@ -5,23 +5,24 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-Every document needs an owner, an assessor, a responsible team or an affected service. Writing names into documents
-puts personal data into the history; writing free text puts "Payments", "payments team" and "Team Payment" into three
-documents that mean the same thing. This concept describes the master data every document refers to: a small,
-encrypted directory of persons and the catalogs of roles, teams, systems, services and external parties, all
-referenced by stable ids.
+Every document needs an owner, an assessor or a responsible team. Writing names into documents puts personal data into
+the history; writing free text puts "Payments", "payments team" and "Team Payment" into three documents that mean the
+same thing. This concept describes the master data every document refers to: catalogs of roles and teams, catalogs an
+application adds, and a small directory of persons under pseudonyms, all referenced by stable ids.
 
 == Scope of the First Iteration
 
 * *Roles are names only.* They describe who is responsible or the contact for something; no right is derived from
-  them. Approvals and access are not tied to a role of the directory.
+  them. Approvals and access are not tied to a role of the directory; access stays a matter of the identity provider
+  and the application.
 * *Hence no staging.* An assignment a user makes is valid at once; there is no pending state and no confirmation by a
   team lead or an administrator. The history of the directory shows who changed what.
 * *Roles and teams come from a catalog.* A user picks them; free text is not allowed. A missing entry is added to the
   catalog through a review.
 
-A later iteration may derive rights from roles; it then needs a confirmation of assignments (see
-<<_later_iterations>>).
+A later iteration may derive rights from roles. Then a self-chosen role must not grant them: assignments of such roles
+need a confirmation by a team lead or an administrator, or come from the identity provider, and a workflow counts
+confirmed assignments only.
 
 == Layout
 
@@ -29,37 +30,32 @@ The directory gets a repository of its own:
 
 ----
 directory (repository)
-  catalog/roles.yaml            ← catalog of roles, not personal, plain text
-  catalog/teams.yaml            ← catalog of teams, not personal, plain text
-  catalog/systems.yaml          ← catalog of products or systems above the services, not personal, plain text
-  catalog/external.yaml         ← catalog of external parties (suppliers, providers), not personal, plain text
-  catalog/services/<id>.yaml    ← one file per application or service, not personal, plain text
-  persons/<pseudonym>.enc       ← one entry per person, encrypted with the person's data encryption key (DEK)
-  keys/keyring.enc              ← per pseudonym issuer, `sub` and one DEK per retention class, encrypted with the KEK
+  catalog/roles.yaml            ← catalog of roles, not personal
+  catalog/teams.yaml            ← catalog of teams, not personal
+  catalog/…                     ← catalogs the application declares, not personal
+  persons/<pseudonym>.yaml      ← one entry per person: name, memberships, hash of the login, no issuer, no `sub`
+  erasures.yaml                 ← erased pseudonyms with their date, no person
 ----
 
-The catalogs are widely readable; the entries of persons are encrypted anyway. One file per person and per service
-keeps concurrent saves free of conflicts; the small catalogs of roles, teams, systems and external parties change
-rarely. The keyring and its
-erasure by key rotation are described in xref:data-protection.adoc[Data Protection].
+The catalogs are widely readable and hold no personal data. One file per person keeps concurrent saves free of
+conflicts. The entries of persons belong to the default person directory `git`; an organisation can give them a
+repository of their own with a smaller circle of readers, or plug in its own source instead (see
+xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
 
-== Catalogs of Roles and Teams
+== Catalogs
 
 [source,yaml]
 ----
 # catalog/roles.yaml
-- id: role:security-champion
+- id: security-champion
   name: Security Champion
   description: Contact for security in the team
-- id: role:service-owner
-  name: Service Owner
-  description: Responsible for an application or service
 ----
 
 [source,yaml]
 ----
 # catalog/teams.yaml
-- id: team:payments
+- id: payments
   name: Payments
   parent: team:platform          # optional, for hierarchies
 ----
@@ -67,75 +63,19 @@ erasure by key rotation are described in xref:data-protection.adoc[Data Protecti
 * *Stable ids instead of names.* Documents refer to `role:security-champion` and `team:payments`; renaming an entry
   breaks no reference.
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to a retired team.
-* *Changes by review.* A new or renamed entry is a pull request or a reviewed save, like every other document.
+* *Changes by review.* A new or renamed entry is a reviewed save, like every other document.
+* *Further catalogs are configuration.* An application declares its own catalogs (for example of its services) with a
+  file, an id prefix and a schema; references of the form `<catalog>:<id>` resolve the same way.
 
-== Catalog of Applications and Services
-
-Most kinds of documents hang on an application or service: its assessments, its threat model, the incidents that
-affected it, the risks of the asset. An entry is larger than one of the small catalogs, hence one file per service:
-
-[source,yaml]
-----
-# catalog/services/payment-api.yaml
-id: service:payment-api
-name: Payment API
-description: Payment processing for the web shop
-system: system:webshop                 # optional: the product or system above
-lifecycle: active                      # planned | active | deprecated | retired
-owner:
-  team: team:payments
-  role: role:service-owner             # responsibility by role, not by person
-repositories:
-  - https://git.example/payments/payment-api
-dependsOn:
-  - service:customer-db
-  - external:psp-provider              # an entry of the catalog of external parties
-protection-needs:                      # confidentiality, integrity, availability
-  confidentiality: high
-  integrity: high
-  availability: high
-data-classes: [personal, payment]
-----
-
-Fields taken from Backstage keep its spelling (`dependsOn`); the fields of the own catalog are written in kebab-case
-(`protection-needs`, `data-classes`).
-
-* *Responsibility by team and role.* The directory resolves them to persons; the catalog itself holds no personal data.
-* *Protection needs* (confidentiality, integrity, availability, as in BSI IT-Grundschutz) decide, for example, review
-  intervals and the classification of an incident.
-* *`repositories`* links catalog and code: documents kept beside the code, detection of outdated documents, later
-  SBOMs.
-* *`dependsOn`* yields a dependency graph: the affected services of an incident follow from it, and protection needs
-  inherit by the maximum principle.
-* *Maintenance.* The owning team keeps the entry through a form; repositories can be proposed from the Git server; a
-  service without a repository is allowed (a bought SaaS application).
-
-=== Alignment with Backstage and Import
-
-Many development organisations already keep such a catalog. The Backstage software catalog holds its entries in
-descriptor files in the repository of each service, by recommendation named `catalog-info.yaml`, with the kinds
-Component, Template, API, Group, User, Resource, System, Domain and Location
-(link:https://backstage.io/docs/features/software-catalog/descriptor-format[Backstage: Descriptor Format of Catalog
-Entities]); the principle "the description lives in the service's repository" matches the one file per
-service of this catalog. Operations often keep a CMDB (i-doit, iTop, ServiceNow); whether entries are imported from
-it is an open question. Therefore:
-
-* *The schema leans on Backstage*: the same terms and, where possible, the same fields (`system`, `lifecycle`,
-  `owner`, `dependsOn`), so that entries can be mapped. The mapping is not one to one: Backstage names a single owner
-  entity where this catalog names a team and a role, and its lifecycle values differ: Backstage names the well-known
-  values `experimental`, `production` and `deprecated` and accepts any other value (same source); this catalog uses
-  `planned`, `active`, `deprecated` and `retired`.
-* *Import*: where Backstage exists, components and systems are imported and kept in sync; groups map onto the team
-  catalog. The own catalog adds only what is missing: protection needs, data classes, links to security documents.
-* *Where nothing exists*, the own catalog is the source of truth.
-* Whether the additional fields stand in `catalog-info.yaml` itself (as annotations) or in the central catalog is
-  configurable per organisation.
+The catalogs are xref:schema-driven-documents.adoc[schema-driven documents]: form, workflow and validation come from
+`git-forms`, so they need no mechanism of their own.
 
 == The Directory of Persons
 
 [source,yaml]
 ----
-# persons/<pseudonym>.enc, decrypted
+# persons/<pseudonym>.yaml
+subject: 9f2c…e41a               # SHA-256 over issuer and sub; neither is stored
 name: Erika Example
 memberships:                     # role per team, not global
   - team: team:payments
@@ -146,23 +86,23 @@ since: 2026-11-12
 ----
 
 *Memberships are pairs of team and role* instead of separate fields: a person often belongs to several teams with a
-different role in each, and assignments almost always ask for "role X in team Y".
+different role in each, and assignments almost always ask for "role X in team Y". The whole entry is personal, not
+only the name: pseudonym, team and role together often identify a person. Commits and documents therefore carry only
+the pseudonym; how the entry is protected and erased is described in xref:data-protection.adoc[Data Protection].
 
 === First Login
 
-. The login yields the issuer, the `sub` and usually the name. The directory finds no pseudonym for that issuer and
-  `sub` in the keyring, creates one and asks the application to show the entry form.
+. The login yields the issuer, the `sub` and usually the name. The person directory finds no entry for the hash of
+  issuer and `sub`, creates a random pseudonym, held in memory until the entry is saved, and asks the application to
+  show the entry form.
 . The form is prefilled with the name from the token. Team and role are picked from the catalogs; a missing entry can
   be requested for the catalog.
-. Saving is a signed commit (signature level 1, see xref:identity-and-signing.adoc[Identity and Signing]); the entry
-  is valid at once. The directory therefore needs `git-signing` at run time, which provides the evidence of the
-  signature levels.
+. Saving is a commit on `main`, signed by the application like every other, without a release workflow; the entry is
+  valid at once. A first login interrupted before this step leaves nothing behind.
 . Later the user changes the own entry through the same form.
 
-The catalogs are xref:schema-driven-documents.adoc[schema-driven documents]: form, workflow and validation come from
-`git-forms`, so they need no mechanism of their own. The entries of persons use the same form and workflow, but they
-are encrypted: the schema validates them in the application before encryption, a CI pipeline sees only ciphertext,
-and no readable output is generated for them.
+With a person directory for the operator's own source (identity provider, SCIM, LDAP) there is no entry form: names
+and memberships come from that source, and the operator maintains them there.
 
 === Staying Current
 
@@ -176,37 +116,13 @@ Self-entered data age: teams change and nobody updates. Hence:
   Entra ID: SCIM provisioning]);
 * a periodic confirmation, yearly or on the first login after a reorganisation: "Is your team still right?"
 
-=== Data Protection of the Directory
-
-* *The whole entry is personal*, not only the name: pseudonym, team and role together often identify a person ("CISO
-  in team X"). The whole entry is therefore encrypted with the DEK of the person; the catalogs are not personal.
-* *Data minimisation*: name, team and role only. Phone or e-mail only where they are really needed; the e-mail comes
-  from the token anyway.
-* *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
-  directory is for and how long it is kept.
-* *Leaving*: the entry is erased through the rotation of the key-encryption key. Documents keep the pseudonym and show
-  "former member"; because responsibilities in documents run through roles (`owner: role:…`), they stay understandable.
-
 == What It Means for the Architecture
 
-* The directory closes a gap: documents refer to roles instead of persons, and the directory resolves `role:`,
-  `team:`, `system:`, `service:` and `external:` to persons and entries, whether or not the identity provider delivers
-  groups.
-* Every kind of document needs it, so it is a shared part, not one kind among others.
-* Persons, roles, teams and services are free of any domain, and the directory builds on `git-store`, `git-crypto` and
-  `git-forms`, and needs `git-signing` at run time for signature level 1; it is therefore the module `git-directory`
-  (see xref:module-structure.adoc[Module Structure]).
-* Which catalogs exist is configuration; further catalogs (suppliers, locations) cost little.
-
-[[_later_iterations]]
-== Later Iterations
-
-* *Rights from roles.* When approvals are tied to roles, a self-chosen role must not grant them: assignments of such
-  roles need a confirmation by a team lead or an administrator (a pending state and signature level 2), or come from
-  the identity provider. A workflow then counts confirmed assignments only.
-* *Confirmed protection needs.* Changes of the protection needs of a service, on which review intervals and
-  notification duties depend, may need a confirmation by the information security officer.
-* *Two-way synchronisation with Backstage*, writing the additional fields back as annotations.
+* Documents refer to roles and teams instead of persons, and the directory resolves `<catalog>:<id>` to entries and a
+  role in a team to persons, whether or not the identity provider delivers groups.
+* Every kind of document needs it, so it is a shared part, not one kind among others: the module `git-directory`
+  (see xref:module-structure.adoc[Module Structure]), built on `git-forms`, which also provides the default person
+  directory `git`.
 
 [CAUTION]
 ====
@@ -216,8 +132,6 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 
 == Open Questions
 
-. Align the schema of the service catalog with the Backstage descriptor format and prototype the import.
-. Decide whether service entries are also imported from a CMDB (i-doit, iTop, ServiceNow).
 . The legal basis of the directory (legitimate interest or employee data protection) is agreed by each operator with
   their data protection officer. The German rule on employee data protection
   (link:https://www.gesetze-im-internet.de/bdsg_2018/__26.html[§ 26 BDSG]) is in force, but its general clause in
@@ -233,6 +147,4 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 
 == Related
 
-* xref:../adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[ADR-0012] -- why roles grant no rights yet.
-* xref:../Requirements.adoc#requirements-git-directory[`git-directory` requirements] and
-  xref:../specification/git-directory.adoc[`git-directory` specification].
+* xref:../specification/git-directory.adoc[`git-directory` specification].

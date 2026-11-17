@@ -1,155 +1,88 @@
 = git-document-repository: `git-directory`
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-xref:../Specification.adoc[Back to Main Specification]
+`git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs in Git and
+provides the default person directory `git` of `git-store` (xref:git-store.adoc#GDR-STORE-19[GDR-STORE-19]). It
+depends on `git-forms`: catalog entries and person entries are schema-driven documents; person entries are saved
+directly on `main`, without a release workflow. Rationale: xref:../concepts/directory-and-catalogs.adoc[Directory and
+Catalogs].
 
-== Overview
+[#GDR-DIR-1]
+== GDR-DIR-1: Catalogs
 
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
-
-`git-directory` (module `de.cuioss.git.document.directory`, not yet created, optional) keeps the catalogs and the
-directory of persons. It depends on `git-forms` and `git-crypto`. Catalog entries are schema-driven documents; person
-entries are validated against a person schema like them but stored encrypted as a whole (`.enc`, Person Entries).
-Saving a person entry needs signature level 1 and therefore a provider of the `SignatureLevelVerifier` of
-`git-store` (`git-signing`) at run time; the static dependencies stay as above. Rationale:
-xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs].
-
-== Catalogs
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-1[GDR-DIR-1: Catalogs]_
-
-*Status:* PLANNED
-
-[cols="1,2,1"]
-|===
-|Catalog |File |Id prefix
-
-|roles |`catalog/roles.yaml` (list) |`role:`
-|teams |`catalog/teams.yaml` (list; optional `parent`) |`team:`
-|services |`catalog/services/<id>.yaml` (one file per entry) |`service:`
-|systems |`catalog/systems.yaml` (list) |`system:`
-|external parties |`catalog/external.yaml` (list) |`external:`
-|===
-
-Common fields: `id` (required, immutable; without the prefix, for example `payments`, referenced as `team:payments`),
-`name` (required), `description`, `retired` (boolean, default `false`). A service carries `lifecycle` as well;
-`lifecycle: retired` and `retired: true` are set together. Further catalogs are declared in configuration with file,
-id prefix and schema.
-
-== Service Catalog
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-2[GDR-DIR-2: Service Catalog]_
-
-*Status:* PLANNED
-
-[cols="1,1,2"]
-|===
-|Field |Required |Semantics
-
-|`system` |no |`system:<id>`, the product above (an entry of the system catalog)
-|`lifecycle` |yes |`planned`, `active`, `deprecated`, `retired`
-|`owner.team`, `owner.role` |yes |references into the team and role catalogs
-|`repositories` |no |list of repository URLs
-|`dependsOn` |no |`service:` or `external:` references
-|`protection-needs` |yes |`confidentiality`, `integrity`, `availability`: `normal`, `high`, `very-high`
-|`data-classes` |no |list of names
-|===
-
-`dependsOn` keeps the spelling of Backstage, from which it is taken; the other fields are written in kebab-case.
-
-`effectiveProtectionNeeds(service)` = per dimension the maximum over the service and every service reachable through
-`dependsOn`, transitively; a cycle is reported as the cycle outcome naming the services on it.
-
-== Person Entries
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-3[GDR-DIR-3: Person Entries]_
-
-*Status:* PLANNED
-
-`persons/<pseudonym>.enc`, the whole entry encrypted with the person's DEK (`git-crypto`). Decrypted fields, validated
-against the person schema: `name` (required),
-`memberships` (list of `{team, role}`), `since` (date), `confirmed` (date of the last confirmation). Additional fields
-need an explicit schema extension by the operator.
-
-== First Login
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-4[GDR-DIR-4: First Login]_
-
-*Status:* PLANNED
-
-`login(claims)`:
-
-* known (issuer, `sub`) with a saved entry → the pseudonym and the entry;
-* known (issuer, `sub`) without a saved entry (an interrupted first login) → the pseudonym and the outcome
-  entry-required with a prefill, as below;
-* unknown (issuer, `sub`) → a new pseudonym (`git-crypto`) and the outcome entry-required with a prefill (`name` from
-  the token, memberships from IdP groups where mapped).
-
-`saveEntry(pseudonym, entry)` validates against the person schema and saves with signature level 1; the evidence is
-checked by the `SignatureLevelVerifier` provider (`git-signing`), which must be present at run time. The entry is valid
-at once.
-
-== Reference Resolution
-
-_See Requirement link:../Requirements.adoc#GDR-DIR-5[GDR-DIR-5: Reference Resolution]_
-
-*Status:* PLANNED
+* The module must keep the catalogs of roles (`role:`) and teams (`team:`) with stable ids; an application must be
+  able to add catalogs of its own by configuration (file, id prefix, schema).
+* An entry must be retired (`retired: true`), never deleted.
 
 [cols="1,2"]
 |===
-|Call |Result
+|Catalog |File
 
-|`resolve("team:payments")` |the catalog entry (also when retired)
-|`holders("role:security-champion", "team:payments")` |the pseudonyms with that membership
-|`resolve("system:payments-platform")`, `resolve("external:card-processor")` |the system or external entry
-|`person(pseudonym)` |the entry, or a former-member marker when the pseudonym was erased (its entry no longer
-decrypts)
+|roles |`catalog/roles.yaml` (list)
+|teams |`catalog/teams.yaml` (list; optional `parent`)
+|declared by the application |as configured, a list file or one file per entry
 |===
 
-== Import from Backstage
+Common fields: `id` (required, immutable, without the prefix: `payments` is referenced as `team:payments`), `name`
+(required), `description`, `retired` (default `false`).
 
-_See Requirement link:../Requirements.adoc#GDR-DIR-6[GDR-DIR-6: Import from Backstage]_
+[#GDR-DIR-2]
+== GDR-DIR-2: Person Directory in Git
 
-*Status:* PLANNED
+* The module must provide the person directory `git`, the default provider.
+* A person entry must be the file `persons/<pseudonym>.yaml` in `directory.persons.repository` (a repository alias,
+  default the directory's repository).
+* An entry must hold the subject hash, the name, the memberships (pairs of team and role), the date `since` and the
+  date of the last confirmation `confirmed`, and no further field unless the operator extends the schema.
+* The subject hash must be the SHA-256 over the UTF-8 bytes of the issuer, a line feed and the `sub`, in lowercase
+  hex; the entry must hold neither issuer nor `sub`, and `sub` must never be written to a repository. The issuer is
+  not personal and appears in the `Actor-Issuer` trailer of every save
+  (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]).
+* A new pseudonym must be `p-` followed by 26 characters of Crockford base32 over 128 random bits from
+  `SecureRandom`, never derived from issuer or `sub`.
 
-Backstage kinds and fields as described in its descriptor format
-(https://backstage.io/docs/features/software-catalog/descriptor-format):
+At start and after every fetch that moves `main` of the persons' repository the provider reads the entries into
+memory, indexed by subject hash and by pseudonym.
 
-[cols="1,2"]
-|===
-|Backstage kind |Catalog
+[#GDR-DIR-3]
+== GDR-DIR-3: First Login
 
-|`Component` |service (`spec.system` → `system`, `spec.lifecycle` → `lifecycle`, `spec.owner` → `owner.team`,
-`spec.dependsOn` → `dependsOn`)
-|`System` |system
-|`Group` |team (`spec.parent` → `parent`)
-|===
+* For an issuer and `sub` without a saved entry the module must create a pseudonym, hold it in memory only, and
+  report entry required with a prefill (`name` from the token, memberships from identity-provider groups where
+  mapped).
+* Saving the entry must be a save on `main` of the persons' repository; the entry must be valid at once.
 
-* References: Backstage entity references are translated by kind: a `Group` → `team:<name>`, a `System` →
-  `system:<name>`, a `Component` → `service:<name>`. Only the namespace `default` is imported; a reference to
-  another namespace or to another kind (a `User` as owner, a `Resource` in `spec.dependsOn`) is reported and left
-  out.
-* Lifecycle: Backstage accepts any value; its well-known values are `experimental`, `production` and `deprecated`.
-  The mapping is configuration (`directory.backstage.lifecycle`); the default maps `production` → `active` and
-  `deprecated` → `deprecated`. An unmapped value is reported and leaves the field unchanged.
-* Matching: the import matches by `metadata.name`; it updates changed fields and never deletes (a vanished entry is
-  reported). Fields Backstage does not know (`owner.role`, `protection-needs`, `data-classes`) are kept.
-* New entries: a new service needs `owner.role`, `protection-needs` and a mapped `lifecycle`, which Backstage does not
-  supply. The import takes `owner.role` and `protection-needs` from the configured defaults
-  (`directory.backstage.defaults`); without them, or with an unmapped lifecycle, the new component is reported and
-  not created.
+A first login interrupted before the entry is saved leaves nothing in Git; the next login creates a new pseudonym,
+and nothing refers to the old one, because no save happened under it.
 
-== Periodic Confirmation
+[#GDR-DIR-4]
+== GDR-DIR-4: Reference Resolution
 
-_See Requirement link:../Requirements.adoc#GDR-DIR-7[GDR-DIR-7: Periodic Confirmation]_
+* The module must resolve `<catalog>:<id>` references of every configured catalog to their entries, retired ones
+  included, and a role in a team to the pseudonyms holding it.
+* A pseudonym must resolve to its entry from the active person directory, or to a former-member marker when it was
+  erased.
 
-*Status:* PLANNED
+[#GDR-DIR-5]
+== GDR-DIR-5: Periodic Confirmation
 
-`directory.confirmation-interval` (ISO 8601 period, optional; absent disables). `dueForConfirmation(instant)` lists
-pseudonyms whose `confirmed` (or `since`) is older than the interval. Confirming sets `confirmed` to today.
+* A confirmation interval (`directory.confirmation-interval`, ISO 8601 period; absent disables it) must be
+  configurable.
+* The module must list the person entries whose `confirmed` (or `since`) date is older than the interval; confirming
+  sets `confirmed` to today.
+
+[#GDR-DIR-6]
+== GDR-DIR-6: Erasure
+
+* Erasure must delete the person's entry in one commit on `main` that also adds the line `<pseudonym> <date>` to
+  `erasures.yaml` of the same repository and names the erased person only by pseudonym; the pseudonym must then
+  resolve to a former member.
+* Erasure must never rewrite the history.
+
+The erasure commit is a save of the administrator who erases, with that administrator's trailers
+(xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]). The history of the repository keeps
+the earlier versions of the entry; see xref:../concepts/data-protection.adoc#_erasing_a_person[Data Protection,
+Erasing a Person].

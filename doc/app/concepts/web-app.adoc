@@ -20,54 +20,34 @@ authentication demand.
 |Part |From `pm-web-app`
 
 |*Stack*
-|Svelte 5 with runes, SvelteKit with `adapter-static` as a pure single-page app (`ssr = false`, `prerender = false`,
-a `fallback` page that the Quarkus application serves for every route of the app), Vite, TypeScript in strict mode
-checked with `svelte-check`, ESLint and Prettier, stylelint for the token rules.
+|Svelte 5 with runes, SvelteKit with `adapter-static` as a pure single-page app with a `fallback` page, Vite,
+TypeScript in strict mode, ESLint, Prettier and stylelint.
 
-|*Design tokens*
-|`src/styles/tokens.css`: type scale, 4 px spacing scale, radius, control sizes, z-index layers, motion and
-breakpoints (phone < 768, tablet 768–1279, desktop ≥ 1280); a light and a dark palette switched by `data-theme` and
-`prefers-color-scheme`; the token contract and WCAG 2.1 AA contrast checks of its theme-readability design. No raw
-colour literal in a view or a component.
+|*Visual language*
+|The design tokens of `src/styles/tokens.css` with a light and a dark palette, the WCAG 2.1 AA contrast checks of its
+theme-readability design, Inter self-hosted and an own icon set; no raw colour literal in a view or a component.
 
-|*Typeface and icons*
-|Inter, self-hosted; an own icon set; no font service and no open icon library in the build.
+|*Structure*
+|The shell (`AppShell` with `NavRail`, `TopBar`, `BottomBar` on the phone, `CommandPalette`), the page templates
+(`DashboardPage`, `ObjectPage`, `TriagePage`, `WizardPage`), the closed vocabulary of basic components, one address
+model with one canonical route per object kind.
 
-|*Shell*
-|`lib/shell`: `AppShell` with `NavRail` (collapsible), `TopBar`, `BottomBar` on the phone, `CommandPalette`, live
-indicator.
-
-|*Page templates*
-|`lib/templates`: `DashboardPage`, `ObjectPage`, `TriagePage` (the column engine), `WizardPage`. A view sets no page
-width of its own; the template's split is the only layout.
-
-|*Components*
-|The closed vocabulary of basic components (button, data table, field, toggle, tabs, confirm dialog, toast, status
-label, …); a view is built from them, not from ad-hoc markup.
-
-|*Address model*
-|One address model (`routes.ts`, `parseAddress` / `formatAddress`); route files are thin stubs that hand over to one
-router view; every object kind has exactly one canonical route.
-
-|*API client*
-|One `ApiClient` against same-origin `/api/v1` with timeouts and typed errors, and one shared Server-Sent Events stream
-with reconnect for live state.
-
-|*Texts*
-|No user-facing text in the code; the en/de message catalogue comes from the server and is cached per version.
-
-|*Tests*
-|Vitest with jsdom and Testing Library beside the code; Playwright and axe-core in a separate end-to-end module.
-
-|*Packaging*
-|`frontend-maven-plugin` builds the app into a resource JAR under `META-INF/resources`; the Quarkus application serves
-it same-origin.
+|*Plumbing*
+|One `ApiClient` against same-origin `/api/v1` with one shared Server-Sent Events stream; the en/de message catalogue
+from the server; Vitest and Testing Library beside the code, Playwright and axe-core in a separate module;
+`frontend-maven-plugin` builds a resource JAR the Quarkus application serves.
 |===
 
-The design documents of `pm-web-app` (`pm-mcp-clients/doc/design/web-app/`: navigation, components, view density and
-filtering, theme readability, interaction affordances) are the reference for the visual and interaction rules; this
-page records only the deviations. The decision is in
-link:../adr/0002-The_web_UI_is_a_Svelte_static_single-page_application_served_same-origin.adoc[ADR-0002].
+The design documents of `pm-web-app` (`pm-mcp-clients/doc/design/web-app/`) are the reference for the visual and
+interaction rules; this page records only the deviations.
+
+=== Why a Static Single-Page Application
+
+A form-heavy, live-updating workshop interface needs client state, so server-rendered pages (Qute) would not carry it
+and would share nothing with `pm-web-app`. A separate frontend server would add a second process, a second origin and
+CORS; served from the application's own origin, the session cookie can be `SameSite=Strict`. A component library
+(Material, Tailwind UI) would break the closed vocabulary and the token contract of `pm-web-app`. The cost: parts of
+`pm-web-app` are copied until a shared component package exists.
 
 == Structure of the App
 
@@ -80,7 +60,7 @@ The rail carries the *lenses* of CISOs-Friend:
 |Lens |Chain of levels (columns) |Template
 
 |*Due* (start page)
-|launcher: deadlines, reviews, approvals waiting for the user
+|launcher: deadlines, reviews, releases waiting for the user
 |`DashboardPage`
 
 |*SAMM*
@@ -96,7 +76,7 @@ The rail carries the *lenses* of CISOs-Friend:
 |`TriagePage`
 
 |*ISMS*
-|register › entry; documents
+|risks › entry; documents
 |`TriagePage`
 
 |*Catalogs*
@@ -104,11 +84,11 @@ The rail carries the *lenses* of CISOs-Friend:
 |`TriagePage`
 
 |*Reports*
-|trends, heat maps, comparisons, reporting dates
+|trends, comparisons, reporting dates
 |`DashboardPage`
 
 |*Settings*
-|own directory entry, passkeys
+|own directory entry
 |`WizardPage`
 |===
 
@@ -119,12 +99,10 @@ The first login and the release of a document run as `WizardPage` flows.
 === Authentication
 
 `pm-web-app` pairs a device and sends a device secret as bearer token. CISOs-Friend does not: the browser never holds a
-token. The server is the confidential client of the identity provider (Token Sheriff) and keeps a server-side session.
-During the login the browser holds a short-lived `HttpOnly`, `Secure`, `SameSite=Lax` login-transaction cookie that
-binds `state` and `nonce` across the identity provider's callback; afterwards it holds only the `HttpOnly`, `Secure`,
-`SameSite=Strict` session cookie. State-changing requests carry an
-anti-CSRF header the `ApiClient` adds. A `401` sends the user through the login and back to the same address; a
-step-up demand opens the identity provider's MFA prompt and returns to the approval
+token. The server is the confidential client of the identity provider (Token Sheriff), keeps a server-side session and
+gives the browser only cookies (link:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]).
+State-changing requests carry an anti-CSRF header the `ApiClient` adds. A `401` sends the user through the login and
+back to the same address; a step-up demand opens the identity provider's MFA prompt and returns to the release
 (link:authentication-and-identity.adoc[Authentication and Identity]).
 
 === Forms from Schemas
@@ -138,21 +116,14 @@ browser and in the server; the server's verdict wins. No category has a hand-wri
 
 The form saves intermediate states automatically as drafts and shows "saved for you" versus "saved for everyone". The
 `ApiClient` sends the blob id it loaded with every save; a concurrent change of the same file returns a conflict for
-that file, and the draft is kept. The form shows the fields that differ, with both values; the field-level comparison
-comes from `git-forms`. Changes by others arrive over the event stream; a
-practice another assessor saved refreshes in place.
+that file, and the draft is kept. The form shows the fields that differ, with both values, and the user decides. When
+the Git server is unreachable, the save fails and the draft keeps the work. Changes by others arrive over the event
+stream; a practice another assessor saved refreshes in place.
 
-=== Review and Approval
+=== Review and Release
 
 Release shows the diff against the last released state, generated from the YAML, not from the AsciiDoc output. The
-approve button names the signature level it needs. Level 2 triggers step-up; level 3 asks the browser's WebAuthn API to
-sign a single-use challenge bound to the commit id (a hash over the commit id and a server nonce) with the user's
-passkey (user verification required) and sends the assertion to the server. Passkey
-registration lives in the settings.
-
-=== Brand
-
-CISOs-Friend has its own brand mark; it keeps the token contract and the palette roles of `pm-web-app`, not its mascot.
+release button says that it needs step-up and triggers the renewed MFA login before the release is written.
 
 == Security of the Page
 

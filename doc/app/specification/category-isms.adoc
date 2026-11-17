@@ -2,90 +2,57 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-ISMS-1[CIFR-ISMS-1: Documents]_
+The ISMS category as configuration (`categories/isms/`): documents and the risk register. Reasoning:
+link:../concepts/category-isms.adoc[ISMS]. Repositories: `isms-core` (documents), `isms-register` (risk register).
 
-Status: PLANNED
+[#CIFR-ISMS-1]
+== CIFR-ISMS-1: Documents
 
-The ISMS category as configuration (`categories/isms/`). Reasoning: link:../concepts/category-isms.adoc[ISMS].
-Repositories: `isms-core` (documents), `isms-register` (registers).
+* Policies, the scope, internal audit reports and management review reports must be schema-driven documents in
+  `isms-core`, released with step-up (link:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
-== Documents
-_See Requirement link:../Requirements.adoc#CIFR-ISMS-1[CIFR-ISMS-1: Documents]_
-
-Status: PLANNED
-
-[cols="1,2,1"]
+[cols="1,2"]
 |===
-|Document type |Path in `isms-core` |Release level
+|Document type |Path in `isms-core`
 
-|Policy |`policies/<id>/` |3
-|Scope |`scope/` |3
-|Statement of applicability |`soa/` (one file per control) |3
-|Internal audit report |`audits/<year>/<id>/` |3
-|Management review |`management-reviews/<year>/` |3
+|Policy |`policies/<id>/`
+|Scope |`scope/`
+|Internal audit report |`audits/<year>/<id>/`
+|Management review |`management-reviews/<year>/`
 |===
 
 Each type is a schema-driven document with YAML data, AsciiDoc fragments and generated output.
 
-== Registers
-_See Requirements:_
+[#CIFR-ISMS-2]
+== CIFR-ISMS-2: Risk Register
 
-* _link:../Requirements.adoc#CIFR-ISMS-2[CIFR-ISMS-2: Registers]_
-* _link:../Requirements.adoc#CIFR-ISMS-5[CIFR-ISMS-5: Operational Data by Reference]_
+* Risks must be kept in a register with one file per entry.
+* Every entry must receive a readable running number unique within the register, also when two users create entries
+  concurrently; the number names the entry and is the target of references.
 
-Status: PLANNED
+Path in `isms-register`: `risks/R-<n>.yaml`. The register is a numbered collection: its entries live on one
+collection branch (`refs/heads/risks`), with no branch per entry. The readable number is assigned on the first save
+by the library's running-number mechanism; it names the entry file, a release tag of the entry and the link target
+(`isms-register:risk/R-042`).
 
-[cols="1,1,2"]
-|===
-|Register |Path in `isms-register` |Readable number
+[#CIFR-ISMS-3]
+== CIFR-ISMS-3: Reporting Dates
 
-|Risks |`risks/R-<n>.yaml` |`R-<n>`
-|Controls |`controls/C-<n>.yaml` |`C-<n>`
-|Suppliers |`suppliers/S-<n>.yaml` |`S-<n>`
-|Nonconformities |`nonconformities/NC-<n>.yaml` |`NC-<n>`
-|Assets (non-application) |`assets/A-<n>.yaml` |`A-<n>`
-|===
-
-Each register is a numbered collection: its entries live on one collection branch (`refs/heads/risks` and so on), with
-no branch per entry. The readable number is assigned on the first save by the library's running-number mechanism; it
-names the entry file, a release tag of the entry and the link target (`isms-register:risk/R-042`). Measures and tasks
-are fields `issues: [<tracker-id>]`; no task state is stored.
-
-== Reporting Dates
-_See Requirement link:../Requirements.adoc#CIFR-ISMS-3[CIFR-ISMS-3: Reporting Dates]_
-
-Status: PLANNED
+* The application must show the risk register as of a given tag or date.
 
 Register entries reach `main` only by release: the library's release of a numbered entry merges that entry's path
-from the collection branch into `main` (path-level merge). The as-of views, by tag or by date, read `main` and
-therefore show released entries only; an entry that is saved but not released is not part of a reporting state.
+from the collection branch into `main` (path-level merge). The as-of view reads `main` and therefore shows released
+entries only. `GET /api/v1/isms/risks?as-of=<tag|date>` is answered from an index the library builds for the given tag
+or commit without changing the current index; a tag selects the tagged commit, a date the last commit on `main` at or
+before the end of that day (UTC).
 
-As-of views, both answered from an index the library builds for the given tag or commit without changing the current
-index:
+[#CIFR-ISMS-4]
+== CIFR-ISMS-4: Operational Data by Reference
 
-* Register: `GET /api/v1/isms/registers/{register}?as-of=<tag|date>` on `isms-register`.
-* Statement of applicability: `GET /api/v1/isms/soa?as-of=<tag|date>` on `isms-core`, built from the released
-  statement of applicability reachable from that commit.
+* Tasks and measures must be referenced by issue-tracker id; the application must not store task state in Git.
 
-A tag selects the tagged commit; a date selects the last commit on `main` at or before the end of that day (UTC).
-
-Audit tags `audit/<yyyy-mm-dd>` mark a reporting date. The application creates them on the action "Mark reporting
-date" (`POST /api/v1/isms/reporting-dates`) of a user with `approve` on both repositories: it tags the current tip of
-`main` of `isms-core` and of `isms-register` with today's date (UTC) as name, signed by the application and pushed
-like a release tag. A past date is not tagged; an as-of query by date covers it. An existing audit tag is never moved.
-A second mark on the same day is refused per repository: when only one of the two repositories carries the day's tag
-(a failure between the two), a retry creates only the missing tag in the repository that lacks it.
-
-== Evidence
-_See Requirement link:../Requirements.adoc#CIFR-ISMS-4[CIFR-ISMS-4: Evidence from SAMM]_
-
-Status: PLANNED
-
-A control's `evidence` list accepts `samm-assessments:assessment/<id>` references; the reference must name a released
-assessment (release tag `assessments/<id>/v1` exists).
+Measures and tasks are fields `issues: [<tracker-id>]`, entered by the user or the agent.

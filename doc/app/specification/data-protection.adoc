@@ -2,139 +2,98 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
+What the application configures and enforces on top of the library's pseudonyms, erasure and repository registry.
+Reasoning: link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library
+contract: link:../../specification/git-directory.adoc#GDR-DIR-6[GDR-DIR-6: Erasure] and
+link:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
 
-Status: PLANNED
+[#CIFR-DP-1]
+== CIFR-DP-1: Repository Cut
 
-What the application configures and enforces on top of the library's keyring, pseudonyms and erasure. Reasoning:
-link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library contract:
-link:../../Requirements.adoc#GDR-CRYPTO-3[GDR-CRYPTO-3: Pseudonyms],
-link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4: Erasure by Key Rotation],
-link:../../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5: Evidence of Erasure],
-link:../../Requirements.adoc#GDR-CRYPTO-6[GDR-CRYPTO-6: Personal Fields in Documents] and
-link:../../Requirements.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
-
-== Repository Cut
-_See Requirement link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
-
-Status: PLANNED
-
-Default `repositories` in the shipped `cisos-friend.yaml`:
+* The repository cut must be configurable; every repository declares exactly one confidentiality class and one
+  retention period (link:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]).
+* The default configuration must contain `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`,
+  `threat-models` and `directory`.
 
 [cols="1,1,1,2"]
 |===
-|Alias |Confidentiality |Retention |Categories
+|Alias |Confidentiality |Retention |Content
 
 |`isms-core` |`public-internal` |`unlimited` |ISMS documents
-|`isms-register` |`restricted` |`unlimited` |ISMS registers
-|`isms-incidents-<year>` |`strongly-restricted` |`incident-reports` (default `P5Y`) |Incident reports
+|`isms-register` |`restricted` |`unlimited` |Risk register
+|`isms-incidents-<year>` |`strongly-restricted` |`P5Y` |Incident reports of one year
 |`samm-assessments` |`public-internal` |`unlimited` |SAMM
-|`threat-models` |`restricted` |`unlimited` |Threat models (variant B)
-|`directory` |`public-internal` |`unlimited` |Catalogs, persons, keyring
+|`threat-models` |`restricted` |`unlimited` |Threat models
+|`directory` |`public-internal` |`unlimited` |Catalogs, person entries under pseudonyms, record of erasures
 |===
 
-The retention classes and their periods are defined in `retention-classes`
-(link:configuration.adoc#_retention_classes[Configuration, Retention Classes]); the period of `incident-reports` defaults
-to `P5Y`, and an organisation sets its own period with its data protection officer. Each category names its class;
-boot validation refuses a repository whose categories carry two retention classes
-(link:configuration.adoc#_boot_validation[Boot Validation]).
-`isms-incidents-<year>` is created on the first report of a year.
+The incident period of `P5Y` is a default; an organisation sets its own with its data protection officer. A category
+names its repository in its `workflow.yaml`; `isms-incidents-<year>` is created on the first report of a year.
 
-== References
-_See Requirement link:../Requirements.adoc#CIFR-DP-2[CIFR-DP-2: Cross-Repository References]_
+[#CIFR-DP-2]
+== CIFR-DP-2: Cross-Repository References
 
-Status: PLANNED
+* A save containing a reference to another repository's entry must be rejected when the target does not exist.
 
-Reference forms, as defined by the library: `<alias>:<kind>/<id>` for a document, where `<alias>` is the repository
-alias of `repositories` (`isms-register:risk/R-042`, `samm-assessments:assessment/<id>`), and `<catalog>:<id>` for a
-directory catalog entry (`service:payment-api`, `role:ciso`). The application may append `#<fragment>` to name a part
-of the target document (a practice, a threat); the existence check applies to the document. On save every reference
-field (schema `x-reference: true`) is resolved against the index; an unresolved reference is a field error
-`REFERENCE_NOT_FOUND`. A reference into a repository the user may not read is reported as not found.
+Reference forms, as defined by the library: `<alias>:<kind>/<id>` for a document (`isms-register:risk/R-042`,
+`samm-assessments:assessment/<id>`), and `<catalog>:<id>` for a catalog entry (`service:payment-api`, `role:ciso`).
+The application may append `#<fragment>` to name a part of the target document (a practice, a threat); the existence
+check applies to the document. On save every reference field (schema `x-reference: true`) is resolved against the
+index; an unresolved reference is a field error `REFERENCE_NOT_FOUND`. A reference into a repository the user may not
+read is reported as not found.
 
-== Erasure
-_See Requirements:_
+[#CIFR-DP-3]
+== CIFR-DP-3: Erasure
 
-* _link:../Requirements.adoc#CIFR-DP-3[CIFR-DP-3: Erasure Batching]_
-* _link:../Requirements.adoc#CIFR-DIR-4[CIFR-DIR-4: Former Members]_
+* With the default person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
+  the erasure must take effect at once. The application runs as one instance
+  (link:../concepts/application-architecture.adoc#_one_instance[Application Architecture, One Instance]), so no
+  other process keeps showing the person.
+* Every erasure must delete the person entry in a commit that records the pseudonym and the date, never the person;
+  it must not rewrite history.
 
-Status: PLANNED
+`POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym calls the library's erasure of the
+active person directory. With `git`, one commit deletes the entry and records pseudonym and date in `erasures.yaml` of
+the persons' repository; the history keeps the earlier versions, and the next checkpoint anchors the commit. A
+provider for the organisation's own source returns managed-by-source; the application answers `409` with the problem
+type `managed-by-source` and names no person.
 
-* Requests: `POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym; stored as pending in the
-  `directory` repository.
-* Execution: at `keyring.rotation-interval` (default `P1D`) the application starts the library's erasure. The
-  library removes the pending entries, re-encrypts the keyring with a new KEK version and commits (and in remote mode
-  pushes) it; only after that succeeded does the library destroy the old KEK version at the key source
-  (link:../../Requirements.adoc#GDR-CRYPTO-4[GDR-CRYPTO-4]). The application only configures the key source.
-* Evidence: the rotation commit names the erased pseudonyms and the KEK version pending destruction; a further commit
-  records the destroyed version (link:../../Requirements.adoc#GDR-CRYPTO-5[GDR-CRYPTO-5]). Both commits are
-  anchored by the next checkpoint while anchoring is active (by default daily, with the own timestamp).
-* Display: a pseudonym without keyring entry is shown as "former member".
+[#CIFR-DP-4]
+== CIFR-DP-4: Retention
 
-== Retention
-_See Requirement link:../Requirements.adoc#CIFR-DP-4[CIFR-DP-4: Retention]_
+* The application must list the repositories whose retention period has ended to users with the right *administer
+  catalogs*; it must not rewrite history.
+* On a confirmed deletion the application must remove its local repository on the volume, stop serving the
+  repository and exclude it from the periodic fetch (link:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]), also after a
+  restart, until the operator removes it from the configuration; the remote repository and backup copies are deleted
+  by the operator.
 
-Status: PLANNED
+A daily job computes `end = created + retention` (for `isms-incidents-<year>`: 31 December of the year + retention)
+and lists expired repositories in the *Due* lens. The deletion is logged in `directory` and anchored by the next
+checkpoint. The operator's duties (link:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
+name the deletion of the remote repository and require backup expiry to match the period.
 
-Daily job: for each repository whose retention class has a period, compute `end = created + period` (for
-`isms-incidents-<year>`: 31 December of `<year>` + period). Expired repositories are listed in the *Due* lens of users
-with `administer-catalogs`. Deletion is a confirmed action that removes the local repository on the volume (the cache
-of a remote repository included) and, through the Git host API of the repository's `host-type`, the remote
-repository; it is logged in `directory` and anchored by the next checkpoint while anchoring is active. Backup
-copies of the Git server and of the volume are outside the application: the operator's duties
-(link:../concepts/deployment.adoc[Deployment]) require their expiry to match the retention period.
+[#CIFR-DP-5]
+== CIFR-DP-5: No Personal Details in Documents
 
-Restriction of processing: before the end of the period, a document can be marked `processing-restricted: true`
-(GDPR Art. 18). This field is distinct from the confidentiality class `restricted` of a repository. It replaces
-erasure while a statutory retention obligation applies (GDPR Art. 17(3)(b), § 35(3) BDSG). A document marked this way
-is readable only with `approve`.
+* A field that names a person must store a pseudonym picked from the person directory, never a name.
+* Fields marked free text in a schema must show a hint that personal details and interview notes do not belong there
+  but in the ticket system.
 
-== Personal Fields
-_See Requirement link:../Requirements.adoc#CIFR-DP-5[CIFR-DP-5: Personal Fields]_
+A schema field with `"x-person": true` holds a pseudonym (`p-…`); validation refuses a value that is no known
+pseudonym. There is no encrypted field type. Fields with `"x-free-text": true` show the hint text
+`form.hint.no-personal-notes`.
 
-Status: PLANNED
+[#CIFR-DP-6]
+== CIFR-DP-6: Read-Access Events
 
-Schema fields with `"x-personal": true` carry a `subject` (pseudonym) and are stored as ciphertext produced by the
-library with that subject's data encryption key (DEK). Fields with `"x-free-text": true` show the hint text
-`form.hint.no-personal-notes` from the catalogue.
+* Every read of a document in a repository of class *restricted* or *strongly restricted* must produce a log record
+  with pseudonym, repository and document id for the SIEM.
 
-== Read-Access Events
-_See Requirement link:../Requirements.adoc#CIFR-DP-6[CIFR-DP-6: Read-Access Events]_
-
-Status: PLANNED
-
-Every `read_document`, `GET /api/v1/documents/…` and diff on a repository of class `restricted` or
-`strongly-restricted` emits one `INFO` record `CISOS_FRIEND-<n>: {pseudonym} read {repository}/{id}`, routed to the SIEM
-through the log shipping of the platform. Index views emit one record per view, not per document.
-
-== Key Source
-_See Requirement link:../Requirements.adoc#CIFR-DP-7[CIFR-DP-7: Key Source]_
-
-Status: PLANNED
-
-`keyring.kek-source`:
-
-[cols="1,2"]
-|===
-|Value |Behaviour
-
-|`kms`
-|Key versions and destruction through the library's KMS key source. The KMS must destroy a single key version:
-link:https://cloud.google.com/kms/docs/destroy-restore[Google Cloud KMS] does, after a scheduled-for-destruction
-duration (default 30 days) that adds to the erasure delay.
-link:https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html[AWS KMS] keeps the key material of every
-rotation until the whole KMS key is deleted, so it cannot serve as KEK source this way; whether one KMS key per KEK
-version is supported is an open question
-
-|`vault-transit`
-|Key versions and destruction through the library's Vault transit key source
-
-|`file`
-|KEK versions read from a mounted directory; destruction is a manual step; `WARN` record at every start
-|===
+Every `read_document`, `GET /api/v1/documents/…` and diff on such a repository emits one `INFO` record
+`CISOS_FRIEND-<n>: {pseudonym} read {repository}/{id}`, routed to the SIEM through the log shipping of the platform.
+Index views emit one record per view, not per document.

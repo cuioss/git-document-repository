@@ -7,95 +7,108 @@
 
 CISOs-Friend is the server application in which a development organisation maintains its OWASP SAMM assessments,
 threat models, incident response reports and ISMS documents as versioned documents, on the Git server it already runs.
-It is built on the libraries of `git-document-repository` and on Token Sheriff, and runs as a Quarkus native
-application on Java 25.
+It is built on the libraries of `git-document-repository` and on Token Sheriff, runs as a Quarkus native application
+on Java 25, and has two user interfaces: a web app for people and an MCP server for AI agents acting for a user.
 
 [NOTE]
 ====
 This directory documents the application, not the libraries. It lives here only until the application has a
 repository of its own; then `doc/app/` moves there in one go and becomes that repository's `doc/`. It is therefore
 self-contained: its diagrams are in `resources/diagrams/`, its decisions in `adr/`, and it links into the library
-documentation only to the library concepts and requirements (`../concepts/`, `../Requirements.adoc`).
+documentation only to the library concepts and requirements.
 ====
 
-== Two User Interfaces
-
-[cols="1,3"]
-|===
-|Interface |For
-
-|*Web app*
-|People: forms generated from the category schemas, dashboards, review and approval with step-up or passkey. A Svelte
-single-page application with the visuals and UI structure of `pm-web-app`.
-
-|*MCP server*
-|AI agents acting for a user: reading, drafting and saving at signature level 1, requesting releases. An OAuth 2.1
-protected resource; tokens are audience-bound and never passed through.
-|===
-
-== Where to Start
-
-[cols="1,3"]
-|===
-|Reader |Entry point
-
-|Anyone new
-|link:concepts/cisos-friend-overview.adoc[Overview] -- the four categories, the audience, the two interfaces, the
-positioning beside verinice.
-
-|Implementer
-|link:Requirements.adoc[Requirements] and link:Specification.adoc[Specification], then the concept of the part at hand.
-
-|Reviewer of the design
-|The <<_concepts,concepts>> in the reading order below and the <<_decisions,decisions>>.
-
-|Operator
-|link:concepts/deployment.adoc[Deployment] and link:specification/configuration.adoc[Configuration].
-|===
+New readers start with the link:concepts/cisos-friend-overview.adoc[Overview]; operators with
+link:concepts/deployment.adoc[Deployment] and link:specification/configuration.adoc[Configuration].
 
 [#_concepts]
 == Concepts
 
-[cols="1,3"]
-|===
-|Concept |Content
+In reading order:
 
-|link:concepts/cisos-friend-overview.adoc[Overview]
-|Question, categories, audience, interfaces, building blocks, positioning
+. link:concepts/cisos-friend-overview.adoc[Overview] -- question, categories, audience, interfaces, positioning
+. link:concepts/category-samm.adoc[OWASP SAMM Assessments] -- layout, workshop editing, release, scores, targets
+. link:concepts/category-threat-models.adoc[Threat Models] -- tool landscape, place of a model, life cycle
+. link:concepts/category-incident-reports.adoc[Incident Response Reports] -- handling versus report, notification
+  deadlines, generated output
+. link:concepts/category-isms.adoc[ISMS and the Comparison with verinice] -- clause 7.5 on Git, documents and the risk
+  register, verinice comparison
+. link:concepts/service-catalog.adoc[Service Catalog] -- services, protection needs, alignment with Backstage
+. link:concepts/authentication-and-identity.adoc[Authentication and Identity] -- login through Token Sheriff, claims,
+  first login, rights, the Git credential, step-up
+. link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] -- repository cut,
+  personal data per category, person directory, erasure, what is agreed with the DPO
+. link:concepts/application-architecture.adoc[Application Architecture] -- shape, modules, configuration, run-time
+  state, native image, testing
+. link:concepts/web-app.adoc[Web App] -- what is taken from `pm-web-app`, structure, what differs, page security
+. link:concepts/mcp-server.adoc[MCP Server] -- protected resource, transport, scopes and rights, attribution
+. link:concepts/deployment.adoc[Deployment] -- what runs where, image, secrets, compose sample, operating duties
 
-|link:concepts/category-samm.adoc[OWASP SAMM Assessments]
-|Layout, workshop editing, release, comparison, targets
-
-|link:concepts/category-threat-models.adoc[Threat Models]
-|Tool landscape, place of a model, outdated-model detection, links
-
-|link:concepts/category-incident-reports.adoc[Incident Response Reports]
-|Handling versus report, notification deadlines, generated output, alternatives
-
-|link:concepts/category-isms.adoc[ISMS and the Comparison with verinice]
-|Clause 7.5 on Git, artefact groups, the bridge to SAMM, verinice comparison
-
-|link:concepts/authentication-and-identity.adoc[Authentication and Identity]
-|Login through Token Sheriff, claims, first login, rights, push credentials, signature levels
-
-|link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
-|Repository cut, personal data per category, erasure concept, key source, what is agreed with the DPO
-
-|link:concepts/application-architecture.adoc[Application Architecture]
-|Shape, modules, libraries, configuration, run-time state, native image, testing
-
-|link:concepts/deployment.adoc[Deployment]
-|What runs where, modes, image, secrets, compose sample, operating duties
-
-|link:concepts/web-app.adoc[Web App]
-|What is taken from `pm-web-app`, structure, what differs, page security
-
-|link:concepts/mcp-server.adoc[MCP Server]
-|Protected resource, transport, scopes and rights, attribution, limits and audit
-|===
-
-The library concepts these build on are in `../concepts/` of `git-document-repository`, starting with
+The library concepts these build on start with
 link:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents].
+
+[#_specification]
+== Specification
+
+Each specification document states its requirements as numbered sections (`CIFR-<GROUP>-<n>`): first the rules that
+must hold, then the design that realises them. Nothing is implemented yet.
+
+[cols="1,1,3"]
+|===
+|Document |Group |Content
+
+|link:specification/architecture-and-modules.adoc[Architecture and Modules]
+|`CIFR-GEN`
+|What the libraries own, Maven modules, categories, layers, run-time state, logging, an unreachable Git server
+
+|link:specification/configuration.adoc[Configuration]
+|`CIFR-CONF`
+|`application.properties`, `cisos-friend.yaml`, boot validation, repositories and refresh
+
+|link:specification/deployment.adoc[Deployment]
+|`CIFR-OPS`
+|Image, ports and readiness, secrets, compose sample
+
+|link:specification/authentication.adoc[Authentication]
+|`CIFR-AUTH`
+|Web login, rights, signed commits and trailers, step-up, the Git credential
+
+|link:specification/directory.adoc[Directory and Catalogs]
+|`CIFR-DIR`
+|Person directory, first login, catalogs, service catalog, Backstage import, former members
+
+|link:specification/mcp-server.adoc[MCP Server]
+|`CIFR-MCP`
+|Transport, metadata, token validation, scopes, credentials, tools, audit
+
+|link:specification/web-app.adoc[Web App]
+|`CIFR-WEB`
+|Stack, visual language, navigation, forms, editing, review, texts, page security
+
+|link:specification/category-samm.adoc[SAMM]
+|`CIFR-SAMM`
+|Layout, scope, editing, release, scores and comparison, targets, evidence
+
+|link:specification/category-threat-models.adoc[Threat Models]
+|`CIFR-TM`
+|Place, format, review due date, links, recipes
+
+|link:specification/category-incident-reports.adoc[Incident Reports]
+|`CIFR-IR`
+|Layout, deadlines, mandatory fields, affected services
+
+|link:specification/category-isms.adoc[ISMS]
+|`CIFR-ISMS`
+|Documents, risk register, reporting dates, operational data
+
+|link:specification/data-protection.adoc[Data Protection]
+|`CIFR-DP`
+|Repository cut, references, erasure, retention, personal details, read-access events
+
+|link:specification/testing.adoc[Testing]
+|`CIFR-NFR`
+|Test lanes, index size, save latency, concurrency, security tests, native image
+|===
 
 [#_decisions]
 == Decisions
@@ -104,52 +117,7 @@ link:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Vers
 |===
 |Record |Decision |Status
 
-|link:adr/0001-CISOs-Friend_runs_as_a_Java_25_Quarkus_native_image_in_a_distroless_container.adoc[ADR-0001]
-|Java 25 Quarkus native image in a distroless container, structure aligned with API Sheriff
-|Accepted
-
-|link:adr/0002-The_web_UI_is_a_Svelte_static_single-page_application_served_same-origin.adoc[ADR-0002]
-|Svelte static single-page application served same-origin, visuals of `pm-web-app`
-|Accepted
-
-|link:adr/0003-The_MCP_server_is_an_OAuth_2.1_protected_resource_and_never_passes_tokens_through.adoc[ADR-0003]
-|MCP server as OAuth 2.1 protected resource, audience-bound tokens, no passthrough
-|Accepted
-
-|link:adr/0004-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0004]
+|link:adr/0001-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0001]
 |Authentication through Token Sheriff, server-side session for the web app
 |Accepted
-
-|link:adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005]
-|Categories are configuration of `git-forms`, not code
-|Accepted
-
-|link:adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]
-|Complement verinice, do not replace it
-|Accepted
-
-|link:adr/0007-Repositories_are_cut_by_confidentiality_and_retention_class.adoc[ADR-0007]
-|Repositories cut by confidentiality and retention class
-|Accepted
-
-|link:adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_lives_in_Git.adoc[ADR-0008]
-|Incident handling stays in ticket and chat; only the report lives in Git
-|Accepted
 |===
-
-== Requirements and Specification
-
-* link:Requirements.adoc[Requirements] -- `CIFR-<GROUP>-<n>`: general, the four categories, directory,
-  authentication, MCP server, web app, data protection, operation, non-functional.
-* link:Specification.adoc[Specification] -- one document per part, each section with its backtracking link and status.
-
-== Reading Order
-
-. link:concepts/cisos-friend-overview.adoc[Overview]
-. link:concepts/category-samm.adoc[SAMM], then the other categories
-. link:concepts/authentication-and-identity.adoc[Authentication and Identity] and
-  link:concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]
-. link:concepts/application-architecture.adoc[Application Architecture], link:concepts/web-app.adoc[Web App],
-  link:concepts/mcp-server.adoc[MCP Server], link:concepts/deployment.adoc[Deployment]
-. The <<_decisions,decisions>>
-. link:Requirements.adoc[Requirements], then link:Specification.adoc[Specification]

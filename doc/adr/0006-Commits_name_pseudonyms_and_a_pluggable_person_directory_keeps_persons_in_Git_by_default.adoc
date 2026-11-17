@@ -1,0 +1,121 @@
+= ADR-0006: Commits name pseudonyms, and a pluggable person directory keeps persons in Git by default
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Commits and documents name persons only by a random pseudonym. Names and memberships lie in a person directory behind the service interface PersonDirectory of git-store. The default provider git keeps one plain YAML entry per person in a repository, found at login by a SHA-256 hash of issuer and sub; erasure deletes the entry and records the pseudonym, and the repository's history keeps earlier versions, as comparable systems keep theirs. Operators who need more plug in a provider for their own source (for example LDAP); then no names enter Git. There is no encryption in Git.
+// tags: data-protection, gdpr, pseudonym, directory, erasure, spi
+// affects: git-store, git-directory, git-forms
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+Commits and documents name persons: as authors, assessors, approvers or affected persons. Git keeps every old version
+of every file, and the GDPR demands that personal data can be erased. The question is where names and memberships live,
+and how much machinery erasure needs.
+
+Comparable systems keep their history and erase only the current record (see
+xref:../concepts/data-protection.adoc#_how_comparable_systems_handle_erasure[Data Protection, How Comparable Systems
+Handle Erasure]).
+
+*The decision:*
+
+* *Commits and documents name pseudonyms only.* The author of a commit is a random pseudonym (`p-<random>`); a document
+  refers to a person by pseudonym and to a responsibility by role and team (`role:…`, `team:…`). Details of affected
+  or involved persons stay in the system that handles the case, such as the ticket system, referenced by id. There is
+  no encrypted field type.
+* *A person directory keeps names and memberships*, behind the service interface `PersonDirectory` of `git-store`:
+  the pseudonym of an identity-provider issuer and `sub`, the person's name and memberships (pairs of team and role),
+  the persons holding a role in a team, and the erasure. Exactly one provider is active, chosen by configuration and
+  found through `ServiceLoader`.
+* *The default provider `git`* (`git-directory`) keeps one plain YAML entry per person, `persons/<pseudonym>.yaml`, in
+  a configured repository, by default the directory's. The entry carries no issuer and no `sub`, only the SHA-256 hash
+  of both, through which the login finds it. Erasure deletes the entry in a commit and records the pseudonym and the
+  date. The history of that repository keeps the earlier versions of the entry.
+* *Providers for the operator's own source* (for example LDAP, SCIM or the identity provider's user directory) plug
+  into the same interface. Names and memberships then stay in that source, no name enters Git, and the operator erases
+  there.
+* *Retention per repository* stays: a repository whose retention period ended is deleted as a whole.
+
+See xref:../concepts/data-protection.adoc[Data Protection].
+
+== Alternatives rejected
+
+=== An encrypted keyring in Git with erasure by key rotation
+
+The mapping and the person entries lie in Git, encrypted with a data key per person and retention class; the keyring
+of data keys is encrypted with a versioned key-encryption key (KEK) held outside Git. Erasure re-encrypts the keyring
+with a new KEK and destroys the old one, which makes every old version in the history unreadable (crypto-shredding).
+
+*Rejected because* it needs a module of its own, an encryption library, a versioned KEK whose old versions must
+vanish from every backup, a strict order of rotate, push and destroy, and a keyring that is a hot spot for
+compare-and-swap; and whether destroying the key counts as erasure is not settled (EDPB Guidelines 02/2025, version
+2.0, para. 51). An operator who needs more than the default plugs in a provider for a source where erasure is a
+deletion.
+
+=== Person entries as files outside every repository
+
+The default provider keeps the entries as plain files on the application's volume, never versioned, so that erasure
+leaves no history.
+
+*Rejected because* it adds a store of its own beside Git, with its own backup.
+An operator who needs erasure without history plugs in a provider for a source that offers it.
+
+=== Names in commits and documents
+
+Commits carry the person's name as author, as Git does by default, and documents name persons.
+
+*Rejected because* the name would then lie in every repository, in every commit and every clone. With pseudonyms the
+names lie in the person entries of one repository only, whose readers can be restricted.
+
+=== Issuer and `sub` in clear text in the entry
+
+The entry stores issuer and `sub`, as the mapping needs them.
+
+*Rejected because* the `sub` is a personal identifier that would stay in the history after an erasure. The hash
+suffices to find the entry at login. A `sub` an attacker can guess, such as an e-mail address, can still be found by
+hashing candidates; a random `sub` cannot.
+
+=== Rewriting the history on erasure
+
+Erasure rewrites every commit that contains the person's entry.
+
+*Rejected because* a rewrite breaks every clone, every signature and every anchor proof.
+
+== Consequences
+
+=== Properties of the design
+
+* No further store and no encryption: the default directory is a repository like the others, with its rights, reviews
+  and backup.
+* References keep working after an erasure: the pseudonym stays in the history and resolves to "former member".
+* An operator with an existing user directory keeps names, and their erasure, where they already are.
+
+=== Accepted costs
+
+* With the default provider, the history of the persons' repository keeps earlier versions of an erased entry, as
+  comparable systems keep theirs. The erasure removes the entry from the current state, from every view of the
+  application and from every new clone's working view; it does not remove it from the history.
+* Who may read the persons' repository may read its history; an organisation that wants a smaller circle gives the
+  person entries a repository of their own with restricted readers.
+* Documents cannot hold personal details; a report that needs them refers to the system that holds them.
+
+=== When this is revisited
+
+When a regulator or an organisation's data protection officer requires erasure from the history of the default
+provider, or when a document kind must hold personal details itself.
+
+== Links
+
+* xref:../concepts/data-protection.adoc[Data Protection]
+* xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs]
+* xref:../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19] -- the person directory interface
+* xref:../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2] -- the `git` provider

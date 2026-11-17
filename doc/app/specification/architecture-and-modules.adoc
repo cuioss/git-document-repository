@@ -2,23 +2,42 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
-
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-GEN-2[CIFR-GEN-2: One Rule Set for Both Interfaces]_
-
-Status: PLANNED
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
 The module layout, the layers inside the application, the run-time state and the cross-cutting technical rules.
 Reasoning: link:../concepts/application-architecture.adoc[Application Architecture].
 
-== Maven Modules
-_See Requirement link:../Requirements.adoc#CIFR-OPS-1[CIFR-OPS-1: Runtime]_
+== Owned by the Libraries
 
-Status: PLANNED
+The application builds on the libraries of `git-document-repository` and on Token Sheriff. Their behaviour is
+referenced here, never restated:
+
+[cols="1,2"]
+|===
+|Behaviour |Owner
+
+|Drafts, saving, compare-and-swap, release by merge and tag, in-memory index, outbox, commit signature, identity
+trailers, signature check, anchoring with the own timestamp
+|link:../../specification/git-store.adoc[`git-store` specification]
+
+|Schemas, templates, workflows, step-up check, deterministic serialisation, running numbers, generated output
+|link:../../specification/git-forms.adoc[`git-forms` specification]
+
+|Person directory: pseudonyms, person entries in Git by default, erasure; catalogs and stable ids
+|link:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19],
+link:../../specification/git-directory.adoc[`git-directory` specification]
+
+|Repositories, remote policy, transport
+|link:../../specification/git-core.adoc[`git-core` specification]
+
+|OIDC confidential client, step-up (RFC 9470), logout, token validation
+|Token Sheriff (link:https://github.com/cuioss/TokenSheriff/tree/main/doc/client[client],
+link:https://github.com/cuioss/TokenSheriff/tree/main/doc/validation[validation])
+|===
+
+== Maven Modules
 
 Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:cui-quarkus-parent`. Root
 `dependencyManagement` imports, in this order: `io.quarkus:quarkus-bom`, the Token Sheriff BOM, the
@@ -55,13 +74,42 @@ Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:c
 
 Reactor order: `categories`, `web-app`, `cisos-friend`, `web-e2e`, `integration-tests`, `deployment`.
 
-== Layers
-_See Requirements:_
+[#CIFR-GEN-1]
+== CIFR-GEN-1: Categories as Configuration
 
-* _link:../Requirements.adoc#CIFR-GEN-2[CIFR-GEN-2: One Rule Set for Both Interfaces]_
-* _link:../Requirements.adoc#CIFR-GEN-4[CIFR-GEN-4: Persistence Only Through the Libraries]_
+* Each category (SAMM, threat models, incident reports, ISMS) must be defined by a JSON Schema, an AsciiDoc template
+  and a workflow, and by nothing else; the only code of a category is a named extension point for behaviour a schema
+  cannot express.
+* Adding a category must require no Java source change: a test category supplied as resources only must pass create,
+  save, release and generated output in the integration tests.
 
-Status: PLANNED
+[cols="1,3"]
+|===
+|File |Content
+
+|`schema.json`
+|JSON Schema of the category's YAML documents; a field that names a person carries `"x-person": true` and holds a
+pseudonym
+
+|`template.adoc`
+|Template that generates the AsciiDoc output from YAML and fragments
+
+|`workflow.yaml`
+|States, transitions, deadlines as data, repository alias
+|===
+
+The only extension point is `ScoreCalculator` (SAMM scores), a named CDI interface in `service`. The test category
+`categories/test-note/` exercises create, save, release and output generation without it.
+
+[#CIFR-GEN-2]
+== CIFR-GEN-2: One Rule Set for Both Interfaces
+
+* Every operation offered by the MCP server must be executed by the same application service as the web app's
+  equivalent operation, with the same rights check, schema validation and step-up check.
+* For every MCP tool, a test must show that the web-app request and the tool call with the same user and input
+  produce the same outcome (success, validation error, conflict, forbidden). The one exception is completing a
+  release: it needs step-up, so the MCP server always ends it with `STEP_UP_REQUIRED`
+  (link:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
 [cols="1,2,2"]
 |===
@@ -80,78 +128,29 @@ Status: PLANNED
 |`config`
 
 |`service`
-|Application services: documents, workflow transitions, deadlines, dashboards, directory flows; it declares the port
-interfaces it needs from outside systems (for example the deletion of a remote repository)
+|Application services: documents, workflow transitions, deadlines, dashboards, directory flows
 |`config`, the `git-document-repository` modules
-
-|`integration`
-|Outbound adapters through `cui-http`: Git host API, ticket systems, chat, issue tracker; each
-implements a port interface of `service`, and CDI injects the implementation
-|`config`, `service` (port interfaces only)
 
 |`config`
 |Configuration model, boot validation rules
 |—
 |===
 
-The clients of the timestamp authority and of the key sources (KMS, Vault transit) belong to the libraries
-(`git-timestamp`, `git-crypto`); `service` configures them from `cisos-friend.yaml` and the application has no adapter
-of its own for them.
+Commit signing, anchoring and the person directory belong to the libraries; `service` configures them from
+`cisos-friend.yaml`, and the application has no adapter of its own for them. The application makes no outbound call
+of its own besides Git and the identity provider.
 
-ArchUnit rules, planned for the unit lane:
+ArchUnit rules, planned for the unit lane: no class outside `service` depends on a `git-document-repository` package;
+`web` and `mcp` do not depend on each other. Every MCP tool delegates to exactly one service method that a web
+resource also calls.
 
-* No class outside `service` depends on a `git-document-repository` package.
-* No class depends on `org.eclipse.jgit`.
-* `web` and `mcp` do not depend on each other.
-* `service` does not depend on `integration`; it reaches outside systems only through its own port interfaces.
+[#CIFR-GEN-3]
+== CIFR-GEN-3: No Database of Its Own
 
-Every MCP tool delegates to exactly one service method that a web resource also calls.
-
-== Categories
-_See Requirement link:../Requirements.adoc#CIFR-GEN-1[CIFR-GEN-1: Categories as Configuration]_
-
-Status: PLANNED
-
-[cols="1,3"]
-|===
-|File |Content
-
-|`schema.json`
-|JSON Schema of the category's YAML documents; fields marked personal carry `"x-personal": true`
-
-|`template.adoc`
-|Template that generates the AsciiDoc output from YAML and fragments
-
-|`workflow.yaml`
-|States, transitions, signature level per transition, deadlines, repository alias
-|===
-
-Extension points for behaviour a schema cannot express, each a named CDI interface in `service`:
-
-[cols="1,2"]
-|===
-|Extension point |Used by
-
-|`ScoreCalculator`
-|SAMM scores
-
-|`OutdatedModelDetector`
-|Threat models
-
-|`DeadlineRule`
-|Incident notification deadlines
-
-|`TimelineImporter`
-|Incident timeline import
-|===
-
-The test category `categories/test-note/` exercises create, save, release and output generation without any extension
-point.
-
-== Run-Time State
-_See Requirement link:../Requirements.adoc#CIFR-GEN-3[CIFR-GEN-3: No Database of Its Own]_
-
-Status: PLANNED
+* The application must persist durable state only in Git repositories.
+* The in-memory index and computed reminders must be rebuilt from Git at start; a restart test must show identical
+  dashboard results before and after restart.
+* The application must not configure a datasource.
 
 [cols="1,1,2"]
 |===
@@ -159,13 +158,13 @@ Status: PLANNED
 
 |Index
 |At start, per repository
-|Save, webhook, periodic fetch
+|Save, periodic fetch
 
-|Keyring mapping
-|At start
-|KEK rotation commit
+|Person directory (`git`)
+|At start, from the persons' repository
+|Fetch that moves its `main`, own save of an entry, erasure
 
-|Pending approvals
+|Pending release requests
 |From the index (open requests are documents)
 |As index
 
@@ -180,40 +179,43 @@ Status: PLANNED
 
 No `quarkus-datasource` or Hibernate extension is on the class path; an enforcer rule bans them.
 
-== Logging and Metrics
-_See Requirement link:../Requirements.adoc#CIFR-OPS-7[CIFR-OPS-7: Logging and Metrics]_
+[#CIFR-GEN-4]
+== CIFR-GEN-4: Persistence Only Through the Libraries
 
-Status: PLANNED
+* Application packages must reach Git only through the `git-document-repository` modules; an ArchUnit rule must fail
+  the build when an application package imports `org.eclipse.jgit`.
 
-* Logger: `de.cuioss.tools.logging.CuiLogger`; one `LogMessages` class per package root, DSL style, with `INFO`,
-  `WARN`, `ERROR` holders; identifiers `CISOS_FRIEND-<n>`.
-* `LogMessages.adoc` lists every record: identifier, level, template, parameters, trigger.
-* Metrics: `quarkus-micrometer-registry-prometheus` on the management port, path `/q/metrics`. Names below
-  `cisos_friend_`: `saves_total{repository,outcome}`, `conflicts_total{repository}`, `index_documents{repository}`,
-  `mcp_calls_total{tool,outcome}`, `rate_limited_total{surface}`.
+[#CIFR-GEN-5]
+== CIFR-GEN-5: Logging and Metrics
 
-== Degraded Operation
-_See Requirement link:../Requirements.adoc#CIFR-NFR-5[CIFR-NFR-5: Degraded Git Server]_
+* Every message at INFO and above must use a `LogRecord` documented in `LogMessages.adoc`.
+* The application must expose Prometheus metrics on the management port.
 
-Status: PLANNED
+Logger: `de.cuioss.tools.logging.CuiLogger`; one `LogMessages` class per package root, DSL style, identifiers
+`CISOS_FRIEND-<n>`. `LogMessages.adoc` lists every record (identifier, level, template, parameters, trigger) and is
+created with the code. Metrics: `quarkus-micrometer-registry-prometheus` at `/q/metrics`, names below
+`cisos_friend_`.
+
+[#CIFR-GEN-6]
+== CIFR-GEN-6: Unreachable Git Server
+
+* When the Git server is unreachable, reads must be served from the local repositories and the web app must show the
+  degraded state.
+* A save must then fail with `GIT_UNAVAILABLE` and leave the draft unchanged; no change may be reported as saved
+  before its push succeeded.
 
 [cols="1,2"]
 |===
 |Condition |Behaviour
 
 |Fetch fails
-|Index serves the last fetched state; health check `git-remote` reports `DOWN` per repository; readiness stays `UP`
-after the first successful start
+|The index serves the last fetched state; the health check `git-remote` reports `DOWN` per repository; readiness
+stays `UP`
 
-|Push fails after save
-|The commit stays on the local working branch and the save result is `SAVED_LOCALLY`; the web app shows "not yet
-visible to others". The next successful push of the working branch carries it (the next save or release, or the retry
-with backoff); when the Git server's state moved meanwhile, the library replays the change onto the fetched tip. A
-change that conflicts on this reconciliation is kept for its user to resolve and shown as a conflict on the next load
-of the document; it is never dropped
+|Push fails during a save
+|The save result is `GIT_UNAVAILABLE`; nothing is kept on the local working branch, the draft holds the work, and the
+user saves again later
 
 |Git server unreachable at start
-|Remote repositories with a valid local repository start from it; a remote repository without a local copy keeps
-readiness `DOWN`; a local-mode repository (`remote: none`) needs no Git server and counts once its local repository
-opens and its index is built
+|See link:deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]
 |===

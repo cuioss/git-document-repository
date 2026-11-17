@@ -1,0 +1,78 @@
+= Service Catalog
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+link:../README.adoc[CISOs-Friend documentation] » Concepts
+
+Most documents of CISOs-Friend hang on an application or service: its SAMM assessment, its threat model, the incidents
+that affected it, the risks it carries. Written as free text, "Payment API", "payments-api" and "the PSP service" end up
+in three documents that mean the same thing. The application therefore keeps a catalog of services and refers to its
+entries by stable id (`service:payment-api`), the same way the library's directory catalogs refer to roles and teams
+(link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs]).
+
+== The Catalog Entry
+
+The library ships the catalogs of roles and teams and lets an application declare further ones. CISOs-Friend declares
+three: services (one file per entry), systems (the products above the services) and external parties (suppliers,
+providers). They lie in the `directory` repository, are widely readable and hold no personal data.
+
+[source,yaml]
+----
+# catalog/services/payment-api.yaml
+id: payment-api
+name: Payment API
+description: Payment processing for the web shop
+system: system:webshop                 # optional: the product or system above
+lifecycle: active                      # planned | active | deprecated
+owner:
+  team: team:payments
+  role: role:service-owner             # responsibility by role, not by person
+repositories:
+  - https://git.example/payments/payment-api
+dependsOn:
+  - service:customer-db
+  - external:psp-provider
+protection-needs:                      # confidentiality, integrity, availability
+  confidentiality: high
+  integrity: high
+  availability: high
+data-classes: [personal, payment]
+----
+
+* *Responsibility by team and role.* The directory resolves them to persons; the catalog holds no personal data.
+* *Protection needs* (confidentiality, integrity, availability, as in BSI IT-Grundschutz) decide the review interval
+  of a threat model and the classification of an incident.
+* *`dependsOn`* yields a dependency graph: the protection needs of a service are at least those of the services it
+  depends on (maximum principle).
+* *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to it.
+
+How the categories use the catalog is shown in link:cisos-friend-overview.adoc#_four_categories[Overview, Four
+Categories].
+
+== Alignment with Backstage
+
+Many development organisations already keep such a catalog. The Backstage software catalog holds its entries in
+descriptor files in the repository of each service, by recommendation named `catalog-info.yaml`, with the kinds
+Component, Template, API, Group, User, Resource, System, Domain and Location
+(link:https://backstage.io/docs/features/software-catalog/descriptor-format[Backstage: Descriptor Format of Catalog
+Entities]). The catalog therefore uses the same terms and, where possible, the same fields (`system`, `lifecycle`,
+`owner`, `dependsOn`, the latter in Backstage's spelling). The mapping is not one to one: Backstage names a single owner
+entity where this catalog names a team and a role, and its well-known lifecycle values are `experimental`,
+`production` and `deprecated` (same source).
+
+Where Backstage exists, an administrator imports its components, systems and groups; the catalog adds only what
+Backstage lacks: protection needs, data classes and the owning role. Where nothing exists, the catalog is the source
+of truth.
+
+== Open Questions
+
+. Whether service entries are also imported from a CMDB (i-doit, iTop, ServiceNow).
+. Whether a change of the protection needs of a service needs a confirmation by the information security officer.
+
+== Related
+
+* link:../specification/directory.adoc#CIFR-DIR-5[Directory, CIFR-DIR-5 and CIFR-DIR-6] -- fields and import
+* link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] (library) -- roles, teams, persons

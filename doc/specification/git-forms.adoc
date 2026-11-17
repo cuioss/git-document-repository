@@ -1,27 +1,19 @@
 = git-document-repository: `git-forms`
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
-
-xref:../Specification.adoc[Back to Main Specification]
-
-== Overview
-
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
 
 `git-forms` (module `de.cuioss.git.document.forms`, not yet created) is the layer of schema-driven documents on top of
 `git-store`. Its third-party dependencies (a YAML library, a JSON Schema validator, a template engine) are open and
 need the owner's approval. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
-== Kind of Document
+[#GDR-FORMS-1]
+== GDR-FORMS-1: Kinds of Documents as Configuration
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-1[GDR-FORMS-1: Kinds of Documents as Configuration]_
-
-*Status:* PLANNED
+* A kind of document must be defined by configuration only: a JSON Schema, a template (required for a per-document
+  kind, optional for a numbered kind), a workflow and a repository alias.
+* Adding a kind of document must require no code change in any module.
 
 [source,yaml]
 ----
@@ -37,37 +29,32 @@ kinds:
     collection: risks                # numbered: one collection branch refs/heads/risks
     schema: schemas/risk.schema.json
     workflow: workflows/approval.yaml
-    numbering: { prefix: R-, digits: 3 }   # optional, see Running Numbers
+    numbering: { prefix: R-, digits: 3 }   # optional, see GDR-FORMS-9
 ----
 
-`numbering` is optional. `template` is required for a per-document kind and optional for a numbered kind. Every other
-field is required. A kind with `numbering` is a numbered collection, a kind without it a per-document collection (see
-xref:git-store.adoc#_reference_layout[git-store, Reference Layout]); a collection is never both and is never named
-`main`, `review` or `checkpoints`. The configuration files live in a configuration repository or directory chosen by the
-application.
+A kind with `numbering` is a numbered collection, a kind without it a per-document collection (see
+xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]). The configuration files live in a configuration repository or directory
+chosen by the application.
 
-== Schema Validation
+[#GDR-FORMS-2]
+== GDR-FORMS-2: Schema Validation
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-2[GDR-FORMS-2: Schema Validation]_
+* Data must be validated against the JSON Schema of its kind before every save.
+* A validation failure must be reported per field path (JSON Pointer and message) and must prevent the save.
+* The schema file must be plain JSON Schema, usable unchanged by a validator outside the library.
 
-*Status:* PLANNED
+The dialect is open. Documents hold no personal data beyond pseudonyms and have no encrypted field type: a field that
+names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory` of `git-store`.
 
-* Validation runs before every save of the data file.
-* A failure returns the invalid outcome with one entry per violation: JSON Pointer of the field and message.
-* The schema file is plain JSON Schema; the dialect is open (see the concept's open questions).
-* A field marked `x-personal` is encrypted and decrypted through the `FieldEncryptor` of `git-store` (provided by
-  `git-crypto`, see xref:git-crypto.adoc#_personal_fields_in_documents[git-crypto, Personal Fields in Documents]);
-  without a provider the save of such a document returns the invalid outcome.
+[#GDR-FORMS-3]
+== GDR-FORMS-3: Data Layout and Serialisation
 
-== Data Layout
-
-_See Requirement link:../Requirements.adoc#GDR-FORMS-3[GDR-FORMS-3: Data Layout and Serialisation]_
-
-*Status:* PLANNED
+* Structured data must be stored as YAML; free text as AsciiDoc fragments in separate files.
+* YAML must be written with the key order of the schema and stable formatting
+  (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]).
 
 Per-document kind, on the document's working branch:
 
-[source]
 ----
 <collection>/<ulid>/
   document.yaml          structured fields, validated by the schema
@@ -75,33 +62,27 @@ Per-document kind, on the document's working branch:
   report.adoc            generated output
 ----
 
-Numbered kind, on the collection branch: one entry file per entry, named by its readable number
-(`<collection>/<number>.yaml`, for example `risks/R-042.yaml`), and the counter file `<collection>/.counter` (see
-Running Numbers). A numbered kind with a template has its generated output next to the entry file
-(`<collection>/<number>.adoc`, for example `risks/R-042.adoc`).
+Numbered kind, on the collection branch: one entry file per entry, `<collection>/<number>.yaml` (for example
+`risks/R-042.yaml`), the counter file `<collection>/.counter`, and with a template the output
+`<collection>/<number>.adoc`. A kind may split `document.yaml` into one file per independently edited part when its
+schema declares the split.
 
-A kind may split `document.yaml` into one file per independently edited part (for example one file per section) when
-its schema declares the split. YAML is written by the YAML codec of `git-forms`, an implementation of the codec
-interface of `git-store`, with the key order of the schema.
+[#GDR-FORMS-4]
+== GDR-FORMS-4: Generated Output
 
-== Generated Output
+* The template must join data and fragments into one AsciiDoc output file; equal input must produce byte-identical
+  output.
+* The output must be committed in the same commit as the data it was generated from.
+* A check operation must report whether a committed output matches its data, and must run from CI without the
+  application.
+* A kind without a template must generate no output; generation and its check must be skipped.
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-4[GDR-FORMS-4: Generated Output]_
+[#GDR-FORMS-5]
+== GDR-FORMS-5: Workflow
 
-*Status:* PLANNED
-
-* `report.adoc` = template(data, fragments). Generation is a pure function of its inputs. For a numbered kind the
-  output is `<collection>/<number>.adoc` = template(entry file).
-* The save writes data, fragments and the output in one commit.
-* A kind without `template` generates no output: the generate step of the save and its check are skipped.
-* `check(commit)` regenerates the output and returns match or mismatch. When `git-forms` is created, a CI job of the
-  consuming repository is planned to call it on every pull request; no such job exists yet.
-
-== Workflow
-
-_See Requirement link:../Requirements.adoc#GDR-FORMS-5[GDR-FORMS-5: Workflow]_
-
-*Status:* PLANNED
+* A workflow must declare states (at least draft, review, approved, superseded) and the allowed transitions.
+* Every transition must map onto a mechanism of the store: `intermediate-save`, `save`, `release` or `tag`.
+* A transition the workflow does not allow must be refused with the outcome transition refused.
 
 image::../resources/diagrams/document-workflow-states.svg["Document states and transitions",align=center]
 
@@ -109,79 +90,68 @@ image::../resources/diagrams/document-workflow-states.svg["Document states and t
 ----
 states: [draft, review, approved, superseded]
 transitions:
-  - { name: edit,      from: draft,    to: draft,      mechanism: intermediate-save, level: 1 }
-  - { name: submit,    from: draft,    to: review,     mechanism: save,              level: 1 }
-  - { name: approve,   from: review,   to: approved,   mechanism: release,           level: 2 }
-  - { name: rework,    from: review,   to: draft,      mechanism: save,              level: 1 }
-  - { name: supersede, from: approved, to: superseded, mechanism: release,           level: 2 }
+  - { name: edit,      from: draft,    to: draft,      mechanism: intermediate-save }
+  - { name: submit,    from: draft,    to: review,     mechanism: save }
+  - { name: approve,   from: review,   to: approved,   mechanism: release }
+  - { name: rework,    from: review,   to: draft,      mechanism: save }
+  - { name: supersede, from: approved, to: superseded, mechanism: release }
 deadlines:
   - { state: review,   within: P14D }
   - { state: approved, review-interval: P1Y }
 ----
 
-* `mechanism` is one of `intermediate-save`, `save`, `release`, `tag`.
-* The current state is the field `state`, written by the transition: in `document.yaml` for a per-document kind, in
-  the entry file `<collection>/<number>.yaml` for a numbered kind. The workflow state `draft` is a value of that field;
-  it is unrelated to the draft references of `git-store`, which hold intermediate saves in any state.
-* When `main` is protected, `submit` opens the pull or merge request and `approve` (release) merges it (see
-  xref:git-store.adoc#_release[git-store, Release]).
-* A transition not listed for the current state returns the transition-refused outcome.
+The current state is the field `state`, written by the transition into `document.yaml` or the entry file. The
+workflow state `draft` is unrelated to the draft references of `git-store`, which hold intermediate saves in any
+state.
 
-== Deadlines
+[#GDR-FORMS-6]
+== GDR-FORMS-6: Deadlines
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-6[GDR-FORMS-6: Deadlines]_
+* A workflow must declare deadlines per state: `within` (due after entering the state), `review-interval` (due
+  periodically while in the state) or `field` (due at the date of a data field).
+* The library must list the documents whose deadline is due at or before a given instant, computed from the index.
+* Deadlines must not be stored as separate data.
 
-*Status:* PLANNED
+[#GDR-FORMS-7]
+== GDR-FORMS-7: Step-Up for Releases
 
-* `within`: due after entering the state; `review-interval`: due periodically while in the state; `field`: due at the
-  date of a data field.
-* `due(instant)` returns the documents with a deadline at or before the instant, computed from the index of
-  `git-store`. No deadline is persisted.
-
-== Signature Level per Transition
-
-_See Requirement link:../Requirements.adoc#GDR-FORMS-7[GDR-FORMS-7: Signature Level per Transition]_
-
-*Status:* PLANNED
-
-`level` (0–4) per transition. The transition asks the `SignatureLevelVerifier` of `git-store` (see
-xref:git-store.adoc#_service_provider_interfaces[git-store, Service Provider Interfaces]) for the evidence of that
-level: trailers for 1, step-up for 2, a passkey note for 3. `git-signing` provides it; `git-forms` does not depend on
-`git-signing`. Missing evidence returns the level-not-met outcome. Without a provider only level 0 is accepted.
-
-Level 4 (qualified electronic signature through a remote signing service) has no provider in this reactor: a
-transition that requires level 4 returns the level-not-met outcome unless a provider of the application supplies the
-evidence.
-
-== Typed Links
-
-_See Requirement link:../Requirements.adoc#GDR-FORMS-8[GDR-FORMS-8: Typed Links]_
-
-*Status:* PLANNED
+* Every transition with the mechanism `release` (every approval is one) must require step-up; no other transition may.
+* Such a transition must be refused with the outcome step-up required unless the caller's `Auth-Context` holds a value
+  of `step-up.amr` or `step-up.acr` and its `Auth-Time` is not older than `step-up.max-age`.
 
 [cols="1,2"]
 |===
-|Form |Example
+|Key |Semantics
 
-|`<alias>:<kind>/<id>` |`register:risk/R-042`
-|`<catalog>:<id>` |`service:payment-api`, `team:payments`, `role:service-owner`
+|`step-up.amr` |`amr` values that denote multi-factor authentication, default `mfa`; a single method such as `otp`
+or `hwk` is no multi-factor authentication (https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176])
+|`step-up.acr` |`acr` values that denote multi-factor authentication
+|`step-up.max-age` |required; ISO 8601 duration, for example `PT5M`
 |===
 
-The schema marks link fields (`"format": "gdr-link"`). On save every link target is resolved through the index or the
-directory; an unresolved target returns the invalid outcome. A retired target resolves.
+Every commit is signed the same way; step-up changes only the authentication the trailers record.
 
-== Running Numbers
+[#GDR-FORMS-8]
+== GDR-FORMS-8: Typed Links
 
-_See Requirement link:../Requirements.adoc#GDR-FORMS-9[GDR-FORMS-9: Running Numbers]_
+* A link must have the form `<alias>:<kind>/<id>` (for example `register:risk/R-042`) or `<catalog>:<id>` (for
+  example `team:payments`).
+* On save the library must check that every link target exists; a missing target must prevent the save with the
+  outcome invalid.
+* A retired target (a catalog entry with `retired: true`) must still resolve.
 
-*Status:* PLANNED
+The schema marks link fields with `"format": "gdr-link"`; targets are resolved through the index or the directory.
 
-* A new document of a per-document kind is named by a ULID: its working branch, data directory, release tag and link
-  target.
-* A kind with `numbering` keeps its entries and the counter file `<collection>/.counter` on one shared collection
-  branch, `refs/heads/<collection>` (a register: one file per entry, no branch per entry).
-* Until its first save a new numbered entry is identified by a ULID (its draft reference is
-  `refs/drafts/<pseudonym>/<collection>/<ulid>`). On the first save the counter is incremented in the same commit, and
-  the readable number (`prefix` + zero-padded counter) names the entry file, its release tags and its link target.
-* Two concurrent creations race on the collection branch; the compare-and-swap of `git-core` makes the loser re-read
-  the counter and take the next number.
+[#GDR-FORMS-9]
+== GDR-FORMS-9: Running Numbers
+
+* A new document of a per-document kind must be stored under a ULID, which names its working branch, its tags and its
+  data directory.
+* An entry of a numbered kind must receive a readable running number (prefix and zero-padded counter) on its first
+  save, from the counter file of the collection branch changed in the same commit; the number names the entry file,
+  the tags and the link target.
+* Two documents created concurrently must never receive the same running number.
+
+Until its first save a numbered entry is identified by a ULID (draft reference
+`refs/drafts/<pseudonym>/<collection>/<ulid>`). Two concurrent creations race on the collection branch; the loser's
+push is refused, and it re-reads the counter and takes the next number.

@@ -1,54 +1,54 @@
 = git-document-repository: `git-store`
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-xref:../Specification.adoc[Back to Main Specification]
-
-== Overview
-
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
-
 `git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, identity per save, the in-memory index, the post-commit outbox and the anchoring. It depends on
-`git-core` only and defines the service provider interfaces through which the optional modules contribute without a
-dependency of `git-store` on them (see Service Provider Interfaces). Rationale:
-xref:../concepts/storage-engine.adoc[Storage Engine].
+saving, release, the signature and the identity trailers of every commit, the in-memory index, post-commit listeners,
+the anchoring with the own timestamp `signed`, and the person directory interface. It depends on `git-core` only.
+Rationale: xref:../concepts/storage-engine.adoc[Storage Engine], xref:../concepts/identity-and-signing.adoc[Identity
+and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
 
-== Repository Registry
+It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`). For
+each exactly one provider is active, named by configuration; a named provider that is not found, or two providers with
+the same id, stop the start of the store.
 
-_See Requirement link:../Requirements.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry]_
+[cols="1,2,2"]
+|===
+|Interface |Contract |Providers
 
-*Status:* PLANNED
+|`SigningKeySource` |Signs bytes with a private key the source holds (<<GDR-STORE-12>>) |`file` in `git-store`;
+KMS or HSM sources supplied by the application
+|`AnchorProvider` |Obtains and verifies a proof that an object existed at a time (<<GDR-STORE-15>>) |`signed` in
+`git-store`, `rfc3161` in xref:git-timestamp.adoc[`git-timestamp`]
+|`PersonDirectory` |Pseudonyms, person entries, holders of a role, erasure (<<GDR-STORE-19>>) |`git` in
+xref:git-directory.adoc[`git-directory`], or a provider for the operator's own source
+|===
+
+[#GDR-STORE-1]
+== GDR-STORE-1: Repository Registry
+
+* The store must manage several repositories, each with a stable alias, a remote, a confidentiality class and an
+  optional retention period.
+* Every operation of the store must address a repository by its alias.
 
 [source,yaml]
 ----
 repositories:
-  - alias: register              # stable id, used in links (register:risk/R-042)
-    remote: https://git.example/sec/register.git   # or: none
-    confidentiality: restricted  # application-defined class name
-    retention: null              # optional, ISO 8601 period, e.g. P10Y
+  - alias: register              # stable id, [a-z0-9-]+, used in links (register:risk/R-042)
+    remote: https://git.example/sec/register.git   # or the path of a local bare repository
+    confidentiality: restricted  # application-defined class name, mapped to access rules by the application
+    retention: P10Y              # optional; after it the operator deletes the repository; the store only reports it
 ----
 
-[cols="1,1,2"]
-|===
-|Field |Required |Semantics
+[#GDR-STORE-2]
+== GDR-STORE-2: Drafts per User and Document
 
-|`alias` |yes |Unique, `[a-z0-9-]+`; never changes for the life of the repository
-|`remote` |yes |`none` (local mode) or an HTTPS URL (remote mode)
-|`confidentiality` |yes |Class name; the application maps classes to access rules
-|`retention` |no |Period after which the repository as a whole is deleted by the operator; the store only reports it
-|===
-
-== Reference Layout
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per User and Document]_
-
-*Status:* PLANNED
+* An intermediate save must be a commit on `refs/drafts/<pseudonym>/<collection>/<id>`, where `<pseudonym>` is the
+  user's pseudonym and `<collection>/<id>` names the document.
+* The push refspec must carry `refs/heads/*`, the tags and `refs/notes/*`, and must never carry `refs/drafts/*`.
+* The store must list the drafts of a user.
 
 [cols="2,3,1"]
 |===
@@ -57,338 +57,291 @@ _See Requirement link:../Requirements.adoc#GDR-STORE-2[GDR-STORE-2: Drafts per U
 |`refs/heads/main` |released state |yes
 |`refs/heads/<collection>/<id>` |working branch of one document of a per-document collection |yes
 |`refs/heads/<collection>` |collection branch of a numbered collection: every entry and the counter file |yes
-|`refs/heads/review/<collection>/<id>` |review branch of one numbered entry for a pull or merge request: `main` with
-only that entry's path applied (see Release) |yes
 |`refs/tags/<collection>/<id>/v<n>` |release `n` of one document or numbered entry, never moved |yes
-|`refs/tags/checkpoints/<n>` |checkpoint `n` of the anchoring (see Anchoring), never moved |yes
-|`refs/drafts/<user>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
-|`refs/notes/*` |anchor proofs (`refs/notes/anchors/<provider>`), approvals |yes
-|`refs/meta/outbox/<consumer>/<branch>` |last processed commit per outbox consumer and branch; the branch name is
-escaped, first every `%` as `%25`, then every `/` as `%2F` |*never*
-|`refs/meta/pending/<user>/<collection>/<id>/<commit-id>` |a pending commit that conflicted when it was replayed onto
-the fetched remote tip, kept until its user resolves it (see Conflict Handling) |*never*
+|`refs/tags/checkpoints/<n>` |checkpoint `n` (<<GDR-STORE-16>>), never moved |yes
+|`refs/notes/anchors/<provider>` |anchor proofs (<<GDR-STORE-17>>) |yes
+|`refs/drafts/<pseudonym>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
 |===
 
-* A collection is either per-document (one working branch per document) or numbered (one collection branch, no
-  branch per entry), never both: Git refuses a reference and a reference nested below it, so `refs/heads/risks` and
-  `refs/heads/risks/<id>` cannot exist side by side. For the same reason the outbox references escape the branch name.
-* A collection must not be named `main`, `review` or `checkpoints`.
-* `<id>` of a per-document collection is the document's ULID; it names the working branch, the release tag, the data
-  directory and the link target. `<id>` of a numbered collection is the readable number (`prefix` + counter, for
-  example `R-042`); it names the entry file, the release tag and the link target. Until its first save a new numbered
-  entry has no number; its draft reference uses a ULID until then (see
-  xref:git-forms.adoc#_running_numbers[git-forms, Running Numbers]).
-* `<user>` is the pseudonym.
-* Push refspec: `refs/heads/*:refs/heads/*`, `refs/tags/*:refs/tags/*`, `refs/notes/*:refs/notes/*`. `git-store`
-  passes it, and the names of the reserved notes references, to `git-core` as configuration.
+* A collection is either per-document or numbered, never both: Git refuses a reference and a reference nested below
+  it, so `refs/heads/risks` and `refs/heads/risks/<id>` cannot exist side by side. A collection is never named `main`
+  or `checkpoints`.
+* `<id>` of a per-document collection is the document's ULID; `<id>` of a numbered collection is the readable number
+  (for example `R-042`). A new numbered entry uses a ULID for its draft reference until its first save
+  (xref:git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9]).
+* The drafts live only in the store's bare clone; they are lost with it.
 
-== Save
+[#GDR-STORE-3]
+== GDR-STORE-3: Explicit Save
 
-_See Requirement link:../Requirements.adoc#GDR-STORE-3[GDR-STORE-3: Explicit Save]_
-
-*Status:* PLANNED
+* An explicit save must apply the draft's changes onto the remote tip of the working branch as one commit whose only
+  parent is that tip (a squash merge in core, path-level as in xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]); no draft
+  commit may become reachable from a pushed reference.
+* The save must push with lease; when the lease is refused or the push rejected, it must fetch and re-apply its
+  operation onto the new tip, up to `save.max-attempts`.
+* When the remote cannot be reached, the save must report unreachable and change nothing; the draft keeps the work.
+* After a successful save the draft reference must be deleted only if it still points to the draft commit that was
+  applied; a newer draft commit must be kept for the next save.
+* The result must report one of: saved, conflict, rejected, unreachable, credentials expired or invalid.
 
 image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",align=center]
 
-In remote mode the local working branch may be ahead of the remote by *pending* commits: commits of earlier saves that
-reported saved locally. The save observes the local working-branch tip when it starts; every later move of the local
-working branch is a compare-and-swap from that observed tip.
+. Fetch the working branch; its tip is the base.
+. Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
+  Check every edit with an `expectedBlobId` (<<GDR-STORE-5>>).
+. Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
+. After the accepted push, move the local working branch to the new commit and delete the draft reference by
+  compare-and-delete.
 
-. Remote mode: fetch the working branch. When the remote cannot be reached (a transport failure, not a refusal), the
-  save continues locally, and its outcome is saved locally instead of saved.
-. Determine the base:
-  * Local mode, or the remote could not be reached: the local working-branch tip, pending commits included.
-  * The fetched remote tip is the local tip or an ancestor of it: the local tip; the push in step 6 carries the pending
-    commits and the new one.
-  * Both moved: replay the pending commits in order, oldest first, onto the fetched remote tip, each as the path
-    changes of that commit, with the blob ids of its parent as expected blob ids, so a concurrent change to the same
-    path is a conflict. A replayed commit keeps the author, message and trailers of the pending commit. The base is the
-    last replayed commit, or the fetched remote tip when no pending commit is left.
-  * A pending commit that conflicts is never dropped: it is kept under
-    `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` (`<user>`: the pseudonym of its `Actor` trailer), its
-    paths are conflicts of this save, and the next load of the document reports the kept commit like a draft
-    conflict, so the user resolves it.
-. Squash merge in core: apply the draft's changes onto the base as one commit whose only parent is the base
-  (path-level, `git-core` In-Core Merge; no textual three-way merge of file content). No draft commit becomes a parent,
-  so no draft commit is reachable from a pushed reference.
-. For every edit with `expectedBlobId`, compare it with the path's blob on the base; a difference is a conflict for that
-  path (Concurrent Change Detection). Conflicts are detected per path, never per field.
-. Move the local working branch by compare-and-swap from the observed tip to the new commit. When the new commit does
-  not descend from the observed tip (after a replay, or after a refused push in step 6), the move is a guarded reset
-  (`git-core` Compare-and-Swap). When the compare-and-swap fails because another local save moved the branch, re-read
-  the local tip as the new observed tip and re-apply the operation from step 2. Saves on one branch are thus
-  serialised by the compare-and-swap.
-. Remote mode: push with lease, the expected remote id being the fetched tip. On a lease refusal or a push rejection
-  fetch again and re-apply the operation from step 2 onto the newly fetched state, up to `save.max-attempts`. This
-  save's own commit is no pending commit: the pending commits are those up to its parent, the observed tip is this
-  save's commit, and the move back to the fetched remote tip, with the pending commits replayed onto it, is a guarded
-  reset. When the remote cannot be reached, the commit stays on the local working branch and the outcome is saved
-  locally; the next push of that branch (the next save or release of the document) carries it.
-. On saved or saved locally, delete the draft reference by compare-and-delete: only if it still points to the draft
-  commit applied in step 3. A newer draft commit stays for the next save.
+The local working branch moves only after the remote accepted the commit, so the clone never holds a saved commit the
+remote lacks.
 
-[cols="1,2"]
+[#GDR-STORE-4]
+== GDR-STORE-4: Conflict Handling
+
+* On a conflict nothing must be pushed, and the draft reference and the working branch must be unchanged.
+* The conflict result must name every conflicting path; conflicts are detected per path (blob), never per field.
+
+The user resolves a conflict in the draft and saves again.
+
+[#GDR-STORE-5]
+== GDR-STORE-5: Concurrent Change Detection
+
+* A save of a file must accept the blob id the caller loaded as `expectedBlobId`.
+* When the file's blob id on the fetched tip differs, the save of that file must report a conflict instead of
+  overwriting it.
+* A save of a file without an expected blob id must overwrite a concurrent change to that file.
+
+[#GDR-STORE-6]
+== GDR-STORE-6: Release
+
+* A release must merge the document's working branch into `main` and create the tag
+  `refs/tags/<collection>/<id>/v<n>` on that merge commit; `n` counts the releases of that document from 1. For a
+  numbered collection the release must merge only the entry's path from the collection branch (path-level merge in
+  core).
+* `main` and the tag must be pushed together, `main` with lease.
+* When `main` moved but the tag is missing, the release must report incomplete, and a repeated release of the same
+  document must create the missing tag on the merged commit instead of merging again.
+* An existing release tag must never be moved or deleted.
+
+The store merges every release itself. `main` is protected on the Git server so that only the technical user may
+push to it and nobody may force-push; a refused push of `main` returns rejected. The release commit carries the
+identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the approver.
+
+[#GDR-STORE-7]
+== GDR-STORE-7: Draft Expiry
+
+* Drafts not changed for `drafts.expiry` must be deleted.
+* A garbage collection must remove objects reachable only from deleted drafts.
+
+[#GDR-STORE-8]
+== GDR-STORE-8: Author, Committer and Credentials
+
+* Every commit of a save must carry the caller's pseudonym as author (e-mail field empty) and the technical user as
+  committer.
+* Every fetch and push must use the credential of the technical user configured for the repository; the store must
+  offer no other credentials.
+* Commits the store writes without a user's save (checkpoints, notes) must not be combined with the commits of a save.
+
+[#GDR-STORE-9]
+== GDR-STORE-9: In-Memory Index
+
+* The store must build an index from `main` and the open working branches at start, after every fetch, and after
+  every save or release.
+* The content of the index must be supplied by the consumer through an index interface.
+* The store must fetch periodically (`fetch.interval`), so that changes made outside the store reach the index.
+* The store must build an index from a tag or a commit for a reporting date, without changing the current index.
+
+The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
+every open working branch. After a save only the changed documents are re-read. `snapshotIndex(tag | commit)` builds
+the index of a reporting date.
+
+[#GDR-STORE-10]
+== GDR-STORE-10: Post-Commit Listeners
+
+* The store must call every registered listener in process with each new commit of the branches it subscribes to,
+  oldest first: after every save or release the store pushed, and after every fetch that moves a subscribed branch.
+* A failing listener must not fail the save, release or fetch that triggered it.
+* The store must keep no progress of listeners; work that must not be lost must be derivable from the Git state at
+  start, as the anchoring derives its pending subjects from its notes (<<GDR-STORE-17>>).
+
+image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source of truth: listeners feed the derived and assuring stores; complementary systems are referenced by id",align=center]
+
+[#GDR-STORE-11]
+== GDR-STORE-11: Deterministic Content through Codecs
+
+* File content must be produced by a codec interface.
+* Encoding an unchanged value must produce byte-identical content, so that saving unchanged data creates no change.
+
+Every codec guarantees `encode(decode(encode(v))) == encode(v)` byte for byte. `git-store` carries no YAML library:
+`git-forms` supplies the YAML codec.
+
+[#GDR-STORE-12]
+== GDR-STORE-12: Commit Signature
+
+* Every commit the store writes must be signed by the application in the SSH signature format.
+* The private key must be used only through the active `SigningKeySource`; the store must ship the source `file`, and
+  an application must be able to supply another (KMS, HSM) without a change of the store.
+
+`git-store` implements JGit's `org.eclipse.jgit.lib.Signer` (since JGit 7.0) and passes it to the in-core writing of
+`git-core`; the signer delegates the signing operation to the source. `signing.key-source` names the source (default
+`file`), `signing.key` is the key reference passed to it (for `file` the path of an SSH private key). With a KMS or
+HSM the application never holds the private key. Whether the store uses JGit's SSH signer of
+`org.eclipse.jgit.ssh.apache` for the signature encoding is open and needs the owner's approval.
+
+[#GDR-STORE-13]
+== GDR-STORE-13: Identity Trailers
+
+* Every commit of a save or release must carry the trailers below, filled from the user who acted. Commits the store
+  writes without a user's action (checkpoints) and notes carry none.
+* No trailer may contain an OIDC `sub` or `sid` in clear text.
+
+[cols="1,2,2"]
 |===
-|Outcome |Meaning
+|Trailer |Value |Source
 
-|saved |the working branch (and in remote mode the remote) holds the change and every pending commit before it
-|saved locally |remote mode only: the local working branch holds the change, the remote could not be reached; the
-change is a pending commit until the next successful push
-|conflict |a real conflict of the draft or of a pending commit; see Conflict Handling
-|rejected |the remote refused the push or the lease after the last attempt
-|credentials expired or invalid |the fetch or push credentials were refused
-|===
-
-Configuration: `save.max-attempts` (required); `git-store` passes it to the compare-and-swap of `git-core` as the
-maximum number of attempts.
-
-== Conflict Handling
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-4[GDR-STORE-4: Conflict Handling]_
-
-*Status:* PLANNED
-
-On conflict nothing is pushed, the draft reference is unchanged and no commit of this save stays on the local working
-branch: the branch ends on the base of Save, step 2. When it points elsewhere (the base came from a replay, or a
-refused push left this save's commit on it), it is moved to the base by guarded reset; the branch then holds the
-fetched remote tip and the pending commits that replayed without conflict. A pending commit that conflicts is kept
-under `refs/meta/pending/<user>/<collection>/<id>/<commit-id>` before the branch moves, so it is never dropped;
-the kept reference is deleted once its user has saved or discarded the resolution. The result lists every conflicting
-path, those of kept pending commits included. Field-level resolution inside a YAML file is the consumer's task
-(`git-forms`).
-
-== Concurrent Change Detection
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-5[GDR-STORE-5: Concurrent Change Detection]_
-
-*Status:* PLANNED
-
-A save edit may carry `expectedBlobId`. When the path's current blob id on the working branch differs, the edit fails
-with conflict for that path. In remote mode the comparison runs against the fetched remote state with the pending
-commits on top (Save, steps 2 and 4), before the save applies the draft onto it. Without `expectedBlobId` an edit
-overwrites a concurrent change to the same file.
-
-== Release
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-6[GDR-STORE-6: Release]_
-
-*Status:* PLANNED
-
-* Direct release, in this order: move `main` by compare-and-swap to the merge of the working branch; then create
-  `refs/tags/<collection>/<id>/v<n>` on that merge commit, with `n` one more than the highest existing release of the
-  document (the first release is `v1`). In remote mode `main` and the tag are pushed together with lease.
-* Release of a numbered entry: the merge takes only that entry's path from the collection branch into `main`
-  (path-level merge in core); the tag follows as above.
-* When `main` moved but the tag is missing (a failure between the two steps), the release returns the incomplete
-  outcome. A repeated release of the same document creates the missing tag on the merged commit and does not merge
-  again.
-* An existing release tag is never moved or deleted.
-* Protected `main`: the push of `main` returns rejected; the store then supports a push of the release source alone,
-  and the release completes as a pull or merge request on the Git server: "submit for review" opens it and the
-  transition "approve (release)" merges it. The fetch that shows the new tip of `main` hands it to the outbox
-  (Post-Commit Outbox); the tag is created on the merged commit then.
-* The source of the pull or merge request: for a per-document kind its working branch. For a numbered entry a review
-  branch `refs/heads/review/<collection>/<id>`, created from `main` with only that entry's path applied (path-level
-  merge in core, as for a direct release); the counter file and the other entries are not part of it.
-* Release commits the store creates carry the trailers of the registered `CommitTrailerContributor` (provided by
-  `git-signing`; see Service Provider Interfaces); a merge commit the Git server created receives the approvals as a
-  note (see xref:git-signing.adoc#_portable_approvals[git-signing, Portable Approvals]).
-
-== Draft Expiry
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-7[GDR-STORE-7: Draft Expiry]_
-
-*Status:* PLANNED
-
-Configuration: `drafts.expiry` (ISO 8601 period, required). A periodic task deletes draft references whose tip commit
-time is older than the period, then runs a garbage collection of unreachable objects.
-
-== Identity per Save
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-8[GDR-STORE-8: Identity per Save]_
-
-*Status:* PLANNED
-
-[cols="1,3"]
-|===
-|Element |Value
-
-|author |the caller's pseudonym (`p-<random>`), e-mail field empty
-|committer |the technical user configured per repository
-|credentials |`CredentialsStrategy` per push: `technical` (configured secret) or `user` (token supplied by the caller)
+|`Actor` |pseudonym (`p-…`) |the active `PersonDirectory`
+|`Actor-Issuer` |issuer URL of the identity provider |token claim `iss`
+|`Auth-Time` |ISO 8601 UTC, seconds precision |token claim `auth_time`
+|`Auth-Context` |`acr=<acr>; amr=<amr>,<amr>…`; a part is left out when its claim is absent |token claims `acr`, `amr`
 |===
 
-A push carries only commits of the save that triggered it and the pending commits before it (earlier saves that
-reported saved locally, see Save); apart from these, commits of different users are never combined in one push.
-Commits the store writes without a user's save (notes, keyring rotations) are never combined with the commits of a save
-and are pushed separately with the technical user's credentials.
+The caller supplies the claims; the store never receives the access token.
 
-== In-Memory Index
+[#GDR-STORE-14]
+== GDR-STORE-14: Signature Verification
 
-_See Requirement link:../Requirements.adoc#GDR-STORE-9[GDR-STORE-9: In-Memory Index]_
+* The library must verify the signatures of the commits of a reference against `signing.allowed-signers`, a file in
+  Git's `allowed_signers` format with a validity period per key, taken from configuration and never from the
+  repository.
+* The verification must list every commit without a signature valid at its commit time, and must run from CI without
+  the application.
 
-*Status:* PLANNED
+A Git administrator who rewrites the repository therefore cannot make a key of their own trusted. A single signature
+can also be checked with a stock Git installation:
+`git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`.
 
-* The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
-  every open working branch.
-* Build points: start, after every fetch, after every save or release the store performs (local and remote mode), on
-  `refresh()` (for a webhook), on a configured interval (`index.refresh-interval`, optional). After a save only the
-  changed documents are re-read.
-* `snapshotIndex(tag | commit)` builds a separate index for a reporting date and leaves the current one unchanged.
+[#GDR-STORE-15]
+== GDR-STORE-15: Anchor Provider
 
-== Post-Commit Outbox
+* The store must define the service interface `AnchorProvider`: obtain a proof for an object id, given the provider's
+  previous proof in the repository, and verify a stored proof, reporting the time it establishes.
+* At most one provider must be active, named by `anchor.provider`; without one the store must anchor nothing.
+* Which subjects are anchored must be decided by the store (<<GDR-STORE-16>>); a provider must only obtain and verify
+  proofs.
+* A failing or unreachable provider must not block or fail a save, a release or a fetch.
 
-_See Requirement link:../Requirements.adoc#GDR-STORE-10[GDR-STORE-10: Post-Commit Outbox]_
+A proof is bytes the store does not interpret. Obtaining one yields the proof or the outcome unavailable, refused or
+failed; verifying one yields the time it establishes or imprint mismatch, signature invalid, chain broken or
+unreadable. The provider id names its notes reference.
 
-*Status:* PLANNED
+[#GDR-STORE-16]
+== GDR-STORE-16: Anchored Subjects and Checkpoints
 
-image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of truth: the outbox feeds the derived and assuring stores; complementary systems are referenced by id, not fed by the outbox",align=center]
+* With an active provider the store must anchor the commit of every release tag once the tag exists, unless
+  `anchor.releases` is `false`.
+* With an active provider the store must create a checkpoint when `anchor.checkpoint-interval` has passed since the
+  previous checkpoint and a pushed reference changed since then, and anchor it.
+* A checkpoint must be tagged `refs/tags/checkpoints/<n>`, `n` counting from 1; an existing checkpoint tag must never
+  be moved or deleted.
 
-* Consumers register by name with the branches they subscribe to (for example `index` on `main` and the working
-  branches, `mirror` on every branch).
-* Triggers: a reference update the store performs in local mode, a successful push in remote mode, and a fetch that
-  moves a subscribed branch (for example a merge the Git server performed, seen through a webhook or the periodic
-  fetch).
-* On a trigger the store walks, per subscribed branch, the commits between `refs/meta/outbox/<consumer>/<branch>` and
-  the branch's new tip, oldest first, and calls the consumer per commit. The branch name is escaped injectively:
-  first every `%` as `%25`, then every `/` as `%2F` (`refs/meta/outbox/mirror/risks%2F01J…`). So the references of
-  `risks` and `risks/<id>` never nest, and two branch names never map to one reference. These references are never
-  pushed.
-* After each successful call that branch's reference moves to that commit. A failing call stops the walk for that
-  consumer and branch only; the next trigger or a periodic retry resumes it. Progress on one branch never moves the
-  reference of another.
-* Consumers must be idempotent per commit hash.
-* When a progress reference is missing (for example in a new clone), the walk for that consumer and branch starts again
-  at the first commit of the branch; the consumer recognises the commits it already processed by their hash and skips
-  them.
+A checkpoint is a commit:
 
-== Anchoring
+* tree: one file `refs`, one line `<object id> SP <reference name> LF` per pushed reference, sorted by name in byte
+  order; it lists `refs/heads/*`, `refs/tags/*` and `refs/notes/*`, without `refs/tags/checkpoints/*` and
+  `refs/notes/anchors/*`;
+* parent: the previous checkpoint, none for the first; author and committer: the technical user; message
+  `Checkpoint <n>`.
 
-_See Requirements link:../Requirements.adoc#GDR-STORE-12[GDR-STORE-12: Pluggable Anchor Providers],
-link:../Requirements.adoc#GDR-STORE-13[GDR-STORE-13: Anchored Subjects and Checkpoints],
-link:../Requirements.adoc#GDR-STORE-14[GDR-STORE-14: Anchor Proofs as Notes]_
+The due check runs after every push and fetch and every `anchor.retry-interval`.
 
-*Status:* PLANNED
+[#GDR-STORE-17]
+== GDR-STORE-17: Anchor Proofs as Notes
 
-Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+* A proof must be stored as a note on the anchored commit under `refs/notes/anchors/<provider>`, base64-encoded.
+* The note must be pushed with lease right after it is written, separately from the commits of any save.
+* A subject without a pushed proof must stay pending and be retried; a retry must push a stored proof instead of
+  requesting a new one.
+* A verification must check every stored proof and list every reference a checkpoint lists whose object id is no
+  longer reachable from that reference (or, for a tag, no longer its target), and every missing checkpoint number.
 
-=== The Provider Interface
+The pending subjects are derived from the Git state: the release commits and checkpoints without a note of the provider
+in the remote's notes reference as of the last fetch. A subject with a local note that the remote lacks needs only the
+push of that note. The store passes the provider its latest proof as `previous`: the note on the newest anchored
+checkpoint or release. `verifyAnchors()` walks the checkpoint chain and the release tags and runs from CI without the
+application.
 
-[source,java]
+[#GDR-STORE-18]
+== GDR-STORE-18: Own Timestamp
+
+* The store must provide the anchor provider `signed`: for an object id it must sign a statement of the object id,
+  the time, a sequence number and the hash of the previous proof.
+* The statement must be signed with an anchor key of its own key source; the start must fail when the anchor key
+  equals the commit-signing key.
+* The provider must refuse to sign when its clock is behind the time of the previous proof or more than
+  `anchor.signed.max-clock-skew` (default `PT5M`) behind the commit time of the subject.
+* Every proof must be written as a log record (INFO) with the repository alias, the object id, the time, the
+  sequence number and the SHA-256 of the proof.
+* The verification must check the signature against `anchor.signed.allowed-signers` and the chain: sequence numbers
+  without gaps, every proof referring to its predecessor, times never decreasing.
+
+Statement, UTF-8, each line ended by LF:
+
 ----
-public interface AnchorProvider {
-
-    /** The provider id: lowercase letters, digits and '-'; names the notes reference refs/notes/anchors/<id>. */
-    String id();
-
-    /** Obtains a proof for the object id; previous is the provider's latest proof in this repository, if any. */
-    AnchorResult anchor(ObjectId subject, @Nullable AnchorProof previous);
-
-    /** Verifies a stored proof against the object id and, where the provider chains its proofs, its predecessor. */
-    AnchorVerification verify(ObjectId subject, AnchorProof proof, @Nullable AnchorProof previous);
-}
+anchor signed 1
+object <object id, lowercase hex>
+time <UTC, ISO 8601 with seconds, for example 2026-11-16T09:30:00Z>
+sequence <n, 1 for the first proof>
+previous <SHA-256 of the previous proof, lowercase hex, or "none" for sequence 1>
 ----
 
-* `AnchorProof` is the provider's proof as bytes; the store does not interpret it.
-* `AnchorResult` is a proof or one of the outcomes unavailable, refused (with the provider's reason) and failed.
-* `AnchorVerification` is the time the proof establishes or one of the outcomes imprint mismatch, signature invalid,
-  chain broken and unreadable (see xref:error-model.adoc[Error Model]).
-* Providers shipped with the libraries: `signed` (xref:git-signing.adoc#_own_timestamp[git-signing, Own Timestamp])
-  and `rfc3161` (xref:git-timestamp.adoc[git-timestamp]).
+The proof is the statement followed by an armored SSH signature over it with the namespace `git-document-anchor`
+(https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). The anchor key comes from
+`anchor.signed.key-source` and `anchor.signed.key`, like the commit-signing key; it should lie under a responsibility
+other than the Git administration, for example the security team's KMS. The log record lets the operator's log
+pipeline keep a copy outside Git. A single proof can be checked with a stock OpenSSH installation:
+`ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
+(https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
 
-=== Subjects
+[#GDR-STORE-19]
+== GDR-STORE-19: Person Directory Interface
 
-* *Releases*: once a release tag exists (Release; after a merge on the Git server, once the fetch shows it), the
-  commit it points to is anchored with every active provider.
-* *Checkpoints*: a checkpoint is due when `anchor.checkpoint-interval` has passed since the commit time of the
-  previous checkpoint and the pushed references differ from those it lists. The store then writes a commit:
-** tree: one file `refs`, one line per pushed reference, `<object id> SP <reference name> LF`, sorted by reference name
-   in byte order; it lists `refs/heads/*`, `refs/tags/*` and `refs/notes/*`, without `refs/tags/checkpoints/*` and
-   `refs/notes/anchors/*`;
-** parent: the previous checkpoint commit, none for the first;
-** author and committer: the technical user (a system commit, see Identity per Save); message `Checkpoint <n>`;
-** tag: `refs/tags/checkpoints/<n>`, `n` one more than the previous checkpoint, created by compare-and-swap that
-   expects the tag to be absent. In remote mode the tag is pushed with lease; a rejection means another instance wrote
-   checkpoint `n`, and the store fetches and decides again whether a checkpoint is due.
-* The due check runs on every trigger of the outbox and on a periodic task (`anchor.retry-interval`). Without an
-  active provider the store writes no checkpoints.
+* The store must define the service interface `PersonDirectory`: the pseudonym of an identity-provider issuer and
+  `sub`; the entry of a pseudonym (name and memberships, pairs of team and role) or a former-member marker; the
+  pseudonyms holding a role in a team; saving an entry; and the erasure of a pseudonym.
+* Exactly one provider must be active, named by `directory.persons.provider` (default `git`). The author pseudonym of
+  every save must come from it.
+* A pseudonym must be stable for the same issuer and `sub` as long as its entry exists. After an erasure the provider
+  must no longer return the person for that pseudonym and must resolve it as a former member; a later login with the
+  same issuer and `sub` is a first login and receives a new pseudonym, which is not linked to the erased one.
+* Outside the provider's own entries, the store must write no data it obtains from the provider into a repository
+  except pseudonyms.
 
-=== Proofs as Notes
+The issuer and `sub` together are the key, because a `sub` is unique only within its issuer. A provider for the
+operator's own source (LDAP, SCIM, the identity provider's user directory) reads names and memberships from that
+source and keeps its own mapping to pseudonyms; it returns not supported for saving an entry and managed by source for
+an erasure, because the operator erases there. Rationale:
+xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory].
 
-* The proof of provider `p` for a commit is a note under `refs/notes/anchors/<p>`: the proof base64-encoded, one proof
-  per line. A note normally holds one proof; it holds more when instances obtained proofs for the same commit and
-  their notes were merged.
-* The store passes a provider its latest proof in the repository as `previous`: the proof on the newest checkpoint or
-  release the provider anchored, as recorded in the provider's notes.
-* Remote mode: the store pushes `refs/notes/anchors/<p>` right after writing the note, on its own and with the
-  technical user's credentials. Only a successful push counts; a failed push keeps the subject pending.
-* Retry: when the note already exists locally, the store pushes it and requests no new proof, so the time the proof
-  establishes never moves later.
-* Push: before every push of `refs/notes/anchors/<p>` the store fetches the remote notes reference and merges the local
-  notes into it with JGit's `NoteMapMerger` (`org.eclipse.jgit.notes`; base: the merge base of the two notes commits)
-  and a note merger that keeps every distinct proof line, duplicates removed. It commits the merged notes (parents: the
-  local and the fetched notes commit), moves the local reference by compare-and-swap and pushes with lease, the
-  expected remote id being the fetched one. On a rejection it repeats from the fetch, up to `save.max-attempts`.
-* `pendingAnchors(provider)` lists the release commits and checkpoints without a proof of that provider.
-
-=== Verification
-
-`verifyAnchors()` walks the checkpoint chain from the highest checkpoint tag and every release tag, and reports per
-provider:
-
-* every proof with the time it establishes, or its verification outcome;
-* every subject without a proof;
-* every reference a checkpoint lists whose listed object id is no longer reachable from that reference, and every
-  listed tag that is missing or points elsewhere: a rewritten or removed state;
-* every checkpoint number between 1 and the highest one without a tag.
-
-It runs from CI without the application, given the providers' trust configuration.
-
-=== Configuration
+[#store-configuration]
+== Configuration
 
 [cols="1,2"]
 |===
 |Key |Semantics
 
-|`anchor.providers` |list of provider ids to activate; default empty, so nothing is anchored
+|`repositories` |the registry (<<GDR-STORE-1>>)
+|`save.max-attempts` |required; attempts of a save or of a push of notes
+|`drafts.expiry` |required; ISO 8601 period
+|`fetch.interval` |required; ISO 8601 duration of the periodic fetch
+|`signing.key-source`, `signing.key` |the commit-signing key; source default `file`
+|`signing.allowed-signers` |required for verification; public commit-signing keys with validity periods
+|`anchor.provider` |the active anchor provider, `signed` or `rfc3161`; default none, so nothing is anchored
 |`anchor.releases` |anchor the commit of every release tag; default `true`
 |`anchor.checkpoint-interval` |ISO 8601 duration; default `P1D`
-|`anchor.retry-interval` |ISO 8601 duration of the periodic task for due checkpoints and pending proofs; default
-`PT15M`
-|===
-
-A provider named in `anchor.providers` but not found by `ServiceLoader` fails the start of the store.
-
-== Codecs
-
-_See Requirement link:../Requirements.adoc#GDR-STORE-11[GDR-STORE-11: Deterministic Content through Codecs]_
-
-*Status:* PLANNED
-
-A codec converts a value to bytes and back. `git-store` defines the codec interface; every codec guarantees
-`encode(decode(encode(v))) == encode(v)` byte for byte. `git-store` carries no YAML library: `git-forms` supplies the
-YAML codec with fixed key order.
-
-== Service Provider Interfaces
-
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
-
-`git-store` defines the interfaces below; the optional modules provide them through `ServiceLoader` (`uses` in
-`module-info.java` of the consumer, `provides` in the provider). No module calls a module it does not depend on.
-
-[cols="1,2,1"]
-|===
-|Interface |Contract |Provider
-
-|`SignatureLevelVerifier` |Checks the evidence of a signature level for a workflow transition; without a provider
-only level 0 is accepted |`git-signing`
-|`CommitTrailerContributor` |Supplies the identity and approval trailers of a commit |`git-signing`
-|`FieldEncryptor` |Encrypts and decrypts a personal field with the data encryption key (DEK) of the data subject
-for the retention class of the field's document kind |`git-crypto`
-|`PseudonymResolver` |Maps issuer and `sub` to a pseudonym; without `git-crypto` the application provides one
-|`git-crypto`
-|`AnchorProvider` |Obtains and verifies a proof that an object existed at a time (see Anchoring); several providers
-may be active |`git-signing` (`signed`), `git-timestamp` (`rfc3161`)
+|`anchor.retry-interval` |ISO 8601 duration of the periodic due check and retry; default `PT15M`
+|`anchor.signed.key-source`, `anchor.signed.key` |the anchor key of `signed`; never the commit-signing key
+|`anchor.signed.allowed-signers` |required for verifying `signed`; public anchor keys with validity periods
+|`anchor.signed.max-clock-skew` |ISO 8601 duration; default `PT5M`
+|`directory.persons.provider` |the active person directory; default `git`
 |===

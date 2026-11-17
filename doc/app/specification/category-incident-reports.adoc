@@ -2,24 +2,21 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-IR-1[CIFR-IR-1: Report Layout and Generated Output]_
+The incident-report category as configuration (`categories/incident-reports/`). Reasoning:
+link:../concepts/category-incident-reports.adoc[Incident Reports]. Repository: `isms-incidents-<year>` of the year of
+awareness.
 
-Status: PLANNED
+[#CIFR-IR-1]
+== CIFR-IR-1: Report Layout and Generated Output
 
-The incident-report category as configuration (`categories/incident-reports/`) plus the extension points
-`DeadlineRule` and `TimelineImporter`. Reasoning: link:../concepts/category-incident-reports.adoc[Incident Reports].
-Repository: `isms-incidents-<year>` of the year of awareness.
-
-== Layout
-_See Requirement link:../Requirements.adoc#CIFR-IR-1[CIFR-IR-1: Report Layout and Generated Output]_
-
-Status: PLANNED
+* An incident report must be stored as `incidents/<id>/incident.yaml`, `narrative/*.adoc` and a generated
+  `report.adoc`.
+* `report.adoc` must be generated reproducibly from the YAML and the fragments; a CI check must fail when the
+  committed `report.adoc` differs from a fresh generation.
 
 [cols="1,3"]
 |===
@@ -27,7 +24,9 @@ Status: PLANNED
 
 |`incidents/<id>/incident.yaml`
 |`occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
-`nis2-applicable`, `affected-services`, `notifications`, `measures`, `timeline`, `tickets`, `root-causes`
+`data-subjects` (categories and approximate numbers of data subjects and records, no person), `nis2-significant`,
+`affected-services`, `protection-needs`, `notifications`, `measures` (with issue ids), `timeline`, `tickets` (ids),
+`root-causes`
 
 |`incidents/<id>/narrative/*.adoc`
 |`course.adoc`, `root-cause-analysis.adoc`, `lessons.adoc`
@@ -36,119 +35,81 @@ Status: PLANNED
 |Generated; never edited
 |===
 
-`<id>`: a ULID, the name of the incident's directory; the readable number `INC-<year>-<n>` is assigned on save. CI
-check: `report.adoc` regenerated and compared byte for byte.
+`<id>`: a ULID, the name of the incident's directory; the readable number `INC-<year>-<n>` is assigned on save.
+Times: `occurred-at` when the incident began, if known (optional); `detected-at` when it was detected; `aware-at` when
+the organisation became aware of it, the start of the GDPR and NIS2 deadlines.
 
-Times:
+[#CIFR-IR-2]
+== CIFR-IR-2: Notification Deadlines
 
-* `occurred-at`: when the incident began, if known; optional.
-* `detected-at`: when the incident was detected.
-* `aware-at`: when the organisation became aware of it; the start of the GDPR and NIS2 deadlines.
+* When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
+  plus 72 hours.
+* When the report is marked as a significant incident under NIS2 (`nis2-significant`), the application must compute
+  an early warning (awareness +24 hours), a notification (awareness +72 hours), every intermediate report an authority
+  requested, and the final report one month after the notification was sent. For an incident not resolved by then, a
+  progress report meets that deadline instead, and the final report is due one month after resolution.
+* The deadline rules must be data of the category's workflow, not code; due times must be shown in the form and in
+  the *Due* lens, and a missed due time must stay visible in the released report.
 
-== Deadlines
-_See Requirement link:../Requirements.adoc#CIFR-IR-2[CIFR-IR-2: Notification Deadlines]_
+Each row is one entry of `deadlines` in `workflow.yaml`. `when` names a field that must be `true` or present, or
+compares two times; the due time is a date field plus a period, and a deadline whose date field is still empty is
+`OPEN`; the deadline is `MET` when one of its `met-by` fields holds `sent-at` ≤ due, `MISSED` after due otherwise,
+`OPEN` before; a `met-by` entry with `while-unresolved` counts only when `resolved-at` is absent or later than the due
+time. A field pointer with `*` yields one deadline per array element.
 
-Status: PLANNED
-
-`DeadlineRule` implementations shipped:
-
-[cols="1,1,1,2"]
+[cols="2,2,2,2"]
 |===
-|Rule |Condition |Due |Notification field
+|Deadline |When |Due |Met by
 
 |`gdpr-art33`
-|`personal-data-affected: true`
+|`personal-data-affected`
 |`aware-at` + `PT72H`
 |`notifications.supervisory-authority`
 
 |`nis2-early-warning`
-|`nis2-applicable: true`
+|`nis2-significant`
 |`aware-at` + `PT24H`
 |`notifications.nis2-early-warning`
 
 |`nis2-notification`
-|`nis2-applicable: true`
+|`nis2-significant`
 |`aware-at` + `PT72H`
 |`notifications.nis2-notification`
 
 |`nis2-intermediate-report`
-|`nis2-applicable: true` and a request of the CSIRT or competent authority recorded in
-`notifications.nis2-intermediate-reports[]` (`requested-at`, `due`)
-|The `due` the request names
-|`notifications.nis2-intermediate-reports[]` (one entry per request)
+|`notifications.nis2-intermediate-reports.*`
+|its `due`
+|that entry
 
 |`nis2-final-report`
-|`nis2-applicable: true` and `resolved-at` ≤ notification `sent-at` + `P1M`
+|`notifications.nis2-notification.sent-at`
 |`notifications.nis2-notification.sent-at` + `P1M`
-|`notifications.nis2-final-report`
-
-|`nis2-progress-report`
-|`nis2-applicable: true`, still being handled at notification `sent-at` + `P1M`
-|`notifications.nis2-notification.sent-at` + `P1M`
-|`notifications.nis2-progress-report`
+|`notifications.nis2-final-report`, or `notifications.nis2-progress-report` with `while-unresolved`
 
 |`nis2-final-report-after-handling`
-|`nis2-applicable: true`, a progress report was due
+|`notifications.nis2-notification.sent-at` + `P1M` has passed and `resolved-at` is empty or later
 |`resolved-at` + `P1M`
 |`notifications.nis2-final-report`
 |===
 
-The final-report rules start only when the notification `sent-at` is recorded; before that the early-warning and
-notification deadlines are shown, and the deadline of every requested intermediate report, which applies whether or
-not the notification was sent. An intermediate report has no deadline of its own in the directive; it is due when
-the requesting authority says. Source of the NIS2 reports:
-https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4) points (a) to (e): early
-warning within 24 hours and incident notification within 72 hours of becoming aware of the significant incident,
-intermediate report upon request, final report not later than one month after the submission of the notification,
-and for an incident ongoing then a progress report at that time and the final report within one month of its
-handling. For a trust service provider the second subparagraph of Art. 23(4) sets the notification itself at
-24 hours; an installation for one configures `nis2-notification` with `PT24H`.
+The shipped periods are those of https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555],
+Art. 23(4); how they read and where a transposition or a trust service provider differs is explained in
+link:../concepts/category-incident-reports.adoc#_the_deadline_clock[Incident Reports, The Deadline Clock]. Other
+periods are a change of the category's `workflow.yaml`, not of code.
 
-The German transposition, https://www.gesetze-im-internet.de/bsig_2025/__32.html[§ 32 BSIG] (BSI-Gesetz of
-2 December 2025, BGBl. 2025 I Nr. 301, in force since 6 December 2025), has the same 24-hour, 72-hour and one-month
-deadlines and the intermediate report on request of the BSI (§ 32(1) Nos. 1 to 4). After a progress report it sets no
-period: the final report is due once the handling is completed (§ 32(2)). For Germany the
-`nis2-final-report-after-handling` deadline is therefore an internal target taken from the directive, not a
-statutory one.
+[#CIFR-IR-3]
+== CIFR-IR-3: Mandatory Fields
 
-A deadline is `MET` when its notification field holds `sent-at` ≤ due, `MISSED` otherwise after due, `OPEN` before.
-The NIS2 deadlines are configuration; the shipped values are those of Art. 23(4) above, so a transposition with other
-periods is covered by configuration without a code change.
+* Saving a draft must be possible with mandatory fields missing; release must be rejected while any mandatory field of
+  the schema is missing, with a list of the missing fields.
 
-== Workflow
-_See Requirement link:../Requirements.adoc#CIFR-IR-3[CIFR-IR-3: Mandatory Fields]_
+States: `draft` → `in-review` → `released`; `incident.release` requires step-up. Draft saves validate types only; the
+transitions to `in-review` and `released` validate `required`; a failure returns `MANDATORY_FIELDS_MISSING` with the
+JSON Pointers of the missing fields.
 
-Status: PLANNED
+[#CIFR-IR-4]
+== CIFR-IR-4: Affected Services
 
-States: `draft` → `in-review` → `released`; default signature level of `incident.release`: 3. Draft saves validate
-types only; the transition to `in-review` and `released` validates `required`; a failure returns
-`MANDATORY_FIELDS_MISSING` with the JSON Pointers of the missing fields.
-
-== Classification
-_See Requirement link:../Requirements.adoc#CIFR-IR-4[CIFR-IR-4: Affected Services]_
-
-Status: PLANNED
-
-`affected-services`: list of `service:` ids. Proposed additions: the transitive closure over `dependsOn` from the picked
-services, shown for confirmation. `protection-needs` of the incident: per dimension (confidentiality, integrity,
-availability) the maximum over the confirmed services.
-
-== Import
-_See Requirement link:../Requirements.adoc#CIFR-IR-5[CIFR-IR-5: Timeline Import]_
-
-Status: PLANNED
-
-`TimelineImporter`: input a ticket id of the ticket system or a thread of the chat; output a list of
-`{at, author-role, text}` appended to `timeline` of the draft; the ticket id is added to `tickets`. The first shipped
-adapter is chosen with the first adopting organisation (open question of the concept). The application reads the
-ticket system and the chat and writes nothing into them; measures are created as issues in the issue tracker and
-referenced by id in `measures`.
-
-== Evaluation
-_See Requirement link:../Requirements.adoc#CIFR-IR-6[CIFR-IR-6: Evaluation across Incidents]_
-
-Status: PLANNED
-
-`GET /api/v1/reports/incidents?year=<y>`: per `category` the count, median of `detected-at − occurred-at` (time to
-detection; without `occurred-at` the time of the first timeline entry is used), median of `resolved-at − detected-at`
-(time to resolution), and every `root-causes` value occurring in more than one released report of the year.
+* Affected services must be picked from the service catalog.
+* The application must derive the protection needs of the incident per dimension as the maximum over the effective
+  protection needs of the affected services (link:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]).

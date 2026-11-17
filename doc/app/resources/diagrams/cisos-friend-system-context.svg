@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- theme-handling: A (theme-neutral); diagram type: deployment.
      The organisation enclosure is also the trust boundary (closed-rect form, dashed 8 4 at 2.0 px). -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 712"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 544"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
-  <title id="title">CISOs-Friend production deployment in remote mode and the systems it relies on</title>
-  <desc id="desc">Production deployment in remote mode. The organisation enclosure is the trust boundary: outside it sit two unauthenticated callers, a browser running the web app with a session cookie and an AI agent as MCP client with a bearer token; inside it every request is authenticated. Both callers reach the CISOs-Friend container over HTTPS on port 8443, and both edges cross the trust boundary. The container is first-party: a Quarkus native image in a distroless image running as nonroot; it serves the static web app, the REST API with its event stream, the MCP endpoint as OAuth 2.1 resource, the application services, the git-document-repository libraries and JGit; management runs over HTTP on port 9000. Mounted into it are the persistent volume for the repositories, the configuration directory and the secrets. The container talks over HTTPS to the systems the organisation already runs: the identity provider with Token Sheriff, the Git server for fetch and push (the Git server sends push webhooks to the container over HTTPS on port 8443), the KMS or Vault for the commit-signing key and the key-encryption key, an optional RFC 3161 timestamp authority, the issue tracker in which measures are created as issues, and the ticket system and the chat, from which the incident timeline is read and into which nothing is written. Security and read-access events reach the SIEM as log records through the operator's log pipeline.</desc>
+  <title id="title">CISOs-Friend production deployment and the systems it relies on</title>
+  <desc id="desc">Production deployment. The organisation enclosure is the trust boundary: outside it sit two unauthenticated callers, a browser running the web app with a session cookie and an AI agent as MCP client with a bearer token; inside it every request is authenticated. Both callers reach the CISOs-Friend container over HTTPS on port 8443, and both edges cross the trust boundary. The container is first-party: a Quarkus native image in a distroless image running as nonroot; it serves the static web app, the REST API with its event stream, the MCP endpoint as OAuth 2.1 resource, the application services, the git-document-repository libraries and JGit; management runs over HTTP on port 9000. Mounted into it are the persistent volume for the repositories, the configuration directory and the secrets. The container talks over HTTPS to the systems the organisation already runs: the identity provider with Token Sheriff, the Git server for fetch and push, and the KMS or Vault for the commit-signing key and the anchor key of the own timestamp; it calls no other system. Security and read-access events reach the SIEM as log records through the operator's log pipeline.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
@@ -42,13 +42,13 @@
 
   <!-- organisation enclosure (depth 1) = trust boundary -->
   <text x="280" y="32" class="trust-lbl">trust boundary — authenticated</text>
-  <rect class="trust" x="280" y="40" width="896" height="648" rx="8"/>
+  <rect class="trust" x="280" y="40" width="896" height="480" rx="8"/>
   <text x="292" y="64" class="encl">organisation</text>
   <text x="292" y="80" class="encl-sub">the application and the systems it relies on</text>
 
   <!-- CISOs-Friend container (depth 2, first-party) -->
-  <rect class="stroke" x="304" y="112" width="360" height="496" rx="4"/>
-  <line class="own-bar" x1="304" y1="120" x2="304" y2="600"/>
+  <rect class="stroke" x="304" y="112" width="360" height="352" rx="4"/>
+  <line class="own-bar" x1="304" y1="120" x2="304" y2="456"/>
   <text x="316" y="136" class="encl">cisos-friend container</text>
   <text x="316" y="152" class="encl-sub">Quarkus native image, distroless, nonroot</text>
   <text x="328" y="192" class="item">web app (static SPA)</text>
@@ -63,15 +63,15 @@
   <text x="328" y="436" class="item">management HTTP :9000</text>
 
   <!-- mounted material: 12 px dashed stems, no arrowheads -->
-  <line class="mount-stem" x1="372" y1="608" x2="372" y2="620"/>
-  <rect class="stroke" x="304" y="620" width="136" height="18" rx="4"/>
-  <text x="312" y="633" class="mount">/app/data (volume)</text>
-  <line class="mount-stem" x1="484" y1="608" x2="484" y2="620"/>
-  <rect class="stroke" x="448" y="620" width="72" height="18" rx="4"/>
-  <text x="456" y="633" class="mount">config/</text>
-  <line class="mount-stem" x1="580" y1="608" x2="580" y2="620"/>
-  <rect class="stroke" x="528" y="620" width="104" height="18" rx="4"/>
-  <text x="536" y="633" class="mount">/run/secrets</text>
+  <line class="mount-stem" x1="372" y1="464" x2="372" y2="476"/>
+  <rect class="stroke" x="304" y="476" width="136" height="18" rx="4"/>
+  <text x="312" y="489" class="mount">/app/data (volume)</text>
+  <line class="mount-stem" x1="484" y1="464" x2="484" y2="476"/>
+  <rect class="stroke" x="448" y="476" width="72" height="18" rx="4"/>
+  <text x="456" y="489" class="mount">config/</text>
+  <line class="mount-stem" x1="580" y1="464" x2="580" y2="476"/>
+  <rect class="stroke" x="528" y="476" width="104" height="18" rx="4"/>
+  <text x="536" y="489" class="mount">/run/secrets</text>
 
   <!-- external systems (depth 2, no accent bar) -->
   <rect class="stroke" x="760" y="112" width="392" height="56" rx="4"/>
@@ -80,27 +80,16 @@
 
   <rect class="stroke" x="760" y="184" width="392" height="56" rx="4"/>
   <text x="772" y="206" class="encl">Git server</text>
-  <text x="772" y="222" class="encl-sub">GitHub, GitLab, Gitea, Bitbucket: truth and backup; push webhooks</text>
+  <text x="772" y="222" class="encl-sub">GitHub, GitLab, Gitea: truth and backup</text>
 
   <rect class="stroke" x="760" y="256" width="392" height="56" rx="4"/>
   <text x="772" y="278" class="encl">KMS or Vault</text>
-  <text x="772" y="294" class="encl-sub">commit-signing key, key-encryption key</text>
+  <text x="772" y="294" class="encl-sub">commit-signing key, anchor key</text>
 
   <rect class="stroke" x="760" y="328" width="392" height="56" rx="4"/>
-  <text x="772" y="350" class="encl">timestamp authority</text>
-  <text x="772" y="366" class="encl-sub">RFC 3161, optional</text>
+  <text x="772" y="350" class="encl">SIEM</text>
+  <text x="772" y="366" class="encl-sub">security and read-access events, via the operator's log pipeline</text>
 
-  <rect class="stroke" x="760" y="400" width="392" height="56" rx="4"/>
-  <text x="772" y="422" class="encl">SIEM</text>
-  <text x="772" y="438" class="encl-sub">security and read-access events, via the operator's log pipeline</text>
-
-  <rect class="stroke" x="760" y="472" width="392" height="56" rx="4"/>
-  <text x="772" y="494" class="encl">issue tracker</text>
-  <text x="772" y="510" class="encl-sub">measures created as issues</text>
-
-  <rect class="stroke" x="760" y="544" width="392" height="56" rx="4"/>
-  <text x="772" y="566" class="encl">ticket system, chat</text>
-  <text x="772" y="582" class="encl-sub">incident timeline read; nothing written into them</text>
 
   <!-- inbound edges, crossing the trust boundary -->
   <line class="arrow" x1="184" y1="212" x2="304" y2="212" marker-end="url(#arrow)"/>
@@ -113,18 +102,10 @@
   <!-- edges inside the organisation -->
   <line class="arrow" x1="664" y1="140" x2="760" y2="140" marker-end="url(#arrow)"/>
   <text x="712" y="132" class="edge-lbl">HTTPS</text>
-  <line class="arrow" x1="664" y1="200" x2="760" y2="200" marker-end="url(#arrow)"/>
-  <text x="712" y="192" class="edge-lbl">HTTPS</text>
-  <line class="arrow" x1="760" y1="224" x2="664" y2="224" marker-end="url(#arrow)"/>
-  <text x="712" y="240" class="edge-lbl">HTTPS :8443</text>
+  <line class="arrow" x1="664" y1="212" x2="760" y2="212" marker-end="url(#arrow)"/>
+  <text x="712" y="204" class="edge-lbl">HTTPS</text>
   <line class="arrow" x1="664" y1="284" x2="760" y2="284" marker-end="url(#arrow)"/>
   <text x="712" y="276" class="edge-lbl">HTTPS</text>
   <line class="arrow" x1="664" y1="356" x2="760" y2="356" marker-end="url(#arrow)"/>
-  <text x="712" y="348" class="edge-lbl">HTTPS</text>
-  <line class="arrow" x1="664" y1="428" x2="760" y2="428" marker-end="url(#arrow)"/>
-  <text x="712" y="420" class="edge-lbl">log records</text>
-  <line class="arrow" x1="664" y1="500" x2="760" y2="500" marker-end="url(#arrow)"/>
-  <text x="712" y="492" class="edge-lbl">HTTPS</text>
-  <line class="arrow" x1="664" y1="572" x2="760" y2="572" marker-end="url(#arrow)"/>
-  <text x="712" y="564" class="edge-lbl">HTTPS</text>
+  <text x="712" y="348" class="edge-lbl">log records</text>
 </svg>

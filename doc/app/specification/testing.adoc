@@ -2,23 +2,14 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
-
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-NFR-4[CIFR-NFR-4: Inbound Input Security]_
-
-Status: PLANNED
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
 Test lanes, tools and the measurable checks behind the non-functional requirements. Reasoning:
 link:../concepts/application-architecture.adoc#_testing[Application Architecture, Testing].
 
 == Lanes
-_See Requirement link:../Requirements.adoc#CIFR-NFR-6[CIFR-NFR-6: Native Image Verification]_
-
-Status: PLANNED
 
 [cols="1,2,2"]
 |===
@@ -28,10 +19,6 @@ Status: PLANNED
 |`./mvnw verify` (surefire)
 |JUnit 5, `cui-test-generator` (`@EnableGeneratorController`), EasyMock, `cui-test-value-objects`
 (`ShouldHandleObjectContracts`), `cui-test-juli-logger` (`@EnableTestLogger`, `LogAsserts`), ArchUnit, Quarkus tests
-
-|HTTP clients
-|Unit lane
-|`cui-test-mockwebserver-junit5` (`@EnableMockWebServer`, `@MockResponseConfig`, `@ModuleDispatcher`), HTTPS included
 
 |Web unit
 |`web-app` build
@@ -43,58 +30,61 @@ Status: PLANNED
 
 |Integration
 |Profile `integration-tests` (failsafe `*IT`)
-|Native image, distroless container, compose stack
+|Native image, distroless container, compose stack with Keycloak and Gitea
 |===
 
-== Integration
-_See Requirement link:../Requirements.adoc#CIFR-NFR-6[CIFR-NFR-6: Native Image Verification]_
+[#CIFR-NFR-1]
+== CIFR-NFR-1: Index Size and Start Time
 
-Status: PLANNED
+* With 1,000 SAMM assessments of 90 answers each, the in-memory index must stay below 100 MB of heap, and the native
+  application must become ready within 60 seconds after the repositories are present locally.
 
-Stack: `cisos-friend` (native image under test), Keycloak, Gitea, TSA stub. The first test class,
-`NativeGitRoundTripIT`, runs fetch, save, release and push against Gitea and verifies tag and signature. It runs in
-its own failsafe execution `native-round-trip`, declared before the execution of the remaining suites, with both its
-`integration-test` and its `verify` goal bound to the `integration-test` phase. Maven runs executions of one phase in
-declaration order, so a failure of this class fails the build before the remaining suites start. A second boot with
-an invalid configuration must fail (boot-validation smoke test).
+[#CIFR-NFR-2]
+== CIFR-NFR-2: Save Latency
 
-== Performance
-_See Requirements:_
+* The application's share of a save (the save duration minus the measured fetch and push time) must stay within
+  500 ms at the 95th percentile.
 
-* _link:../Requirements.adoc#CIFR-NFR-1[CIFR-NFR-1: Index Size and Start Time]_
-* _link:../Requirements.adoc#CIFR-NFR-2[CIFR-NFR-2: Save Latency]_
+Fixture for both: a generated `samm-assessments` repository with 1,000 assessments of 90 answers
+(`cui-test-generator`). Index size: heap histogram after start, attributed to the index classes. Start: time from
+process start to readiness `UP` with local repositories present. Save latency: 1,000 sequential saves against the
+Gitea of the integration stack; the save service records the time spent in fetch and push per save (timer
+`cisos_friend_save_git_seconds`).
 
-Status: PLANNED
+Provisional: the targets of CIFR-NFR-1 and CIFR-NFR-2 are confirmed by the prototype measurement; until then the
+checks run in a `benchmarks` lane whose results are reported, not gating.
 
-* Fixture: a generated `samm-assessments` repository with 1,000 assessments of 90 answers (`cui-test-generator`).
-* Index size: heap histogram after start, attributed to the index classes; must be < 100 MB.
-* Start: time from process start to readiness `UP` with local repositories present; must be ≤ 60 s.
-* Save latency, local mode: 1,000 sequential saves; p95 ≤ 500 ms.
-* Save latency, remote mode: 1,000 sequential saves against the Gitea of the integration stack. The save service
-  records the time spent in fetch and push per save (timer `cisos_friend_save_git_seconds`); the application's share
-  is the save duration minus that time; p95 ≤ 500 ms.
+[#CIFR-NFR-3]
+== CIFR-NFR-3: Concurrent Workshop
 
-Provisional: targets confirmed by the prototype measurement; until then the checks run in a `benchmarks` lane whose
-results are reported, not gating.
+* Fifteen users saving the fifteen different practices of one assessment concurrently, ten saves each, must lose no
+  save.
 
-== Concurrency
-_See Requirement link:../Requirements.adoc#CIFR-NFR-3[CIFR-NFR-3: Concurrent Workshop]_
+Fifteen virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 150
+changes must be present on the working branch and every save result must be `SAVED` after the library's retries.
 
-Status: PLANNED
+[#CIFR-NFR-4]
+== CIFR-NFR-4: Inbound Input Security
 
-Twenty virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 200
-changes must be present on the working branch and no save result may be lost (every result is `SAVED` after the
-library's retries, or `CONFLICT` only for tests that deliberately share a question).
+* Every path segment, query parameter and header read by the REST API and the MCP endpoint must pass a
+  `de.cuioss.http.security` validation pipeline before use; the adversarial attack-database tests must pass.
 
-== Security Tests
-_See Requirement link:../Requirements.adoc#CIFR-NFR-4[CIFR-NFR-4: Inbound Input Security]_
-
-Status: PLANNED
-
-* Inbound validation: every REST resource, the MCP endpoint and the webhook endpoint run the generator-driven attack
-  databases of `cui-http-testing` (path traversal, header injection, query manipulation); every attack must be rejected
-  before reaching a service.
-* MCP token tests: foreign audience, expired, wrong issuer, query-string token, missing scope, DPoP mismatch; each with
-  the specified status and `WWW-Authenticate`.
-* Credential leak scan: see link:mcp-server.adoc#_upstream_credentials[MCP Server, Upstream Credentials].
+* Inbound validation: every REST resource and the MCP endpoint run the generator-driven attack databases of
+  `cui-http-testing` (path traversal, header injection, query manipulation); every attack must be rejected before
+  reaching a service.
+* MCP token tests: foreign audience, expired, wrong issuer, query-string token, missing scope; each with the specified
+  status and `WWW-Authenticate`.
+* Credential leak scan: see link:mcp-server.adoc#CIFR-MCP-5[MCP Server, CIFR-MCP-5].
 * Web: CSRF header missing, wrong `Origin`, CSP present on every HTML response.
+
+[#CIFR-NFR-5]
+== CIFR-NFR-5: Native Image Verification
+
+* The integration suite must run a fetch, a save, a release and a push against a local Git server with the native
+  image before any other integration test.
+
+The first test class, `NativeGitRoundTripIT`, runs fetch, save, release and push against Gitea and verifies tag and
+signature. It runs in its own failsafe execution `native-round-trip`, declared before the execution of the remaining
+suites, with both its `integration-test` and its `verify` goal bound to the `integration-test` phase. Maven runs
+executions of one phase in declaration order, so a failure of this class fails the build before the remaining suites
+start. A second boot with an invalid configuration must fail.

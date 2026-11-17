@@ -19,7 +19,7 @@ value of the store. The documents also need what a plain database does not give 
 diffs, a release that freezes a state, an approval that survives as evidence, and a format a person can read
 without the application.
 
-Development organisations already operate exactly such a store. GitHub, GitLab, Gitea or Bitbucket keep history,
+Development organisations already operate exactly such a store. GitHub, GitLab or Gitea keep history,
 enforce rights, review changes and are backed up. Reusing that server avoids the extra database.
 
 == Assumptions
@@ -27,8 +27,8 @@ enforce rights, review changes and are backed up. Reusing that server avoids the
 * *Server-based.* One application server manages the Git repositories. No client holds a clone.
 * *Git is the persistence only.* Users never see Git; they see forms, documents and approvals.
 * *A maintained Git server exists*, with backups, in the organisation that runs the application.
-* *Authentication is given.* User login and the OAuth flows against the Git server come from Token Sheriff, a system
-  of its own in a parallel repository. The libraries consume credentials; they run no login flow.
+* *Authentication is given.* User login comes from Token Sheriff, a system of its own in a parallel repository. The
+  libraries consume the user's claims and the technical user's credential; they run no login flow.
 
 == The Structural Response
 
@@ -41,19 +41,19 @@ of its own:
 
 |*No working trees.* A branch is a reference, not a working area. Documents are written as blobs, trees and commits
 in memory; references move by compare-and-swap. Drafts are references per user; saving applies a draft as a squash
-merge in core and, in remote mode, pushes the result. Local and remote repositories share one API.
+merge in core and pushes the result to the repository's remote.
 |xref:storage-engine.adoc[The Storage Engine on Git]
 
-|*Identity by signature.* A technical user pushes; the application signs every commit and records the claims of the
-logged-in user as trailers. Approvals can be raised to MFA or a passkey signature. Pushing in the user's name stays
-optional.
+|*Identity by signature.* Only a technical user talks to Git; the application signs every commit and records the
+claims of the logged-in user as trailers. Every approval requires a fresh MFA login (step-up).
 |xref:identity-and-signing.adoc[Identity and Signing]
 
-|*Data protection without a further store.* The pseudonym mapping lies in Git in an encrypted keyring; erasure
-rotates the key-encryption key and destroys the old one. Repositories are cut by confidentiality and retention class.
+|*Data protection by pseudonyms.* Commits and documents name persons only by pseudonym; names lie in one place, the
+pluggable person directory, by default as entries in a repository, or in the operator's own source. Repositories are
+cut by confidentiality and retention class.
 |xref:data-protection.adoc[Data Protection]
 
-|*Evidence.* Releases and periodic checkpoints are anchored through pluggable providers (an own signed timestamp,
+|*Evidence.* Releases and periodic checkpoints are anchored through a pluggable provider (an own signed timestamp or
 RFC 3161 timestamps), the proofs stored as `git notes`. Every other store beside Git is either derived from it (the
 index) or lives in a system the organisation already runs.
 |xref:evidence-and-companion-stores.adoc[Evidence and Companion Stores]
@@ -62,7 +62,7 @@ index) or lives in a system the organisation already runs.
 approval, deadlines and links. A kind of document becomes configuration of one generic layer.
 |xref:schema-driven-documents.adoc[Schema-Driven Documents]
 
-|*Master data.* A directory of persons (encrypted) and catalogs of roles, teams and services that every document
+|*Master data.* A directory of persons under pseudonyms and catalogs of roles, teams and services that every document
 refers to by stable ids.
 |xref:directory-and-catalogs.adoc[Directory and Catalogs]
 |===
@@ -71,8 +71,8 @@ How these primitives are cut into Maven modules is described in xref:module-stru
 
 == Existing Solutions
 
-No Java library known to this concept provides this shape: drafts per user, merge on save, local or remote by
-configuration, and the same API for both. None of the candidates surveyed below does. Building blocks and reference
+No Java library known to this concept provides this shape: drafts per user and merge on save, in memory, against any
+Git server. None of the candidates surveyed below does. Building blocks and reference
 designs exist.
 
 [cols="1,2,1"]
@@ -120,22 +120,21 @@ underneath is generic, and every domain needs it identically. Separating it has 
 
 === Scope
 
-* *Repositories*: local or remote mode by configuration; a bare clone as disposable cache; a registry of several
-  repositories (confidentiality and retention classes) with stable aliases.
+* *Repositories*: a remote per repository and a bare clone as disposable cache; a registry of several repositories
+  (confidentiality and retention classes) with stable aliases.
 * *Writing*: in-core commits (blob, tree, commit) without working trees; compare-and-swap reference updates with retry;
   in-core merge; deterministic file content through a codec interface.
 * *Drafts and saving*: draft references per user and document; intermediate save; save as squash merge in core,
-  compare-and-swap, fetch, push and re-apply on rejection; conflict results per path; expiry and garbage collection
-  of drafts.
-* *Identity*: author and committer per save; a credentials strategy per push (technical user or user token); commit
-  trailers for approvals.
+  fetch, push with lease and re-apply on rejection; conflict results per path; expiry and garbage collection of
+  drafts.
+* *Identity*: author and committer per save; the technical user's credential for every push; the application's
+  signature and the identity trailers on every commit.
 * *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
   index interface the domain fills.
-* *Post-commit processing*: an outbox over the new commits, idempotent by commit hash, with its progress kept in a
-  reference; the hook for mirror and index.
+* *Post-commit listeners*: in-process callbacks for the new commits, the hook for the index.
 * *Anchoring*: releases and periodic checkpoints anchored through a provider interface, the proofs as notes.
-* *Notes*: reading and writing `git notes` for anchor proofs, approvals and other annotations.
-* *Results instead of exceptions* for the expected outcomes (saved, conflict, rejected, credentials expired).
+* *Results instead of exceptions* for the expected outcomes (saved, conflict, rejected, unreachable, credentials
+  expired).
 
 === Not in Scope
 
@@ -144,17 +143,17 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * the OAuth flows and the identity provider (Token Sheriff; the libraries only consume credentials),
 * integrations with issue trackers and ticket systems.
 
-The anchor providers live in the optional modules: the own timestamp in `git-signing`, the client of an RFC 3161
-timestamp authority in `git-timestamp`; `git-store` only defines their interface.
+The own timestamp is part of `git-store`; the client of an RFC 3161 timestamp authority lives in the optional module
+`git-timestamp`.
 
 == Risks and Limits
 
 * *Many concurrent writers on one branch cause retries.* For documents maintained by few people over days this is
   uncritical; a high-frequency write load is not a case for this store.
-* *Several application instances* stay safe through compare-and-swap on push, but each in-memory index is only as
-  fresh as its last fetch. Webhooks of the Git server shorten the gap.
-* *A conflict in the same file* is detected per path. `git-forms` resolves it per field of the YAML structure where
-  the changed fields differ; a real conflict goes to the user.
+* *One application instance* serves a repository: the drafts live in its clone. Changes made on the Git server
+  itself reach the index with the next periodic fetch.
+* *A conflict in the same file* is detected per path and goes to the user; one file per independently edited part
+  keeps such conflicts rare.
 * *Removing data from the history stays expensive.* The rules of xref:data-protection.adoc[Data Protection] keep
   personal data out of the history instead.
 * *The content API of the Git server* would be simpler than a clone, but binds to one vendor and runs into rate
@@ -175,8 +174,7 @@ the mechanisms; they do not certify them.
 
 == Open Questions
 
-. Prototype the store: concurrent saves against one branch, measuring conflicts and retries
-  (see xref:storage-engine.adoc#_open_questions[Storage Engine, Open Questions]).
+. Prototype the store: concurrent saves against one branch, measuring conflicts and retries.
 . Draft the API of the modules together with the repository layout of the first consuming application.
 . Should JGit be added as a dependency of this repository? Like every dependency, it needs the owner's approval.
 
@@ -184,9 +182,7 @@ the mechanisms; they do not certify them.
 
 * xref:module-structure.adoc[Module Structure] -- the modules, their dependencies, and the foundation shared with
   other clients.
-* xref:../Requirements.adoc[Requirements] and xref:../Specification.adoc[Specification] -- what the libraries must do
-  and how.
-* xref:../adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010] -- why there is no database.
+* xref:../README.adoc#_specification[Specification] -- what the libraries must do and how.
 
 This concept stops at the library boundary. What an application built on it looks like is documented with that
 application.

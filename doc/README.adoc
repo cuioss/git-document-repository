@@ -18,25 +18,11 @@ or law cites the source it was checked against.
 repository later and is not part of the library documentation.
 ====
 
-== Where to Start
-
-[cols="1,3"]
-|===
-|Reader |Entry point
-
-|Newcomer
-|xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents] -- the problem, the
-assumptions, the primitives and the limits.
-
-|Contributor changing the module structure
-|xref:concepts/module-structure.adoc[Module Structure] and the <<_architecture_decisions,decision records>>.
-
-|Implementer
-|xref:Requirements.adoc[Requirements] (what must hold) and xref:Specification.adoc[Specification] (how it is
-realised).
-|===
-
+[[_concepts]]
 == Concepts
+
+Read in this order; the newcomer starts with the first, a contributor changing the module structure with the last and
+the <<_architecture_decisions,decision records>>.
 
 [cols="1,3"]
 |===
@@ -45,26 +31,26 @@ realised).
 |xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]
 |Problem, assumptions, existing solutions, scope of the libraries, risks and limits
 
-|xref:concepts/module-structure.adoc[Module Structure]
-|The reactor, module dependencies, the foundation modules, the order of work
-
 |xref:concepts/storage-engine.adoc[The Storage Engine on Git]
-|Local and remote mode, no working trees, compare-and-swap, drafts and saving, visibility, the in-memory index
+|One remote per repository, no working trees, compare-and-swap, drafts and saving, the in-memory index
 
 |xref:concepts/identity-and-signing.adoc[Identity and Signing]
-|Technical user and user token, the application signature, trailers, graded traceability, passkey approvals
+|The technical user, the application signature on every commit, trailers, step-up for approvals
 
-|xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
-|Pseudonymous history, the encrypted keyring, erasure by key rotation, repositories per class
+|xref:concepts/data-protection.adoc[Data Protection: Pseudonyms, the Person Directory and Repository Cut]
+|Pseudonymous history, the pluggable person directory, erasure, repositories per class
 
 |xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
-|Derived, complementary and assuring stores, anchoring of releases and checkpoints, the post-commit outbox
+|Derived, complementary and assuring stores, anchoring of releases and checkpoints, post-commit listeners
 
 |xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
 |Schema, data and generated output, workflow, deadlines, links, running numbers
 
 |xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
-|Catalogs of roles, teams and services, the encrypted directory of persons, Backstage alignment
+|Catalogs of roles, teams and those an application declares, the directory of persons under pseudonyms
+
+|xref:concepts/module-structure.adoc[Module Structure]
+|The reactor, module dependencies, the foundation modules, the order of work
 |===
 
 == Clients
@@ -89,73 +75,69 @@ context; _Alternatives rejected_, each with a one-sentence description and the r
 _Properties of the design_, _Accepted costs_ and _When this is revisited_; and _Links_. The decision records of the
 application in `doc/app/adr/` follow the same structure.
 
-[cols="1,3,1"]
+[cols="1,4"]
 |===
-|ADR |Decision |Status
+|ADR |Decision
 
 |xref:adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[0001]
 |Documents are written in core without working trees, and references move by compare-and-swap
-|Accepted
 
-|xref:adr/0002-Local_and_remote_mode_share_one_API_and_the_local_bare_clone_is_a_disposable_cache.adoc[0002]
-|Local and remote mode share one API; the local bare clone is a disposable cache in remote mode
-|Accepted
+|xref:adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[0002]
+|Every repository has a remote, and the local bare clone is a disposable cache
 
 |xref:adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[0003]
 |Drafts are per-user references that are never pushed
-|Accepted
 
-|xref:adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[0004]
-|The libraries are one reactor of separately consumed modules, with optional aspect modules
-|Accepted
+|xref:adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[0004]
+|The libraries are one reactor of separately consumed modules, and the JGit foundation is shared with its clients
 
-|xref:adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[0005]
-|The JGit foundation is a library of its own, shared with its clients
-|Accepted
+|xref:adr/0005-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[0005]
+|A technical user writes, and the application signs every commit with the user claims as signed trailers
 
-|xref:adr/0006-The_application_signs_every_commit_and_records_the_user_claims_as_signed_trailers.adoc[0006]
-|The application signs every commit and records the user's claims as signed trailers
-|Accepted
+|xref:adr/0006-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[0006]
+|Commits name pseudonyms; a pluggable person directory keeps persons in Git by default
 
-|xref:adr/0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[0007]
-|Passkey approvals are stored as `git notes` on the approved commit
-|Accepted
+|xref:adr/0007-Releases_and_checkpoints_are_anchored_through_a_pluggable_provider.adoc[0007]
+|Releases and checkpoints are anchored through a pluggable provider
 
-|xref:adr/0008-The_pseudonym_mapping_lies_in_an_encrypted_keyring_in_Git_and_erasure_rotates_the_key-encryption_key.adoc[0008]
-|The pseudonym mapping lies in an encrypted keyring in Git; erasure rotates the key-encryption key
-|Accepted
-
-|xref:adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[0009]
-|Releases and checkpoints are anchored through pluggable providers; a post-commit outbox follows every save
-|Accepted
-
-|xref:adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[0010]
-|No database; the in-memory index is derived from Git
-|Accepted
-
-|xref:adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[0011]
+|xref:adr/0008-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[0008]
 |Documents are schema-driven YAML data with AsciiDoc fragments and generated output
-|Accepted
-
-|xref:adr/0012-Directory_roles_are_names_only_in_the_first_iteration.adoc[0012]
-|Directory roles are names only in the first iteration
-|Accepted
 |===
 
-== Requirements and Specification
+[[_specification]]
+== Specification
 
-* xref:Requirements.adoc[Requirements] -- prefix `GDR`, grouped by module, with a closing traceability table.
-* xref:Specification.adoc[Specification] -- one document per module plus the error model and testing; every section
-  links back to its requirement and carries its implementation status.
+One document per module. Each lists the module's requirements (prefix `GDR`, numbered per group) as sections, each
+with its "must" statements first and the design that realises them after. Every requirement is planned.
 
-== Reading Order
+[cols="1,3"]
+|===
+|Document |Content
 
-. xref:concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]
-. xref:concepts/storage-engine.adoc[The Storage Engine on Git]
-. xref:concepts/identity-and-signing.adoc[Identity and Signing]
-. xref:concepts/data-protection.adoc[Data Protection: Pseudonymisation, Erasure and Repository Cut]
-. xref:concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores]
-. xref:concepts/schema-driven-documents.adoc[Schema-Driven Documents]
-. xref:concepts/directory-and-catalogs.adoc[Directory and Catalogs]
-. xref:concepts/module-structure.adoc[Module Structure]
-. xref:Requirements.adoc[Requirements], then xref:Specification.adoc[Specification]
+|xref:specification/general.adoc[General]
+|Layering, platform modules, results and outcomes, logging, secrets, non-functional limits, test approach
+
+|xref:specification/git-core.adoc[git-core]
+|Hardened repositories, remote policy, bare clone, in-core writing, compare-and-swap, merge, transport, cache
+repository, reading, notes, identity
+
+|xref:specification/git-worktrees.adoc[git-worktrees]
+|Linked working trees, commit from a working tree, working-tree status
+
+|xref:specification/git-testing.adoc[git-testing]
+|Repository fixtures and the credential generator
+
+|xref:specification/git-store.adoc[git-store]
+|Registry, drafts, saving, release, identity, index, listeners, codecs, signature, verification, anchoring, own
+timestamp, person directory interface
+
+|xref:specification/git-forms.adoc[git-forms]
+|Kinds of documents, schema validation, data layout, generated output, workflow, deadlines, step-up, links, running
+numbers
+
+|xref:specification/git-timestamp.adoc[git-timestamp]
+|RFC 3161 anchor provider and its verification
+
+|xref:specification/git-directory.adoc[git-directory]
+|Catalogs, persons, first login, resolution, confirmation, erasure
+|===

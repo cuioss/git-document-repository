@@ -20,56 +20,61 @@ free text. This category replaces the report, not the handling.
   structure, review and approval, the kind of document the schema-driven approach on Git is made for.
 
 The live phase therefore stays in the chat, the ticket system, the on-call service and Confluence; only the report
-moves into CISOs-Friend. The application reads the ticket system and the chat to import the timeline into the report
-and writes nothing into them; measures are created as issues in the issue tracker and referenced by id. The decision
-is recorded in
-link:../adr/0008-Incident_handling_stays_in_ticket_and_chat_only_the_report_lives_in_Git.adoc[ADR-0008].
+moves into CISOs-Friend. Handling the live phase in CISOs-Friend would not work: Git is no real-time medium, and a
+commit per chat message would bury the report. The application connects to none of these systems: the report refers
+to tickets and to measures (issues) by the ids the user or an agent enters.
 
 == What a Form Gains over Confluence
 
-. *Mandatory fields and deadlines are enforced.* Security incidents carry hard notification deadlines: GDPR Art. 33
-  (notification within 72 hours; documentation of every personal data breach, para. 5) and, where it applies, NIS2
-  (early warning within 24 hours and incident notification within 72 hours of becoming aware of a significant
-  incident; an intermediate report on request of the CSIRT or competent authority; a final report no later than one
-  month after the notification, or, for an incident still ongoing then, a progress report at that point and the final
-  report within one month of its handling;
-  https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4)). Germany transposes this in
-  https://www.gesetze-im-internet.de/bsig_2025/__32.html[§ 32 BSIG] (BSI-Gesetz of 2 December 2025, BGBl. 2025 I
-  Nr. 301, in force since 6 December 2025) with the same 24-hour, 72-hour and one-month deadlines, reported to the
-  joint reporting office of BSI and BBK; one difference: after a progress report, § 32(2) sets no period for the final
-  report, which is due once the handling is completed. NIS2 applies to entities of a type listed in Annex I or II of
-  the directive that are at least medium-sized enterprises under Recommendation 2003/361/EC (Art. 2(1)), and to some
-  types regardless of size (Art. 2(2)); Art. 3 divides them into essential and important entities. The German
-  thresholds in https://www.gesetze-im-internet.de/bsig_2025/__28.html[§ 28 BSIG] are at least 50 employees, or an
-  annual turnover and a balance sheet total each above EUR 10 million, for the entity types of Anlagen 1 and 2.
-  A form with a schema shows the deadlines and checks the mandatory fields; a Confluence page cannot.
-. *Review and approval* by pull request, with a passkey approval where configured, immutable after approval,
+. *Mandatory fields and deadlines are enforced.* Security incidents carry hard notification deadlines (see
+  <<_the_deadline_clock>>). A form with a schema shows the deadlines and checks the mandatory fields; a Confluence page
+  cannot.
+. *Review and approval* in the application, with step-up for the release, immutable after approval,
   timestamped: evidence for ISO 27001 A.5.24–5.28 (among them 5.27, learning from incidents, and 5.28, collection of
   evidence).
-. *Machine-readable*: evaluations across all incidents (categories, time to detection and resolution, recurring
-  causes); in Confluence that is free text.
-. *Links*: an incident creates risks in the ISMS register, measures as issues and, where it applies, a review of the
-  threat model of the affected service.
+. *Machine-readable*: categories, times and root causes are fields, ready for evaluations across incidents; in
+  Confluence they are free text.
+. *Links*: an incident leads to risks in the ISMS register and records its measures by issue id.
 . *Data protection and confidentiality*: a repository per year with a retention period (`isms-incidents-2026`),
-  personal details encrypted through the keyring, read access for a small circle
+  no personal details in the report (they stay in the ticket system), read access for a small circle
   (link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
 
 Where Confluence is better: joint live editing and commenting, familiarity for non-technical participants, and it
 runs already. That is why the live phase stays there.
 
+[#_the_deadline_clock]
 == The Deadline Clock
 
-The deadlines start at a point the report records: the time the organisation became aware of the incident (`aware-at`).
-From that field and the classification (personal data affected, NIS2 applicable) the application computes the due times
-of the notifications and shows them in the form and on the dashboard. The report also records when the incident began
-(`occurred-at`; where unknown, the first timeline entry) and when it was detected (`detected-at`); the time to detection
-is `detected-at` minus `occurred-at` and starts no deadline. Deadlines are computed from the in-memory index; reminders
-are runtime state of the application, not persistence. A notification that was sent is a field with its time and its
+GDPR Art. 33 requires the notification of a personal data breach within 72 hours and the documentation of every such
+breach (para. 5). Where it applies, NIS2 requires an early warning within 24 hours and an incident notification within
+72 hours of becoming aware of a significant incident, an intermediate report on request of the CSIRT or competent
+authority, and a final report no later than one month after the notification, or, for an incident still ongoing then,
+a progress report at that point and the final report within one month of its handling
+(https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4)). For a trust service provider
+the second subparagraph of Art. 23(4) sets the notification itself at 24 hours. NIS2 applies to entities of a type
+listed in Annex I or II of the directive that are at least medium-sized enterprises under Recommendation 2003/361/EC
+(Art. 2(1)), and to some types regardless of size (Art. 2(2)).
+
+Germany transposes this in https://www.gesetze-im-internet.de/bsig_2025/__32.html[§ 32 BSIG] (BSI-Gesetz of
+2 December 2025, BGBl. 2025 I Nr. 301, in force since 6 December 2025) with the same 24-hour, 72-hour and one-month
+deadlines, reported to the joint reporting office of BSI and BBK. One difference: after a progress report, § 32(2)
+sets no period for the final report, which is due once the handling is completed; for Germany the month after
+resolution is an internal target. The German thresholds in https://www.gesetze-im-internet.de/bsig_2025/__28.html[§ 28
+BSIG] are at least 50 employees, or an annual turnover and a balance sheet total each above EUR 10 million, for the
+entity types of Anlagen 1 and 2.
+
+The first deadlines start at a point the report records: the time the organisation became aware of the incident
+(`aware-at`). The final NIS2 report runs from the notification that was sent, or, for an incident still ongoing then,
+from its resolution (`resolved-at`). From these times and the classification (personal data affected, significant
+incident under NIS2) the application computes the due times and shows them in the form and on the dashboard. The rules
+are data of the category's workflow, so another period (a trust service provider, a transposition that differs) is a
+change of configuration, not of code. The report also records when the incident began (`occurred-at`) and when it was
+detected (`detected-at`); neither starts a deadline. Deadlines are computed from the in-memory index; reminders are
+runtime state of the application, not persistence. A notification that was sent is a field with its time and its
 recipient; a missed deadline stays visible in the released report.
 
-The affected services come from the service catalog, and with them their protection needs and data classes. The
-`dependsOn` graph of the catalog names the services an incident may have reached; the protection needs inherit by the
-maximum principle and feed the classification.
+The affected services come from the link:service-catalog.adoc[service catalog]; the protection needs of the incident
+are the maximum over their effective protection needs, which already include what the services depend on.
 
 == AsciiDoc Is the Output, Not the Truth
 
@@ -91,45 +96,41 @@ customers is generated from it as well. The mechanism is the library's
 link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
 template and the workflow.
 
-Personal details in the narrative (a named employee who clicked a link) are a special case: the form offers a field
-encrypted with the data encryption key (DEK) of the data subject, and the UI warns against personal interview notes in
-free text.
+Personal details in the narrative (a named employee who clicked a link) do not go into the report. The narrative names
+roles and pseudonyms ("a member of `team:payments`"); the details stay in the ticket, referenced by its id, and the UI
+warns against personal details and interview notes in free text. For a personal data breach the report records the
+categories and approximate number of data subjects and records, which is what the notification to the supervisory
+authority asks for (GDPR Art. 33(3)(a), link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU)
+2016/679]).
 
 == Existing Alternatives
 
-[cols="1,2,2"]
+[cols="1,2"]
 |===
-|Tool |Kind |Assessment
+|Tool |Assessment
 
 |incident.io, FireHydrant, Rootly, PagerDuty
-|Commercial SaaS, focused on operational incidents (SRE)
-|Strong in the live phase with chat integration, produce postmortems; the data lie with the vendor
+|Commercial SaaS for operational incidents (SRE); strong in the live phase, produce postmortems; the data lie with
+the vendor
 
 |Jira Service Management with Confluence templates
-|Commercial, Atlassian
 |Close to the current setup, but free text without a schema
 
 |Netflix Dispatch
-|Open source incident management with Slack
-|Live phase; archived on GitHub (last push 2025-09-03) and no longer maintained
+|Open source, live phase with Slack; archived on GitHub (https://github.com/Netflix/dispatch[Dispatch on GitHub])
 
 |DFIR-IRIS
-|Open source (LGPL-3.0) collaborative incident response platform; report templates producing docx, Markdown or
-HTML (https://docs.dfir-iris.org/latest/operations/reports/[IRIS reports])
-|Closest for security incidents; maintained (release v2.4.29 on 2026-08-10); a PostgreSQL database and a Docker
-Compose stack of its own (https://github.com/dfir-iris/iris-web[iris-web on GitHub])
+|Open source (LGPL-3.0) incident response platform with report templates
+(https://docs.dfir-iris.org/latest/operations/reports/[IRIS reports]); closest for security incidents, but a
+PostgreSQL database and a Docker Compose stack of its own (https://github.com/dfir-iris/iris-web[iris-web on GitHub])
 
 |TheHive
-|Case management platform for security incidents in a SOC, by StrangeBee
-|For SOC teams; TheHive 5 is distributed commercially and every edition needs a licence, the free Community licence
-is for non-commercial use
-(https://docs.strangebee.com/thehive/installation/licenses/about-licenses/[TheHive licenses]); the open source
-TheHive 4 (AGPL-3.0, last release 4.1.24 on 2022-09-13) is archived
-(https://github.com/TheHive-Project/TheHive[TheHive on GitHub])
+|Case management for SOC teams; TheHive 5 needs a licence in every edition, the free Community licence is for
+non-commercial use (https://docs.strangebee.com/thehive/installation/licenses/about-licenses/[TheHive licenses])
 
 |Postmortems as Markdown in Git
-|Established practice (template of the Google SRE book)
-|Shows that the approach carries, but without form, schema and deadlines
+|Established practice (template of the Google SRE book); shows that the approach carries, but without form, schema and
+deadlines
 |===
 
 No tool known to this concept structures reports, reviews them, stores them without additional operation and links
@@ -139,11 +140,12 @@ them to the ISMS, the threat models and the notification duties. The gap is the 
 
 . Draft the schema of incident response reports with the notification deadlines (GDPR Art. 33; NIS2 where it
   applies).
-. Design the import of the timeline from the ticket system or the chat (which systems, pull or push).
+. Deferred: import of the timeline from the ticket system or the chat.
+. Deferred: proposing further affected services along `dependsOn` of the service catalog.
+. Deferred: evaluations across incidents (median times to detection and resolution, recurring root causes).
 
 == Related
 
 * link:category-isms.adoc[ISMS] — risks and measures from incidents
 * link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the yearly repository
 * link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]
-* Sources: https://github.com/Netflix/dispatch[Dispatch on GitHub]
