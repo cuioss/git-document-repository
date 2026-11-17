@@ -106,7 +106,8 @@ The target of a save is the working branch of the document or the collection bra
 target branch that does not exist yet starts at the tip of `main`, which gives the release its merge base; the push
 then expects the branch to be absent on the remote. Content that has no release is saved with the same steps onto
 `main` itself: the person entries and the erasure record of `git-directory`
-(xref:git-directory.adoc#GDR-DIR-3[GDR-DIR-3], xref:git-directory.adoc#GDR-DIR-6[GDR-DIR-6]).
+(xref:git-directory.adoc#GDR-DIR-3[GDR-DIR-3], xref:git-directory.adoc#GDR-DIR-6[GDR-DIR-6],
+xref:git-directory.adoc#GDR-DIR-7[GDR-DIR-7]).
 
 [#GDR-STORE-4]
 == GDR-STORE-4: Conflict Handling
@@ -337,8 +338,10 @@ pipeline keep a copy outside Git. A single proof can be checked with a stock Ope
 == GDR-STORE-19: Person Directory Interface
 
 * The store must define the service interface `PersonDirectory`: the pseudonym of an identity-provider issuer and
-  `sub`; the entry of a pseudonym (name and memberships, pairs of team and role) or a former-member marker; the
-  pseudonyms holding a role in a team; saving an entry; and the erasure of a pseudonym.
+  `sub`; the entry of a pseudonym (name and memberships, pairs of team and role) or a former-member marker with the
+  memberships the provider still knows, possibly none; the pseudonyms holding a role in a team; saving an entry;
+  saving an unbound entry, the unbound entries holding one of given memberships, and binding one to an issuer and
+  `sub`; and the erasure of a pseudonym.
 * Exactly one provider must be active, named by `directory.persons.provider` (default `git`). The author pseudonym of
   every save must come from it.
 * A pseudonym must be stable for the same issuer and `sub` as long as its entry exists. After an erasure the provider
@@ -349,7 +352,8 @@ pipeline keep a copy outside Git. A single proof can be checked with a stock Ope
 
 The issuer and `sub` together are the key, because a `sub` is unique only within its issuer. A provider for the
 operator's own source (LDAP, SCIM, the identity provider's user directory) reads names and memberships from that
-source and keeps its own mapping to pseudonyms; it returns not supported for saving an entry and managed by source for
+source and keeps its own mapping to pseudonyms; it returns not supported for saving an entry, an unbound entry or a
+binding, and managed by source for
 an erasure, because the operator erases there. Rationale:
 xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory].
 

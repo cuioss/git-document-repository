@@ -93,16 +93,40 @@ different role in each, and assignments almost always ask for "role X in team Y"
 only the name: pseudonym, team and role together often identify a person. Commits and documents therefore carry only
 the pseudonym; how the entry is protected and erased is described in xref:data-protection.adoc[Data Protection].
 
+=== Prefilled Entries
+
+An operator can fill the directory before the people log in, for example from an organisation chart, so that
+documents can name responsibilities from the start. A prefilled entry has a pseudonym, a name and memberships, but no
+subject hash: it is *unbound*, because no login leads to it yet. Documents refer to its pseudonym like to any other;
+it authors no save before it is bound. An administrator saves it on `main`, like every person entry, with at least
+one membership, and keeps name and memberships current until the person binds it: only a matching membership leads
+the first login to it.
+
+When the person logs in, the entry must not be created a second time: a second pseudonym would leave the references
+on the prefilled one behind. The first login therefore offers to *bind* the login to it.
+
 === First Login
 
-. The login yields the issuer, the `sub` and usually the name. The person directory finds no entry for the hash of
-  issuer and `sub`, creates a random pseudonym, held in memory until the entry is saved, and asks the application to
-  show the entry form.
-. The form is prefilled with the name from the token. Team and role are picked from the catalogs; a missing entry can
-  be requested for the catalog.
+. The login yields the issuer, the `sub` and usually the name. The person directory finds no bound entry for the
+  hash of issuer and `sub`, creates a random pseudonym, held in memory until the entry is saved, and asks the
+  application to show the entry form.
+. The form is prefilled with the name from the token. The user confirms the name and picks team and role from the
+  catalogs; a missing entry can be requested for the catalog.
+. Before saving, the directory looks for unbound entries that hold at least one of the entered memberships. If it
+  finds any, it shows them with name and memberships, and the user chooses: *bind* to one of them, or *create* a new
+  entry.
 . Saving is a commit on `main`, signed by the application like every other, without a release workflow; the entry is
-  valid at once. A first login interrupted before this step leaves nothing behind.
+  valid at once. Binding writes the subject hash and the entered data into the chosen entry: the user takes over its
+  pseudonym, and the in-memory one is dropped. Creating saves a new entry under the in-memory pseudonym. A bound entry
+  is never offered again. A first login interrupted before this step leaves nothing behind.
 . Later the user changes the own entry through the same form.
+
+[CAUTION]
+====
+The binding rests on the user's own statement: whoever logs in first with a matching team and role can bind an entry
+meant for someone else, and then appears as the person the documents name. The binding commit carries that user's
+trailers, so it can be traced and corrected, but it is not prevented.
+====
 
 With a person directory for the operator's own source (identity provider, SCIM, LDAP) there is no entry form: names
 and memberships come from that source, and the operator maintains them there.
@@ -135,6 +159,9 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 
 == Open Questions
 
+. Whether a binding of a prefilled entry takes effect at once or only after an administrator confirms it, and how a
+  wrong binding is undone.
+. Whether an unbound entry that nobody binds expires, and after which period.
 . Whether a catalog change is saved directly on `main`, like a person entry, or on a working branch with review and
   release. The list files `catalog/roles.yaml` and `catalog/teams.yaml` follow neither document layout of
   xref:../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3], so `git-directory` has to declare their layout

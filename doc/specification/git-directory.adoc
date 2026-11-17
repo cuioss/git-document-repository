@@ -37,8 +37,9 @@ xref:../concepts/directory-and-catalogs.adoc#_open_questions[Directory and Catal
 * The module must provide the person directory `git`, the default provider.
 * A person entry must be the file `persons/<pseudonym>.yaml` in `directory.persons.repository` (a repository alias,
   default the directory's repository).
-* An entry must hold the subject hash, the name, the memberships (pairs of team and role), the date `since` and the
-  date of the last confirmation `confirmed`, and no further field unless the operator extends the schema.
+* A bound entry must hold the subject hash, the name, the memberships (pairs of team and role), the date `since` and
+  the date of the last confirmation `confirmed`, and no further field unless the operator extends the schema; an
+  unbound entry (<<GDR-DIR-7>>) holds the same without subject hash and `confirmed`.
 * The subject hash must be the SHA-256 over the UTF-8 bytes of the issuer, a line feed and the `sub`, in lowercase
   hex; the entry must hold neither issuer nor `sub`, and `sub` must never be written to a repository. The issuer is
   not personal and appears in the `Actor-Issuer` trailer of every save
@@ -53,37 +54,54 @@ memory, indexed by subject hash and by pseudonym.
 [#GDR-DIR-3]
 == GDR-DIR-3: First Login
 
-* For an issuer and `sub` without a saved entry the module must create a pseudonym, hold it in memory only, and
+* For an issuer and `sub` without a bound entry the module must create a pseudonym, hold it in memory only, and
   report entry required with a prefill (`name` from the token, memberships from identity-provider groups where
   mapped).
-* Saving the entry must be a save on `main` of the persons' repository, without review or release; the entry must
-  take effect with that save, so that the next resolution of the pseudonym returns it.
+* For entered memberships the module must list the binding candidates: the unbound entries (<<GDR-DIR-7>>) that hold
+  at least one of them.
+* Saving the first entry must take the caller's choice: *create*, a new entry under the pseudonym held in memory, or
+  *bind*, naming a binding candidate. Binding must write the subject hash, the entered name and memberships and
+  `confirmed` into that entry in one commit and keep its pseudonym; the pseudonym held in memory is dropped. A bind to
+  an entry that is bound or holds none of the entered memberships must be refused with the outcome not bindable.
+* Saving must be a save on `main` of the persons' repository, without review or release; the entry must take effect
+  with that save, so that the next resolution of the pseudonym returns it.
+* The commit of a created entry must name the pseudonym held in memory, the commit of a binding the pseudonym of the
+  bound entry, which that commit binds, both as author (xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]) and in the
+  `Actor` trailer (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]).
+* Every attempt of the save, the re-applications of
+  xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3] included, must check against the tip it commits on that no entry
+  holds the subject hash yet and, for a binding, that the chosen entry is still unbound and holds one of the entered
+  memberships; the push with lease makes the check atomic. When the subject hash is bound meanwhile, nothing is
+  written and the pseudonym resolves to that entry; when the chosen entry is bound meanwhile, the save must be
+  refused with the outcome not bindable.
 
 A first login interrupted before the entry is saved leaves nothing in Git; the next login creates a new pseudonym,
-and nothing refers to the old one, because no save happened under it.
+and nothing refers to the old one, because no save happened under it. The binding rests on the user's statement; see
+xref:../concepts/directory-and-catalogs.adoc#_first_login[Directory and Catalogs, First Login].
 
 [#GDR-DIR-4]
 == GDR-DIR-4: Reference Resolution
 
 * The module must resolve `<catalog>:<id>` references of every configured catalog to their entries, retired ones
   included, and a role in a team to the pseudonyms holding it.
-* A pseudonym must resolve to its entry from the active person directory, or to a former-member marker when it was
-  erased.
+* A pseudonym must resolve to its entry from the active person directory, or to a former-member marker with the
+  memberships recorded at the erasure (<<GDR-DIR-6>>) when it was erased.
 
 [#GDR-DIR-5]
 == GDR-DIR-5: Periodic Confirmation
 
 * A confirmation interval (`directory.confirmation-interval`, ISO 8601 period; absent disables it) must be
   configurable.
-* The module must list the person entries whose `confirmed` (or `since`) date is older than the interval; confirming
-  sets `confirmed` to today.
+* The module must list the bound person entries whose `confirmed` (or `since`) date is older than the interval;
+  confirming sets `confirmed` to today.
 
 [#GDR-DIR-6]
 == GDR-DIR-6: Erasure
 
 * Erasure must delete the person's entry in one commit on `main` that also appends an item with the fields
-  `pseudonym` and `date` (ISO 8601 calendar date) to the list in `erasures.yaml` of the same repository, and names the
-  erased person only by pseudonym; the pseudonym must then resolve to a former member.
+  `pseudonym`, `date` (ISO 8601 calendar date) and `memberships` (the pairs of team and role the entry held, empty
+  when it held none) to the list in `erasures.yaml` of the same repository, and names the erased person only by
+  pseudonym; the pseudonym must then resolve to a former member with those memberships.
 * Erasure must never rewrite the history.
 
 [source,yaml]
@@ -91,9 +109,33 @@ and nothing refers to the old one, because no save happened under it.
 # erasures.yaml: one item per erased pseudonym, no further field
 - pseudonym: p-3ZQ4M1V9K2D8R3T6X0B5N7HJCA
   date: 2026-11-17
+  memberships:
+    - team: team:payments
+      role: role:security-champion
 ----
 
 The erasure commit is a save of the administrator who erases, with that administrator's trailers
 (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]). The history of the repository keeps
 the earlier versions of the entry; see xref:../concepts/data-protection.adoc#_erasing_a_person[Data Protection,
 Erasing a Person].
+
+[#GDR-DIR-7]
+== GDR-DIR-7: Prefilled Entries
+
+* The module must save an unbound entry: a person entry without subject hash and without `confirmed`, under a new
+  pseudonym (<<GDR-DIR-2>>), as a save on `main` of the persons' repository by an administrator.
+* An unbound entry must hold at least one membership, so that a first login can find it (<<GDR-DIR-3>>); an
+  administrator may change its name and memberships until it is bound.
+* An unbound entry must resolve like a bound one (<<GDR-DIR-4>>) and may be referenced by documents; its pseudonym
+  must author no save before the commit that binds it.
+* An unbound entry must become bound only by a first login that binds it (<<GDR-DIR-3>>).
+
+[source,yaml]
+----
+# persons/<pseudonym>.yaml, prefilled: no subject-hash, no confirmed
+name: Erika Example
+memberships:
+  - team: team:payments
+    role: role:security-champion
+since: 2026-11-17
+----

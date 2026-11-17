@@ -100,7 +100,8 @@ Erasure rewrites every commit that contains the person's entry.
 
 * No further store and no encryption: the default directory is a repository like the others, with its rights, reviews
   and backup.
-* References keep working after an erasure: the pseudonym stays in the history and resolves to "former member".
+* References keep working after an erasure: the pseudonym stays in the history and resolves to the team and role the
+  person held, without a name.
 * An operator with an existing user directory keeps names, and their erasure, where they already are.
 
 === Accepted costs

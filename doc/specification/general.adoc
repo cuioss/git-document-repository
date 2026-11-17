@@ -131,6 +131,7 @@ The outcome list of `git-directory`:
 |Outcome |Raised by
 
 |entry required |first login
+|not bindable |first login, a bind to an entry that is bound or matches none of the entered memberships
 |===
 
 Exceptions remain for programming errors (violated preconditions) and unexpected I/O failures; they are never used

@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: The application reaches Git only as a technical user and signs every commit with its own key in the SSH format, through an exchangeable key source; pseudonym, issuer, auth time and auth context are trailers; the release commit, which the application merges itself, names the approver; every release requires step-up MFA. There is no push in the user's name, no passkey approval and no graded signature.
+// summary: The application reaches Git only as a technical user and signs every commit with its own key in the SSH format, through an exchangeable key source; pseudonym, issuer, auth time and auth context are trailers; the release commit, which the application merges itself, names the approver; by default every release requires step-up MFA, and the workflow declares it per transition. There is no push in the user's name, no passkey approval and no graded signature.
 // tags: identity, signing, trailers, traceability, step-up
 // affects: git-store, git-forms
 // supersedes:
@@ -30,8 +30,8 @@ question is how the store reaches Git and records identity, with as few variants
 * The commit message carries the trailers `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time` and `Auth-Context`.
 * *The application merges releases itself.* `main` is protected so that only the technical user may push to it; the
   release commit carries the trailers of the user who approves, and the application signs it.
-* *Every release requires step-up:* the user re-authenticates with MFA shortly before, and `Auth-Context` and
-  `Auth-Time` record it.
+* *Releases require step-up by default:* the user re-authenticates with MFA shortly before, and `Auth-Context` and
+  `Auth-Time` record it. The workflow declares per transition which transitions require it.
 * The public keys for verification come from configuration, never from the repository.
 
 See xref:../concepts/identity-and-signing.adoc[Identity and Signing].
@@ -97,6 +97,36 @@ The commit's author field names the user, without trailers or a signature.
 
 *Rejected because* the author field is unchecked metadata. It makes no statement anyone can verify.
 
+=== A signed sequence number in every commit
+
+Every commit carries a counter, `n + 1` after its predecessor `n`, signed with the commit. The series of numbers
+would prove that the commits form a monotonic series and replace an external timestamp authority.
+
+*Rejected because*
+
+* the order is already signed: the signature covers the parent ids, so every commit fixes its predecessor and, through
+  it, the whole history with its content. A counter proves less than the hash chain.
+* it adds nothing against the holder of the commit-signing key, the one attacker the signature cannot stop. The counter
+  is signed with the same key, so its holder can fork after `n` with another `n + 1`, renumber a rewritten history
+  without gaps, or withhold a commit and publish it later. Telling the real series from a forged one needs a record
+  outside the operator's control, which is what the anchor is
+  (xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]).
+* it detects no cut-off end: a history truncated by someone with Git access keeps valid signatures and a gapless
+  counter. Detecting it needs the last number kept outside the repository, which is no more than the reference ids a
+  checkpoint already lists.
+* it does not fit the store: commits are written in parallel on working branches, collection branches and `main`, so
+  a counter across them needs one allocator that every save passes, beside the compare-and-swap of each reference; a
+  rejected and retried push either leaves a gap, and then a gap proves nothing, or must change the signed number; a
+  release merge has two parents with two numbers; and a gapless counter ties the store to a single writing instance.
+* it cannot replace an external timestamp. What an RFC 3161 timestamp adds is a witness the operator does not control;
+  anything the application signs itself, its operator can produce again. The default anchor provider `signed` already
+  needs no external service and is the stronger form of the idea: a chain of proofs with sequence number and hash of
+  the previous proof, a time that never runs backwards, a key separate from the commit-signing key, and a copy of
+  every proof in the operator's log pipeline
+  (xref:0007-Releases_and_checkpoints_are_anchored_through_a_pluggable_provider.adoc[ADR-0007]). An external timestamp
+  authority is needed only where an auditor or a court must not depend on the operator, and a counter is not
+  independent of the operator either.
+
 == Consequences
 
 === Properties of the design
@@ -125,4 +155,4 @@ electronic signature inside the application.
 * xref:../concepts/identity-and-signing.adoc[Identity and Signing]
 * xref:../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12 – GDR-STORE-14] -- signature, trailers,
   verification
-* xref:../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7] -- step-up for releases
+* xref:../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7] -- step-up per transition

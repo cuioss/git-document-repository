@@ -107,9 +107,13 @@ the person directory, which stores a pseudonym.
 
 CISOs-Friend uses the library's person directory
 (xref:../../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]). By default
-each person enters name, team and role at the first login, and the entry is saved under its pseudonym in the
+each person enters name, team and role at the first login, or binds an entry an administrator prefilled with the same
+team and role, and the entry is saved under its pseudonym in the
 `directory` repository, with the login only as a hash; an organisation that wants a smaller circle of readers gives the
-persons a repository of their own. Where persons and groups are maintained centrally (for example LDAP), a provider for
+persons a repository of their own. A binding rests on the person's own statement of team and role: whoever logs in
+first with a matching team and role can bind an entry meant for someone else; confirmation and undoing of a binding
+are open questions of xref:../../concepts/directory-and-catalogs.adoc#_open_questions[Directory and Catalogs]. Where
+persons and groups are maintained centrally (for example LDAP), a provider for
 that source replaces it: no name enters Git, and the organisation keeps and erases the personal data there
 (xref:../specification/directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]).
 
@@ -119,15 +123,17 @@ With the default directory an erasure deletes the person's entry in a commit; th
 operational concept:
 
 * *On request or on leaving*: a user with the right `administer-catalogs` erases a pseudonym; the deletion is
-  effective at once (xref:../specification/data-protection.adoc#CIFR-DP-3[CIFR-DP-3]). Documents keep the pseudonym and show "former member"; because responsibilities run through
-  roles, they stay understandable.
+  effective at once (xref:../specification/data-protection.adoc#CIFR-DP-3[CIFR-DP-3]). Documents keep the pseudonym
+  and show the team and role the person held, for example "former Security Champion, Payments", without a name;
+  because responsibilities run through roles, they stay understandable.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
   anchors it when an anchor provider is active.
 * *History*: the history of the persons' repository keeps the earlier versions of the entry; what that means, and
   the deadline for answering a request, is set out in
   xref:../../concepts/data-protection.adoc[Data Protection] (_Erasing a Person_ and _What Has to Be Done Right_).
-* *With the organisation's own source* the application erases nothing itself; it shows the pseudonym as "former
-  member" once the source no longer knows the person.
+* *With the organisation's own source* the application erases nothing itself; once the source no longer knows the
+  person, it shows the pseudonym with the memberships the provider still reports, and as "former member" without
+  them.
 
 == What Is Agreed with the Data Protection Officer
 

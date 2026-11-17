@@ -133,7 +133,8 @@ Web-app equivalents: `list_documents` the document lists of the lenses and `read
 draft save and `save` the save (xref:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]). Two tools
 have no web-app equivalent and are tested through the MCP server alone: `discard_draft`, because the web app offers
 no discarding of a draft, and `request_release`. An agent can only request a release: `request_release` returns
-`RELEASE_REQUESTED`, and completing a release is a web-app operation that requires step-up
+`RELEASE_REQUESTED`, and completing a release is a web-app operation, which requires step-up under the shipped
+workflows
 (xref:mcp-server.adoc#CIFR-MCP-6[CIFR-MCP-6], xref:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
 [cols="1,2,2"]
@@ -196,12 +197,14 @@ xref:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]) and `FIRST_LOGIN_REQUIRED`
 |`SAVED`; `CONFLICT` (per file, with the fields that differ and both values); validation errors per field, among them
 `REFERENCE_NOT_FOUND` (xref:data-protection.adoc#CIFR-DP-2[CIFR-DP-2]); `DOCUMENT_RELEASED`
 (xref:category-samm.adoc#CIFR-SAMM-4[CIFR-SAMM-4]); `REJECTED` (the Git server refused the push,
-xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GEN-6>>)
+xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GEN-6>>); `STEP_UP_REQUIRED` when the
+workflow requires step-up for the transition (xref:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4])
 
 |Transition into review
 |—
 |The new state; `MANDATORY_FIELDS_MISSING` with the JSON Pointers of the missing fields
-(xref:category-incident-reports.adoc#CIFR-IR-3[CIFR-IR-3])
+(xref:category-incident-reports.adoc#CIFR-IR-3[CIFR-IR-3]); `STEP_UP_REQUIRED` when the workflow requires step-up for
+the transition
 
 |Release
 |—
@@ -236,7 +239,7 @@ xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GE
 
 |Person directory (`git`)
 |At start, from the persons' repository
-|Fetch that moves its `main`, own save of an entry, erasure
+|Fetch that moves its `main`, own save of an entry, binding, prefilled entries, erasure
 
 |Pending release requests
 |From the index (open requests are documents)
