@@ -17,6 +17,8 @@
       .sub       { font-size: 11px; fill: #6e7681; font-style: italic; }
       .item      { font-size: 12px; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
       .item-bold { font-size: 12px; font-weight: 700; fill: #6e7681; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .label     { font-size: 13px; fill: #6e7681; }
+      .label-bold { font-size: 13px; font-weight: 600; fill: #6e7681; }
       .caption   { font-size: 11px; fill: #6e7681; text-anchor: middle; font-style: italic; }
     </style>
   </defs>
@@ -28,15 +30,15 @@
   <rect class="stroke" x="40" y="40" width="160" height="416" rx="4"/>
   <text x="56" y="64" class="hdr">NavRail</text>
   <text x="56" y="80" class="sub">lenses</text>
-  <text x="56" y="112" class="item">Due</text>
-  <text x="56" y="136" class="item-bold">SAMM</text>
-  <text x="56" y="160" class="item">Threat models</text>
-  <text x="56" y="184" class="item">Incidents</text>
-  <text x="56" y="208" class="item">ISMS</text>
-  <text x="56" y="232" class="item">Catalogs</text>
-  <text x="56" y="256" class="item">Reports</text>
+  <text x="56" y="112" class="label">Due</text>
+  <text x="56" y="136" class="label-bold">SAMM</text>
+  <text x="56" y="160" class="label">Threat models</text>
+  <text x="56" y="184" class="label">Incidents</text>
+  <text x="56" y="208" class="label">ISMS</text>
+  <text x="56" y="232" class="label">Catalogs</text>
+  <text x="56" y="256" class="label">Reports</text>
   <line class="thin" x1="56" y1="276" x2="184" y2="276"/>
-  <text x="56" y="300" class="item">Settings</text>
+  <text x="56" y="300" class="label">Settings</text>
 
   <!-- TopBar -->
   <rect class="stroke" x="216" y="40" width="644" height="56" rx="4"/>
@@ -44,7 +46,7 @@
   <text x="232" y="82" class="sub">breadcrumb</text>
   <text x="400" y="74" class="item">CommandPalette</text>
   <text x="590" y="74" class="item">LiveIndicator</text>
-  <text x="760" y="74" class="item">user menu</text>
+  <text x="760" y="74" class="label">user menu</text>
 
   <!-- main: TriagePage -->
   <rect class="stroke" x="216" y="112" width="644" height="344" rx="4"/>
@@ -52,13 +54,13 @@
   <text x="232" y="152" class="sub">column window: scope › assessment › practice</text>
 
   <rect class="stroke" x="232" y="168" width="152" height="272" rx="4"/>
-  <text x="244" y="190" class="item-bold">scopes</text>
+  <text x="244" y="190" class="label-bold">scopes</text>
   <text x="244" y="214" class="item">team:payments</text>
   <text x="244" y="236" class="item">service:shop</text>
   <text x="244" y="258" class="item">organisation</text>
 
   <rect class="stroke" x="400" y="168" width="168" height="272" rx="4"/>
-  <text x="412" y="190" class="item-bold">assessments</text>
+  <text x="412" y="190" class="label-bold">assessments</text>
   <text x="412" y="214" class="item">2026-q4 (draft)</text>
   <text x="412" y="236" class="item">2026-q2 (released)</text>
   <text x="412" y="258" class="item">2025-q4 (released)</text>
@@ -67,12 +69,12 @@
   <text x="596" y="190" class="item-bold">ObjectPage: practice</text>
   <text x="596" y="214" class="sub">form generated from the schema</text>
   <rect class="thin" x="596" y="228" width="236" height="28" rx="4"/>
-  <text x="604" y="246" class="item">question 1  answer ▾</text>
+  <text x="604" y="246" class="label">question 1  answer ▾</text>
   <rect class="thin" x="596" y="264" width="236" height="28" rx="4"/>
-  <text x="604" y="282" class="item">question 2  answer ▾</text>
-  <text x="596" y="316" class="item">saved for you · 12:04</text>
+  <text x="604" y="282" class="label">question 2  answer ▾</text>
+  <text x="596" y="316" class="label">saved for you · 12:04</text>
   <rect class="stroke" x="596" y="392" width="236" height="32" rx="4"/>
-  <text x="604" y="412" class="item">Release (confirm with MFA)</text>
+  <text x="604" y="412" class="label">Release (confirm with MFA)</text>
 
   <!-- caption -->
   <text x="450" y="500" class="caption">Shell, templates and components from pm-web-app; on phones a BottomBar replaces the NavRail.</text>

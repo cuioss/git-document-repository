@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: Every repository of the store has a remote, a Git server or, on a single server, a local bare repository; the remote is the source of truth, and the store works on a bare clone that holds nothing pushed state lacks except the drafts.
+// summary: Every repository of the store has a remote, a Git server or, on a single server, a local bare repository; the remote is the source of truth, and the store works on a bare clone whose only content beyond the pushed state is the drafts.
 // tags: storage, remote, configuration, cache
 // affects: git-core, git-store
 // supersedes:
@@ -29,7 +29,7 @@ without one. The question is whether these are two modes with two code paths or 
   only after the remote accepted it.
 * The clone is a cache: a new clone restores every pushed state. Beyond that it holds only the drafts
   (xref:0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]); deleting it loses them and
-  nothing else.
+  nothing else. The remote never secures the drafts; only a backup of the clone's storage does.
 * When the remote cannot be reached, a save fails and the draft keeps the work.
 
 See xref:../concepts/storage-engine.adoc#_one_remote_one_code_path[Storage Engine, One Remote, One Code Path].
@@ -53,10 +53,16 @@ conflicting commits and resets of the local branch. The draft already keeps the 
 
 === The content API of the Git server instead of a clone
 
-GitHub and GitLab offer REST APIs that create commits without a clone.
+GitHub and GitLab offer REST APIs that create commits without a clone
+(link:https://docs.github.com/en/rest/git/commits[GitHub Docs, REST API endpoints for Git commits: Create a commit],
+link:https://docs.gitlab.com/api/commits/[GitLab Docs, Commits API: Create a commit]).
 
-*Rejected because* the API binds the store to one vendor and runs into rate limits. A JGit clone works with every Git
-server.
+*Rejected because* the API binds the store to one vendor and runs into rate limits: GitHub limits an authenticated
+user or a GitHub App installation to 5,000 REST requests per hour by default
+(link:https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api[GitHub Docs, Rate limits for
+the REST API]), and a GitLab administrator can limit authenticated API requests per user
+(link:https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/[GitLab Docs, User and IP rate
+limits]). A JGit clone works with every Git server.
 
 == Consequences
 
@@ -69,7 +75,7 @@ server.
 
 * Every save pays a fetch and a push, also on a single server.
 * No save is possible while the remote is unreachable.
-* The clone needs persistent storage for the drafts.
+* The clone needs persistent storage, and a backup, for the drafts.
 
 === When this is revisited
 

@@ -5,14 +5,14 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-An application that stores its data in someone else's Git server has a pleasant property: it owns no database, so it has
-no schema migration, no database backup and no connection pool to tune; the Git server's backup covers every saved
-state. Only the drafts are covered by the backup of the volume, which therefore needs one of its own. It also has an
-unpleasant one: everything it knows at run time is either derived from Git or lost on restart. The architecture of
-CISOs-Friend is the arrangement that keeps the pleasant property and contains the unpleasant one. Its build, runtime and
-test structure follow API Sheriff, so a contributor who knows one knows the other.
+An application that stores its data in the organisation's Git server owns no database: it has no schema migration, no
+database backup and no connection pool to tune, and the Git server's backup covers every saved state. Only the drafts
+are covered by the backup of the volume, which therefore needs one of its own. The consequence is that everything the
+application knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend keeps
+the first property and limits the second. Its build, runtime and test structure follow API Sheriff, so a contributor
+who knows one knows the other.
 
 == Shape
 
@@ -25,11 +25,11 @@ One Quarkus application, compiled to a native image on Java 25, serves three sur
 Behind the surfaces sits one layer of *application services*: categories, rights, step-up, deadlines, the first
 login, the dashboards. Neither surface carries a rule of its own; the web app and the MCP server call the same services
 with the same checks. Below the services sit the libraries of `git-document-repository`
-(link:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which reaches
+(xref:../../concepts/module-structure.adoc[Module Structure]): the document modules on top of `git-core`, which reaches
 the Git server through JGit over HTTPS. Commit signing and anchoring live in `git-store`, the person directory in
 `git-directory`; the application only supplies their configuration and keys. Besides the Git server, the identity
-provider and the KMS, the application calls no other system: tickets and issues are referenced by the ids users or
-agents enter.
+provider, the KMS and, where one is configured, an RFC 3161 timestamp authority, the application calls no other
+system: tickets and issues are referenced by the ids users or agents enter.
 
 ----
  browser ──► static web app (resource JAR, same origin)
@@ -60,13 +60,14 @@ imported in the root `dependencyManagement`, `maven.compiler-plugin.release` = `
 |The Quarkus application: surfaces, services, configuration, boot validation. Carries the `native` profile.
 
 |`categories`
-|The category definitions as resources: per category a JSON Schema, a template and a workflow. Tested on its own
-against the library's form engine; no Java code. The one behaviour a schema cannot express, the SAMM score, sits
+|The category definitions as resources: per category a JSON Schema, an AsciiDoc template and a workflow; besides
+them the catalog declarations and the threat-model recipes. Tested on its own against the library's form engine; no
+Java code. The one behaviour a schema cannot express, the SAMM score, sits
 behind the extension point `ScoreCalculator` in `cisos-friend`.
 
 |`web-app`
 |The Svelte single-page application, built by `frontend-maven-plugin` into a resource JAR
-(link:web-app.adoc[Web App]).
+(xref:web-app.adoc[Web App]).
 
 |`web-e2e`
 |Playwright end-to-end tests and the axe-core accessibility audit against the built application.
@@ -75,7 +76,7 @@ behind the extension point `ScoreCalculator` in `cisos-friend`.
 |Builds the native image and the distroless container, starts a compose stack, runs the failsafe `*IT` suites.
 
 |`deployment`
-|The compose sample (link:deployment.adoc[Deployment]).
+|The compose sample (xref:deployment.adoc[Deployment]).
 |===
 
 A `benchmarks` module (k6, non-gating) follows once there is a performance question worth measuring.
@@ -100,7 +101,7 @@ A `benchmarks` module (k6, non-gating) follows once there is a performance quest
 validation pipelines before use.
 
 |`cui-java-tools`
-|`CuiLogger` with `LogRecord` constants for every message at INFO and above; the catalogue is documented in
+|`CuiLogger` with `LogRecord` constants for every message at INFO and above; the messages are documented in
 `LogMessages.adoc`.
 
 |Quarkus extensions
@@ -121,7 +122,8 @@ Following API Sheriff, `application.properties` carries only Quarkus and runtime
 interface, logging). The policy of the application lives in its own YAML, `cisos-friend.yaml`, validated against a
 bundled JSON Schema:
 
-* the repositories with alias, remote, confidentiality, retention period, credential reference and fetch interval;
+* the repositories with alias, remote, confidentiality, retention period and credential reference;
+* one fetch interval for all repositories (`fetch.interval`);
 * the mapping from identity-provider groups to rights per repository;
 * the enabled categories, whose behaviour comes from their definitions alone; there is no second layer of overrides;
 * the one step-up setting for every release;
@@ -149,7 +151,7 @@ Everything the application holds in memory is either derived from Git or deliber
 |Rebuilt at start
 
 |Drafts
-|`refs/drafts/<user>/…` in the local repository
+|`refs/drafts/<pseudonym>/…` in the local repository
 |Survive only on a persistent volume
 
 |Sessions of the web app
@@ -195,5 +197,5 @@ anything else depends on it.
 
 == Related
 
-* link:deployment.adoc[Deployment], link:web-app.adoc[Web App], link:mcp-server.adoc[MCP Server]
-* link:../../concepts/module-structure.adoc[Module Structure] — the libraries
+* xref:deployment.adoc[Deployment], xref:web-app.adoc[Web App], xref:mcp-server.adoc[MCP Server]
+* xref:../../concepts/module-structure.adoc[Module Structure] — the libraries

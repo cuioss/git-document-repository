@@ -1,13 +1,13 @@
 = CISOs-Friend: Configuration
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 Two sources: `application.properties` for Quarkus runtime settings, and `cisos-friend.yaml` for the policy of the
-application. Reasoning: link:../concepts/application-architecture.adoc#_configuration[Application Architecture,
+application. Reasoning: xref:../concepts/application-architecture.adoc#_configuration[Application Architecture,
 Configuration].
 
 [#CIFR-CONF-1]
@@ -16,16 +16,18 @@ Configuration].
 * Policy configuration must be one YAML document validated against a bundled JSON Schema; `${NAME:-default}`
   placeholders must be resolved from the environment.
 * An invalid configuration must stop the boot with one log record per violation.
-* `--validate-config <dir>` must validate offline and exit with `0` for a valid and non-zero for an invalid
+* `--validate-config <dir>` must validate offline and exit with `0` for a valid and `1` for an invalid
   configuration.
 * Secret values must not be representable in the YAML; the schema must accept only references (mounted file, KMS key
   id or Vault path).
 
 === application.properties
 
+The application sets these values; the column shows the application's value, not the Quarkus default.
+
 [cols="1,1,2"]
 |===
-|Key |Default |Meaning
+|Key |Value |Meaning
 
 |`quarkus.http.ssl-port`
 |`8443`
@@ -73,22 +75,41 @@ for `private_key_jwt`), `groups-claim` (default `groups`)
 |`categories`
 |yes
 |List of the enabled categories (`samm`, `threat-models`, `incident-reports`, `isms`); their behaviour comes from
-their definitions in the `categories` module only
+their definitions in the `categories` module and the named extension points
+(xref:architecture-and-modules.adoc#CIFR-GEN-1[CIFR-GEN-1])
 
 |`step-up`
 |yes
 |`acr` (the `acr` value that states multi-factor authentication), `amr` (list of `amr` values accepted instead,
-default `mfa`; a single method such as `otp` is not multi-factor),
-`max-age` (default `PT5M`) (link:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4])
+default `mfa`, the value for multiple-factor authentication; a single method such as `otp`, one-time password, is not
+multi-factor; values as registered in link:https://www.rfc-editor.org/rfc/rfc8176#section-2[RFC 8176, §2]),
+`max-age` (default `PT5M`) (xref:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4])
 
 |`signing`
 |yes
-|`key-ref` (commit-signing key; SSH format)
+|`key-ref` (commit-signing key; SSH format), `allowed-signers` (path of a mounted file in Git's `allowed_signers`
+format with the public commit-signing keys and their validity periods; never read from a repository,
+xref:../../specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14])
+
+|`save`
+|yes
+|`max-attempts`: the number of attempts of a save, or of a push of notes, when the lease is refused or the push is
+rejected (xref:../../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3])
+
+|`drafts`
+|yes
+|`expiry`: ISO 8601 period after which a draft not changed is deleted
+(xref:../../specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7])
+
+|`fetch`
+|no
+|`interval`: ISO 8601 duration of the periodic fetch, one value for all repositories, default `PT5M`
+(<<CIFR-CONF-2>>)
 
 |`anchor`
 |no
 |Anchoring of releases and checkpoints
-(link:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
+(xref:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
 `provider` (default `signed`; `none` switches anchoring off), `checkpoint-interval` (ISO 8601 duration, default
 `P1D`), `signed-key-ref` (the anchor key of the own timestamp; must differ from `signing.key-ref`)
 
@@ -102,10 +123,16 @@ default `mfa`; a single method such as `otp` is not multi-factor),
 
 |`directory`
 |no
-|The person directory (link:directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]): `persons.provider` (default `git`),
+|The person directory (xref:directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]): `persons.provider` (default `git`),
 `persons.repository` (default `directory`), `confirmation-interval` (default `P12M`), `backstage` (the import of
-link:directory.adoc#CIFR-DIR-6[CIFR-DIR-6])
+xref:directory.adoc#CIFR-DIR-6[CIFR-DIR-6])
 |===
+
+The library settings of xref:../../specification/git-store.adoc#store-configuration[`git-store`, Configuration] come
+from these keys: `repositories`, `save.max-attempts`, `drafts.expiry`, `fetch.interval`, `signing.allowed-signers`,
+`anchor.provider`, `anchor.checkpoint-interval` and `directory.persons.provider` under the same names; the library's
+`signing.key-source` and `signing.key` from `signing.key-ref`, its `anchor.signed.key-source` and
+`anchor.signed.key` from `anchor.signed-key-ref`.
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 
@@ -132,8 +159,8 @@ absolute HTTPS URI without fragment. Offline, `application --validate-config <di
 * Every repository must have a remote; a single-server setup uses a local bare repository as its remote.
 * Every repository must declare its confidentiality class and its retention period, and nothing else may declare a
   retention period.
-* The application must refresh every repository by a periodic fetch, default every 5 minutes, and after its own
-  saves.
+* The application must refresh every repository by a periodic fetch, at one interval for all repositories
+  (`fetch.interval`, default `PT5M`), and after its own saves.
 
 [cols="1,1,3"]
 |===
@@ -159,8 +186,4 @@ of that year)
 |`credential-ref`
 |for HTTPS
 |Reference to the credential of the technical user, the only Git credential
-
-|`fetch-interval`
-|no
-|ISO 8601 duration, default `PT5M`
 |===

@@ -1,13 +1,13 @@
 = CISOs-Friend: Architecture and Modules
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The module layout, the layers inside the application, the run-time state and the cross-cutting technical rules.
-Reasoning: link:../concepts/application-architecture.adoc[Application Architecture].
+Reasoning: xref:../concepts/application-architecture.adoc[Application Architecture].
 
 == Owned by the Libraries
 
@@ -18,19 +18,19 @@ referenced here, never restated:
 |===
 |Behaviour |Owner
 
-|Drafts, saving, compare-and-swap, release by merge and tag, in-memory index, outbox, commit signature, identity
-trailers, signature check, anchoring with the own timestamp
-|link:../../specification/git-store.adoc[`git-store` specification]
+|Drafts, saving, compare-and-swap, release by merge and tag, in-memory index, post-commit listeners, commit
+signature, identity trailers, signature check, anchoring with the own timestamp
+|xref:../../specification/git-store.adoc[`git-store` specification]
 
 |Schemas, templates, workflows, step-up check, deterministic serialisation, running numbers, generated output
-|link:../../specification/git-forms.adoc[`git-forms` specification]
+|xref:../../specification/git-forms.adoc[`git-forms` specification]
 
 |Person directory: pseudonyms, person entries in Git by default, erasure; catalogs and stable ids
-|link:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19],
-link:../../specification/git-directory.adoc[`git-directory` specification]
+|xref:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19],
+xref:../../specification/git-directory.adoc[`git-directory` specification]
 
 |Repositories, remote policy, transport
-|link:../../specification/git-core.adoc[`git-core` specification]
+|xref:../../specification/git-core.adoc[`git-core` specification]
 
 |OIDC confidential client, step-up (RFC 9470), logout, token validation
 |Token Sheriff (link:https://github.com/cuioss/TokenSheriff/tree/main/doc/client[client],
@@ -49,7 +49,9 @@ Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:c
 
 |`categories`
 |jar (resources only)
-|`categories/<category>/schema.json`, `template.adoc`, `workflow.yaml` per category
+|`categories/<category>/schema.json`, `template.adoc`, `workflow.yaml` per category; the catalog declarations
+(xref:directory.adoc#CIFR-DIR-4[CIFR-DIR-4]) and the threat-model recipes
+(xref:category-threat-models.adoc#CIFR-TM-5[CIFR-TM-5])
 
 |`web-app`
 |jar
@@ -78,8 +80,7 @@ Reactor order: `categories`, `web-app`, `cisos-friend`, `web-e2e`, `integration-
 == CIFR-GEN-1: Categories as Configuration
 
 * Each category (SAMM, threat models, incident reports, ISMS) must be defined by a JSON Schema, an AsciiDoc template
-  and a workflow, and by nothing else; the only code of a category is a named extension point for behaviour a schema
-  cannot express.
+  and a workflow; the only code of a category is a named extension point for behaviour a schema cannot express.
 * Adding a category must require no Java source change: a test category supplied as resources only must pass create,
   save, release and generated output in the integration tests.
 
@@ -98,6 +99,10 @@ pseudonym
 |States, transitions, deadlines as data, repository alias
 |===
 
+Besides the category definitions, the `categories` module carries the catalog declarations
+(xref:directory.adoc#CIFR-DIR-4[CIFR-DIR-4]) and the threat-model recipes `categories/threat-models/recipes/<id>.yaml`
+(xref:category-threat-models.adoc#CIFR-TM-5[CIFR-TM-5]); both are resources, not code.
+
 The only extension point is `ScoreCalculator` (SAMM scores), a named CDI interface in `service`. The test category
 `categories/test-note/` exercises create, save, release and output generation without it.
 
@@ -106,10 +111,19 @@ The only extension point is `ScoreCalculator` (SAMM scores), a named CDI interfa
 
 * Every operation offered by the MCP server must be executed by the same application service as the web app's
   equivalent operation, with the same rights check, schema validation and step-up check.
-* For every MCP tool, a test must show that the web-app request and the tool call with the same user and input
-  produce the same outcome (success, validation error, conflict, forbidden). The one exception is completing a
-  release: it needs step-up, so the MCP server always ends it with `STEP_UP_REQUIRED`
-  (link:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
+* For every MCP tool that has an equivalent web-app operation, a test must show that the web-app request and the tool
+  call with the same user and input produce the same outcome (success, validation error, conflict, forbidden).
+
+Web-app equivalents: `list_documents` the document lists of the lenses and `read_catalog` the *Catalogs* lens
+(xref:web-app.adoc#CIFR-WEB-3[CIFR-WEB-3]), `list_due` the *Due* lens, `search` the search of the top bar
+(xref:../concepts/web-app.adoc#_structure_of_the_app[Web App, Structure of the App]), `read_recipe` the recipe's
+`WizardPage` (xref:category-threat-models.adoc#CIFR-TM-5[CIFR-TM-5]), `read_document` the document request
+`GET /api/v1/documents/…`, `diff` the diff request (xref:web-app.adoc#CIFR-WEB-6[CIFR-WEB-6]), `write_draft` the
+draft save and `save` the save (xref:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]). Two tools
+have no web-app equivalent and are tested through the MCP server alone: `discard_draft`, because the web app offers
+no discarding of a draft, and `request_release`. An agent can only request a release: `request_release` returns
+`RELEASE_REQUESTED`, and completing a release is a web-app operation that requires step-up
+(xref:mcp-server.adoc#CIFR-MCP-6[CIFR-MCP-6], xref:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
 [cols="1,2,2"]
 |===
@@ -140,9 +154,55 @@ Commit signing, anchoring and the person directory belong to the libraries; `ser
 `cisos-friend.yaml`, and the application has no adapter of its own for them. The application makes no outbound call
 of its own besides Git and the identity provider.
 
-ArchUnit rules, planned for the unit lane: no class outside `service` depends on a `git-document-repository` package;
-`web` and `mcp` do not depend on each other. Every MCP tool delegates to exactly one service method that a web
-resource also calls.
+ArchUnit rules of the unit lane: no class outside `service` depends on a `git-document-repository` package;
+`web` and `mcp` do not depend on each other. Every MCP tool delegates to exactly one service method; for a tool with
+a web-app equivalent, a web resource calls the same method.
+
+[#operation-outcomes]
+=== Operation Outcomes
+
+Each operation of the application services has one closed set of outcomes, the same for the web app and the MCP
+server. Every operation can also end with `FORBIDDEN` (no mapped right,
+xref:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]) and `FIRST_LOGIN_REQUIRED`
+(xref:directory.adoc#CIFR-DIR-2[CIFR-DIR-2]).
+
+[cols="1,1,3"]
+|===
+|Operation |Tool |Outcomes
+
+|Write a draft
+|`write_draft`
+|`DRAFT_SAVED`; validation errors per field
+
+|Discard a draft
+|`discard_draft`
+|`DISCARDED`
+
+|Save
+|`save`
+|`SAVED`; `CONFLICT` (per file, with the fields that differ and both values); validation errors per field, among them
+`REFERENCE_NOT_FOUND` (xref:data-protection.adoc#CIFR-DP-2[CIFR-DP-2]); `DOCUMENT_RELEASED`
+(xref:category-samm.adoc#CIFR-SAMM-4[CIFR-SAMM-4]); `REJECTED` (the Git server refused the push,
+xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GEN-6>>)
+
+|Transition into review
+|—
+|The new state; `MANDATORY_FIELDS_MISSING` with the JSON Pointers of the missing fields
+(xref:category-incident-reports.adoc#CIFR-IR-3[CIFR-IR-3])
+
+|Release
+|—
+|`RELEASED`; `STEP_UP_REQUIRED` with the step-up address (xref:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]);
+`MANDATORY_FIELDS_MISSING`; `REJECTED`; `GIT_UNAVAILABLE`
+
+|Request a release
+|`request_release`
+|`RELEASE_REQUESTED` with the request id
+
+|Read, list, search, diff
+|`read_document`, `list_documents`, `search`, `diff`, `list_due`, `read_catalog`, `read_recipe`
+|The result
+|===
 
 [#CIFR-GEN-3]
 == CIFR-GEN-3: No Database of Its Own
@@ -217,5 +277,5 @@ stays `UP`
 user saves again later
 
 |Git server unreachable at start
-|See link:deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]
+|See xref:deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]
 |===

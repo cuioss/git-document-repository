@@ -9,8 +9,8 @@
 Git repository, reached through JGit in memory and without working trees, as the persistence of an application in
 which users maintain versioned documents. The modules are released together and consumed separately.
 
-This directory holds the design documentation of the libraries. Every statement about an external product, standard
-or law cites the source it was checked against.
+This directory holds the design documentation of the libraries. A statement about an external product, standard or
+law has to cite the source it was checked against; a statement without one is a defect.
 
 [NOTE]
 ====
@@ -108,7 +108,8 @@ application in `doc/app/adr/` follow the same structure.
 == Specification
 
 One document per module. Each lists the module's requirements (prefix `GDR`, numbered per group) as sections, each
-with its "must" statements first and the design that realises them after. Every requirement is planned.
+with its "must" statements first and the design that realises them after. No requirement is implemented yet; the
+modules are scaffolds.
 
 [cols="1,3"]
 |===

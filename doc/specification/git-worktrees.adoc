@@ -5,22 +5,29 @@
 :source-highlighter: highlight.js
 
 `git-worktrees` (module `de.cuioss.git.document.worktrees`, a scaffold) holds the linked working trees. It depends on
-`git-core` alone. The document store does not use it; clients that work on files on disk do. `LinkedWorktrees` reads
-and writes git's administration files of linked working trees natively, because JGit has no `git worktree` command;
-`WorktreeOperations` offers the operations below on JGit, in process. Rationale:
+`git-core` alone. The document store does not use it; clients that work on files on disk do. JGit 7.8.0 has no
+command that creates a linked working tree: its `api` package holds no worktree command
+(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit 7.8.0 `api` package]). The module is therefore to read and write Git's administration files of
+linked working trees itself (planned class `LinkedWorktrees`) and to offer the operations below on JGit, in process
+(planned class `WorktreeOperations`). Rationale:
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules].
 
 [#GDR-WT-1]
 == GDR-WT-1: Linked Working Trees
 
 * The library must add, list and remove linked working trees.
-* The administration files must follow git's own layout, so that `git worktree list` of a git installation lists the
+* The administration files must follow Git's own layout, so that `git worktree list` of a Git installation lists the
   working trees the library created.
 
-`worktreeAdd` creates a linked working tree for a branch at a path and writes `$GIT_DIR/worktrees/<name>/` (`gitdir`,
-`commondir`, `HEAD`) and the `.git` file in the working tree; `worktreeList` lists the main and the linked working
-trees; `worktreeRemove` removes the working tree directory and its administration directory. The test suite asserts
-the compatibility with `git worktree list` where a git binary is present.
+`worktreeAdd` is to create a linked working tree for a branch at a path and write the administration directory
+`$GIT_DIR/worktrees/<id>/` with `gitdir` (the absolute path back to the working tree's `.git` file), `commondir` (the
+path of the main repository's `$GIT_DIR`) and `HEAD`, and in the working tree the `.git` file holding
+`gitdir: <path>` that points to the administration directory
+(link:https://git-scm.com/docs/gitrepository-layout[gitrepository-layout(5)], entries `worktrees`,
+`worktrees/<id>/gitdir` and `commondir`; link:https://git-scm.com/docs/git-worktree[git-worktree(1)], DETAILS).
+`worktreeList` is to list the main and the linked working trees; `worktreeRemove` is to remove the working tree
+directory and its administration directory. The tests are to assert the compatibility with `git worktree list` where a
+Git binary is present.
 
 [#GDR-WT-2]
 == GDR-WT-2: Commit from a Working Tree
@@ -35,4 +42,6 @@ Hooks stay refused through `RefusingFS` of `git-core`.
 
 * The library must report the status of a working tree as three path sets: `changed` (tracked and modified),
   `untracked` (present and not tracked) and `deleted` (tracked and missing).
-* The status must not prescribe a digest format; a consumer builds its own digest on the path sets.
+* The status must consist of these three path sets and nothing else.
+
+A consumer that needs a digest of the status builds its own on the path sets.

@@ -5,13 +5,13 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
 Most documents of CISOs-Friend hang on an application or service: its SAMM assessment, its threat model, the incidents
 that affected it, the risks it carries. Written as free text, "Payment API", "payments-api" and "the PSP service" end up
 in three documents that mean the same thing. The application therefore keeps a catalog of services and refers to its
 entries by stable id (`service:payment-api`), the same way the library's directory catalogs refer to roles and teams
-(link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs]).
+(xref:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs]).
 
 == The Catalog Entry
 
@@ -43,18 +43,23 @@ data-classes: [personal, payment]
 ----
 
 * *Responsibility by team and role.* The directory resolves them to persons; the catalog holds no personal data.
-* *Protection needs* (confidentiality, integrity, availability, as in BSI IT-Grundschutz) decide the review interval
-  of a threat model and the classification of an incident.
-* *`dependsOn`* yields a dependency graph: the protection needs of a service are at least those of the services it
-  depends on (maximum principle).
+* *Protection needs* per dimension (confidentiality, integrity, availability) in the categories normal, high and very
+  high, as BSI-Standard 200-2 defines them (section 8.2,
+  https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Grundschutz/International/bsi-standard-2002_en_pdf.pdf?__blob=publicationFile&v=2[BSI-Standard
+  200-2, IT-Grundschutz Methodology, version 1.0]), decide the review interval of a threat model and the
+  classification of an incident.
+* *`dependsOn`* yields a dependency graph: the effective protection needs of a service are the maximum over the
+  service and every service it depends on. BSI-Standard 200-2 (section 8.2.2) also derives protection needs along
+  dependencies, but in the other direction: an application whose results another application depends on takes over
+  that application's protection needs (see <<_open_questions>>).
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to it.
 
-How the categories use the catalog is shown in link:cisos-friend-overview.adoc#_four_categories[Overview, Four
+How the categories use the catalog is shown in xref:cisos-friend-overview.adoc#_four_categories[Overview, Four
 Categories].
 
 == Alignment with Backstage
 
-Many development organisations already keep such a catalog. The Backstage software catalog holds its entries in
+An organisation may already keep such a catalog in Backstage. The Backstage software catalog holds its entries in
 descriptor files in the repository of each service, by recommendation named `catalog-info.yaml`, with the kinds
 Component, Template, API, Group, User, Resource, System, Domain and Location
 (link:https://backstage.io/docs/features/software-catalog/descriptor-format[Backstage: Descriptor Format of Catalog
@@ -67,12 +72,15 @@ Where Backstage exists, an administrator imports its components, systems and gro
 Backstage lacks: protection needs, data classes and the owning role. Where nothing exists, the catalog is the source
 of truth.
 
+[#_open_questions]
 == Open Questions
 
+. Whether the effective protection needs also flow to the services a service depends on, as BSI-Standard 200-2
+  (section 8.2.2) derives them, instead of or besides the maximum over the services it depends on.
 . Whether service entries are also imported from a CMDB (i-doit, iTop, ServiceNow).
 . Whether a change of the protection needs of a service needs a confirmation by the information security officer.
 
 == Related
 
-* link:../specification/directory.adoc#CIFR-DIR-5[Directory, CIFR-DIR-5 and CIFR-DIR-6] -- fields and import
-* link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] (library) -- roles, teams, persons
+* xref:../specification/directory.adoc#CIFR-DIR-5[Directory, CIFR-DIR-5 and CIFR-DIR-6] -- fields and import
+* xref:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] (library) -- roles, teams, persons

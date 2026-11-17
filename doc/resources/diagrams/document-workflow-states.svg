@@ -56,9 +56,9 @@
   <text x="660" y="172" class="lbl">supersede</text>
   <text x="660" y="200" class="lbl">step-up</text>
   <path class="arrow" d="M360,220 Q260,290 162,222" marker-end="url(#arrow)"/>
-  <text x="260" y="284" class="lbl">rework</text>
+  <text x="260" y="272" class="lbl">rework</text>
   <path class="arrow" d="M140,160 Q160,100 180,158" marker-end="url(#arrow)"/>
-  <text x="160" y="94" class="lbl">edit (intermediate save)</text>
+  <text x="160" y="120" class="lbl">edit (intermediate save)</text>
   <text x="450" y="40" class="hdr">Workflow states of a document</text>
   <text x="450" y="60" class="sub">each transition maps onto a store mechanism; every commit is signed, every release requires step-up</text>
   <text x="450" y="352" class="caption">Deadlines are declared per state, for example a review within 14 days or a yearly review of an approved document.</text>

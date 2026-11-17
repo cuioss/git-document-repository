@@ -5,10 +5,9 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-A persistence library that starts as one module tends to stay one module until a consumer complains about the
-dependencies it drags along. This concept describes how the libraries of this repository are cut into modules
-instead, why the cut was made before the first line of store code, and which modules form the generic JGit
-foundation.
+A library cut as one module makes every consumer take all of its dependencies. This concept describes how the
+libraries of this repository are cut into modules instead, why the cut was made before the first line of store code,
+and which modules form the generic JGit foundation.
 
 == The Problem
 
@@ -82,7 +81,8 @@ repository; its kinds of documents are configuration of `git-forms`.
 directly (planned), since its fixtures create JGit repositories.
 
 `git-store` defines three service interfaces that `ServiceLoader` finds (JPMS `uses` and `provides`), so no module
-calls a module it does not depend on. For each exactly one provider is active, named by configuration:
+calls a module it does not depend on. Providers are named by configuration; `SigningKeySource` and `PersonDirectory`
+have exactly one active provider each, `AnchorProvider` at most one:
 
 * `SigningKeySource` signs with a key the source holds: `file` in `git-store`, a KMS or HSM source from the
   application.
@@ -104,15 +104,20 @@ term of a domain, so it serves the document store and every other client that wo
 
 * *`git-core`* holds the file system that refuses hooks and process starts (`RefusingFS`), the remote policy
   (`RemotePolicy`: an HTTPS origin or local only, checked before every fetch and push), commit and reference identity
-  (`GitIdentity`), the result type and the closed list of outcomes (`GitResult`, `GitOutcome`), and the repository
+  (`GitIdentity`), the result type and the closed list of Git outcomes (`GitResult`, `GitOutcome`), and the repository
   operations: open and init, the log, fetch and push (with credentials and lease), and the cache repository (one commit
   fetched into a bare cache under a remote policy, a file read at that commit). For the document store it adds in-core
   writing, compare-and-swap with retry, in-core merge with conflict results per path, and `git notes`. `GitOutcome`
-  stays one closed list, the worktree outcomes included: they are terms of Git, not of a domain, and one list keeps
-  result handling uniform for every client.
+  is the closed list of Git outcomes, the worktree outcomes included: they are terms of Git, not of a domain. It
+  carries no domain term. Each aspect module defines its own closed list for its domain outcomes (for example
+  `git-forms`: invalid, mismatch, transition refused, step-up required), carried by the same result shape (outcome,
+  value, detail), so adding an aspect module changes nothing in `git-core` (see
+  xref:../specification/general.adoc#GDR-GEN-3[GDR-GEN-3]).
 * *`git-worktrees`* holds the linked working trees (administration files in git's own layout, readable by
   `git worktree list` and written natively, because JGit has no command that adds or removes a linked working tree;
-  JGit 7.0 added read support only, checked in JGit 7.8.0): adding, listing and removing working trees, the commit
+  JGit 7.0 added read support only; checked in JGit 7.8.0, whose
+  link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[`api`
+  package] holds no worktree command): adding, listing and removing working trees, the commit
   from a working tree, and a working-tree status as a generic primitive (the path set of changed, untracked and deleted
   files), on which a client builds its own digest. The document store does not need this module; clients that work on
   files on disk do.
@@ -136,7 +141,7 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
 . Add the aspect modules as the document store needs them: `git-store` first, then `git-forms`, `git-directory`
-  and `git-timestamp`. They change nothing for the clients of the foundation.
+  and `git-timestamp`. They change nothing in `git-core` and nothing for the clients of the foundation.
 
 == Open Questions
 

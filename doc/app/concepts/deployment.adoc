@@ -5,16 +5,16 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-The promise of CISOs-Friend to an operator is short: no new database. In full it reads: no new database, one container,
-one persistent volume, the secrets listed under <<_configuration_and_secrets>>, and a handful of systems the
-organisation already runs. This page names all of them, and how the container is built and shipped. The structure
+CISOs-Friend needs no new database. An operator runs one container with one persistent volume, provides the secrets
+listed under <<_configuration_and_secrets>>, and connects a few systems the organisation already runs. This page
+names all of them, and how the container is built and shipped. The structure
 follows API Sheriff.
 
 == What Runs Where
 
-image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint and services on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server and the KMS, and passes log records to the SIEM",align=center]
+image::../resources/diagrams/cisos-friend-system-context.svg["CISOs-Friend container with web app, REST API, MCP endpoint, services, Token Sheriff and the libraries, on a persistent volume; browsers and AI agents reach it over HTTPS; it talks to the identity provider, the Git server, the KMS and, optionally, an RFC 3161 timestamp authority, and passes log records to the SIEM",align=center]
 
 [cols="1,3"]
 |===
@@ -31,12 +31,13 @@ every unsaved draft.
 |*Git server* (GitHub, GitLab, Gitea)
 |Source of truth and backup; protected branches and tags.
 
-|*Identity provider* with Token Sheriff
-|Authentication of people and agents; groups; step-up.
+|*Identity provider*
+|Authentication of people and agents; groups; step-up. The Token Sheriff libraries that talk to it run inside the
+application.
 
 |*KMS or Vault*
-|Preferably the commit-signing key and the anchor key of the own timestamp, which anchors releases and daily
-checkpoints.
+|Preferably the commit-signing key and the anchor key. With the anchor key the application signs its own timestamps,
+which anchor the releases and the periodic checkpoints.
 
 |*SIEM*
 |Read-access and security events of the application.
@@ -53,9 +54,12 @@ Following API Sheriff:
 * *Native binary* built with the Mandrel builder image on the JDK 25 line; no JVM in the runtime image.
 * *Base image* `quay.io/quarkus/quarkus-distroless-image`, pinned by digest; the process runs as `nonroot`.
 * *Health check* answered by the binary itself (`--health-probe`), because the distroless image has no shell or
-  `curl`.
-* *Ports*: 8443 (HTTPS), 9000 (management: readiness, liveness, Prometheus metrics). Plain HTTP 8080 only behind a
-  terminating proxy.
+  other programs to run a check with: it is built from `gcr.io/distroless/cc`
+  (https://github.com/quarkusio/quarkus-images/blob/95188c0a6a1760b9b5766516c7fc7748e7485aaf/quarkus-distroless-base-image/src/main/java/io/quarkus/images/QuarkusDistroless.java[`QuarkusDistroless.java`]),
+  and distroless images contain no package managers, shells or other programs
+  (https://github.com/GoogleContainerTools/distroless[distroless README]).
+* *Ports*: 8443 (HTTPS), 9000 (management: readiness, liveness, Prometheus metrics), 8080 (plain HTTP, only a
+  redirect to 8443).
 * *OCI labels* for version, revision, source and licence from build arguments.
 * *Multi-architecture*: amd64 and arm64 built natively on separate runners and joined into one image index, published
   as `ghcr.io/cuioss/cisos-friend`.
@@ -65,11 +69,12 @@ The release follows the cuioss release process of the application repository; pu
 [#_configuration_and_secrets]
 == Configuration and Secrets
 
-`cisos-friend.yaml` is a mounted configuration directory, validated at boot and offline (`--validate-config`); URLs
-and client ids come from environment variables, referenced as placeholders. Secrets (the Git credential of the
+`cisos-friend.yaml` is a file in a mounted configuration directory, validated at boot and offline
+(`--validate-config`); URLs and client ids come from environment variables, referenced as placeholders. Secrets (the Git
+credential of the
 technical user, the TLS key, the OIDC client credential) are mounted files or Vault references. The commit-signing key
 and the anchor key are best kept in a KMS or HSM: the application signs through its interface and never sees the key;
-a key file is the weakest variant. The full list is in link:../specification/deployment.adoc#_secrets[Deployment,
+a key file is the weakest variant. The full list is in xref:../specification/deployment.adoc#_secrets[Deployment,
 Secrets].
 
 == Compose Sample
@@ -89,10 +94,13 @@ The integration tests use the same topology with additional variants.
 
 . The Git server's backup covers every saved state. Drafts are never pushed; they stay on the volume: back the volume
   up as well, otherwise losing it loses them
-  (link:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]).
+  (xref:../../concepts/storage-engine.adoc#_two_levels_of_saving[Storage Engine, Two Levels of Saving]).
 . When the application lists a repository whose retention period has ended, delete the remote repository on the Git
   server, and let backups expire with the same period: deleting the repository in the application reaches neither.
-. Watch the readiness probe (link:../specification/deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]).
+. Protect `main` of every repository on the Git server so that only the technical user may push to it and nobody may
+  force-push; the application cannot verify this setting
+  (xref:authentication-and-identity.adoc#_the_git_credential[Authentication and Identity, The Git Credential]).
+. Watch the readiness probe (xref:../specification/deployment.adoc#CIFR-OPS-2[Deployment, CIFR-OPS-2]).
 . Register the commit-signing key with the bot account if the Git server shall show commits as "Verified".
 . Route the application's security events into the SIEM.
 
@@ -101,12 +109,11 @@ The integration tests use the same topology with additional variants.
 . Whether the first organisation needs an RFC 3161 timestamp authority instead of the own timestamp, and which one
   (qualified under eIDAS, or internal under another responsibility).
 . Whether a Helm chart is shipped beside the compose sample.
-. Sizing of the volume and memory for the expected number of repositories and documents (to be measured in the
-  prototype).
+. Sizing of the volume and memory for the expected number of repositories and documents (to be measured).
 
 == Related
 
-* link:application-architecture.adoc[Application Architecture]
-* link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the repository cut and the
+* xref:application-architecture.adoc[Application Architecture]
+* xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the repository cut and the
   person directory
-* link:../../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] — anchoring
+* xref:../../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] — anchoring

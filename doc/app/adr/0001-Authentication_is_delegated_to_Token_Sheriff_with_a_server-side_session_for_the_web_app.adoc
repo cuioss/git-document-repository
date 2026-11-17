@@ -19,7 +19,8 @@ Accepted
 == Decision
 
 The application needs authenticated users, their claims for the signed trailers, step-up for releases, and access
-rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of its own.
+rights. Token Sheriff provides the OAuth and OpenID Connect flows as a set of libraries that run inside the
+application; the identity provider is the external system.
 
 *The decision:* authentication is delegated to Token Sheriff.
 
@@ -31,16 +32,16 @@ rights. Token Sheriff provides the OAuth and OpenID Connect flows as a system of
 * Agents present bearer tokens that `token-sheriff-validation-quarkus` validates.
 * Rights come from identity-provider groups, mapped per repository. Directory roles grant nothing.
 
-The details are in link:../concepts/authentication-and-identity.adoc[Authentication and Identity].
+The details are in xref:../concepts/authentication-and-identity.adoc[Authentication and Identity].
 
 == Alternatives rejected
 
 === Tokens in the browser
 
 A public client in the SPA would hold access and refresh tokens. *Rejected because* any script injection could take
-them. The IETF guidance for browser-based applications (draft-ietf-oauth-browser-based-apps) strongly recommends the
-backend-for-frontend architecture for business applications, sensitive applications and applications that handle
-personal data.
+them. RFC 10017, OAuth 2.0 for Browser-Based Applications (BCP 212, formerly draft-ietf-oauth-browser-based-apps),
+strongly recommends the backend-for-frontend architecture for business applications, sensitive applications and
+applications that handle personal data (section 6.1.4.3).
 
 === API Sheriff as BFF in front of the application
 
@@ -70,7 +71,8 @@ option for organisations that run API Sheriff anyway.
 
 == Links
 
-* link:../concepts/authentication-and-identity.adoc[Authentication and Identity]
-* Token Sheriff `doc/client` (CLIENT-1 to CLIENT-24)
-* https://datatracker.ietf.org/doc/draft-ietf-oauth-browser-based-apps/[OAuth 2.0 for Browser-Based Applications]
-  (draft-ietf-oauth-browser-based-apps, section 6.1)
+* xref:../concepts/authentication-and-identity.adoc[Authentication and Identity]
+* Token Sheriff `doc/client` (CLIENT-1 to CLIENT-24); https://github.com/cuioss/TokenSheriff[Token Sheriff on GitHub]
+* https://www.rfc-editor.org/rfc/rfc10017[RFC 10017, OAuth 2.0 for Browser-Based Applications] (BCP 212,
+  August 2026, section 6.1, Backend for Frontend)
+* https://www.rfc-editor.org/rfc/rfc9470[RFC 9470, OAuth 2.0 Step Up Authentication Challenge Protocol]

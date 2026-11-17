@@ -29,7 +29,8 @@ without making an external service a requirement.
   id, and verify a stored proof. At most one provider is active, named by configuration; without one the store anchors
   nothing.
 * *What is anchored* is decided by `git-store`, the same for every provider:
-** the commit of every release tag, right after the tag exists;
+** the commit of every release tag, right after the tag exists, unless the configuration turns release anchoring off
+   (`anchor.releases`);
 ** a *checkpoint* at most once per configured interval (default one day), and only when a pushed reference changed
    since the previous one. A checkpoint is a commit whose tree lists every pushed reference with its object id; its
    parent is the previous checkpoint, and it is tagged `refs/tags/checkpoints/<n>`. Anchoring a checkpoint proves
@@ -60,8 +61,8 @@ deployment, also to those for which a proof by their own key is enough. It stays
 
 Every new commit of `main` is anchored on its own.
 
-*Rejected because* with an external authority it makes one call per commit, which a qualified timestamp service
-charges for, and ties the pace of saving to that service. A checkpoint proves every commit it reaches; releases, the
+*Rejected because* with an external authority it makes one call per commit and ties the pace of saving to that
+service. A checkpoint proves every commit it reaches; releases, the
 states an auditor asks for, are still anchored one by one.
 
 === The commit signature as the own timestamp

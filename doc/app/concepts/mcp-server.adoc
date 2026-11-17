@@ -5,19 +5,21 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
 An AI agent that fills in a threat model from a recipe or drafts an incident report from the responders' notes is useful
-exactly as long as it can be held to the same rules as the person it works for. The usual first version of such an
-integration hands the agent a long-lived API key with the rights of a service account, and the audit trail then says
-"the bot did it". CISOs-Friend's MCP server works the other way round: every call carries an audience-bound token of a
+exactly as long as it can be held to the same rules as the person it works for. An integration that hands the agent a
+long-lived API key with the rights of a service account leaves an audit trail that names only the service account.
+CISOs-Friend's MCP server works the other way round: every call carries an audience-bound token of a
 named user and acts with no more than that user's rights, and the steps that need a human stay with the human.
 
 == The Server as a Protected Resource
 
 The MCP authorization specification makes authorization optional and says that HTTP transports which use it should
 conform to it. CISOs-Friend uses authorization and follows the MCP authorization specification for HTTP transports:
-the MCP server is an OAuth 2.1 resource server. The normative revision is 2026-07-28 (its published pages
+the MCP server is an OAuth 2.1 resource server
+(https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], an Internet-Draft). The
+normative revision is 2026-07-28 (its published pages
 `basic/authorization`, `basic/transports` and `basic/transports/streamable-http`, linked under <<_related>>).
 
 * *Protected Resource Metadata* (RFC 9728) is served at `/.well-known/oauth-protected-resource/mcp` (the URL RFC 9728
@@ -27,19 +29,22 @@ the MCP server is an OAuth 2.1 resource server. The normative revision is 2026-0
 * *Discovery*: a request without a valid token gets `401` with `WWW-Authenticate: Bearer resource_metadata="…",
   scope="…"`.
 * *Tokens* arrive in the `Authorization` header of every request, never in the query string.
-* *Validation*: the server validates every token as OAuth 2.1 §5.2 requires, through
-  `token-sheriff-validation-quarkus`: signature against the issuer's JWKS, expiry, issuer, and *audience*. The token's
+* *Validation*: section 5.2 of draft-ietf-oauth-v2-1-13 requires a resource server to check that a token has not
+  expired, is authorized for the requested resource and carries the appropriate scope. The server validates every
+  token through `token-sheriff-validation-quarkus`: signature against the issuer's JWKS, expiry, issuer, and
+  *audience*. The token's
   `aud` must contain the server's canonical URI, the value MCP clients send as `resource` parameter (RFC 8707). A
   token issued for any other resource is rejected with `401`, however valid it is otherwise.
 * *Insufficient scope*: a call whose token lacks a scope gets `403` with `error="insufficient_scope"`, the scopes the
-  operation needs and the `resource_metadata` URI, so the client can run a step-up authorization for exactly those
-  scopes.
+  operation needs and the `resource_metadata` URI, so the client can obtain a new token with exactly those scopes.
+  This scope request is not the step-up of a release, which is a renewed MFA login of the user.
 * *No token passthrough*: the server never forwards the token it received to another service. Upstream calls use
   their own credentials (see <<_git_credentials_never_reach_the_agent>>).
 
 The client side of the flow (discovery, PKCE `S256`, `resource` parameter, Client ID Metadata Documents or dynamic
-registration) is the agent's and the authorization server's duty; the application documents what it expects of both
-in its configuration guide.
+registration) is the agent's and the authorization server's duty; the server's side is specified in
+xref:../specification/mcp-server.adoc#CIFR-MCP-2[MCP Server, CIFR-MCP-2] and
+xref:../specification/mcp-server.adoc#CIFR-MCP-3[CIFR-MCP-3].
 
 image::../resources/diagrams/mcp-token-flow.svg["Sequence: the agent calls the MCP server without a token and gets 401 with the resource metadata; it reads the metadata, authorises at the identity provider with the resource parameter, calls again with the bearer token; the server validates audience and scope through Token Sheriff, runs the tool as the user and saves through the technical user with signed trailers",align=center]
 
@@ -71,7 +76,7 @@ permission of a call is the intersection: the agent never exceeds the user it ac
 |===
 
 The user's rights come from the identity-provider groups, mapped per repository, exactly as for the web app
-(link:authentication-and-identity.adoc#_rights[Authentication and Identity, Rights]). There is no agent-specific
+(xref:authentication-and-identity.adoc#_rights[Authentication and Identity, Rights]). There is no agent-specific
 service account.
 
 == What an Agent Can and Cannot Do
@@ -103,7 +108,7 @@ request; the request appears in the user's *Due* lens of the web app.
 == Git Credentials Never Reach the Agent
 
 The application pushes only with the technical user
-(link:authentication-and-identity.adoc#_the_git_credential[The Git Credential]). That credential is never part of a tool
+(xref:authentication-and-identity.adoc#_the_git_credential[The Git Credential]). That credential is never part of a tool
 result, an error message or a log line, and the agent's access token is never used against the Git server. A
 compromised agent therefore holds at most an audience-bound token for this one server, valid for the lifetime its
 authorization server sets.
@@ -113,7 +118,7 @@ authorization server sets.
 
 Every commit an agent causes carries the identity of the user, exactly as a commit from the web app does (pseudonym,
 issuer, authentication time and context; the trailer schema is the library's, see
-link:../../concepts/identity-and-signing.adoc[Identity and Signing]). The agent client, the `client_id` (or `azp`) of
+xref:../../concepts/identity-and-signing.adoc[Identity and Signing]). The agent client, the `client_id` (or `azp`) of
 the token, is recorded in the audit log only (see <<_open_questions>>).
 
 == Limits and Audit
@@ -147,11 +152,15 @@ human.
 [#_related]
 == Related
 
-* link:authentication-and-identity.adoc[Authentication and Identity]
-* link:web-app.adoc[Web App] — where humans complete what agents request
+* xref:authentication-and-identity.adoc[Authentication and Identity]
+* xref:web-app.adoc[Web App] — where humans complete what agents request
 * Sources: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[MCP Authorization 2026-07-28],
   https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[MCP Transports 2026-07-28],
   https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http[Streamable HTTP 2026-07-28],
   https://www.rfc-editor.org/rfc/rfc9728[RFC 9728], https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
-  https://www.rfc-editor.org/rfc/rfc6750#section-3.1[RFC 6750 §3.1]; Token Sheriff `doc/validation` and `doc/client`
+  https://www.rfc-editor.org/rfc/rfc6750#section-3.1[RFC 6750 §3.1],
+  https://www.rfc-editor.org/rfc/rfc9449[RFC 9449],
+  https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[The OAuth 2.1 Authorization Framework,
+  draft-ietf-oauth-v2-1-13] (Internet-Draft, 28 May 2025; the version the MCP authorization specification is based on);
+  Token Sheriff `doc/validation` and `doc/client`
   (CLIENT-12)

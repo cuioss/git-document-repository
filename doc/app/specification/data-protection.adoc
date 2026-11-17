@@ -1,21 +1,21 @@
 = CISOs-Friend: Data Protection
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 What the application configures and enforces on top of the library's pseudonyms, erasure and repository registry.
-Reasoning: link:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library
-contract: link:../../specification/git-directory.adoc#GDR-DIR-6[GDR-DIR-6: Erasure] and
-link:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
+Reasoning: xref:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library
+contract: xref:../../specification/git-directory.adoc#GDR-DIR-6[GDR-DIR-6: Erasure] and
+xref:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
 
 [#CIFR-DP-1]
 == CIFR-DP-1: Repository Cut
 
 * The repository cut must be configurable; every repository declares exactly one confidentiality class and one
-  retention period (link:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]).
+  retention period (xref:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]).
 * The default configuration must contain `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`,
   `threat-models` and `directory`.
 
@@ -40,21 +40,28 @@ names its repository in its `workflow.yaml`; `isms-incidents-<year>` is created 
 * A save containing a reference to another repository's entry must be rejected when the target does not exist.
 
 Reference forms, as defined by the library: `<alias>:<kind>/<id>` for a document (`isms-register:risk/R-042`,
-`samm-assessments:assessment/<id>`), and `<catalog>:<id>` for a catalog entry (`service:payment-api`, `role:ciso`).
+`samm-assessments:assessment/<ulid>`), and `<catalog>:<id>` for a catalog entry (`service:payment-api`, `role:ciso`).
 The application may append `#<fragment>` to name a part of the target document (a practice, a threat); the existence
-check applies to the document. On save every reference field (schema `x-reference: true`) is resolved against the
-index; an unresolved reference is a field error `REFERENCE_NOT_FOUND`. A reference into a repository the user may not
-read is reported as not found.
+check applies to the document.
+
+Schema markers: every reference field carries the library's `"format": "gdr-link"`
+(xref:../../specification/git-forms.adoc#GDR-FORMS-8[GDR-FORMS-8]); a field holding a catalog reference carries in
+addition `"x-catalog": "<catalog>"`, naming the catalog its target must belong to (for example
+`"x-catalog": "service"`). There is no other reference marker. On save every reference field is resolved, a document
+reference against the index and a catalog reference against the catalog; an unresolved reference is a field error
+`REFERENCE_NOT_FOUND`. A reference into a repository the user may not read is reported as not found.
 
 [#CIFR-DP-3]
 == CIFR-DP-3: Erasure
 
 * With the default person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
-  the erasure must take effect at once. The application runs as one instance
-  (link:../concepts/application-architecture.adoc#_one_instance[Application Architecture, One Instance]), so no
-  other process keeps showing the person.
+  the erasure must take effect at once.
 * Every erasure must delete the person entry in a commit that records the pseudonym and the date, never the person;
   it must not rewrite history.
+
+The erasure takes effect at once because the application runs as one instance
+(xref:../concepts/application-architecture.adoc#_one_instance[Application Architecture, One Instance]): no other
+process keeps showing the person.
 
 `POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym calls the library's erasure of the
 active person directory. With `git`, one commit deletes the entry and records pseudonym and date in `erasures.yaml` of
@@ -68,13 +75,13 @@ type `managed-by-source` and names no person.
 * The application must list the repositories whose retention period has ended to users with the right *administer
   catalogs*; it must not rewrite history.
 * On a confirmed deletion the application must remove its local repository on the volume, stop serving the
-  repository and exclude it from the periodic fetch (link:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]), also after a
+  repository and exclude it from the periodic fetch (xref:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]), also after a
   restart, until the operator removes it from the configuration; the remote repository and backup copies are deleted
   by the operator.
 
 A daily job computes `end = created + retention` (for `isms-incidents-<year>`: 31 December of the year + retention)
 and lists expired repositories in the *Due* lens. The deletion is logged in `directory` and anchored by the next
-checkpoint. The operator's duties (link:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
+checkpoint. The operator's duties (xref:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
 name the deletion of the remote repository and require backup expiry to match the period.
 
 [#CIFR-DP-5]
@@ -91,8 +98,8 @@ pseudonym. There is no encrypted field type. Fields with `"x-free-text": true` s
 [#CIFR-DP-6]
 == CIFR-DP-6: Read-Access Events
 
-* Every read of a document in a repository of class *restricted* or *strongly restricted* must produce a log record
-  with pseudonym, repository and document id for the SIEM.
+* Every read of a document in a repository of class `restricted` or `strongly-restricted` must produce a log record
+  with pseudonym, repository and document id for the security information and event management system (SIEM).
 
 Every `read_document`, `GET /api/v1/documents/…` and diff on such a repository emits one `INFO` record
 `CISOS_FRIEND-<n>: {pseudonym} read {repository}/{id}`, routed to the SIEM through the log shipping of the platform.

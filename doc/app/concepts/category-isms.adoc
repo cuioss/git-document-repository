@@ -5,12 +5,13 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-ISO 27001 clause 7.5 asks for the control of documented information: versioning, review and approval, availability,
-protection against change, traceable changes. Read with a developer's eyes, that is a description of a Git server with
-protected branches. The ISMS category takes the hint, carefully: it is an extension of CISOs-Friend for development
-organisations, not a replacement for a complete ISMS product.
+Clause 7.5 of https://www.iso.org/standard/27001[ISO/IEC 27001:2022] asks for the control of documented
+information: versioning, review and approval, availability, protection against change, traceable changes. Read with
+a developer's eyes, that is a description of a Git server with protected branches. The ISMS category takes the hint,
+carefully: it is an extension of CISOs-Friend for development organisations, not a replacement for a complete ISMS
+product.
 
 == The ISMS on Git
 
@@ -28,16 +29,16 @@ The ISMS artefacts sort into three groups:
 
 . *Documents, very well suited*: policies, scope, internal audit and management review reports. Rarely changed,
   approval-centred, diffable.
-. *Registers, well suited*, with the pattern of link:category-samm.adoc[SAMM] (one file per entry, in-memory index,
+. *Registers, well suited*, with the pattern of xref:category-samm.adoc[SAMM] (one file per entry, in-memory index,
   compare-and-swap). The first iteration keeps the risk register only. The in-memory index rests on the design
-  assumption that a mid-sized ISMS holds at most a few thousand register entries; the prototype measures index build
-  time and memory at that size.
+  assumption that a mid-sized ISMS holds at most a few thousand register entries; a measurement of index build time and
+  memory at that size has to confirm it before the register is built.
 . *Operational data, referenced instead of stored*: tasks and deadlines (issue tracker of the Git server or Jira), the
   live handling of incidents (ticket system; the report on an incident is a schema-driven document, see
-  link:category-incident-reports.adoc[Incident Response Reports]), training records per employee (learning platform or
+  xref:category-incident-reports.adoc[Incident Response Reports]), training records per employee (learning platform or
   HR system). Persons, roles and teams come from the library's
-  link:../../concepts/directory-and-catalogs.adoc[directory], the services from the
-  link:service-catalog.adoc[service catalog].
+  xref:../../concepts/directory-and-catalogs.adoc[directory], the services from the
+  xref:service-catalog.adoc[service catalog].
 
 === Mechanisms the ISMS Uses
 
@@ -45,10 +46,10 @@ All of these are library mechanisms; the ISMS category uses them and adds no mec
 
 * *Releases in the repository*: the application merges every release itself; the signed release commit names the
   releasing user, so the evidence survives a change of Git server
-  (link:../../concepts/identity-and-signing.adoc[Identity and Signing]).
+  (xref:../../concepts/identity-and-signing.adoc[Identity and Signing]).
 * *Running numbers* (R-042) under concurrent creation: a ULID identifies a new entry until its first save, which
   assigns the readable number that then names the entry file
-  (link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
+  (xref:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
 * *Reporting dates*: "the risk register as of the audit on 1 March" is a tag or the commit of that date; the index
   is built from it.
 * *Deadlines and reminders* are computed from the index; notifications are runtime state of the application, not
@@ -57,8 +58,8 @@ All of these are library mechanisms; the ISMS category uses them and adds no mec
 === The Bridge to SAMM
 
 A gap between a SAMM score and its target may become a risk in the register, with a reference to the released
-assessment. Once controls are kept, a released assessment becomes evidence for the secure-development controls
-(Annex A 8.25 ff.) by a reference to its tag. Both domains run on one engine.
+assessment. Once controls are kept, a released assessment becomes evidence for the secure-development controls of
+ISO/IEC 27001:2022, among them A.8.25, by a reference to its tag. Both domains run on one engine.
 
 === Limits
 
@@ -70,30 +71,35 @@ assessment. Once controls are kept, a released assessment becomes evidence for t
 
 == Comparison with verinice
 
-verinice (SerNet) is an established ISMS product. The classic product is a desktop client (Eclipse RCP) with the server
-verinice.PRO and a database, strong in BSI IT-Grundschutz, ISO 27001 and data protection. verinice.veo is the new web
-application: microservices on PostgreSQL, Keycloak and RabbitMQ, orchestrated by Kubernetes, offered as SaaS or on
-premise.
+verinice is an ISMS product of SerNet. The classic product is a Java application whose user interface is built on the
+Eclipse Rich Client Platform (https://github.com/SerNet/verinice[verinice on GitHub]), with the server verinice.PRO,
+which needs a PostgreSQL or Oracle database; SerNet names domains for BSI IT-Grundschutz, ISO/IEC 27001, TISAX,
+NIS 2, data protection and BCM (https://verinice.com/en/products/verinice/verinicepro-server[verinice.PRO]). verinice.veo is the
+web-based new generation, offered as verinice.cloud by SerNet or as verinice.onprem for operation in a data centre
+(https://verinice.com/en/veo[verinice.veo]); it consists of several microservices that need Keycloak, PostgreSQL and
+RabbitMQ (https://github.com/SerNet/verinice-veo[verinice-veo on GitHub]).
 
 [cols="1,2,2"]
 |===
 |Criterion |CISOs-Friend (Git) |verinice / verinice.veo
 
 |Domain content
-|Built by the project. The Grundschutz compendium is free; the texts of ISO 27001 are copyrighted and may not be
-shipped, only own wording and numbers
-|Catalogues, methodology and modelling logic included, matured over years
+|Built by the project. The IT-Grundschutz-Kompendium is published by the BSI as a download
+(https://www.bsi.bund.de/DE/Themen/Unternehmen-und-Organisationen/Standards-und-Zertifizierung/IT-Grundschutz/IT-Grundschutz-Kompendium/it-grundschutz-kompendium_node.html[IT-Grundschutz-Kompendium]);
+the text of ISO/IEC 27001:2022 is not part of the project, only own wording and the clause and control numbers
+|Domains for Grundschutz, ISO/IEC 27001 and others in the product; for veo, SerNet announces the content of catalogs,
+compendia and standards and preinstalls it on the server (verinice.veo page)
 
 |Reports (statement of applicability, Grundschutz check, risk report)
 |Built by the project
-|Available in the product
+|In the product; verinice.PRO customises reports with vDesigner (verinice.PRO page)
 
 |Operation
 |Application and existing Git server; backup, rights and reviews exist
-|veo: Kubernetes, PostgreSQL, Keycloak, RabbitMQ, or SaaS with the data at the vendor
+|veo: microservices with Keycloak, PostgreSQL and RabbitMQ on premise, or verinice.cloud operated by SerNet
 
 |Versioning, diff, reporting dates
-|Native and complete
+|Every change is a commit, any two states compare as a diff, a reporting date is a tag or a commit
 |veo keeps every change of an object as a version: the History sidebar shows and restores earlier versions
 (https://github.com/SerNet/verinice-veo-web-documentation/blob/main/docs/en/manual/objects.md[veo manual, Objects]),
 and the veo-history service returns all revisions of a resource and the one current at a point in time
@@ -101,28 +107,30 @@ and the veo-history service returns all revisions of a resource and the one curr
 comparison between versions
 
 |Approval and tamper evidence
-|Release with step-up in signed commits, protected branches, anchored releases and daily checkpoints, verifiable
+|Release with step-up in signed commits, protected branches, anchored releases and periodic checkpoints, verifiable
 without the application
-|Workflow functions of the application (scope to verify); tamper evidence depends on the database and the
-administrators' rights
+|verinice.PRO names a web-based workflow with mail notification (verinice.PRO page); the sources checked name no tamper
+evidence
 
 |Rights
 |Coarse per repository, cut by confidentiality; enforced by the application
-|Fine-grained per object and role in the application
+|verinice.PRO names a granular authorization and role concept (verinice.PRO page); veo manages users and access rights
+in Keycloak (https://verinice.com/en/ressources/learn/technical-background[verinice technical details])
 
 |Data sovereignty
-|Plain YAML or AsciiDoc, readable without any software
-|Database, export through exchange formats or REST API
+|Plain YAML or AsciiDoc files, readable with any text editor
+|Database; veo offers a public, documented programming interface
+(https://verinice.com/en/ressources/learn/interfaces-apis[Interfaces and APIs])
 
 |Acceptance by auditors
 |Has to be explained (process description of the control of documented information)
-|Known, especially for Grundschutz certification
+|Not checked against a source; SerNet names BSI and ISO licences for verinice (verinice.PRO page)
 |===
 
 === Positioning
 
 From this comparison follows the positioning: CISOs-Friend complements verinice and does not compete with it as a
-complete ISMS. Core and extension are listed in link:cisos-friend-overview.adoc#_positioning[Overview, Positioning].
+complete ISMS. Core and extension are listed in xref:cisos-friend-overview.adoc#_positioning[Overview, Positioning].
 
 == Open Questions
 
@@ -132,12 +140,14 @@ complete ISMS. Core and extension are listed in link:cisos-friend-overview.adoc#
 
 == Related
 
-* link:category-samm.adoc[SAMM], link:category-incident-reports.adoc[Incident Reports],
-  link:category-threat-models.adoc[Threat Models]
-* link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — `isms-core`,
+* xref:category-samm.adoc[SAMM], xref:category-incident-reports.adoc[Incident Reports],
+  xref:category-threat-models.adoc[Threat Models]
+* xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — `isms-core`,
   `isms-register`, `isms-incidents-<year>`
 * Sources: https://verinice.com/en/ressources/learn/technical-background[verinice technical details],
   https://verinice.com/en/ressources/learn/interfaces-apis[Interfaces and APIs],
   https://verinice.com/en/veo[verinice.veo] (offered as verinice.cloud and verinice.onprem),
+  https://verinice.com/en/products/verinice/verinicepro-server[verinice.PRO],
+  https://github.com/SerNet/verinice[verinice on GitHub] (Eclipse Rich Client Platform in its README),
   https://github.com/SerNet/verinice-veo[verinice-veo on GitHub] (PostgreSQL, Keycloak and RabbitMQ in its README),
   https://github.com/SerNet/verinice-veo-web[verinice-veo-web on GitHub]

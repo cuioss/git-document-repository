@@ -5,7 +5,8 @@
 :source-highlighter: highlight.js
 
 `git-core` is the JGit level of the reactor: module and package `de.cuioss.git.document.core`, a scaffold. It depends
-on no other module of the reactor; its only third-party dependency is JGit (planned, needs the owner's approval). The
+on no other module of the reactor. Its declared third-party dependency is `org.jspecify:jspecify` (annotations,
+`requires static`); JGit is planned and needs the owner's approval (see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]). The
 JGit APIs named here are checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of
 https://github.com/eclipse-jgit/jgit). Rationale: xref:../concepts/module-structure.adoc#_the_foundation_modules[Module
 Structure, The Foundation Modules] and xref:../concepts/storage-engine.adoc[Storage Engine].
@@ -14,7 +15,8 @@ Structure, The Foundation Modules] and xref:../concepts/storage-engine.adoc[Stor
 |===
 |Type |Role
 
-|`RefusingFS` |JGit file system that refuses hooks and process starts (`CapabilityRefusedException`)
+|`RefusingFS` |Subclass of JGit's `FS` that refuses hooks and process starts with the `git-core` exception
+`CapabilityRefusedException`
 |`RemotePolicy` |The permitted remote: HTTPS origin or local only
 |`GitIdentity` |Commit ids, reference names, resolution and ambiguity
 |`GitResult`, `GitOutcome` |Result type and closed outcome list (see xref:general.adoc#GDR-GEN-3[GDR-GEN-3])
@@ -29,8 +31,10 @@ Structure, The Foundation Modules] and xref:../concepts/storage-engine.adoc[Stor
 * All operations must run in process; no `git` installation may be required.
 * A refused capability must be reported as an outcome, not executed.
 
-Every repository is built with `RefusingFS`; hook execution and process starts throw `CapabilityRefusedException`
-inside JGit, which `RepositoryOperations` maps to the refused-by-policy outcome.
+Every repository is to be built with `RefusingFS`, which overrides the hook and process methods of JGit's
+`org.eclipse.jgit.util.FS` (among them `runHookIfPresent`, `runProcess`, `runInShell` and `execute`;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/FS.java[JGit 7.8.0 `FS`]) so that they throw `CapabilityRefusedException`, an exception type of
+`git-core`, not of JGit. `RepositoryOperations` maps it to the refused-by-policy outcome.
 
 [#GDR-CORE-2]
 == GDR-CORE-2: Remote Policy
@@ -72,20 +76,33 @@ signs the commit before it is inserted; `git-core` signs nothing itself.
   number of attempts the caller passes.
 * After the last failed attempt the result must report a conflict outcome; the reference must be unchanged.
 
-The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit. The
-update sets the expected old id (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference that must not
-exist yet) and never the force flag. `NEW` and `FAST_FORWARD` are success; `LOCK_FAILURE` (locked, or no longer the
-expected old id) re-applies the operation and retries; `IO_FAILURE` is an exception; every other result is returned
-at once as rejected, the detail naming it.
+The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit. Every
+reference change sets the expected old id (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference
+that must not exist yet). An update never sets the force flag: `NEW` and `FAST_FORWARD` are success. A delete
+(compare-and-delete, used by the store for a draft reference) sets the expected old id and the force flag, because a
+delete has no new value and `RefUpdate` returns `REJECTED` for it without the flag and `FORCED` with it; `FORCED` is
+success for a delete. In both cases the expected-old check runs first, so a reference that moved yields `LOCK_FAILURE`
+and is unchanged (`RefUpdate.updateImpl`,
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit 7.8.0 `RefUpdate`]).
+`LOCK_FAILURE` (locked, or no longer the expected old id) re-applies the operation and retries; `IO_FAILURE` is an
+exception; every other result is returned at once as rejected, the detail naming it.
 
 [#GDR-CORE-6]
 == GDR-CORE-6: In-Core Merge
 
-* The library must merge two commits without a working tree.
+* The library must merge two commits without a working tree, at path level only: a path changed by one side takes
+  that side's entry; a path changed differently by both sides is a conflict; file contents are never merged.
 * A merge with conflicts must report the conflicting paths and must not create a commit.
 
-The merger is created in core (`MergeStrategy.RECURSIVE.newMerger(repo, true)`); success yields a tree id, from which
-the caller builds the merge commit.
+The merger is `MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.newMerger(repo)` (class `StrategySimpleTwoWayInCore`, always in
+core): a three-way merge over the merge base and both tips at the path level only, which reports a path modified by
+both sides (content or file mode) as a conflict and never merges file contents
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/merge/StrategySimpleTwoWayInCore.java[JGit 7.8.0 `StrategySimpleTwoWayInCore`]).
+`MergeStrategy.RECURSIVE` is not used: it merges file contents textually, which
+xref:../adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001]
+rejects. Success yields a tree id, from which the caller builds the merge commit. The merger reports no conflicting
+paths, so on failure the library computes them itself with a tree walk over the merge base and both tips: every path
+whose entry (object id or file mode) differs from the base on both sides and differs between the sides.
 
 [#GDR-CORE-7]
 == GDR-CORE-7: Fetch and Push with Credentials and Lease

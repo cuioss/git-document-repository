@@ -35,7 +35,9 @@ Trees].
 === One working tree per user and document
 
 Each user and document gets a working tree of its own. By default Git checks a branch out in only one working tree
-at a time. A working tree per user and document multiplies disk use and file-system work. It also forces a checkout
+at a time: `git worktree add` refuses a branch that is already checked out in another working tree unless `--force`
+is given (link:https://git-scm.com/docs/git-worktree[git-worktree(1)]). A working tree per user and document multiplies
+disk use and file-system work. It also forces a checkout
 before every read.
 
 *Rejected because* the content is already in memory. Writing it to disk only to read it back into a commit adds cost
@@ -49,7 +51,8 @@ The document store writes through linked working trees, like clients whose agent
 reading (https://projects.eclipse.org/projects/technology.jgit/releases/7.0.0[JGit 7.0 release notes]: "Add worktrees
 read support"). JGit 7.8.0 still has no command that creates a linked working tree: its API package holds no worktree
 command; the support is the reading of `commondir` through `BaseRepositoryBuilder.setGitCommonDir`
-(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit 7.8.0 `api` package]).
+(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit
+7.8.0 `api` package]).
 `git-worktrees` stays available for consumers that need files.
 
 === A lock per document instead of compare-and-swap

@@ -5,11 +5,11 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-An OWASP SAMM assessment usually ends its life as a spreadsheet named `samm-final-v3-reviewed.xlsx`, and the
-comparison with last year's assessment is done by eye. That loses the one thing an assessment is for: the trend.
-SAMM is the core category of CISOs-Friend because its model and its assessments map directly onto files in Git.
+An OWASP SAMM assessment kept as a spreadsheet such as `samm-final-v3-reviewed.xlsx` is compared with last year's
+assessment by eye. That loses the one thing an assessment is for: the trend. SAMM is the core category of CISOs-Friend
+because its model and its assessments map directly onto files in Git.
 
 == What an Assessment Is
 
@@ -27,29 +27,37 @@ Git therefore fits:
 * history, rights, reviews and backups come from the existing infrastructure.
 
 Drafts, the working branch per assessment, saving and release are mechanisms of the library's
-link:../../concepts/storage-engine.adoc[storage engine]; this page names only what SAMM adds.
+xref:../../concepts/storage-engine.adoc[storage engine]; this page names only what SAMM adds.
 
 == Repository Layout
 
+The layout follows the library's document layout `<collection>/<ulid>/document.yaml` with the split files a schema
+declares. SAMM has two kinds of document, the scope and the assessment:
+
 ----
-samm.yaml                              # pinned SAMM model version(s)
-scopes/<scope-id>/scope.yaml           # refers to a team:, a service: or the organisation (directory)
-scopes/<scope-id>/assessments/<assessment-id>/
-    assessment.yaml                    # header: date, model version, status, assessors
-    answers/<practice-id>.yaml         # one file per practice: parallel editing without conflicts
-    evidence.yaml                      # evidence as links, not as files
-scopes/<scope-id>/targets.yaml         # target maturity, roadmap
+samm.yaml                              # pinned SAMM model version(s): repository configuration
+scopes/<ulid>/
+    document.yaml                      # kind scope; subject: team:<id>, service:<id> or organisation
+    targets.yaml                       # declared split: target maturity, roadmap
+assessments/<ulid>/
+    document.yaml                      # kind assessment; header: scope (samm-assessments:scope/<ulid>), date,
+                                       # model version, state, assessors
+    answers/<practice-id>.yaml         # declared split, one file per practice: parallel editing without conflicts
+    evidence.yaml                      # declared split: evidence as links, not as files
 ----
 
 * *One file per practice* keeps concurrent edits of different practices conflict-free.
 * *Deterministic serialisation* (fixed key order, stable formatting) makes diffs show real changes only; the
-  serialisation is the library's (link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
+  serialisation is the library's (xref:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
 * *Evidence as links* (wiki, ticket, pipeline) avoids large files and Git LFS.
-* *The scope* refers to a team, a service or the organisation through the stable ids of the
-  link:../../concepts/directory-and-catalogs.adoc[directory and catalogs].
+* *The scope* names its subject, a team, a service or the organisation, through the stable ids of the
+  xref:../../concepts/directory-and-catalogs.adoc[directory and catalogs]; an assessment refers to its scope by the
+  typed reference `samm-assessments:scope/<ulid>`.
+* *An assessment* is worked on in the working branch `refs/heads/assessments/<ulid>`; a practice is referenced as
+  `samm-assessments:assessment/<ulid>#<practice-id>`.
 
 The repository is `samm-assessments`, readable by development and security
-(link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
+(xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
 
 == Workshop Mode: Save Often
 
@@ -62,9 +70,9 @@ that practice file; the form shows the differing questions with both values, and
 == Release, Comparison and Targets
 
 * *Release* merges the assessment branch into `main` and creates the library's release tag `<collection>/<id>/v<n>`,
-  here `assessments/<id>/v1`: an assessment is released once, so `n` is always 1. Protected branches and tags of the
+  here `assessments/<ulid>/v1`: an assessment is released once, so `n` is always 1. Protected branches and tags of the
   Git server make it immutable. The application merges the release itself; the signed release commit names the
-  releasing user, who confirms the release with step-up (see link:authentication-and-identity.adoc#_step_up[Step-Up]).
+  releasing user, who confirms the release with step-up (see xref:authentication-and-identity.adoc#_step_up[Step-Up]).
 * *Scores* are computed as the OWASP SAMM toolbox computes them, so they stay comparable with toolbox results and the
   SAMM benchmark. The model has one question per activity, 90 in all (15 practices, 2 streams each, 3 maturity
   levels), and each answer carries the value of the model's answer set: 0, 0.25, 0.5 or 1
@@ -82,31 +90,33 @@ that practice file; the form shows the differing questions with both values, and
 * *Comparison* reads two released tags of the same model version from the in-memory index and shows the score
   difference per practice and stream. Dashboards and trends over hundreds of assessments come from the same index.
 * *Targets* in `targets.yaml` name the target maturity per practice. A gap between the released score and the target
-  can become a risk in the ISMS register (link:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
+  can become a risk in the ISMS register (xref:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
 * *Model versions*: an assessment keeps the model version it was taken with.
 
 == Links to the Other Categories
 
 * A maintained threat model is direct evidence for the SAMM practice _Threat Assessment_ (business function
   _Design_); the assessment links to the threat models of the services in its scope
-  (link:category-threat-models.adoc[Threat Models]).
-* A released assessment is evidence for the secure-development controls of ISO 27001 (Annex A 8.25 ff.) by a reference
-  to its tag.
+  (xref:category-threat-models.adoc[Threat Models]).
+* Once the ISMS keeps controls, a released assessment can serve as evidence for the secure-development controls of
+  https://www.iso.org/standard/27001[ISO/IEC 27001:2022], among them A.8.25, by a reference to its tag
+  (xref:category-isms.adoc#_the_bridge_to_samm[ISMS, the bridge to SAMM]).
 * An ISMS product, verinice for example, refers to a released assessment by its release tag; the application delivers
-  nothing into it (link:cisos-friend-overview.adoc#_positioning[Overview, Positioning]).
+  nothing into it (xref:cisos-friend-overview.adoc#_positioning[Overview, Positioning]).
 
 == Open Questions
 
-. Draft the repository schema of SAMM (the JSON Schema of `assessment.yaml`, `answers/*.yaml`, `targets.yaml`).
+. Draft the schemas of the kinds `scope` and `assessment` (their `document.yaml` and the splits `targets.yaml`,
+  `answers/<practice-id>.yaml` and `evidence.yaml`).
 . How the SAMM model YAML is pinned and updated (vendored copy in the repository or a fetched release).
 . Deferred: a comparison across SAMM model versions (mapping practices by id and marking changed questions).
 . Deferred: the pattern _private until submitted_ for single assessors, beside _save often_.
 
 == Related
 
-* link:../../concepts/storage-engine.adoc[Storage Engine] — drafts, saving, release, index
-* link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents] — the shape of every category
-* link:category-threat-models.adoc[Threat Models], link:category-isms.adoc[ISMS]
+* xref:../../concepts/storage-engine.adoc[Storage Engine] — drafts, saving, release, index
+* xref:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents] — the shape of every category
+* xref:category-threat-models.adoc[Threat Models], xref:category-isms.adoc[ISMS]
 * Sources: https://owasp.org/2020/02/11/SAMM-v2.html[SAMM v2.0 released],
   https://owaspsamm.org/release-notes-v2/[Key changes in SAMM v2],
   https://github.com/owaspsamm/core[SAMM core model (YAML files on GitHub)],

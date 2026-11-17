@@ -1,19 +1,21 @@
 = CISOs-Friend: Category SAMM
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The SAMM category as configuration (`categories/samm/`) plus the `ScoreCalculator` extension point. Reasoning:
-link:../concepts/category-samm.adoc[SAMM]. Repository: `samm-assessments`.
+xref:../concepts/category-samm.adoc[SAMM]. Repository: `samm-assessments`.
 
 [#CIFR-SAMM-1]
 == CIFR-SAMM-1: Assessment Layout
 
-* An assessment must be stored under `scopes/<scope-id>/assessments/<assessment-id>/` with `assessment.yaml`, one
-  `answers/<practice-id>.yaml` per practice and `evidence.yaml`.
+* Scopes and assessments must be per-document kinds in the library's layout
+  (xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]): a scope at `scopes/<ulid>/document.yaml`, an
+  assessment at `assessments/<ulid>/document.yaml` with the declared splits `answers/<practice-id>.yaml`, one per
+  practice, and `evidence.yaml`.
 * Each assessment must record the SAMM model version it was taken with; `samm.yaml` must pin the available model
   versions.
 
@@ -22,33 +24,36 @@ link:../concepts/category-samm.adoc[SAMM]. Repository: `samm-assessments`.
 |Path |Content
 
 |`samm.yaml`
-|`models`: list of pinned SAMM model versions with source and checksum
+|`models`: list of pinned SAMM model versions with source and checksum (repository configuration)
 
-|`scopes/<scope-id>/scope.yaml`
-|`id`, `title`, `subject` (one of `team:<id>`, `service:<id>`, `organisation`)
+|`scopes/<ulid>/document.yaml`
+|Kind `scope`: `title`, `subject` (one of `team:<id>`, `service:<id>`, `organisation`)
 
-|`scopes/<scope-id>/assessments/<assessment-id>/assessment.yaml`
-|`title`, `date`, `model-version`, `state` (`draft`, `in-review`, `released`), `assessors` (pseudonyms)
+|`scopes/<ulid>/targets.yaml`
+|Declared split of a scope: per practice `target` (0–3, in steps of the model), optional `due`; the roadmap
 
-|`…/answers/<practice-id>.yaml`
-|Per question: `answer` (model answer id), `comment` (AsciiDoc fragment, optional)
+|`assessments/<ulid>/document.yaml`
+|Kind `assessment`: `scope` (the typed reference `samm-assessments:scope/<ulid>`), `title`, `date`, `model-version`,
+`state` (`draft`, `in-review`, `released`), `assessors` (pseudonyms)
 
-|`…/evidence.yaml`
-|List of `{practice, question, title, url}`
+|`assessments/<ulid>/answers/<practice-id>.yaml`
+|Declared split of an assessment, per question: `answer` (model answer id), `comment` (AsciiDoc fragment, optional)
 
-|`scopes/<scope-id>/targets.yaml`
-|Per practice: `target` (0–3, in steps of the model), optional `due`
+|`assessments/<ulid>/evidence.yaml`
+|Declared split of an assessment: list of `{practice, question, title, url}`
 |===
 
-`<assessment-id>` is a ULID; it names the assessment directory, the working branch, the release tag and the link
-target (`samm-assessments:assessment/<assessment-id>`). A readable label such as `team-a 2026 Q4` is the `title`.
+The `<ulid>` of an assessment names its directory, the working branch `refs/heads/assessments/<ulid>`, the release tag
+`assessments/<ulid>/v1` and the link target `samm-assessments:assessment/<ulid>`; a practice is referenced as
+`samm-assessments:assessment/<ulid>#<practice-id>`. A readable label such as `team-a 2026 Q4` is the `title`.
 
 [#CIFR-SAMM-2]
 == CIFR-SAMM-2: Scope
 
-* A scope must refer to exactly one `team:`, `service:` or the organisation by stable catalog id.
-* A save whose scope reference does not resolve in the directory must be rejected with a validation error naming the
-  reference.
+* A scope's `subject` must be exactly one of a `team:<id>` or `service:<id>` catalog reference or the value
+  `organisation`; the organisation has no catalog entry.
+* A save whose `subject` catalog reference does not resolve in the directory, or whose assessment `scope` reference
+  does not resolve, must be rejected with a validation error naming the reference.
 
 [#CIFR-SAMM-3]
 == CIFR-SAMM-3: Joint Editing
@@ -57,9 +62,9 @@ target (`samm-assessments:assessment/<assessment-id>`). A readable label such as
 * Concurrent saves to the same practice must yield a conflict for the later save that shows the differing questions
   with both values; the later user's draft must be kept.
 * Every save must be visible to the other editors of the assessment within 5 seconds
-  (link:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]).
+  (xref:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]).
 
-Every save applies the draft's changes onto the tip of `refs/heads/assessments/<assessment-id>` as one commit (squash
+Every save applies the draft's changes onto the tip of `refs/heads/assessments/<ulid>` as one commit (squash
 merge in core). Conflicts are detected per practice file by blob id; the draft stays unchanged.
 
 Transition `samm.submit`: `draft` → `in-review`, by a user with `edit`; it validates `required` of the schema. Saves
@@ -68,12 +73,12 @@ stay possible in `in-review`.
 [#CIFR-SAMM-4]
 == CIFR-SAMM-4: Release
 
-* Release must produce the tag `assessments/<id>/v1` on the released state and require step-up; an assessment is
+* Release must produce the tag `assessments/<ulid>/v1` on the released state and require step-up; an assessment is
   released once.
 * After release, any save to the released assessment must be rejected; a new assessment is created instead.
 
 Transition `samm.release`: `in-review` → `released`, by a user with `approve`. The application merges into `main`,
-tags `assessments/<assessment-id>/v1` and sets `state: released`; the release commit is signed and names the
+tags `assessments/<ulid>/v1` and sets `state: released`; the release commit is signed and names the
 releasing user in its trailers. Saves to a released assessment return `DOCUMENT_RELEASED`.
 
 [#CIFR-SAMM-5]
@@ -85,8 +90,11 @@ releasing user in its trailers. Saves to a released assessment return `DOCUMENT_
 * The application must compare two released assessments of one scope taken with the same model version and show the
   score difference per business function, practice and stream.
 
-`ScoreCalculator` computes the scores (link:../concepts/category-samm.adoc#_release_comparison_and_targets[SAMM,
-Release, Comparison and Targets]); its result is cached in the index per released tag:
+`ScoreCalculator` computes the scores (xref:../concepts/category-samm.adoc#_release_comparison_and_targets[SAMM,
+Release, Comparison and Targets]); its result is cached in the index per released tag. Sources: the answer sets of the
+model (link:https://github.com/owaspsamm/core/tree/v2.2.0/model/answer_sets[SAMM core v2.2.0, answer sets]), the
+scoring rules (link:https://owaspsamm.org/blog/samm-relative-scoring/[SAMM blog, 2025-01-21]) and the toolbox
+spreadsheet (link:https://github.com/owaspsamm/core/releases/tag/v2.2.0[`SAMM_spreadsheet.xlsx` of release v2.2.0]).
 
 * answer value: the `value` of the chosen answer in the model's answer set (0, 0.25, 0.5 or 1 in model v2.2.0); an
   unanswered question counts 0;
@@ -107,7 +115,7 @@ stream: score `from`, score `to`, difference. Two assessments of different model
   to create a risk in the ISMS register for each gap.
 
 The scope view shows the gaps of the latest released assessment by default. "Create risk" opens a new draft in
-`isms-register` with a reference `samm-assessments:assessment/<id>#<practice>`.
+`isms-register` with a reference `samm-assessments:assessment/<ulid>#<practice-id>`.
 
 [#CIFR-SAMM-7]
 == CIFR-SAMM-7: Evidence as Links

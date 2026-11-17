@@ -40,11 +40,16 @@ chosen by the application.
 == GDR-FORMS-2: Schema Validation
 
 * Data must be validated against the JSON Schema of its kind before every save.
-* A validation failure must be reported per field path (JSON Pointer and message) and must prevent the save.
-* The schema file must be plain JSON Schema, usable unchanged by a validator outside the library.
+* A validation failure must be reported per field path (JSON Pointer,
+  link:https://www.rfc-editor.org/rfc/rfc6901[RFC 6901], and message) and must prevent the save.
+* The schema file must be plain JSON Schema, usable unchanged by a validator outside the library that supports its
+  dialect; link targets (<<GDR-FORMS-8>>) only the library checks.
 
-The dialect is open. Documents hold no personal data beyond pseudonyms and have no encrypted field type: a field that
-names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory` of `git-store`.
+The dialect is open. Apart from the person entries of the `git` person directory
+(xref:git-directory.adoc#GDR-DIR-2[GDR-DIR-2]), the one kind that holds a name
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), documents hold no personal data beyond pseudonyms and have no encrypted
+field type: a field that names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory`
+of `git-store`.
 
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
@@ -55,6 +60,7 @@ names a person holds a pseudonym (`p-…`), resolved for display through the `Pe
 
 Per-document kind, on the document's working branch:
 
+[source,text]
 ----
 <collection>/<ulid>/
   document.yaml          structured fields, validated by the schema
@@ -81,7 +87,9 @@ schema declares the split.
 == GDR-FORMS-5: Workflow
 
 * A workflow must declare states (at least draft, review, approved, superseded) and the allowed transitions.
-* Every transition must map onto a mechanism of the store: `intermediate-save`, `save`, `release` or `tag`.
+* Every transition must map onto a mechanism of the store: `intermediate-save`
+  (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]), `save` (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]) or `release`
+  (xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6]).
 * A transition the workflow does not allow must be refused with the outcome transition refused.
 
 image::../resources/diagrams/document-workflow-states.svg["Document states and transitions",align=center]

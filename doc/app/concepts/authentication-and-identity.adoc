@@ -5,32 +5,39 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-Most users of an ISMS or of an incident report have no account on the Git server, and an organisation that hands
-every one of them a Git seat just to fill in a form has bought a licence problem along with the form. CISOs-Friend
-therefore authenticates people against the organisation's identity provider, pushes with a technical user, and
+Users of an ISMS or of an incident report need no account on the Git server, and the application does not require
+one: a Git account per person only to fill in a form would be one more account to manage for each of them.
+CISOs-Friend therefore authenticates people against the organisation's identity provider, pushes with a technical
+user, and
 writes the identity of the person into every commit in a form the application signs. This page is the application
 side of that design: the login, the claims used, the first login, the rights, the Git credential and the step-up of
 a release.
 
 The library side (the trailer schema, the commit signature, step-up, the signature check) is described in
-link:../../concepts/identity-and-signing.adoc[Identity and Signing] and is not restated here.
+xref:../../concepts/identity-and-signing.adoc[Identity and Signing] and is not restated here.
 
 == Login Through Token Sheriff
 
 Token Sheriff provides authentication and the OAuth flows; this application takes it as given
-(link:../adr/0001-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0001]).
+(xref:../adr/0001-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0001]).
 
 * *Web app*: the server is a confidential client of the identity provider through `token-sheriff-client-quarkus`
-  (authorization code with PKCE `S256`, session-bound `state` and `nonce`, issuer check, optional PAR). The tokens stay
+  (authorization code with PKCE `S256` (https://www.rfc-editor.org/rfc/rfc7636[RFC 7636]), session-bound `state`
+  and `nonce`, issuer check, optional pushed authorization requests (PAR,
+  https://www.rfc-editor.org/rfc/rfc9126[RFC 9126])). The tokens stay
   in the server; the browser holds only cookies
-  (link:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]). This is the
+  (xref:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]). This is the
   backend-for-frontend shape Token Sheriff's client is built for; an API Sheriff BFF in front of the application was
   considered and not chosen (ADR-0001, alternatives).
 * *MCP server*: AI agents present bearer access tokens. The server validates them with
-  `token-sheriff-validation-quarkus` as an OAuth 2.1 resource server (link:mcp-server.adoc[MCP Server]).
-* *Logout* is RP-initiated and revokes the tokens the server holds.
+  `token-sheriff-validation-quarkus` as an OAuth 2.1 resource server
+  (https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], an Internet-Draft;
+  xref:mcp-server.adoc[MCP Server]).
+* *Logout* is RP-initiated
+  (https://openid.net/specs/openid-connect-rpinitiated-1_0.html[OpenID Connect RP-Initiated Logout 1.0]) and revokes
+  the tokens the server holds.
 
 === The Claims and What Becomes of Them
 
@@ -43,7 +50,7 @@ Token Sheriff provides authentication and the OAuth flows; this application take
 
 |`sub`
 |Looked up in the person directory to find the user's pseudonym. *Never* written into the history: the trailer
-carries the pseudonym (link:../../concepts/data-protection.adoc[Data Protection]).
+carries the pseudonym (xref:../../concepts/data-protection.adoc[Data Protection]).
 
 |`auth_time`, `acr`, `amr`
 |Time and strength of the authentication; written as `Auth-Time` and `Auth-Context` trailers; checked before a
@@ -57,12 +64,12 @@ release (step-up).
 
 |`azp` / `client_id`
 |For tokens presented to the MCP server: which agent client acts for the user; written to the audit log
-(link:mcp-server.adoc#_attribution_of_agent_actions[MCP Server, Attribution]).
+(xref:mcp-server.adoc#_attribution_of_agent_actions[MCP Server, Attribution]).
 |===
 
 == First Login
 
-The person directory is a library interface (link:../../concepts/directory-and-catalogs.adoc[Directory and
+The person directory is a library interface (xref:../../concepts/directory-and-catalogs.adoc[Directory and
 Catalogs]); the application supplies the flow and the form. The first login below applies to the default directory
 (`git`); with a directory for the organisation's own source the person already exists there, and there is no form.
 
@@ -73,8 +80,9 @@ Catalogs]); the application supplies the flow and the form. The first login belo
 . The form is prefilled with the name from the token and, where the identity provider delivers groups or departments,
   with the team. Team and role are picked from the catalogs; free text is not allowed. A missing entry can be
   requested for the catalog.
-. The form carries the *information duty* under GDPR Art. 13: what the directory is for, what it holds (name, team and
-  role only), how long it is kept, and the legal basis agreed with the data protection officer.
+. The form carries the *information duty* under GDPR Art. 13
+  (https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]): what the directory is for, what it holds
+  (name, team and role only), how long it is kept, and the legal basis agreed with the data protection officer.
 . Saving is a signed commit; the entry is valid at once. There is no pending state in the first iteration,
   because roles are names only and grant nothing.
 . Later the user changes the own entry in the same form. A periodic confirmation ("Is your team still right?") opens
@@ -98,8 +106,10 @@ The application reaches every Git server as one technical user, with a credentia
 bot account token). The commit names the user's pseudonym as author and the bot as committer; the signed trailers carry
 the identity. No user needs an account on the Git server, and nothing is pushed in a user's name.
 
-`main` of every repository is protected on the Git server so that only the technical user may push to it and nobody
-may force-push. The application merges releases itself, so the signed release commit names the releasing user.
+The operator protects `main` of every repository on the Git server so that only the technical user may push to it and
+nobody may force-push; the application cannot verify this setting
+(xref:deployment.adoc#_operating_duties[Deployment, Operating Duties]). The application merges releases itself, so
+the signed release commit names the releasing user.
 
 [#_step_up]
 == Step-Up
@@ -107,24 +117,24 @@ may force-push. The application merges releases itself, so the signed release co
 Every commit is signed by the application with the identity trailers. One rule decides where more is needed: *every
 release requires step-up, and nothing else does*. Before a release the server checks `acr` or `amr` and `auth_time` of
 the session against one global setting. If they do not meet it, the server re-drives authorization with `acr_values`
-and `max_age` (RFC 9470, provided by Token Sheriff's client) and verifies the result before it writes the release; the
+and `max_age` (https://www.rfc-editor.org/rfc/rfc9470[RFC 9470], provided by Token Sheriff's client) and verifies the
+result before it writes the release; the
 trailers record the fresh authentication. For the user that is one MFA confirmation per release; saves, the first-login
 entry and changes of the own entry need none.
 
-An AI agent can never release; it hands the release to the human (link:mcp-server.adoc[MCP Server]). A document that
+An AI agent can never release; it hands the release to the human (xref:mcp-server.adoc[MCP Server]). A document that
 needs a qualified electronic signature is signed outside the application.
 
 == Open Questions
 
-. Clarify with Token Sheriff which claims (`sub`, `acr`, `amr`, `auth_time`) and groups reach the application, and
-  how the step-up for a release is triggered.
+. Clarify with Token Sheriff which claims (`sub`, `acr`, `amr`, `auth_time`) and groups reach the application.
 . Whether groups arrive by token claim or by SCIM.
 . Deferred: the `Session` trailer, an HMAC of the session id `sid` that would correlate a commit with the login logs.
 
 == Related
 
-* link:../../concepts/identity-and-signing.adoc[Identity and Signing] — the library side
-* link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] — persons, roles, teams
-* link:mcp-server.adoc[MCP Server], link:web-app.adoc[Web App]
+* xref:../../concepts/identity-and-signing.adoc[Identity and Signing] — the library side
+* xref:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] — persons, roles, teams
+* xref:mcp-server.adoc[MCP Server], xref:web-app.adoc[Web App]
 * Token Sheriff: `TokenSheriff/doc/client` (CLIENT-1 to CLIENT-24, step-up CLIENT-12, logout CLIENT-13) and
   `TokenSheriff/doc/validation` (audience, scopes)

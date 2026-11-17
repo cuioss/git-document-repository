@@ -5,8 +5,9 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-Git is usually explained through a working tree: check out, edit files, commit. A server that keeps hundreds to a few
-thousand documents for dozens of users cannot afford one checked-out directory per user and document. This concept
+Git is usually explained through a working tree: check out, edit files, commit. The store is designed for hundreds to
+a few thousand documents and dozens of users; one checked-out directory per user and document would multiply disk use
+and file-system work by both numbers. This concept
 describes how the store reads and writes documents in Git without any working tree: one remote per repository, drafts
 and saving, multiple users, and the in-memory index.
 
@@ -26,8 +27,8 @@ repository addressed by its path. The store works on a bare clone of it
 
 * Every explicit save fetches and pushes; intermediate saves stay in the clone. A commit lands on the clone's branch
   only after the remote accepted it, so the clone never holds a saved state the remote lacks.
-* The clone is a cache: a new clone restores every pushed state. Beyond that it holds only the drafts, which are lost
-  with it.
+* The clone is a cache: a new clone restores every pushed state. Beyond that it holds only the drafts, which the
+  remote never secures: they are lost with the clone unless the operator backs up its storage.
 * When the remote cannot be reached, a save fails and the draft keeps the work.
 
 JGit creates and clones the repositories; no `git` installation is needed.
@@ -35,8 +36,13 @@ JGit creates and clones the repositories; no `git` installation is needed.
 == No Working Trees
 
 A Git branch is no working area; it is a *reference*, a pointer to a commit. Any number of references can exist for
-any number of users at the same time. A working tree is a checked-out state on disk, and only one exists per branch.
-JGit 7.0 added read support for linked working trees; JGit 7.8.0 still has no command that creates one. The document
+any number of users at the same time. A working tree is a checked-out state on disk, and by default Git refuses to
+check a branch out in a second working tree; `git worktree add --force` overrides this
+(link:https://git-scm.com/docs/git-worktree[git-worktree(1)], option `--force`).
+JGit 7.0 added read support for linked working trees; JGit 7.8.0 still has no command that creates one
+(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit
+7.8.0
+`api` package]). The document
 store holds the content in memory anyway, so it writes blobs, trees and commits directly into the object database and
 then moves the reference
 (xref:../adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001]).
@@ -64,9 +70,9 @@ change to the same file; with it, the edit fails with a conflict for that path.
 |Level |What happens |Where it lives |Secured
 
 |Intermediate save (automatic)
-|Commit on `refs/drafts/<user>/<collection>/<id>`, where `<user>` is the pseudonym
+|Commit on `refs/drafts/<pseudonym>/<collection>/<id>`, where `<pseudonym>` is the user's pseudonym
 |The server's clone only
-|No
+|Only by a backup of the clone's storage
 
 |Save (explicit)
 |Fetch; apply the draft's changes onto the working-branch tip as one commit whose only parent is that tip (squash
@@ -81,10 +87,11 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save: fe
 Draft references are never pushed
 (xref:../adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]):
 the push refspec carries `refs/heads/*`, the tags and `refs/notes/*` only. A user who logs in again finds the drafts
-under `refs/drafts/<user>/` and continues. Conditions:
+under `refs/drafts/<pseudonym>/` and continues. Conditions:
 
-* *Persistent storage.* The clone needs persistent storage, for example a persistent volume in a container platform.
-  Without it every restart loses all unsaved drafts.
+* *Persistent storage and a backup.* The clone needs persistent storage, for example a persistent volume in a container
+  platform. Without it every restart loses all unsaved drafts; without a backup of that storage a lost volume loses
+  them.
 * *One instance.* One application instance serves a repository; the drafts live in its clone. A second instance would
   not see them.
 * *Expiry.* Abandoned drafts expire after a configured period; a garbage collection removes their objects.
@@ -110,8 +117,9 @@ rule; an organisation that wants one gives the right to approve to other people 
 
 == Reading and Queries
 
-At start and after every fetch the store reads `main` and the open working branches into an *in-memory index*. Even
-hundreds of documents with dozens of fields each are a few megabytes. Dashboards, deadlines and evaluations are
+At start and after every fetch the store reads `main` and the open working branches into an *in-memory index*. The
+estimate, to be confirmed by the prototype, is a few megabytes for hundreds of documents with dozens of fields each.
+Dashboards, deadlines and evaluations are
 computed from it. Every save or release updates it at once; a periodic fetch brings changes made on the Git server
 itself.
 
@@ -130,8 +138,8 @@ transactions.
 == Open Questions
 
 . Prototype concurrent saves against one branch, measuring conflicts and retries.
-. Push and fetch with the technical user's token credentials against GitHub, GitLab and Gitea; determine the token
-  lifetimes each host grants and how a token is refreshed.
+. Push and fetch with the technical user's token credentials against GitHub, GitLab, Gitea and Forgejo; determine
+  the token lifetimes each host grants and how a token is refreshed.
 
 == Related
 
@@ -143,4 +151,5 @@ transactions.
 == Sources
 
 * JGit: https://projects.eclipse.org/node/30057[JGit 7.0.0 release (read support for worktrees)],
-  https://www.eclipse.org/lists/jgit-dev/msg02873.html[jgit-dev: commit without working tree through DirCache and ObjectInserter]
+  https://www.eclipse.org/lists/jgit-dev/msg02873.html[jgit-dev: commit without working tree through DirCache and
+  ObjectInserter]
