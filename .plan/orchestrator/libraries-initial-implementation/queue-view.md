@@ -4,32 +4,33 @@
 
 ## START HERE
 
-**Resume anchor**: Ledger landed via chore/orchestrator-ledger-init (gitignore fixed). If that PR is merged and main is pulled: run /plan-orchestrator next slug=libraries-initial-implementation to emit PLAN-01. If not yet merged: wait for it first.
+**Resume anchor**: PLAN-01 (git-testing-fixtures) running (operator-confirmed). Await its PR, then run analyze for the landing; PLAN-02 is next once PLAN-01 lands.
 **Phase**: orchestrating
+**Running**:
+- PLAN-01 (WS-01)
 **Queue** (staged, in order):
-1. PLAN-01 (WS-01)
-2. PLAN-02 (WS-01)
-3. PLAN-03 (WS-01)
-4. PLAN-04 (WS-01)
-5. PLAN-05 (WS-01)
-6. PLAN-06 (WS-01)
-7. PLAN-07 (WS-02)
-8. PLAN-08 (WS-02)
-9. PLAN-09 (WS-02)
-10. PLAN-10 (WS-02)
-11. PLAN-11 (WS-02)
-12. PLAN-12 (WS-03)
-13. PLAN-13 (WS-03)
-14. PLAN-14 (WS-03)
-15. PLAN-15 (WS-04)
-16. PLAN-16 (WS-04)
-17. PLAN-17 (WS-05)
+1. PLAN-02 (WS-01)
+2. PLAN-03 (WS-01)
+3. PLAN-04 (WS-01)
+4. PLAN-05 (WS-01)
+5. PLAN-06 (WS-01)
+6. PLAN-07 (WS-02)
+7. PLAN-08 (WS-02)
+8. PLAN-09 (WS-02)
+9. PLAN-10 (WS-02)
+10. PLAN-11 (WS-02)
+11. PLAN-12 (WS-03)
+12. PLAN-13 (WS-03)
+13. PLAN-14 (WS-03)
+14. PLAN-15 (WS-04)
+15. PLAN-16 (WS-04)
+16. PLAN-17 (WS-05)
 
 ## Ordered Queue
 
 | # | Plan | Workstream | Status | Surface (expected) | Lane |
 |---|------|------------|--------|--------------------|------|
-| 1 | PLAN-01 | WS-01 | staged | AGENTS.md; doc/specification/git-testing.adoc; git-testing/pom.xml; git-testing/src/main/java/de/cuioss/git/document/testing/; git-testing/src/main/java/module-info.java; git-testing/src/test/java/; pom.xml | plan-marshall |
+| 1 | PLAN-01 | WS-01 | running | AGENTS.md; doc/specification/git-testing.adoc; git-testing/pom.xml; git-testing/src/main/java/de/cuioss/git/document/testing/; git-testing/src/main/java/module-info.java; git-testing/src/test/java/; pom.xml | plan-marshall |
 | 2 | PLAN-02 | WS-01 | staged | AGENTS.md; doc/clients/pm-mcp-core.adoc; doc/concepts/module-structure.adoc; doc/specification/general.adoc; doc/specification/git-core.adoc; git-core/pom.xml; git-core/src/main/java/de/cuioss/git/document/core/; git-core/src/main/java/module-info.java; git-core/src/main/resources/; git-core/src/test/java/; pom.xml | plan-marshall |
 | 3 | PLAN-03 | WS-01 | staged | AGENTS.md; doc/clients/pm-mcp-core.adoc; doc/specification/git-worktrees.adoc; git-worktrees/pom.xml; git-worktrees/src/main/java/de/cuioss/git/document/worktrees/; git-worktrees/src/main/java/module-info.java; git-worktrees/src/test/java/ | plan-marshall |
 | 4 | PLAN-04 | WS-01 | staged | doc/specification/git-core.adoc; git-core/src/main/java/de/cuioss/git/document/core/; git-core/src/test/java/ | plan-marshall |
