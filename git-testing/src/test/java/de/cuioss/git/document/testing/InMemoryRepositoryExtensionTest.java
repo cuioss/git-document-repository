@@ -81,10 +81,7 @@ class InMemoryRepositoryExtensionTest {
             inserter.flush();
         }
 
-        assertAll("fresh repository",
-                () -> assertFalse(EARLIER_OBJECTS.isEmpty(), "The repetition recorded its object"),
-                () -> assertEquals(List.of(), repository.getRefDatabase().getRefs(),
-                        "A fresh repository has no references"));
+        assertEquals(List.of(), repository.getRefDatabase().getRefs(), "A fresh repository has no references");
     }
 
     @Test

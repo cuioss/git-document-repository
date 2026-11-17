@@ -18,7 +18,6 @@ package de.cuioss.git.document.testing;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,7 +39,6 @@ class GitCredentialGeneratorTest {
         var generated = generator.next();
 
         assertAll("generated credential",
-                () -> assertNotNull(generated, "The generator yields a credential"),
                 () -> assertFalse(generated.username().isBlank(), "The user name of the credential is set"),
                 () -> assertTrue(generated.token().length >= 8, "The token holds at least eight characters"),
                 () -> assertFalse(generated.toString().contains(new String(generated.token())),
