@@ -50,7 +50,8 @@ directly, and no service package knows JGit.
 == Maven Modules
 
 The reactor mirrors API Sheriff. Its central idea is that a category is data: the module `categories` holds, per
-category, a JSON Schema, an AsciiDoc template and a workflow, and contains no Java code; the one behaviour a schema
+category, its kinds of documents, each with a JSON Schema, an AsciiDoc template and a workflow, and contains no Java
+code; the one behaviour a schema
 cannot express, the SAMM score, sits behind the extension point `ScoreCalculator` in the application module. The
 other modules separate the application, the web app, the end-to-end tests, the native integration tests and the
 compose sample (xref:../specification/architecture-and-modules.adoc#_maven_modules[Architecture and Modules, Maven

@@ -34,7 +34,7 @@
   </defs>
   <rect class="stroke" x="100" y="160" width="120" height="60" rx="8" ry="8"/>
   <text x="160" y="186" class="hdr">draft</text>
-  <text x="160" y="206" class="sub">refs/drafts/…</text>
+  <text x="160" y="206" class="sub">working branch</text>
   <rect class="stroke" x="300" y="160" width="120" height="60" rx="8" ry="8"/>
   <text x="360" y="186" class="hdr">review</text>
   <text x="360" y="206" class="sub">working branch</text>

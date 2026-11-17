@@ -102,6 +102,12 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 The local working branch moves only after the remote accepted the commit, so the clone never holds a saved commit the
 remote lacks.
 
+The target of a save is the working branch of the document or the collection branch of its numbered collection. A
+target branch that does not exist yet starts at the tip of `main`, which gives the release its merge base; the push
+then expects the branch to be absent on the remote. Content that has no release is saved with the same steps onto
+`main` itself: the person entries and the erasure record of `git-directory`
+(xref:git-directory.adoc#GDR-DIR-3[GDR-DIR-3], xref:git-directory.adoc#GDR-DIR-6[GDR-DIR-6]).
+
 [#GDR-STORE-4]
 == GDR-STORE-4: Conflict Handling
 
@@ -261,7 +267,8 @@ yields the time the proof establishes, no proof (a subject without a stored proo
 * With an active provider the store must anchor the commit of every release tag once the tag exists, unless
   `anchor.releases` is `false`.
 * With an active provider the store must create a checkpoint when `anchor.checkpoint-interval` has passed since the
-  previous checkpoint and a pushed reference changed since then, and anchor it.
+  previous checkpoint and a reference the checkpoint lists changed since then, and anchor it; the checkpoint tags
+  and the anchor notes, which the anchoring itself moves, must not make a checkpoint due.
 * A checkpoint must be tagged `refs/tags/checkpoints/<n>`, `n` counting from 1; an existing checkpoint tag must never
   be moved or deleted.
 
@@ -273,7 +280,9 @@ A checkpoint is a commit:
 * parent: the previous checkpoint, none for the first; author and committer: the technical user; message
   `Checkpoint <n>`.
 
-The due check runs after every push and fetch and every `anchor.retry-interval`.
+The checkpoint commit is reachable only through its tag; the tag is pushed with the expectation that it does not exist
+on the remote, separately from the commits of any save, before the proof is requested. The due check runs after every
+push and fetch and every `anchor.retry-interval`.
 
 [#GDR-STORE-17]
 == GDR-STORE-17: Anchor Proofs as Notes

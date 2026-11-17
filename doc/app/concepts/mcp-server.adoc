@@ -123,7 +123,7 @@ the token, is recorded in the audit log only (see <<_open_questions>>).
   material, session ids and document content are never logged. The records reach the SIEM.
 * *Content is data*: document text returned to an agent may contain instructions written by anyone with write access.
   The server treats every write the agent sends as untrusted input: schema validation and rights check, exactly as
-  for a human. A release needs step-up, which an agent cannot perform, so an agent only requests it.
+  for a human.
 
 [CAUTION]
 ====
@@ -139,6 +139,9 @@ human.
   optional).
 . Whether the organisation's authorization server supports Client ID Metadata Documents, or agents are pre-registered.
 . The exact tool list per category, and whether recipes are offered as MCP prompts.
+. How a release request is stored in Git: as a field of the document on its working branch or as a document of a kind
+  of its own, and in which repository
+  (xref:../specification/architecture-and-modules.adoc#CIFR-GEN-3[CIFR-GEN-3]).
 . Deferred: the trailer `Actor-Client`. Until it comes, the history does not show whether a commit came from the user
   in the web app or from an agent acting for the user; only the audit log records the client.
 . Deferred: sender-constrained tokens (DPoP, RFC 9449).

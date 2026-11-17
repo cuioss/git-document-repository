@@ -107,14 +107,17 @@ rejected (xref:../../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3])
 (<<CIFR-CONF-2>>)
 
 |`anchor`
-|no
+|yes
 |Anchoring of releases and checkpoints
 (xref:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
-`provider` (default `signed`; `none` switches anchoring off), `checkpoint-interval` (ISO 8601 duration, default
-`P1D`), `signed-key-ref` (the anchor key of the own timestamp; must differ from `signing.key-ref`),
+`provider` (`signed`, the default, `rfc3161`, or `none`, which switches anchoring off), `checkpoint-interval`
+(ISO 8601 duration, default `P1D`), `signed-key-ref` (the anchor key of the own timestamp; required with the provider
+`signed`; must differ from `signing.key-ref`),
 `signed-allowed-signers` (path of a mounted file in the `allowed_signers` format with the public anchor keys and their
 validity periods; required with the provider `signed`; must hold no commit-signing key; never read from a repository,
-xref:../../specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18])
+xref:../../specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]), `timestamp` (`url`, `trust`, `credentials-ref`;
+`url` and `trust` required with the provider `rfc3161`, the library's `timestamp.url`, `timestamp.trust` and
+`timestamp.credentials` of xref:../../specification/git-timestamp.adoc#GDR-TSA-1[GDR-TSA-1])
 
 |`mcp`
 |yes

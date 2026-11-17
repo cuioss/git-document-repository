@@ -129,6 +129,9 @@ the draft references of `git-store`, which hold intermediate saves in any state.
 * The library must list the documents whose deadline is due at or before a given instant, computed from the index.
 * Deadlines must not be stored as separate data.
 
+Further forms of a deadline rule are an open question of
+xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
+
 [#GDR-FORMS-7]
 == GDR-FORMS-7: Step-Up for Releases
 

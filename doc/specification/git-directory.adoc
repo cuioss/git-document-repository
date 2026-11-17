@@ -27,7 +27,9 @@ Catalogs].
 |===
 
 Common fields: `id` (required, immutable, without the prefix: `payments` is referenced as `team:payments`), `name`
-(required), `description`, `retired` (default `false`).
+(required), `description`, `retired` (default `false`). On which branch a catalog change is saved, and whether it
+passes a release, is an open question of
+xref:../concepts/directory-and-catalogs.adoc#_open_questions[Directory and Catalogs].
 
 [#GDR-DIR-2]
 == GDR-DIR-2: Person Directory in Git

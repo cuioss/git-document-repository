@@ -98,8 +98,9 @@ only the technical user.
 
 == The Git Credential
 
-The application reaches every Git server as one technical user, with a credential per repository (a deploy key or a
-bot account token). The commit names the user's pseudonym as author and the bot as committer; the signed trailers carry
+The application reaches every Git server as one technical user, with a credential per repository (an access token
+of a bot account, used over HTTPS, the only network transport of the library).
+The commit names the user's pseudonym as author and the bot as committer; the signed trailers carry
 the identity. No user needs an account on the Git server, and nothing is pushed in a user's name.
 
 The application merges releases itself, so the signed release commit names the releasing user; protecting `main` on
