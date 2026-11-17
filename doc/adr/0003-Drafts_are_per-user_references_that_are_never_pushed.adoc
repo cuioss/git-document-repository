@@ -43,8 +43,8 @@ document content out of the server's control.
 
 The server keeps the unsaved work in a table of a database beside the repository.
 
-*Rejected because* a table brings back the database the store avoids
-(xref:0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010]).
+*Rejected because* a table brings back the database the store avoids (see
+xref:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]).
 
 === Drafts pushed to the remote
 
@@ -64,8 +64,7 @@ see half-finished work. Drafts are secured by the backup of the repository direc
 
 * Drafts are unsecured: a lost repository directory loses them. The directory needs persistent storage and a
   backup.
-* With several instances a draft lives on the instance that wrote it: one instance, sticky sessions or a shared
-  volume.
+* One application instance serves a repository, because the drafts live in its clone.
 * Abandoned drafts need expiry and a garbage collection.
 
 === When this is revisited
@@ -77,4 +76,5 @@ When operators demand secured drafts by default.
 * xref:../concepts/storage-engine.adoc[Storage Engine]
 * xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores] -- unsecured drafts as an
   accepted gap
-* xref:../Requirements.adoc#requirements-git-store[`git-store` requirements]
+* xref:../specification/git-store.adoc#GDR-STORE-2[GDR-STORE-2] and
+  xref:../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]

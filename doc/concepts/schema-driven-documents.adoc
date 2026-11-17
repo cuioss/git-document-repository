@@ -30,9 +30,8 @@ code.
 
 == Schema
 
-A *JSON Schema* per kind of document produces the form and validates the data, in the user interface and in CI. The
-same schema file serves both, so a document edited directly in the repository is held to the same rules as one edited
-through the form.
+A *JSON Schema* per kind of document produces the form and validates the data before every save. It is plain JSON
+Schema, so any validator outside the application can check the same data against it.
 
 == Data, Free Text and Generated Output
 
@@ -50,9 +49,9 @@ The single `document.yaml` is the default. A kind whose schema declares a split 
 YAML file per independently edited part instead (see below).
 
 * *The structured data stay in YAML.* Free text may be AsciiDoc with tables and images.
-* *AsciiDoc is the output, not the truth.* `report.adoc` is generated reproducibly and committed as readable evidence.
-  The design includes a CI check that regenerates it and compares the result with the committed file; like the
-  rest of `git-forms`, it is not implemented. PDF for external readers is generated from it as well.
+* *AsciiDoc is the output, not the truth.* `report.adoc` is generated reproducibly and committed as readable evidence;
+  a check regenerates it and compares the result with the committed file, also without the application. PDF for
+  external readers is generated from it as well.
 * *Deterministic serialisation.* Fixed key order and stable formatting make diffs show real changes only.
 * *One file per independently edited part.* A document that several people edit at once (one file per section,
   practice or entry) keeps concurrent saves free of conflicts (see xref:storage-engine.adoc[Storage Engine]).
@@ -82,20 +81,16 @@ the mechanisms of the store:
 |save onto the working branch
 
 |approve (release)
-|merge into `main` and tag, by the application; approvals written as signed trailers
+|merge into `main` and tag, by the application; the signed release commit names the approver
 
 |supersede
 |a later approved version of the same document; the old tag stays
 |===
 
-The workflow further declares:
-
-* *deadlines* per state -- notification duties and review intervals, computed from the in-memory index;
-* *step-up* per transition, a fresh MFA login before the transition -- see
-  xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing].
-
-Deadlines and reminders are computed, never stored: notifications are runtime state of the application, not
-persistence.
+Every release transition, and so every approval, requires *step-up*, a fresh MFA login (see
+xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing]). The workflow further declares
+*deadlines* per state: notification duties and review intervals, computed from the in-memory index, never stored.
+Notifications are runtime state of the application, not persistence.
 
 == Links
 
@@ -103,13 +98,13 @@ Documents refer to each other by *typed references* across kinds and repositorie
 
 * `<alias>:<kind>/<id>` names a document: the repository alias from the registry, the kind of document and its id,
   for example `register:risk/R-042`;
-* `<catalog>:<id>` names an entry of a directory catalog, for example `service:payment-api` or `role:ciso` (see
+* `<catalog>:<id>` names an entry of a directory catalog, for example `team:payments` or `role:ciso` (see
   xref:directory-and-catalogs.adoc[Directory and Catalogs]).
 
 The store checks on save that the target exists. A retired target stays resolvable, so old
 documents keep their meaning.
 
-== Running Numbers and Reporting Dates
+== Running Numbers
 
 * *Two kinds of collections.* A per-document collection gives every document a ULID, which names its working
   branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link target. A numbered
@@ -120,8 +115,6 @@ documents keep their meaning.
   assigned by two creators at once. It is assigned on the first save through a counter file on the collection branch,
   changed in the same commit, and the compare-and-swap makes it unique: the loser re-reads the counter and takes the
   next number.
-* *Reporting dates.* "The register as of the audit on 1 March" is a tag or the commit of that date; the index is built
-  from that snapshot.
 
 [CAUTION]
 ====
@@ -137,8 +130,7 @@ modelled.
 
 == Related
 
-* xref:../adr/0011-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0011]
+* xref:../adr/0008-Documents_are_schema-driven_YAML_data_with_AsciiDoc_fragments_and_generated_output.adoc[ADR-0008]
   -- the decision for this shape.
 * xref:directory-and-catalogs.adoc[Directory and Catalogs] -- the catalogs are schema-driven documents themselves.
-* xref:../Requirements.adoc#requirements-git-forms[`git-forms` requirements] and
-  xref:../specification/git-forms.adoc[`git-forms` specification].
+* xref:../specification/git-forms.adoc[`git-forms` specification].

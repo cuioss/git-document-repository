@@ -72,7 +72,6 @@ The losing writer could merge its commit textually into the winner's commit inst
 
 * Any number of users and drafts exist at the same time without any disk state per user.
 * Concurrent writers are safe without application-level locks.
-* Local and remote repositories use the same write path.
 
 === Accepted costs
 
@@ -86,5 +85,4 @@ When a consumer needs files on disk for a tool, or when retries dominate the wri
 == Links
 
 * xref:../concepts/storage-engine.adoc[Storage Engine]
-* xref:../Requirements.adoc#requirements-git-core[`git-core` requirements]
 * xref:../specification/git-core.adoc[`git-core` specification]

@@ -23,7 +23,7 @@ stands against erasure, restriction of processing replaces erasure for that peri
 Commits themselves are personal data when the author is a named person. Rewriting history to remove one person breaks
 every clone, every signature and every anchor proof. The design therefore keeps names out of commits and documents and
 confines them to the person directory
-(xref:../adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008]).
+(xref:../adr/0006-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0006]).
 
 == Pseudonyms in Commits and Documents
 
@@ -84,14 +84,8 @@ not in every commit, and the login identifier is stored only as a hash.
 
 === Erasing a Person
 
-With the default provider:
-
-. One commit deletes the person's entry and records the pseudonym and the date in `erasures.yaml`; it names no person.
-. Where a statutory retention duty applies to the attribution of the person's commits (for example the approvals in
-  incident reports under a retention period), the operator sets a restriction date instead: until then the entry is
-  hidden from every view and serves only requests the operator answers; then it is erased as above (restriction
-  instead of erasure, § 35(3) BDSG).
-. The pseudonym stays in the history and resolves to "former member".
+With the default provider one commit deletes the person's entry and records the pseudonym and the date in
+`erasures.yaml`; it names no person. The pseudonym stays in the history and resolves to "former member".
 
 The erasure removes the entry from the current state and from every view of the application. The history of the
 persons' repository keeps the earlier versions, in every clone and every backup of the Git server. Whoever may read
@@ -105,6 +99,8 @@ An operator who needs erasure without history plugs in a provider for a source t
   `sub` an attacker can guess, such as an e-mail address, can be found by hashing candidates. Where the identity
   provider uses such a `sub`, the persons' repository deserves a small circle of readers.
 * *Data minimisation.* Name and memberships only; the e-mail comes from the token when needed and is not stored.
+* *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
+  directory is for and how long it is kept.
 * *Answer within the deadline.* The GDPR asks for an answer without undue delay and within one month at the latest
   (Art. 12(3)); the erasure commit is effective at once.
 
@@ -130,7 +126,6 @@ into separate repositories; the concrete cut is the decision of the application.
 * *References across repositories* use stable ids of the form `<alias>:<kind>/<id>` for documents (for example
   `register:risk/R-042`) and `<catalog>:<id>` for entries of the directory catalogs (for example `role:ciso`). The
   store checks on save that the target exists.
-* A CI pipeline on every push can validate schemas (JSON Schema) and references with the existing infrastructure.
 * After its retention period a repository is deleted as a whole.
 
 [CAUTION]
@@ -144,14 +139,13 @@ hashed; an operator who must erase without history plugs in a provider for a sou
 
 . Which provider for an operator's own source ships first (the identity provider's user directory, SCIM, LDAP), and
   how it maps the source's groups onto teams and roles.
+. Deferred: restriction instead of erasure (§ 35(3) BDSG) for a person whose attribution falls under a statutory
+  retention duty, for example the approvals in incident reports.
 
 == Related
 
-* xref:../adr/0008-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0008]
-  -- the decision.
-* xref:../specification/git-store.adoc#_person_directory[`git-store`, Person Directory] and
-  xref:../specification/git-directory.adoc#_person_directory_in_git[`git-directory`, Person Directory in Git] -- the
-  specifications.
+* xref:../specification/git-store.adoc#GDR-STORE-19[`git-store`, GDR-STORE-19] and
+  xref:../specification/git-directory.adoc#GDR-DIR-2[`git-directory`, GDR-DIR-2 – GDR-DIR-6] -- the specifications.
 
 == Sources
 

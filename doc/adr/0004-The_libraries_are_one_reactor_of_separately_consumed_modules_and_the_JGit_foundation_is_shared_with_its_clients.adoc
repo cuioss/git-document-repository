@@ -1,0 +1,98 @@
+= ADR-0004: The libraries are one reactor of separately consumed modules, and the JGit foundation is shared with its clients
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: git-document-repository is a multi-module reactor released together; the generic, hardened JGit code becomes the foundation modules git-core, git-worktrees and git-testing, shared by the document store and other clients; the aspects of the document store are modules of their own, each carrying its own third-party dependencies.
+// tags: modules, layering, dependencies, release, foundation, jgit
+// affects: git-core, git-worktrees, git-testing, git-store, git-forms, git-timestamp, git-directory
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Accepted
+
+== Decision
+
+The document store has several aspects: storage, forms, timestamps and a directory; some bring third-party
+libraries. Hardened JGit code (a refusing file system, a remote policy, identity handling, results, transport and a
+cache repository) already exists in a client of Git repositories, and the store needs the same code. The question is
+how the code is cut into artifacts, and whether the store copies the hardened code or shares it.
+
+*The decision:* one repository, one Maven reactor, released together to Maven Central. Every module is consumed
+separately:
+
+* `git-core`, `git-worktrees`, `git-testing` -- the JGit foundation, taken over from its first client and shared by
+  every client, the document store included; what is specific to a client stays with that client;
+* `git-store` -- drafts, saving, signature, index, anchoring;
+* `git-forms` -- schema-driven documents;
+* `git-timestamp`, `git-directory` -- optional aspects.
+
+Each module carries its own third-party dependencies; a consumer of `git-core` alone pulls none of those of the
+modules above it. See xref:../concepts/module-structure.adoc[Module Structure] and, for the client the code comes from,
+xref:../clients/pm-mcp-core.adoc[Client: `pm-mcp-core`].
+
+== Alternatives rejected
+
+=== One module to start, split later
+
+All aspects start in one module, which is split once the code grows.
+
+*Rejected because* three forces would split it later at a higher price: the foundation shared with other clients,
+optional dependencies that become mandatory in one module, and a layering that one module does not enforce.
+
+=== One repository per module
+
+Every module lives in a repository of its own with its own release.
+
+*Rejected because* the modules change together while the store is young. Separate repositories would need a release
+per change and version alignment across them.
+
+=== A copy of the hardened code in the document store
+
+The document store copies the hardened code and maintains its copy independently.
+
+*Rejected because* every security fix of the hardening would be needed twice, and the two copies would drift.
+
+=== The foundation inside the client's repository
+
+The foundation stays in the repository of the client it comes from, and the document store depends on it there.
+
+*Rejected because* a library must not hang on the life cycle of another product's repository; the repository in
+question is proprietary and deploys only `SNAPSHOT` versions to its own registry (see
+xref:../clients/pm-mcp-core.adoc#_a_shared_foundation_with_pm_provider_git[Client: `pm-mcp-core`]).
+
+=== The application's kinds of documents as modules
+
+Modules per kind of document (assessments, reports, registers).
+
+*Rejected because* the kinds are configuration of `git-forms`, not code. No module of this repository knows a term of
+a domain.
+
+== Consequences
+
+=== Properties of the design
+
+* Module boundaries enforce the layering; consumers take only what they need.
+* Hardening and transport exist once, tested against real local remotes.
+
+=== Accepted costs
+
+* More POMs and `module-info.java` files to maintain; all modules share one version, even when only one changed.
+* Life cycles are coupled: a contract change wanted by a client is a release of this repository first.
+* The code taken over must be released under this repository's open-source licence.
+
+=== When this is revisited
+
+When a module needs a release cadence of its own, or when the contracts needed by a client and by the document store
+diverge.
+
+== Links
+
+* xref:../concepts/module-structure.adoc[Module Structure]
+* xref:../clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]
+* xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1] -- layering and dependency isolation

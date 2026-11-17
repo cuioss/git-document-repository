@@ -37,9 +37,10 @@ with JGit and sign them themselves.
 
 == What a Signature of the Application Shows
 
-The application signs every commit with its own key. The signature covers the whole commit object: the tree (and
-with it all content), the parents, author, committer and the commit message with its trailers. The application writes
-the identity of the logged-in user as *trailers* into the message, so that statement is signed with it:
+The application signs every commit with its own key, in the SSH signature format. The signature covers the whole commit
+object: the tree (and with it all content), the parents, author, committer and the commit message with its trailers. The
+application writes the identity of the logged-in user as *trailers* into the message, so that statement is signed with
+it:
 
 ----
 Update data/section-a.yaml
@@ -47,15 +48,11 @@ Update data/section-a.yaml
 Actor: p-7f3a9c                       ← pseudonym from the person directory
 Actor-Issuer: https://idp.example     ← who authenticated the user
 Auth-Time: 2026-11-12T14:03:11Z
-Auth-Context: mfa                     ← acr / amr of the token
-Session: hmac:3b1e…                   ← HMAC of the session id, not the session id itself
-Actor-Client: agent-client-42         ← only when a delegated client (an AI agent) acted for the user
+Auth-Context: acr=urn:example:mfa; amr=pwd,otp   ← acr / amr of the token
 ----
 
-A release commit additionally carries the approvals: `Approved-by: p-91c2d0 (role:ciso)`. The role in parentheses
-only records in which role the user approved; in the first iteration it grants and checks nothing. Because the
-application merges the release itself, the approvals are part of the signed release commit, and the repository itself
-is the evidence.
+A release commit carries the trailers of the user who approves it. Because the application merges the release
+itself, the approval is part of the signed release commit, and the repository itself is the evidence.
 
 What the signature shows:
 
@@ -64,8 +61,6 @@ What the signature shows:
   at once in a check.
 * *Binding to an authenticated identity.* The author field can be set freely; the signed trailer says "the
   application confirms: this change came from a user whom identity provider X authenticated at T with MFA".
-* *Correlation with logs.* The HMAC of the session id links the commit to the login logs of the identity provider or
-  Token Sheriff without disclosing the session id.
 
 What it does not show:
 
@@ -76,38 +71,31 @@ What it does not show:
 === Which Identifier Goes into the Trailer
 
 In an OIDC token `sub` is the stable identifier of the user and `sid` the identifier of the session. Both are
-pseudonymous, hence personal identifiers, and they would stay in the history for good. Therefore:
-
-* *The own pseudonym from the person directory instead of `sub`.* The person entry links the pseudonym to the login
-  only through a hash of issuer and `sub`, and is erased by a commit (see
-  xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
-* *Only an HMAC of `sid`.* That suffices to correlate with logs. The `sid` is no access token, but it is not stored in
-  clear text for good either.
+pseudonymous, hence personal identifiers, and they would stay in the history for good. The trailer therefore carries
+the own pseudonym from the person directory instead of `sub`, and no `sid` at all. The person entry links the
+pseudonym to the login only through a hash of issuer and `sub`, and is erased by a commit (see
+xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
 
 == Step-Up for Approvals
 
-Every commit is signed the same way. What differs between a save and an approval is the authentication behind it: a
-transition of a workflow can require *step-up*, a renewed authentication with MFA shortly before the approval. The
-application then writes the `acr` / `amr` and the time of that authentication into the signed trailers, and the
-statement becomes "… and the user confirmed this very approval with MFA". The effort for the user is one MFA
-confirmation per approval.
-
-Whether a transition requires step-up is part of the workflow of a schema-driven document, per kind of document and
-per transition (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]); typically a release does,
-an intermediate save does not. In the first iteration an approval needs no particular role of the directory; who may
-approve is a matter of access, not of the catalog of roles.
+Every commit is signed the same way. What differs between a save and an approval is the authentication behind it:
+every release, and so every approval, requires *step-up*, a renewed authentication with MFA shortly before. The
+application writes the `acr` / `amr` and the time of that authentication into the signed trailers, and the statement
+becomes "… and the user confirmed this very approval with MFA". The effort for the user is one MFA confirmation per
+approval; saves need none (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
+iteration an approval needs no particular role of the directory; who may approve is a matter of access, not of the
+catalog of roles.
 
 == What Has to Be Done Right
 
 . *Protect the signing key.* Best in a KMS or HSM: the application signs through its interface and never sees the
   key. A key as a file is the weakest variant.
 . *Verify independently of the Git server.*
-** A file `allowed_signers` in the repository, after the principle of Git's SSH signatures, with validity periods,
-   so commits stay verifiable after a change of key.
-** A *trust root outside the repository.* An administrator who can rewrite the repository can also put a key of
-   their own into `allowed_signers`. The verifier therefore takes the application's keys from its own configuration,
-   and accepts a new version of the file only when a key of the previous trusted version signed it.
-** The application and a CI job check that every commit on `main` carries a valid signature.
+** The verifier takes the application's public keys, with validity periods, from its own configuration, in the
+   `allowed_signers` format of Git's SSH signatures, never from the repository. An administrator who can rewrite the
+   repository therefore cannot make a key of their own trusted, and commits stay verifiable after a change of key.
+** The application and a CI job check that every commit on `main` carries a valid signature; a stock Git installation
+   can check single commits.
 ** The Git server can additionally require signed commits. The conditions under which it marks a commit as verified
    differ per vendor: GitHub requires a signature verifiable against a public key added to an account
    (link:https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification[GitHub Docs]);
@@ -125,8 +113,7 @@ approve is a matter of access, not of the catalog of roles.
 . *Separate responsibilities.* When the Git administration and the operation of the application (or of the KMS) lie
   with different people, a forgery needs both, and auditors can be shown that separation.
 . *JGit.* Signing runs through an own implementation of JGit's signer interface `org.eclipse.jgit.lib.Signer`
-  (since JGit 7.0), so that the KMS or HSM signs; SSH or OpenPGP format by choice (`signing.format`: `ssh` or
-  `openpgp`).
+  (since JGit 7.0), so that the KMS or HSM signs.
 
 [CAUTION]
 ====
@@ -139,17 +126,20 @@ signature is signed outside the application.
 
 == Open Questions
 
-. Prototype the signature: commit signature through a KMS with JGit's signer interface, the trailer schema,
-  `allowed_signers` with validity periods and the configured trust root.
-. Which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups the identity provider delivers decides which
-  trailers can be filled; the consuming application clarifies this with Token Sheriff.
+. Prototype the signature: commit signature through a KMS with JGit's signer interface, the trailer schema, and
+  verification against configured keys with validity periods.
+. Which claims (`sub`, `acr`, `amr`, `auth_time`) and groups the identity provider delivers decides which trailers can
+  be filled; the consuming application clarifies this with Token Sheriff.
+. Deferred: a `Session` trailer (an HMAC of the session id) to correlate a commit with the login logs of the identity
+  provider.
+. Deferred: an `Actor-Client` trailer naming a delegated client (an AI agent) that saved on the user's behalf.
 
 == Related
 
-* xref:../adr/0006-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0006]
+* xref:../adr/0005-A_technical_user_writes_and_the_application_signs_every_commit_with_the_user_claims_as_signed_trailers.adoc[ADR-0005]
   -- the technical user and the signature.
-* xref:../Requirements.adoc#requirements-git-signing[`git-signing` requirements] and
-  xref:../specification/git-signing.adoc[`git-signing` specification].
+* xref:../specification/git-store.adoc#GDR-STORE-12[`git-store`, GDR-STORE-12 – GDR-STORE-14] and
+  xref:../specification/git-forms.adoc#GDR-FORMS-7[`git-forms`, GDR-FORMS-7] -- the specifications.
 
 == Sources
 

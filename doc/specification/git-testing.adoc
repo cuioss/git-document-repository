@@ -1,50 +1,36 @@
 = git-document-repository: `git-testing`
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-xref:../Specification.adoc[Back to Main Specification]
+`git-testing` (module `de.cuioss.git.document.testing`, a scaffold) provides test support for consumers of the
+reactor. It is a regular artifact consumed in test scope and depends on no other module of the reactor; its
+third-party dependencies are listed in xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. Rationale:
+xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules].
 
-== Overview
+[#GDR-TEST-1]
+== GDR-TEST-1: Repository Fixtures
 
-_See Requirement link:../Requirements.adoc#GDR-GEN-1[GDR-GEN-1: Module Layering and Dependency Isolation]_
-
-*Status:* PLANNED
-
-`git-testing` (module `de.cuioss.git.document.testing`) provides test support for consumers of the reactor. It is a
-regular artifact consumed in test scope; it depends on no other module of the reactor. Its third-party dependencies are
-JGit, declared directly because no reactor module brings it, `cui-test-generator` and JUnit 5; all are planned and need
-the owner's approval (see xref:../Specification.adoc#_module_dependencies[Module Dependencies]).
-
-== Repository Fixtures
-
-_See Requirement link:../Requirements.adoc#GDR-TEST-1[GDR-TEST-1: Repository Fixtures]_
-
-*Status:* PLANNED
+* The module must provide JUnit 5 fixtures for a local repository, an in-memory repository and a local remote for
+  fetch and push tests.
+* The fixtures must work without network access and must clean up every directory they create.
 
 [cols="1,3"]
 |===
 |Fixture |Contract
 
 |local repository |A bare repository in a temporary directory, created per test, deleted after it
-|in-memory repository |A JGit in-memory (DFS) repository; no file system. JGit's
+|in-memory repository |A JGit in-memory (DFS) repository. JGit's
 `org.eclipse.jgit.internal.storage.dfs.InMemoryRepository` lives in an internal package (JGit 7.8.0): the fixture
 wraps it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type
-|local remote |A second bare repository reachable as a remote, for fetch and push tests
+|local remote |A second bare repository addressed by a `file:` URL, which the remote policy local only admits
 |===
 
-* All fixtures are JUnit 5 extensions or parameter resolvers; none needs network access.
-* The local remote is addressed by a `file:` URL. The policy value local only of `git-core` admits it, because it
-  admits every remote without a host; tests of the HTTPS origin value use their own refused-remote cases.
+[#GDR-TEST-2]
+== GDR-TEST-2: Credential Generator
 
-== Credential Generator
+* The module must provide a `cui-test-generator` generator for transport credentials.
 
-_See Requirement link:../Requirements.adoc#GDR-TEST-2[GDR-TEST-2: Credential Generator]_
-
-*Status:* PLANNED
-
-`GitCredentialGenerator` and `GitGenerators` implement the
-`cui-test-generator` contract and produce transport credentials (user and token) for tests; values are random and
-never real secrets.
+`GitCredentialGenerator` and `GitGenerators` produce a user and a token for tests; the values are random and never
+real secrets.

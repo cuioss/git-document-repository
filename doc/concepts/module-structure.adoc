@@ -17,10 +17,10 @@ Three forces would split a single module later, at a higher price:
 * *A shared foundation.* Hardened JGit code (remote policy, refusing file system, transport, cache repository) is
   needed by the document store and by other clients of Git repositories. A second copy in the document store would
   need every security fix twice.
-* *Optional dependencies.* Encryption, timestamping and form rendering bring third-party libraries. In one module
+* *Optional dependencies.* Timestamping and form rendering bring third-party libraries. In one module
   they become mandatory for every consumer, including one that only reads a repository.
 * *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries make it checkable;
-  the build check that enforces it is planned (see xref:../specification/testing.adoc[Testing]).
+  the build check that enforces it is planned (see xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1]).
 
 One module to start would be simpler at first, but it leaves all three forces to a later split, when consumers
 already depend on its shape. The cut below removes all three at once.
@@ -51,17 +51,13 @@ in-core writing, compare-and-swap, in-core merge, notes
 |scaffold
 
 |`git-store`
-|Drafts, saving, author and committer per save, index, outbox (xref:storage-engine.adoc[Storage Engine])
+|Drafts, saving, release, commit signature and identity trailers, index, post-commit listeners, anchoring with the own
+timestamp (xref:storage-engine.adoc[Storage Engine], xref:identity-and-signing.adoc[Identity and Signing])
 |planned
 
 |`git-forms`
-|Schema-driven documents: schema, template, workflow, deadlines, step-up per transition
+|Schema-driven documents: schema, template, workflow, deadlines, step-up for releases
 (xref:schema-driven-documents.adoc[Schema-Driven Documents])
-|planned
-
-|`git-signing` (optional)
-|Commit signature, user claims, step-up evidence, signature check, the own timestamp as anchor provider
-(xref:identity-and-signing.adoc[Identity and Signing])
 |planned
 
 |`git-timestamp` (optional)
@@ -70,7 +66,7 @@ Stores, The Anchor])
 |planned
 
 |`git-directory` (optional)
-|Directory of persons, catalogs of roles, teams, systems, services and external parties
+|Directory of persons, catalogs of roles and teams, catalogs an application declares
 (xref:directory-and-catalogs.adoc[Directory and Catalogs])
 |planned
 |===
@@ -81,31 +77,25 @@ repository; its kinds of documents are configuration of `git-forms`.
 
 === Dependencies and Third-Party Isolation
 
-`git-worktrees` depends on `git-core` alone. `git-store` builds on `git-core`; `git-forms`, `git-signing` and
-`git-timestamp` build on `git-store`; `git-directory` builds on `git-forms`.
-`git-testing` depends on no other module of the reactor; it declares JGit directly (planned), since its fixtures
-create JGit repositories.
+`git-worktrees` and `git-store` build on `git-core`; `git-forms` and `git-timestamp` build on `git-store`;
+`git-directory` builds on `git-forms`. `git-testing` depends on no other module of the reactor; it declares JGit
+directly (planned), since its fixtures create JGit repositories.
 
-The optional modules plug into the modules below them through service interfaces that `git-store` defines and
-`ServiceLoader` finds (JPMS `uses` and `provides`), so no module calls a module it does not depend on. These
-interfaces are planned:
+`git-store` defines three service interfaces that `ServiceLoader` finds (JPMS `uses` and `provides`), so no module
+calls a module it does not depend on. For each exactly one provider is active, named by configuration:
 
-* `StepUpVerifier` (the step-up evidence for a transition that requires it) and `CommitTrailerContributor` (the actor
-  and approval trailers) are provided by `git-signing`. Without a provider a transition that requires step-up is
-  refused.
-* `PersonDirectory` (issuer and `sub` to pseudonym, the person entries, holders of a role, erasure) is provided by
-  `git-directory` (`git`, the default) or by a provider for the operator's own source. Exactly one is active, so
-  `git-signing` and `git-store` get the pseudonym of the author in either case.
-* `AnchorProvider` (a proof that an object existed at a time) is provided by `git-signing` (`signed`, the own
-  timestamp) and by `git-timestamp` (`rfc3161`). `git-store` decides what is anchored and stores the proofs; without
-  an active provider it anchors nothing.
-* `git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules
-  above it instead of hard-coding them.
+* `SigningKeySource` signs with a key the source holds: `file` in `git-store`, a KMS or HSM source from the
+  application.
+* `PersonDirectory` maps issuer and `sub` to a pseudonym and holds the person entries: `git` in `git-directory` (the
+  default) or a provider for the operator's own source.
+* `AnchorProvider` obtains a proof that an object existed at a time: `signed` in `git-store` or `rfc3161` in
+  `git-timestamp`; without an active provider the store anchors nothing.
 
-No module knows a term of a domain. The modules above `git-core` carry their own third-party dependencies (a YAML
-library, a JSON Schema validator and a template engine in `git-forms`, a timestamp client in `git-timestamp`), so a
-consumer of `git-core` alone pulls none of them. Every one of these dependencies, JGit included, needs the owner's
-approval before it is added.
+`git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules
+above it instead of hard-coding them. No module knows a term of a domain. The modules above `git-core` carry their own
+third-party dependencies (listed in xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1]), so a consumer of
+`git-core` alone pulls none of them. Every one of these dependencies, JGit included, needs the owner's approval before
+it is added.
 
 == The Foundation Modules
 
@@ -130,7 +120,7 @@ term of a domain, so it serves the document store and every other client that wo
   fixtures for local and in-memory repositories and a local remote.
 
 Every module except `git-testing` is to work in a GraalVM native image and to ship the metadata it needs
-(xref:../Requirements.adoc#GDR-NFR-4[GDR-NFR-4]), so a client with a native build can use it.
+(xref:../specification/general.adoc#GDR-NFR-4[GDR-NFR-4]), so a client with a native build can use it.
 
 A shared foundation couples life cycles: a contract change wanted by a client is a release of this repository first.
 The foundation is therefore released with real versions to Maven Central, stays small and stable, and carries no
@@ -145,8 +135,8 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
   release a first version.
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
-. Add the aspect modules as the document store needs them: `git-store` first, then `git-signing`,
-  `git-timestamp`, `git-forms`, `git-directory`. They change nothing for the clients of the foundation.
+. Add the aspect modules as the document store needs them: `git-store` first, then `git-forms`, `git-directory`
+  and `git-timestamp`. They change nothing for the clients of the foundation.
 
 == Open Questions
 
@@ -155,10 +145,7 @@ xref:../clients/pm-mcp-core.adoc#_open_questions[Client: `pm-mcp-core`, Open Que
 
 == Related
 
-* xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_with_optional_aspect_modules.adoc[ADR-0004]
-  -- the module cut.
-* xref:../adr/0005-The_JGit_foundation_is_a_library_of_its_own_shared_with_its_clients.adoc[ADR-0005] -- the
-  shared foundation.
+* xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[ADR-0004]
+  -- the module cut and the shared foundation.
 * xref:../clients/pm-mcp-core.adoc[Client: `pm-mcp-core`] -- the first client of the foundation.
-* xref:../Requirements.adoc#requirements-general[General requirements] -- layering and dependency isolation as
-  requirements.
+* xref:../specification/general.adoc[General requirements] -- layering and dependency isolation.

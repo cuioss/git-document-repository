@@ -1,4 +1,4 @@
-= ADR-0008: Commits name pseudonyms, and a pluggable person directory keeps persons in Git by default
+= ADR-0006: Commits name pseudonyms, and a pluggable person directory keeps persons in Git by default
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
@@ -22,14 +22,9 @@ Commits and documents name persons: as authors, assessors, approvers or affected
 of every file, and the GDPR demands that personal data can be erased. The question is where names and memberships live,
 and how much machinery erasure needs.
 
-Comparable systems keep their history and erase only the current record. verinice veo keeps every earlier revision of
-a deleted element in its history service; only deleting a whole tenant removes its revisions
-(https://github.com/SerNet/verinice-veo-history[verinice-veo-history], `MessageSubscriber.kt` and
-`RevisionJpaRepo.kt`, checked at commit `ffc00ad329` of 3 November 2026). GitLab and GitHub move the contributions of
-a deleted user to a placeholder account, while the Git commits keep the user's name
-(https://docs.gitlab.com/user/profile/account/delete_account[GitLab: Delete users],
-https://docs.github.com/en/enterprise-server@3.18/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/deleting-users-from-your-instance[GitHub
-Enterprise Server: Deleting users]).
+Comparable systems keep their history and erase only the current record (see
+xref:../concepts/data-protection.adoc#_how_comparable_systems_handle_erasure[Data Protection, How Comparable Systems
+Handle Erasure]).
 
 *The decision:*
 
@@ -44,8 +39,7 @@ Enterprise Server: Deleting users]).
 * *The default provider `git`* (`git-directory`) keeps one plain YAML entry per person, `persons/<pseudonym>.yaml`, in
   a configured repository, by default the directory's. The entry carries no issuer and no `sub`, only the SHA-256 hash
   of both, through which the login finds it. Erasure deletes the entry in a commit and records the pseudonym and the
-  date; where a statutory retention duty applies, the entry is restricted until a date and deleted then. The history of
-  that repository keeps the earlier versions of the entry.
+  date. The history of that repository keeps the earlier versions of the entry.
 * *Providers for the operator's own source* (for example LDAP, SCIM or the identity provider's user directory) plug
   into the same interface. Names and memberships then stay in that source, no name enters Git, and the operator erases
   there.
@@ -72,7 +66,7 @@ deletion.
 The default provider keeps the entries as plain files on the application's volume, never versioned, so that erasure
 leaves no history.
 
-*Rejected because* it adds a store of its own beside Git, with its own backup, and ties the directory to one instance.
+*Rejected because* it adds a store of its own beside Git, with its own backup.
 An operator who needs erasure without history plugs in a provider for a source that offers it.
 
 === Names in commits and documents
@@ -123,5 +117,5 @@ provider, or when a document kind must hold personal details itself.
 
 * xref:../concepts/data-protection.adoc[Data Protection]
 * xref:../concepts/directory-and-catalogs.adoc[Directory and Catalogs]
-* xref:../Requirements.adoc#GDR-STORE-15[GDR-STORE-15] -- the person directory interface
-* xref:../Requirements.adoc#requirements-git-directory[`git-directory` requirements] -- the `git` provider
+* xref:../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19] -- the person directory interface
+* xref:../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2] -- the `git` provider

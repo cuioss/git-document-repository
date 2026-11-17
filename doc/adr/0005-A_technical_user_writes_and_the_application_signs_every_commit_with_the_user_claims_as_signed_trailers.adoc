@@ -1,4 +1,4 @@
-= ADR-0006: A technical user writes, and the application signs every commit with the user claims as signed trailers
+= ADR-0005: A technical user writes, and the application signs every commit with the user claims as signed trailers
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
@@ -6,10 +6,10 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: The application reaches Git only as a technical user and signs every commit with its own key through an exchangeable signer; pseudonym, issuer, auth time, auth context, a session HMAC and, for a delegated client, its client id are trailers; approvals are Approved-by trailers of the release commit the application merges itself; a workflow transition may require step-up MFA. There is no push in the user's name, no passkey approval and no graded signature.
+// summary: The application reaches Git only as a technical user and signs every commit with its own key in the SSH format, through an exchangeable key source; pseudonym, issuer, auth time and auth context are trailers; the release commit, which the application merges itself, names the approver; every release requires step-up MFA. There is no push in the user's name, no passkey approval and no graded signature.
 // tags: identity, signing, trailers, traceability, step-up
-// affects: git-signing, git-store, git-forms
-// supersedes: ADR-0007
+// affects: git-store, git-forms
+// supersedes:
 // end-adr-metadata
 
 == Status
@@ -25,14 +25,14 @@ question is how the store reaches Git and records identity, with as few variants
 
 * *Only a technical user* reaches the Git server, with a credential per repository. Nothing is pushed in a user's
   name.
-* *The application signs every commit* with its own key, through an exchangeable signer (KMS, HSM or key file).
-* The commit message carries trailers: `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time`, `Auth-Context` and
-  `Session` (an HMAC of the session id). A save that a delegated client performs on the user's behalf also carries
-  `Actor-Client` (the OAuth client id of that client).
+* *The application signs every commit* with its own key in the SSH signature format, through an exchangeable key
+  source (key file, KMS or HSM).
+* The commit message carries the trailers `Actor` (the pseudonym), `Actor-Issuer`, `Auth-Time` and `Auth-Context`.
 * *The application merges releases itself.* `main` is protected so that only the technical user may push to it; the
-  approvals of the workflow become `Approved-by` trailers of the release commit, which the application signs.
-* *Step-up* is a property of a workflow transition: the user re-authenticates with MFA before the approval, and the
-  `Auth-Context` and `Auth-Time` trailers record it.
+  release commit carries the trailers of the user who approves, and the application signs it.
+* *Every release requires step-up:* the user re-authenticates with MFA shortly before, and `Auth-Context` and
+  `Auth-Time` record it.
+* The public keys for verification come from configuration, never from the repository.
 
 See xref:../concepts/identity-and-signing.adoc[Identity and Signing].
 
@@ -52,8 +52,8 @@ optional variant beside the technical user it doubles every path through the sto
 The release opens a pull or merge request; reviewers approve in the Git server, which then merges into protected
 `main`.
 
-*Rejected because* the reviewers need Git accounts, the merge commit is the server's and cannot carry the
-application's signature, and the approvals would have to be copied into notes on that commit afterwards.
+*Rejected because* the reviewers need Git accounts, and the merge commit is the server's and cannot carry the
+application's signature.
 
 === Passkey approvals (WebAuthn) and graded signature levels
 
@@ -61,9 +61,8 @@ An approval is additionally signed by a passkey on the user's device, stored as 
 of several signature levels up to a qualified electronic signature.
 
 *Rejected because* it needs a WebAuthn library, the registration and trust of public keys per user, notes per
-approval and a prototype of a challenge that WebAuthn does not standardise; and every level is a further variant to
-build and verify. The decision recorded in
-xref:0007-Passkey_approvals_are_stored_as_git_notes_on_the_approved_commit.adoc[ADR-0007] is superseded.
+approval and a challenge format that WebAuthn does not standardise; and every level is a further variant to build and
+verify.
 
 === Commits signed with the user's own Git key
 
@@ -77,12 +76,20 @@ GitLab with the instance key once _Sign web-based commits_ is enabled
 (link:https://docs.gitlab.com/user/project/repository/signed_commits/web_commits/[GitLab Docs]), Gitea with the key
 configured under `[repository.signing]` (link:https://docs.gitea.com/administration/signing[Gitea Docs]).
 
+=== A signed key file in the repository
+
+The verification keys lie in an `allowed_signers` file in the repository; a new version is trusted only when a key of
+the previous version signed it.
+
+*Rejected because* the chain of trusted versions needs its own verification logic, and the keys are configuration of
+the verifier anyway. Taken from configuration, they cannot be replaced by whoever rewrites the repository.
+
 === `sub` and `sid` in clear text as trailers
 
 The trailers name the user by the identity provider's subject (`sub`) and session id (`sid`).
 
 *Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym is erasable
-through the person directory; the HMAC of `sid` still correlates with logs.
+through the person directory.
 
 === The author field only
 
@@ -94,17 +101,16 @@ The commit's author field names the user, without trailers or a signature.
 
 === Properties of the design
 
-* One path through the store: one credential type, one signature, one place for approvals.
-* Integrity and origin of every commit are checkable without the Git server.
-* Evidence is portable across Git servers.
-* No user needs a Git account.
+* One path through the store: one credential type, one signature format, one place for approvals.
+* Integrity and origin of every commit are checkable without the Git server, also with a stock Git installation.
+* Evidence is portable across Git servers, and no user needs a Git account.
 
 === Accepted costs
 
 * Trust lies in the application and its key. A compromised server can sign in anyone's name; no key on the user's
   device confirms an approval.
 * The Git server's audit log names only the technical user.
-* The signing key needs a KMS or HSM, an `allowed_signers` file with validity periods, and anchoring.
+* The signing key needs a KMS or HSM, and anchoring keeps older commits credible after a compromise.
 
 === When this is revisited
 
@@ -114,4 +120,6 @@ electronic signature inside the application.
 == Links
 
 * xref:../concepts/identity-and-signing.adoc[Identity and Signing]
-* xref:../Requirements.adoc#requirements-git-signing[`git-signing` requirements]
+* xref:../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12 – GDR-STORE-14] -- signature, trailers,
+  verification
+* xref:../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7] -- step-up for releases

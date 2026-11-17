@@ -6,16 +6,15 @@
 :source-highlighter: highlight.js
 
 A store that promises "no further database" has to answer where the search index, the access log and the proof
-against a rewritten history live. This concept names the gaps that remain beside Git, the systems that
-close them without a database of their own, how the history is anchored externally, and how Git and the other
-systems stay consistent.
+against a rewritten history live. This concept names the gaps that remain beside Git, the systems that close them
+without a database of their own, how the history is anchored, and how Git and the other systems stay consistent.
 
 == The Problem
 
 Git is an append-only, hash-chained store, but only as long as nobody with administrative rights rewrites it. A
-force push by an administrator replaces the history silently. Approvals given in the Git server's review tool live in
-the server's database, not in the repository. Search and evaluations need structures Git does not keep. Personal data
-must be deletable, which Git history is not. Each of these gaps invites a new store; most of them do not need one.
+force push by an administrator replaces the history silently. Search and evaluations need structures Git does not
+keep. Personal data must be deletable, which Git history is not. Each of these gaps invites a new store; most of them
+do not need one.
 
 == Three Classes of Stores
 
@@ -24,10 +23,10 @@ Every store beside Git falls into one of three classes:
 . *Derived*: rebuildable from Git at any time (index, search, dashboards). Local, volatile, no backup.
 . *Complementary*: data that must not be in Git because it is mutable, deletable or personal. It belongs in a system
   the organisation already operates, not in a new store.
-. *Assuring*: an independent append-only proof about Git ("these commits existed at this time"). It must lie
-  outside the control of the Git administrator.
+. *Assuring*: an independent proof about Git ("these commits existed at this time"). It must lie outside the control
+  of the Git administrator.
 
-image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of truth; the post-commit outbox feeds the derived and assuring stores, complementary systems are only referenced by id",align=center]
+image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source of truth; post-commit listeners feed the derived and assuring stores, complementary systems are only referenced by id",align=center]
 
 [cols="2,3,1"]
 |===
@@ -36,30 +35,29 @@ image::../resources/diagrams/store-classes-and-outbox.svg["Git as the source of 
 |History rewritten (force push by an administrator)
 |Anchoring of releases and periodic checkpoints: an own signed timestamp, or an RFC 3161 timestamp authority where an
 independent proof is needed
-|none for the own timestamp (it uses the key source of the signing); a timestamp authority for RFC 3161
+|none for the own timestamp; a timestamp authority for RFC 3161
 
-|Approvals live in the Git server's database
-|`Approved-by` trailers of the release commit, which the application merges and signs (see
+|Approvals in the Git server's database
+|The release commit, merged and signed by the application, names the approver (see
 xref:identity-and-signing.adoc[Identity and Signing])
 |none
 
 |Personal, deletable data
-|Names only in the person directory: by default its entries in a repository under pseudonyms, erased by a commit
-whose history keeps earlier versions, or the operator's own user directory (see
-xref:data-protection.adoc#_the_person_directory[Data Protection]); operational details in the ticket system
+|Names only in the person directory (see xref:data-protection.adoc#_the_person_directory[Data Protection]);
+operational details in the ticket system
 |none
 
 |Read-access log (who read a confidential document, logins)
 |The organisation's existing logging or SIEM (ISO/IEC 27001:2022, Annex A control 8.15 Logging)
 |none
 
-|Unsecured drafts
-|Accepted risk by default; the library never pushes drafts. An organisation that wants them secured backs up the
-repository directory of the application server
+|Unsaved drafts
+|Accepted risk; the library never pushes drafts. An organisation that wants them secured backs up the application
+server's clone
 |none
 
 |Search, evaluations, reporting-date views
-|In-memory index, optionally a disposable cache (for example embedded SQLite, H2 or Lucene)
+|In-memory index, optionally a disposable cache
 |none, disposable
 |===
 
@@ -68,8 +66,8 @@ repository directory of the application server
 A copy of all commits in a second store adds nothing: Git already is an append-only, hash-chained store. Value comes
 from a *proof that a state existed at a time*, held where the Git administrator cannot change it unnoticed: the anchor
 of the hash chain. Anchoring is optional and pluggable; `git-store` decides what is anchored and stores the proofs,
-and providers obtain and verify them
-(xref:../adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]).
+and one provider obtains and verifies them
+(xref:../adr/0007-Releases_and_checkpoints_are_anchored_through_a_pluggable_provider.adoc[ADR-0007]).
 
 === What Is Anchored
 
@@ -92,13 +90,13 @@ only at the time of the next checkpoint.
 |===
 |Provider |What it proves |What it needs
 
-|`signed` (`git-signing`), own timestamp
+|`signed` (`git-store`), own timestamp
 |That the holder of the anchor key signed, at the time its clock showed, that the object existed. Best effort: the
 anchor key is separate from the commit-signing key and should lie under another responsibility than the Git
 administration; the proofs form a chain (sequence number and hash of the previous proof), and the time never runs
 backwards; every proof is also written as a log record, so the operator's log pipeline, often a SIEM under the
 security team, keeps a copy outside Git
-|The key source the signing already uses (KMS, HSM or key file); no further service
+|A key source (KMS, HSM or key file); no further service
 
 |`rfc3161` (`git-timestamp`)
 |That an independent timestamp authority saw the hash at the time it signed. A qualified electronic timestamp enjoys
@@ -107,20 +105,18 @@ the presumption of the accuracy of its date and time and of the integrity of the
 |A timestamp authority reachable over HTTPS; one call per release and checkpoint
 |===
 
-Both can be active at once. Further providers fit the same interface, for example write-once (WORM) storage where the
-organisation has it.
+A deployment activates one of them, or none. The own timestamp is not independent of the operator: whoever holds the
+anchor key and controls the clock can sign a back-dated statement. What it gives is narrower and still useful. A Git
+administrator without the anchor key cannot forge proofs, a back-dated proof breaks the chain or contradicts the
+copies in the log pipeline, and a later compromise of the commit-signing key devalues only the commits not reached by
+a proof from before the compromise (see xref:identity-and-signing.adoc#_what_has_to_be_done_right[Identity and
+Signing]). It is no qualified electronic timestamp. Where an auditor or a court needs a proof independent of the
+organisation's own operation, the deployment uses `rfc3161`. A timestamp authority run inside the organisation is
+independent only when it lies under a responsibility other than the Git administration and the application's
+operation.
 
-The own timestamp is not independent of the operator: whoever holds the anchor key and controls the clock can sign a
-back-dated statement. What it gives is narrower and still useful. A Git administrator without the anchor key cannot
-forge proofs, a back-dated proof breaks the chain or contradicts the copies in the log pipeline, and a later
-compromise of the commit-signing key devalues only the commits not reached by a proof from before the compromise (see
-xref:identity-and-signing.adoc#_what_has_to_be_done_right[Identity and Signing]). It is no qualified electronic
-timestamp. Where an auditor or a court needs a proof independent of the organisation's own operation, `rfc3161` is
-added. A timestamp authority run inside the organisation is independent only when it lies under a responsibility other
-than the Git administration and the application's operation.
-
-Without any provider the guarantee is what signed commits, the Git server's protected branches and tags, and its
-backup give.
+Without a provider the guarantee is what signed commits, the Git server's protected branches and tags, and its backup
+give.
 
 === Detecting a Removed State
 
@@ -129,8 +125,7 @@ the matching notes and tags in the same push, and a verifier who knows only the 
 missing. Detecting a removed state therefore needs a *copy outside the administrator's control*:
 
 * the log records of the `signed` provider in the operator's log pipeline;
-* a *mirror* to a second Git server under another responsibility, pushed after every save, where a force push on the
-  main server shows at once;
+* a mirror on a second Git server under another responsibility, where a force push on the main server shows;
 * a copy of each proof in a store of another responsibility (WORM storage, an archive of the security team).
 
 *Public transparency logs* (Sigstore Rekor) are not recommended for internal data: every entry of the public log is
@@ -140,47 +135,37 @@ readable by anyone.
 
 Git comes first; everything else follows and is derived from Git.
 
-* *An outbox whose queue is Git.* After every save (and in remote mode every push), and after every fetch that moves
-  a branch, for example after a commit of another instance, the store walks the new commits and feeds its consumers from
-  them: mirror and index. The anchoring runs on the same triggers.
-* *Idempotent by commit hash.* After a failure the store resumes from the last processed hash. The progress is
-  remembered per consumer and branch in a reference `refs/meta/outbox/<consumer>/<branch>`, again in Git, so it needs
-  no store of its own. The branch name is escaped, first every `%` as `%25`, then every `/` as `%2F`, so the progress
-  references of `risks` and `risks/<id>` never nest and two branch names never share one reference; they are never
-  pushed.
+* *Post-commit listeners.* After every save or release the store pushed, and after every fetch that moves a branch,
+  the store hands the new commits to its listeners in process, for example the index. It keeps no progress: what must
+  not be lost is derived from Git at start. The index is rebuilt; the anchoring finds the releases and checkpoints
+  without a proof by reading its notes.
 * *Complementary data by reference only.* Git holds `incident: TICKET-4711`; the ticket system never holds Git
   content.
 
 The truth then sorts as follows:
 
-* *Git*: documents, registers, the directory with the person entries, approval trailers and notes, checkpoints and
-  anchor proofs as notes.
+* *Git*: documents, registers, the directory with the person entries, signed commits with their trailers,
+  checkpoints and anchor proofs as notes.
 * *Derived*: index and search, volatile and rebuildable.
 * *Complementary*: the identity provider (authentication, groups), an operator's own person directory where one is
-  plugged in, the issue and ticket system (operations), Vault or KMS (keys), the SIEM (read-access log).
-* *Assuring*: the anchor proofs (own timestamp, RFC 3161 timestamps), optionally a mirror.
+  plugged in, the ticket system, the KMS (keys), the SIEM (read-access log).
+* *Assuring*: the anchor proofs and their copies outside Git.
 
 [CAUTION]
 ====
 An anchor proves that a state existed; it cannot restore a state that was removed. Restoring after a rewritten
-history still needs the Git server's backup or the mirror. Together with a copy outside the Git administrator's
+history still needs the Git server's backup or a mirror. Together with a copy outside the Git administrator's
 control the anchor turns a silent rewrite into a detectable one, nothing more; notes alone do not.
 ====
 
 == Open Questions
 
-. Decide whether a mirror is required for every deployment or left to the operator. Interim rule: where the removal
-  of a released state must be detectable, the log copy of `signed` or a mirror is mandatory.
 . Whether the checkpoint interval of one day suits audits, or whether deployments with frequent changes need a
   shorter one.
 
 == Related
 
-* xref:../adr/0009-Releases_and_checkpoints_are_anchored_through_pluggable_providers_and_a_post-commit_outbox_follows_every_save.adoc[ADR-0009]
-  -- anchoring and the outbox.
-* xref:../adr/0010-No_database_the_in-memory_index_is_derived_from_Git.adoc[ADR-0010] -- the index as a derived store.
-* xref:../specification/git-store.adoc#_anchoring[`git-store`, Anchoring],
-  xref:../specification/git-signing.adoc#_own_timestamp[`git-signing`, Own Timestamp] and
+* xref:../specification/git-store.adoc#GDR-STORE-15[`git-store`, GDR-STORE-15 – GDR-STORE-18] and
   xref:../specification/git-timestamp.adoc[`git-timestamp`] -- the specifications.
 
 == Sources
