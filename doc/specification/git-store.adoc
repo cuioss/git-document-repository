@@ -10,9 +10,10 @@ the anchoring with the own timestamp `signed`, and the person directory interfac
 Rationale: xref:../concepts/storage-engine.adoc[Storage Engine], xref:../concepts/identity-and-signing.adoc[Identity
 and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
 
-It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`). For
-each exactly one provider is active, named by configuration; a named provider that is not found, or two providers with
-the same id, stop the start of the store.
+It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`), each
+provider named by configuration. For `SigningKeySource` and `PersonDirectory` exactly one provider is active; for
+`AnchorProvider` at most one, and without one the store anchors nothing (<<GDR-STORE-15>>). A named provider that is
+not found, or two providers with the same id, stop the start of the store.
 
 [cols="1,2,2"]
 |===
@@ -63,13 +64,18 @@ repositories:
 |`refs/drafts/<pseudonym>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
 |===
 
-* A collection is either per-document or numbered, never both: Git refuses a reference and a reference nested below
-  it, so `refs/heads/risks` and `refs/heads/risks/<id>` cannot exist side by side. A collection is never named `main`
+* A collection is either per-document or numbered, never both: JGit refuses a reference nested below an existing one
+  and a reference that would contain an existing one (`RefDatabase.getConflictingNames`, checked by
+  `RefUpdate.updateImpl`; link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefDatabase.java[JGit 7.8.0 `RefDatabase`]), so
+  `refs/heads/risks` and `refs/heads/risks/<id>` cannot exist side by side. A collection is never named `main`
   or `checkpoints`.
-* `<id>` of a per-document collection is the document's ULID; `<id>` of a numbered collection is the readable number
+* `<id>` of a per-document collection is the document's ULID (26 characters of Crockford base32 over a 48-bit
+  timestamp and 80 random bits, sortable by creation time; link:https://github.com/ulid/spec[ULID specification]);
+  `<id>` of a numbered collection is the readable number
   (for example `R-042`). A new numbered entry uses a ULID for its draft reference until its first save
   (xref:git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9]).
-* The drafts live only in the store's bare clone; they are lost with it.
+* The drafts live only in the store's bare clone; the remote never secures them, and they are lost with the clone
+  unless the operator backs up its storage.
 
 [#GDR-STORE-3]
 == GDR-STORE-3: Explicit Save
@@ -88,10 +94,10 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 
 . Fetch the working branch; its tip is the base.
 . Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
-  Check every edit with an `expectedBlobId` (<<GDR-STORE-5>>).
+  Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>).
 . Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
 . After the accepted push, move the local working branch to the new commit and delete the draft reference by
-  compare-and-delete.
+  compare-and-delete (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]); a draft reference that moved meanwhile is kept.
 
 The local working branch moves only after the remote accepted the commit, so the clone never holds a saved commit the
 remote lacks.
@@ -131,7 +137,8 @@ identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the a
 [#GDR-STORE-7]
 == GDR-STORE-7: Draft Expiry
 
-* Drafts not changed for `drafts.expiry` must be deleted.
+* Drafts not changed for `drafts.expiry` must be deleted by compare-and-delete
+  (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]), so that a draft changed meanwhile is kept.
 * A garbage collection must remove objects reachable only from deleted drafts.
 
 [#GDR-STORE-8]
@@ -146,14 +153,15 @@ identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the a
 [#GDR-STORE-9]
 == GDR-STORE-9: In-Memory Index
 
-* The store must build an index from `main` and the open working branches at start, after every fetch, and after
-  every save or release.
+* The store must build an index from `main` and every working branch and collection branch of the repository
+  (<<GDR-STORE-2>>) at start, after every fetch, and after every save or release.
 * The content of the index must be supplied by the consumer through an index interface.
 * The store must fetch periodically (`fetch.interval`), so that changes made outside the store reach the index.
 * The store must build an index from a tag or a commit for a reporting date, without changing the current index.
 
 The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
-every open working branch. After a save only the changed documents are re-read. `snapshotIndex(tag | commit)` builds
+every working branch and collection branch. After a save only the changed documents are re-read.
+`snapshotIndex(tag | commit)` builds
 the index of a reporting date.
 
 [#GDR-STORE-10]
@@ -194,7 +202,8 @@ HSM the application never holds the private key. Whether the store uses JGit's S
 
 * Every commit of a save or release must carry the trailers below, filled from the user who acted. Commits the store
   writes without a user's action (checkpoints) and notes carry none.
-* No trailer may contain an OIDC `sub` or `sid` in clear text.
+
+xref:general.adoc#GDR-NFR-3[GDR-NFR-3] keeps the OIDC `sub` and the session id `sid` out of every trailer.
 
 [cols="1,2,2"]
 |===
@@ -206,7 +215,11 @@ HSM the application never holds the private key. Whether the store uses JGit's S
 |`Auth-Context` |`acr=<acr>; amr=<amr>,<amr>…`; a part is left out when its claim is absent |token claims `acr`, `amr`
 |===
 
-The caller supplies the claims; the store never receives the access token.
+The claims `iss`, `auth_time`, `acr` and `amr` are those of the ID Token
+(link:https://openid.net/specs/openid-connect-core-1_0.html#IDToken[OpenID Connect Core 1.0, 2 ID Token]); `sid` is
+the session id of
+link:https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0] (2.1). The
+caller supplies the claims; the store never receives the access token.
 
 [#GDR-STORE-14]
 == GDR-STORE-14: Signature Verification
@@ -217,9 +230,14 @@ The caller supplies the claims; the store never receives the access token.
 * The verification must list every commit without a signature valid at its commit time, and must run from CI without
   the application.
 
-A Git administrator who rewrites the repository therefore cannot make a key of their own trusted. A single signature
-can also be checked with a stock Git installation:
-`git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`.
+The validity period per key is the `valid-after` and `valid-before` options of the `allowed_signers` format
+(link:https://man.openbsd.org/ssh-keygen.1#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]); Git checks that the
+committer timestamp lies within it, with Git 2.35 or later and OpenSSH 8.8 or later (`gpg.ssh.allowedSignersFile` in
+link:https://git-scm.com/docs/git-config[git-config(1)]; Git passes the timestamp as `-Overify-time` since 2.35,
+link:https://github.com/git/git/blob/v2.35.0/gpg-interface.c[`gpg-interface.c` at v2.35.0]). A Git administrator who rewrites the repository therefore
+cannot make a key of their own trusted. A single signature can also be checked with a stock Git installation of version
+2.35 or later: `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`
+(link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).
 
 [#GDR-STORE-15]
 == GDR-STORE-15: Anchor Provider
@@ -231,9 +249,11 @@ can also be checked with a stock Git installation:
   proofs.
 * A failing or unreachable provider must not block or fail a save, a release or a fetch.
 
-A proof is bytes the store does not interpret. Obtaining one yields the proof or the outcome unavailable, refused or
-failed; verifying one yields the time it establishes or imprint mismatch, signature invalid, chain broken or
-unreadable. The provider id names its notes reference.
+A proof is bytes the store does not interpret. The outcomes are those of the `git-store` list of
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3], used identically by every provider. Obtaining a proof yields the proof,
+unavailable (the provider cannot be reached) or refused (the provider refuses or answers with an error). Verifying
+yields the time the proof establishes, no proof (a subject without a stored proof), imprint mismatch, signature invalid
+(also for a proof that cannot be read) or chain broken. The provider id names its notes reference.
 
 [#GDR-STORE-16]
 == GDR-STORE-16: Anchored Subjects and Checkpoints
@@ -287,6 +307,7 @@ application.
 
 Statement, UTF-8, each line ended by LF:
 
+[source,text]
 ----
 anchor signed 1
 object <object id, lowercase hex>

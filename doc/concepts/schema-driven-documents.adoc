@@ -30,8 +30,9 @@ code.
 
 == Schema
 
-A *JSON Schema* per kind of document produces the form and validates the data before every save. It is plain JSON
-Schema, so any validator outside the application can check the same data against it.
+A *JSON Schema* per kind of document produces the form and validates the data before every save. Once the dialect
+is decided (see <<_open_questions>>), any validator that supports that dialect can check the same data outside the
+application.
 
 == Data, Free Text and Generated Output
 
@@ -80,6 +81,9 @@ the mechanisms of the store:
 |submit for review
 |save onto the working branch
 
+|rework
+|save onto the working branch; the document returns from review to draft
+
 |approve (release)
 |merge into `main` and tag, by the application; the signed release commit names the approver
 
@@ -87,8 +91,9 @@ the mechanisms of the store:
 |a later approved version of the same document; the old tag stays
 |===
 
-Every release transition, and so every approval, requires *step-up*, a fresh MFA login (see
-xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing]). The workflow further declares
+Every release transition, and so every approval, requires *step-up*, an MFA authentication no older than a
+configured maximum age (see xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing]). The workflow
+further declares
 *deadlines* per state: notification duties and review intervals, computed from the in-memory index, never stored.
 Notifications are runtime state of the application, not persistence.
 
@@ -107,10 +112,15 @@ documents keep their meaning.
 == Running Numbers
 
 * *Two kinds of collections.* A per-document collection gives every document a ULID, which names its working
-  branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link target. A numbered
-  collection (a register) keeps all entries on one collection branch `refs/heads/<collection>`, without a branch per
-  entry; its readable number names the entry file, the tag and the link target. A collection is one or the other,
-  never both, because Git refuses a reference and a reference nested below it.
+  branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link target. A ULID is a
+  128-bit identifier of a 48-bit timestamp and 80 random bits, written as 26 characters in Crockford's base32 and
+  sortable by its timestamp (link:https://github.com/ulid/spec[ULID specification]). A numbered collection (a
+  register) keeps all entries on one collection branch `refs/heads/<collection>`, without a branch per entry; its
+  readable number names the entry file, the tag and the link target. A collection is one or the other, never both,
+  because a reference cannot exist together with a reference nested below it: JGit refuses
+  `refs/heads/<collection>/<id>` while `refs/heads/<collection>` exists, and the reverse
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefDatabase.java[`RefDatabase.isNameConflicting`],
+  JGit 7.8.0).
 * *Running numbers under concurrent creation.* A readable number such as `R-042` (`prefix` and counter) cannot be
   assigned by two creators at once. It is assigned on the first save through a counter file on the collection branch,
   changed in the same commit, and the compare-and-swap makes it unique: the loser re-reads the counter and takes the

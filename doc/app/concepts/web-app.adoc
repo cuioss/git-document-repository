@@ -5,11 +5,11 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
 The web app is where a security officer releases an assessment and where a team spends a two-hour SAMM workshop. The
-first wants to see exactly what is being approved; the second wants the form out of the way. Neither wants to learn a
-new interface vocabulary, and the cuioss project already has one that works: the `pm-web-app` of `pm-mcp-clients`.
+first needs to see exactly what is being approved; the second needs a form that keeps up with the discussion. The
+cuioss project already has an interface vocabulary for such pages: the `pm-web-app` of `pm-mcp-clients`.
 CISOs-Friend takes its visuals and its technical UI structure from there and changes only what the domain and the
 authentication demand.
 
@@ -24,7 +24,8 @@ authentication demand.
 TypeScript in strict mode, ESLint, Prettier and stylelint.
 
 |*Visual language*
-|The design tokens of `src/styles/tokens.css` with a light and a dark palette, the WCAG 2.1 AA contrast checks of its
+|The design tokens of `src/styles/tokens.css` with a light and a dark palette, the
+https://www.w3.org/TR/WCAG21/[WCAG 2.1] AA contrast checks of its
 theme-readability design, Inter self-hosted and an own icon set; no raw colour literal in a view or a component.
 
 |*Structure*
@@ -33,9 +34,9 @@ theme-readability design, Inter self-hosted and an own icon set; no raw colour l
 model with one canonical route per object kind.
 
 |*Plumbing*
-|One `ApiClient` against same-origin `/api/v1` with one shared Server-Sent Events stream; the en/de message catalogue
-from the server; Vitest and Testing Library beside the code, Playwright and axe-core in a separate module;
-`frontend-maven-plugin` builds a resource JAR the Quarkus application serves.
+|One `ApiClient` against same-origin `/api/v1` with one shared Server-Sent Events stream; the en/de message texts
+from the server (`/api/v1/messages`); Vitest and Testing Library beside the code, Playwright and axe-core in a
+separate module; `frontend-maven-plugin` builds a resource JAR the Quarkus application serves.
 |===
 
 The design documents of `pm-web-app` (`pm-mcp-clients/doc/design/web-app/`) are the reference for the visual and
@@ -51,7 +52,7 @@ CORS; served from the application's own origin, the session cookie can be `SameS
 
 == Structure of the App
 
-image::../resources/diagrams/web-app-shell-layout.svg["The web app shell: navigation rail with the lenses, top bar with search and user, the main area with one page template, and the live indicator fed by the event stream",align=center]
+image::../resources/diagrams/web-app-shell-layout.svg["The web app shell: navigation rail with the lenses, top bar with command palette, live indicator fed by the event stream and user menu, and the main area with one page template, here the TriagePage of the SAMM lens with scopes, assessments and the selected practice as ObjectPage",align=center]
 
 The rail carries the *lenses* of CISOs-Friend:
 
@@ -80,7 +81,7 @@ The rail carries the *lenses* of CISOs-Friend:
 |`TriagePage`
 
 |*Catalogs*
-|catalog › entry (roles, teams, services)
+|catalog › entry (roles, teams, services, systems, external parties)
 |`TriagePage`
 
 |*Reports*
@@ -100,10 +101,11 @@ The first login and the release of a document run as `WizardPage` flows.
 
 `pm-web-app` pairs a device and sends a device secret as bearer token. CISOs-Friend does not: the browser never holds a
 token. The server is the confidential client of the identity provider (Token Sheriff), keeps a server-side session and
-gives the browser only cookies (link:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]).
-State-changing requests carry an anti-CSRF header the `ApiClient` adds. A `401` sends the user through the login and
+gives the browser only cookies (xref:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]).
+State-changing requests carry an anti-CSRF header the `ApiClient` adds; the server also refuses them when their
+`Origin` is another origin than its own. A `401` sends the user through the login and
 back to the same address; a step-up demand opens the identity provider's MFA prompt and returns to the release
-(link:authentication-and-identity.adoc[Authentication and Identity]).
+(xref:authentication-and-identity.adoc[Authentication and Identity]).
 
 === Forms from Schemas
 
@@ -135,12 +137,13 @@ release button says that it needs step-up and triggers the renewed MFA login bef
   `<meta http-equiv="content-security-policy">` tag
   (link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/core/postbuild/fallback.js[`fallback.js`],
   link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/runtime/server/page/render.js[`render.js`],
-  `@sveltejs/kit` 3.2.0). A `<meta>` policy ignores `frame-ancestors`, `report-uri` and `sandbox`; the Quarkus
+  `@sveltejs/kit` 3.2.0). A `<meta>` policy does not support `frame-ancestors`, `report-uri` and `sandbox`
+  (link:https://www.w3.org/TR/CSP3/#meta-element[Content Security Policy Level 3, section 3.3]); the Quarkus
   application sends these as a response header.
 * No third-party origin: fonts, icons and scripts come from the application.
 * AsciiDoc previews and generated reports are rendered by the server and sanitised; the browser never renders raw
   user HTML.
-* Every text shown comes from the catalogue or from validated document data.
+* Every text shown comes from the server's message texts or from validated document data.
 
 == Open Questions
 
@@ -149,7 +152,7 @@ release button says that it needs step-up and triggers the renewed MFA login bef
 
 == Related
 
-* link:authentication-and-identity.adoc[Authentication and Identity]
-* link:application-architecture.adoc[Application Architecture]
-* link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents] — schemas and generated output
+* xref:authentication-and-identity.adoc[Authentication and Identity]
+* xref:application-architecture.adoc[Application Architecture]
+* xref:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents] — schemas and generated output
 * `pm-mcp-clients/pm-web-app` and `pm-mcp-clients/doc/design/web-app/` (reference implementation and design)

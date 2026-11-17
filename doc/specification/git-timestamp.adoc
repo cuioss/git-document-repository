@@ -18,8 +18,11 @@ Stores, The Anchor].
 * The module must contain no decision about which commits are anchored and no handling of notes or pushes.
 
 The request is a `TimeStampReq` with `messageImprint` = SHA-256 over the object id as lowercase ASCII hex,
-`certReq = true` and a random nonce; the previous proof is not used. The proof is the DER-encoded `TimeStampToken`. An
-unreachable authority or an error response returns unavailable or failed; `git-store` keeps the subject pending.
+`certReq = true` and a random nonce; the previous proof is not used. The proof is the DER-encoded `TimeStampToken`
+(`TimeStampReq`, `messageImprint`, `certReq`, `nonce` and `TimeStampToken` as defined in
+link:https://www.rfc-editor.org/rfc/rfc3161[RFC 3161], 2.4). The outcomes are those of the `git-store` list of
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3]: an unreachable authority returns unavailable, an error response refused;
+`git-store` keeps the subject pending.
 
 [cols="1,2"]
 |===
@@ -37,4 +40,4 @@ the Git administration and the application's operation; otherwise it proves no m
 == GDR-TSA-2: Timestamp Verification
 
 * The module must verify a stored token against the object id and `timestamp.trust`, and report the time the token
-  proves, or imprint mismatch or signature invalid.
+  proves, or imprint mismatch or signature invalid (also for a token that cannot be read).

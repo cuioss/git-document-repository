@@ -1,13 +1,13 @@
 = CISOs-Friend: Testing
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 Test lanes, tools and the measurable checks behind the non-functional requirements. Reasoning:
-link:../concepts/application-architecture.adoc#_testing[Application Architecture, Testing].
+xref:../concepts/application-architecture.adoc#_testing[Application Architecture, Testing].
 
 == Lanes
 
@@ -31,6 +31,10 @@ link:../concepts/application-architecture.adoc#_testing[Application Architecture
 |Integration
 |Profile `integration-tests` (failsafe `*IT`)
 |Native image, distroless container, compose stack with Keycloak and Gitea
+
+|Benchmarks
+|Profile `benchmarks` of the `integration-tests` module, in a CI job of its own
+|The fixture and measurements of <<CIFR-NFR-1>> and <<CIFR-NFR-2>>; reports, does not gate
 |===
 
 [#CIFR-NFR-1]
@@ -51,8 +55,8 @@ process start to readiness `UP` with local repositories present. Save latency: 1
 Gitea of the integration stack; the save service records the time spent in fetch and push per save (timer
 `cisos_friend_save_git_seconds`).
 
-Provisional: the targets of CIFR-NFR-1 and CIFR-NFR-2 are confirmed by the prototype measurement; until then the
-checks run in a `benchmarks` lane whose results are reported, not gating.
+The checks of CIFR-NFR-1 and CIFR-NFR-2 run in the `benchmarks` lane. It reports each measured value against its
+target and does not fail the build.
 
 [#CIFR-NFR-3]
 == CIFR-NFR-3: Concurrent Workshop
@@ -69,22 +73,30 @@ changes must be present on the working branch and every save result must be `SAV
 * Every path segment, query parameter and header read by the REST API and the MCP endpoint must pass a
   `de.cuioss.http.security` validation pipeline before use; the adversarial attack-database tests must pass.
 
+Tests:
+
 * Inbound validation: every REST resource and the MCP endpoint run the generator-driven attack databases of
   `cui-http-testing` (path traversal, header injection, query manipulation); every attack must be rejected before
   reaching a service.
 * MCP token tests: foreign audience, expired, wrong issuer, query-string token, missing scope; each with the specified
   status and `WWW-Authenticate`.
-* Credential leak scan: see link:mcp-server.adoc#CIFR-MCP-5[MCP Server, CIFR-MCP-5].
-* Web: CSRF header missing, wrong `Origin`, CSP present on every HTML response.
+* Credential leak scan: see xref:mcp-server.adoc#CIFR-MCP-5[MCP Server, CIFR-MCP-5].
+* Web: CSRF header missing, wrong `Origin`, CSP present on every HTML response
+  (xref:web-app.adoc#CIFR-WEB-8[Web App, CIFR-WEB-8]).
 
 [#CIFR-NFR-5]
 == CIFR-NFR-5: Native Image Verification
 
 * The integration suite must run a fetch, a save, a release and a push against a local Git server with the native
   image before any other integration test.
+* A boot of the native image with an invalid configuration must fail
+  (xref:configuration.adoc#CIFR-CONF-1[Configuration, CIFR-CONF-1]).
 
 The first test class, `NativeGitRoundTripIT`, runs fetch, save, release and push against Gitea and verifies tag and
 signature. It runs in its own failsafe execution `native-round-trip`, declared before the execution of the remaining
 suites, with both its `integration-test` and its `verify` goal bound to the `integration-test` phase. Maven runs
-executions of one phase in declaration order, so a failure of this class fails the build before the remaining suites
-start. A second boot with an invalid configuration must fail.
+several executions bound to one phase in the order they are declared in the POM, a parent's declarations before the
+child's
+(link:https://maven.apache.org/guides/mini/guide-configuring-plugins.html#Using_the_.3Cexecutions.3E_Tag[Maven:
+Configuring Plugins, Using the `<executions>` Tag]), so a failure of this class fails the build before the remaining
+suites start. A second boot, with an invalid configuration, checks that the boot fails.

@@ -14,7 +14,8 @@ This is a technical assessment, not legal advice.
 
 == The Problem
 
-As soon as personal data lie in a repository, the right to erasure (GDPR Art. 17) applies, and Art. 25 (data
+As soon as personal data lie in a repository, the right to erasure
+(link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[GDPR] Art. 17) applies, and Art. 25 (data
 protection by design and by default) demands a system that can serve the data subjects' rights. Exceptions exist
 (Art. 17(3)), above all statutory retention duties (Art. 17(3)(b)), but only for the data they cover and only for their
 period; afterwards storage limitation (Art. 5(1)(e)) requires deletion. Under German law, where a retention period
@@ -54,7 +55,7 @@ xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Store
 |`git` (`git-directory`), the default
 |One plain YAML entry per person, `persons/<pseudonym>.yaml`, in a configured repository, by default the directory's.
 The entry carries no issuer and no `sub`, only the SHA-256 hash of both, through which the login finds it. The user
-enters name, team and role at the first login and keeps them current
+enters name and memberships (pairs of team and role) at the first login and keeps them current
 |A commit deletes the entry and records pseudonym and date; the repository's history keeps the earlier versions
 
 |A provider for the operator's own source (an extension point, for example LDAP, SCIM or the identity provider's user
@@ -96,26 +97,29 @@ An operator who needs erasure without history plugs in a provider for a source t
 === What Has to Be Done Right
 
 * *Hash, not `sub`.* The entry stores the SHA-256 over issuer and `sub`. A random `sub` cannot be recovered from it; a
-  `sub` an attacker can guess, such as an e-mail address, can be found by hashing candidates. Where the identity
+  `sub` an attacker can guess, such as an email address, can be found by hashing candidates. Where the identity
   provider uses such a `sub`, the persons' repository deserves a small circle of readers.
-* *Data minimisation.* Name and memberships only; the e-mail comes from the token when needed and is not stored.
+* *Data minimisation.* Name and memberships only; the email address comes from the token when needed and is not
+  stored.
 * *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
   directory is for and how long it is kept.
-* *Answer within the deadline.* The GDPR asks for an answer without undue delay and within one month at the latest
-  (Art. 12(3)); the erasure commit is effective at once.
+* *Answer within the deadline.* The GDPR asks for an answer without undue delay and in any event within one month of
+  receipt of the request; where necessary that period may be extended by two further months, and the data subject is
+  told of the extension and its reasons within the first month (Art. 12(3)). The erasure commit is effective at once.
 
 == Repositories per Confidentiality and Retention Class
 
-GitHub, GitLab and Forgejo grant read rights per repository: roles are assigned per repository or project
+GitHub, GitLab, Gitea and Forgejo grant read rights per repository: roles are assigned per repository or project
 (link:https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization[GitHub],
 link:https://docs.gitlab.com/user/permissions/[GitLab],
+link:https://docs.gitea.com/usage/permissions[Gitea],
 link:https://forgejo.org/docs/latest/user/repo-permissions/[Forgejo]). The protected branches of GitHub and GitLab
 restrict pushing, merging, force pushing and deletion, not reading
 (link:https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches[GitHub],
 link:https://docs.gitlab.com/user/project/repository/branches/protected/[GitLab]). Gerrit is the exception: its
 `Read` permission is granted per reference, so a branch can be hidden
 (link:https://gerrit-review.googlesource.com/Documentation/access-control.html[Gerrit access controls]).
-None of the four documents a read restriction per path. Cutting the data into repositories *by confidentiality* turns
+None of the five documents a read restriction per path. Cutting the data into repositories *by confidentiality* turns
 that into an advantage; cutting them *by retention period* solves deletion. The store therefore manages a *registry of
 repositories*, each with a stable alias, a confidentiality class and an optional retention period. A typical cut puts
 widely readable policies, restricted registers and strongly restricted records of one year (with a retention period)
@@ -149,4 +153,5 @@ hashed; an operator who must erase without history plugs in a provider for a sou
 
 == Sources
 
+* GDPR: https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679], Art. 5(1)(e), 12(3), 13, 17, 25
 * BDSG: https://www.gesetze-im-internet.de/bdsg_2018/__35.html[§ 35 BDSG, Right to erasure]

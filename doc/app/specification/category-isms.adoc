@@ -1,19 +1,19 @@
 = CISOs-Friend: Category ISMS
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The ISMS category as configuration (`categories/isms/`): documents and the risk register. Reasoning:
-link:../concepts/category-isms.adoc[ISMS]. Repositories: `isms-core` (documents), `isms-register` (risk register).
+xref:../concepts/category-isms.adoc[ISMS]. Repositories: `isms-core` (documents), `isms-register` (risk register).
 
 [#CIFR-ISMS-1]
 == CIFR-ISMS-1: Documents
 
 * Policies, the scope, internal audit reports and management review reports must be schema-driven documents in
-  `isms-core`, released with step-up (link:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
+  `isms-core`, released with step-up (xref:authentication.adoc#CIFR-AUTH-4[CIFR-AUTH-4]).
 
 [cols="1,2"]
 |===

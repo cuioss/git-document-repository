@@ -1,13 +1,13 @@
 = CISOs-Friend: Deployment
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The shipped image, its ports and probes, how secrets reach it, and the compose sample. Reasoning:
-link:../concepts/deployment.adoc[Deployment].
+xref:../concepts/deployment.adoc[Deployment].
 
 [#CIFR-OPS-1]
 == CIFR-OPS-1: Native Image and Container
@@ -96,14 +96,18 @@ declares no volume.
 |`credential-ref` per repository
 
 |Commit-signing key
-|`signing.key-ref` (KMS key id recommended)
+|`signing.key-ref`: a `kms:` key id or a `file:` reference
 
 |Anchor key of the own timestamp
-|`anchor.signed-key-ref` (a KMS key of its own, ideally under the security team's key policy)
+|`anchor.signed-key-ref`: a `kms:` key id or a `file:` reference, never the commit-signing key
 |===
 
+The two `allowed_signers` files hold public keys only and are no secrets; they are mounted read-only with the
+configuration directory and named by `signing.allowed-signers` and `anchor.signed-allowed-signers`
+(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
+
 Every reference uses one of the forms `file:`, `kms:` or `vault:`
-(link:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
+(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
 
 [#CIFR-OPS-3]
 == CIFR-OPS-3: Compose Sample

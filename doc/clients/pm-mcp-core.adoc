@@ -34,8 +34,11 @@ Constraints:
 * *Two life cycles are coupled.* PM-MCP is pre-1.0 and changes contracts without deprecation cycles. The foundation
   therefore stays small and stable and carries no domain term of either side.
 * *Licence.* The code taken over from `pm-provider-git` has to be released for the open-source licence of
-  `git-document-repository` (Apache License 2.0). The other direction is unproblematic: a proprietary product may
-  depend on an open-source library.
+  `git-document-repository` (Apache License 2.0). The other direction needs no release: a work that merely links to the
+  interfaces of the libraries is no Derivative Work of them (§ 1), every licensee may reproduce and distribute the
+  libraries (§ 2), and a redistribution carries a copy of the licence and keeps the notices (§ 4)
+  (link:https://www.apache.org/licenses/LICENSE-2.0[Apache License 2.0], §§ 1, 2, 4). A proprietary product may
+  therefore depend on the libraries under these conditions.
 
 == Inventory of `pm-provider-git`
 
@@ -74,7 +77,9 @@ cache repository (`initCache`, `fetchCommit`, `readFile`), and its records
 
 |`LinkedWorktrees`
 |The administration files of git's linked working trees, read and written natively, because JGit has no command
-that adds or removes a linked working tree (JGit 7.0 added read support only; checked in JGit 7.8.0)
+that adds or removes a linked working tree (JGit 7.0 added read support only; checked in JGit 7.8.0, whose
+link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[`api`
+package] holds no worktree command)
 |none
 
 |`WorktreeShaDigest`

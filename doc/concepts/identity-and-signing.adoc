@@ -37,19 +37,24 @@ with JGit and sign them themselves.
 
 == What a Signature of the Application Shows
 
-The application signs every commit with its own key, in the SSH signature format. The signature covers the whole commit
-object: the tree (and with it all content), the parents, author, committer and the commit message with its trailers. The
-application writes the identity of the logged-in user as *trailers* into the message, so that statement is signed with
-it:
+The application signs every commit with its own key, in Git's SSH signature format (`gpg.format = ssh`,
+link:https://git-scm.com/docs/git-config[git-config(1)]). The signature covers the commit object without the `gpgsig`
+header that carries the signature itself: the tree (and with it all content), the parents, author, committer and the
+commit message with its trailers (link:https://git-scm.com/docs/gitformat-signature[gitformat-signature(5)], commit
+signatures). The application writes
+the identity of the logged-in user as *trailers* into the message, so that statement is signed with it:
 
 ----
 Update data/section-a.yaml
 
-Actor: p-7f3a9c                       ← pseudonym from the person directory
-Actor-Issuer: https://idp.example     ← who authenticated the user
+Actor: p-7f3a9c <1>
+Actor-Issuer: https://idp.example <2>
 Auth-Time: 2026-11-12T14:03:11Z
-Auth-Context: acr=urn:example:mfa; amr=pwd,otp   ← acr / amr of the token
+Auth-Context: acr=urn:example:mfa; amr=pwd,otp <3>
 ----
+<1> The pseudonym from the person directory.
+<2> Who authenticated the user.
+<3> `acr` and `amr` of the token.
 
 A release commit carries the trailers of the user who approves it. Because the application merges the release
 itself, the approval is part of the signed release commit, and the repository itself is the evidence.
@@ -70,9 +75,15 @@ What it does not show:
 
 === Which Identifier Goes into the Trailer
 
-In an OIDC token `sub` is the stable identifier of the user and `sid` the identifier of the session. Both are
-pseudonymous, hence personal identifiers, and they would stay in the history for good. The trailer therefore carries
-the own pseudonym from the person directory instead of `sub`, and no `sid` at all. The person entry links the
+In OpenID Connect `sub` is the identifier of the user, "locally unique and never reassigned" within the issuer
+(link:https://openid.net/specs/openid-connect-core-1_0.html#IDToken[OpenID Connect Core 1.0, section 2]), and `sid`
+the identifier of a session
+(link:https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0,
+section 2.4]). Neither names the person, but each relates to exactly one: under the GDPR a person who can be
+identified by reference to an online identifier is identifiable (Art. 4(1)), and data that can be attributed to a
+person with additional information remain personal data (Recital 26). In the history they would stay for good. The
+trailer therefore carries the own pseudonym from the
+person directory instead of `sub`, and no `sid` at all. The person entry links the
 pseudonym to the login only through a hash of issuer and `sub`, and is erased by a commit (see
 xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]).
 
@@ -83,7 +94,8 @@ every release, and so every approval, requires *step-up*, a renewed authenticati
 application writes the `acr` / `amr` and the time of that authentication into the signed trailers, and the statement
 becomes "… and the user had authenticated with MFA no longer than `step-up.max-age` before this approval". Several
 approvals within that period can rest on the same authentication; the trailers do not bind the MFA to one approval.
-The effort for the user is at most one MFA confirmation per approval; saves need none (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
+The effort for the user is at most one MFA confirmation per approval; saves need none (see
+xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
 iteration an approval needs no particular role of the directory; who may approve is a matter of access, not of the
 catalog of roles.
 
@@ -93,10 +105,19 @@ catalog of roles.
   key. A key as a file is the weakest variant.
 . *Verify independently of the Git server.*
 ** The verifier takes the application's public keys, with validity periods, from its own configuration, in the
-   `allowed_signers` format of Git's SSH signatures, never from the repository. An administrator who can rewrite the
-   repository therefore cannot make a key of their own trusted, and commits stay verifiable after a change of key.
-** The application and a CI job check that every commit on `main` carries a valid signature; a stock Git installation
-   can check single commits.
+   allowed-signers format of OpenSSH that Git reads through `gpg.ssh.allowedSignersFile`, never from the repository.
+   The format bounds a key with the options `valid-after` and `valid-before`
+   (link:https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]), and Git 2.35 or later
+   accepts a signature when the key was valid at the commit's committer timestamp
+   (link:https://git-scm.com/docs/git-config[git-config(1)], `gpg.ssh.allowedSignersFile`). An administrator who can
+   rewrite the repository therefore cannot make a key of their own trusted, and commits stay verifiable after a change
+   of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the signature was
+   made: a holder of a compromised key can date a new commit back into the key's validity period. The time a commit
+   existed rests on the anchor (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
+   Anchor]).
+** The application and a CI job check that every commit on `main` carries a valid signature; with Git alone,
+   `git verify-commit` checks single commits against that file
+   (link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).
 ** The Git server can additionally require signed commits. The conditions under which it marks a commit as verified
    differ per vendor: GitHub requires a signature verifiable against a public key added to an account
    (link:https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification[GitHub Docs]);
@@ -114,7 +135,9 @@ catalog of roles.
 . *Separate responsibilities.* When the Git administration and the operation of the application (or of the KMS) lie
   with different people, a forgery needs both, and auditors can be shown that separation.
 . *JGit.* Signing runs through an own implementation of JGit's signer interface `org.eclipse.jgit.lib.Signer`
-  (since JGit 7.0), so that the KMS or HSM signs.
+  (`@since 7.0`;
+  link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Signer.java[`Signer.java`],
+  checked in JGit 7.8.0), so that the KMS or HSM signs.
 
 [CAUTION]
 ====
@@ -145,3 +168,9 @@ signature is signed outside the application.
 == Sources
 
 * eIDAS: https://eur-lex.europa.eu/eli/reg/2014/910/oj[Regulation (EU) No 910/2014], Art. 25(2)
+* GDPR: https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679], Art. 4(1), Recital 26
+* OpenID Connect: https://openid.net/specs/openid-connect-core-1_0.html[OpenID Connect Core 1.0],
+  https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0]
+* Git signatures: https://git-scm.com/docs/gitformat-signature[gitformat-signature(5)],
+  https://git-scm.com/docs/git-config[git-config(1)], https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)],
+  https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1)]

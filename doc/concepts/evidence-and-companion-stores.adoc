@@ -11,7 +11,9 @@ without a database of their own, how the history is anchored, and how Git and th
 
 == The Problem
 
-Git is an append-only, hash-chained store, but only as long as nobody with administrative rights rewrites it. A
+Git names every object by the hash of its content, and every commit names its parents
+(link:https://git-scm.com/docs/gitglossary[gitglossary(7)], _object_, _object name_, _parent_), so a commit fixes its
+whole history. That protects the history only as long as nobody with administrative rights moves the references: a
 force push by an administrator replaces the history silently. Search and evaluations need structures Git does not
 keep. Personal data must be deletable, which Git history is not. Each of these gaps invites a new store; most of them
 do not need one.
@@ -49,12 +51,12 @@ operational details in the ticket system
 |none
 
 |Read-access log (who read a confidential document, logins)
-|The organisation's existing logging or SIEM (ISO/IEC 27001:2022, Annex A control 8.15 Logging)
+|The organisation's existing logging or SIEM (ISO/IEC 27001:2022, A.8.15 Logging)
 |none
 
 |Unsaved drafts
-|Accepted risk; the library never pushes drafts. An organisation that wants them secured backs up the application
-server's clone
+|Accepted risk; the library never pushes drafts, so the remote never secures them. They are secured only by a backup
+of the clone's storage
 |none
 
 |Search, evaluations, reporting-date views
@@ -64,7 +66,8 @@ server's clone
 
 == The Anchor
 
-A copy of all commits in a second store adds nothing: Git already is an append-only, hash-chained store. Value comes
+A copy of all commits in a second store adds nothing: in Git every commit already fixes its history by hash. Value
+comes
 from a *proof that a state existed at a time*, held where the Git administrator cannot change it unnoticed: the anchor
 of the hash chain. Anchoring is optional and pluggable; `git-store` decides what is anchored and stores the proofs,
 and one provider obtains and verifies them
@@ -100,9 +103,10 @@ security team, keeps a copy outside Git
 |A key source (KMS, HSM or key file); no further service
 
 |`rfc3161` (`git-timestamp`)
-|That an independent timestamp authority saw the hash at the time it signed. A qualified electronic timestamp enjoys
-the presumption of the accuracy of its date and time and of the integrity of the data bound to it (eIDAS, Regulation
-(EU) No 910/2014, Art. 41(2))
+|That an independent timestamp authority saw the hash at the time it signed. Only a qualified electronic timestamp,
+issued by a qualified trust service provider, enjoys the presumption of the accuracy of its date and time and of the
+integrity of the data bound to it (eIDAS, Regulation (EU) No 910/2014, Art. 41(2), 42); any other RFC 3161 proof is
+an electronic timestamp that may not be denied legal effect solely for not being qualified (Art. 41(1))
 |A timestamp authority reachable over HTTPS; one call per release and checkpoint
 |===
 
@@ -129,8 +133,10 @@ missing. Detecting a removed state therefore needs a *copy outside the administr
 * a mirror on a second Git server under another responsibility, where a force push on the main server shows;
 * a copy of each proof in a store of another responsibility (WORM storage, an archive of the security team).
 
-*Public transparency logs* (Sigstore Rekor) are not recommended for internal data: every entry of the public log is
-readable by anyone.
+*Public transparency logs* (Sigstore Rekor) are not recommended for internal data: a transparency log makes every
+valid entry public so that anybody can validate it, and who does not want an entry in the public Sigstore instances is
+pointed to running instances of their own
+(link:https://blog.sigstore.dev/privacy-in-sigstore-57cac15af0d0/[Sigstore Blog: Privacy in Sigstore, May 2022]).
 
 == Consistency between Git and the Other Systems
 
@@ -171,4 +177,7 @@ control the anchor turns a silent rewrite into a detectable one, nothing more; n
 
 == Sources
 
-* eIDAS: https://eur-lex.europa.eu/eli/reg/2014/910/oj[Regulation (EU) No 910/2014], Art. 41(2)
+* eIDAS: https://eur-lex.europa.eu/eli/reg/2014/910/oj[Regulation (EU) No 910/2014], Art. 41, 42
+* ISO/IEC 27001: https://www.iso.org/standard/27001[ISO/IEC 27001:2022], A.8.15 Logging
+* Git objects: https://git-scm.com/docs/gitglossary[gitglossary(7)]
+* Sigstore: https://blog.sigstore.dev/privacy-in-sigstore-57cac15af0d0/[Privacy in Sigstore]

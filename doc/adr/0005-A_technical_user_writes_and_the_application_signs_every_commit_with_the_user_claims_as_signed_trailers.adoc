@@ -61,8 +61,10 @@ An approval is additionally signed by a passkey on the user's device, stored as 
 of several signature levels up to a qualified electronic signature.
 
 *Rejected because* it needs a WebAuthn library, the registration and trust of public keys per user, notes per
-approval and a challenge format that WebAuthn does not standardise; and every level is a further variant to build and
-verify.
+approval and a format of its own that binds the approved commit to the assertion, because WebAuthn requires the
+challenge to be generated randomly by the relying party
+(link:https://www.w3.org/TR/webauthn-2/#sctn-cryptographic-challenges[W3C Web Authentication Level 2, 13.4.3
+Cryptographic Challenges]); and every level is a further variant to build and verify.
 
 === Commits signed with the user's own Git key
 
@@ -90,7 +92,8 @@ The trailers name the user by the identity provider's subject (`sub`) and sessio
 
 *Rejected because* both are personal identifiers and would stay in the history for good. The pseudonym stays as
 well, but erasure in the person directory removes its current entry; earlier versions of the entry remain in the
-history of the persons' repository (see ADR-0006).
+history of the persons' repository (see
+xref:0006-Commits_name_pseudonyms_and_a_pluggable_person_directory_keeps_persons_in_Git_by_default.adoc[ADR-0006]).
 
 === The author field only
 
@@ -103,7 +106,14 @@ The commit's author field names the user, without trailers or a signature.
 === Properties of the design
 
 * One path through the store: one credential type, one signature format, one place for approvals.
-* Integrity and origin of every commit are checkable without the Git server, also with a stock Git installation.
+* Integrity and origin of every commit are checkable without the Git server, also with a stock Git installation of
+  version 2.35 or later. Git 2.34 verifies SSH signatures against an `allowed_signers` file
+  (link:https://github.com/git/git/blob/master/Documentation/RelNotes/2.34.0.adoc[Git 2.34.0 release notes],
+  link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)], `gpg.ssh.allowedSignersFile` in
+  link:https://git-scm.com/docs/git-config[git-config(1)]); only from 2.35 on does it pass the committer timestamp to
+  `ssh-keygen` (`-Overify-time`,
+  link:https://github.com/git/git/blob/v2.35.0/gpg-interface.c[`gpg-interface.c` at v2.35.0]), so a commit whose
+  committer timestamp lies in the key's validity period still verifies after that period has ended.
 * Evidence is portable across Git servers, and no user needs a Git account.
 
 === Accepted costs
@@ -111,7 +121,8 @@ The commit's author field names the user, without trailers or a signature.
 * Trust lies in the application and its key. A compromised server can sign in anyone's name; no key on the user's
   device confirms an approval.
 * The Git server's audit log names only the technical user.
-* The signing key needs a KMS or HSM, and anchoring keeps older commits credible after a compromise.
+* A key file, the default source, protects the signing key only as well as the host's file system does; a KMS or HSM
+  keeps the key out of the application. Anchoring keeps older commits credible after a compromise.
 
 === When this is revisited
 

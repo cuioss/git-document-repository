@@ -5,12 +5,11 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-Incident response reports are written in Confluence today, under time pressure, by people who just spent a night on
-the incident. The 72-hour notification deadline is somewhere in a calendar, the mandatory fields are somewhere in a
-template nobody enforces, and next year's question "how often did this root cause recur" is answered by reading
-free text. This category replaces the report, not the handling.
+Where incident response reports are written as Confluence pages, the 72-hour notification deadline is kept outside the
+report, the template's mandatory fields are not enforced, and the question "how often did this root cause recur" is
+answered by reading free text. This category replaces the report, not the handling.
 
 == Handling and Report Are Two Things
 
@@ -30,14 +29,15 @@ to tickets and to measures (issues) by the ids the user or an agent enters.
   <<_the_deadline_clock>>). A form with a schema shows the deadlines and checks the mandatory fields; a Confluence page
   cannot.
 . *Review and approval* in the application, with step-up for the release, immutable after approval,
-  timestamped: evidence for ISO 27001 A.5.24–5.28 (among them 5.27, learning from incidents, and 5.28, collection of
-  evidence).
+  timestamped: evidence for the incident management controls A.5.24 to A.5.28 of
+  https://www.iso.org/standard/27001[ISO/IEC 27001:2022] (among them A.5.27, learning from information security
+  incidents, and A.5.28, collection of evidence).
 . *Machine-readable*: categories, times and root causes are fields, ready for evaluations across incidents; in
   Confluence they are free text.
 . *Links*: an incident leads to risks in the ISMS register and records its measures by issue id.
 . *Data protection and confidentiality*: a repository per year with a retention period (`isms-incidents-2026`),
   no personal details in the report (they stay in the ticket system), read access for a small circle
-  (link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
+  (xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
 
 Where Confluence is better: joint live editing and commenting, familiarity for non-technical participants, and it
 runs already. That is why the live phase stays there.
@@ -45,9 +45,10 @@ runs already. That is why the live phase stays there.
 [#_the_deadline_clock]
 == The Deadline Clock
 
-GDPR Art. 33 requires the notification of a personal data breach within 72 hours and the documentation of every such
-breach (para. 5). Where it applies, NIS2 requires an early warning within 24 hours and an incident notification within
-72 hours of becoming aware of a significant incident, an intermediate report on request of the CSIRT or competent
+GDPR Art. 33 (https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]) requires the notification of
+a personal data breach within 72 hours and the documentation of every such breach (para. 5). Where it applies, NIS2
+requires an early warning within 24 hours and an incident notification within 72 hours of becoming aware of a
+significant incident, an intermediate report on request of the CSIRT or competent
 authority, and a final report no later than one month after the notification, or, for an incident still ongoing then,
 a progress report at that point and the final report within one month of its handling
 (https://eur-lex.europa.eu/eli/dir/2022/2555/oj[Directive (EU) 2022/2555], Art. 23(4)). For a trust service provider
@@ -73,27 +74,27 @@ detected (`detected-at`); neither starts a deadline. Deadlines are computed from
 runtime state of the application, not persistence. A notification that was sent is a field with its time and its
 recipient; a missed deadline stays visible in the released report.
 
-The affected services come from the link:service-catalog.adoc[service catalog]; the protection needs of the incident
+The affected services come from the xref:service-catalog.adoc[service catalog]; the protection needs of the incident
 are the maximum over their effective protection needs, which already include what the services depend on.
 
 == AsciiDoc Is the Output, Not the Truth
 
 When the form produces AsciiDoc and someone edits that AsciiDoc by hand, the form can no longer load it cleanly.
-Hence:
+Hence the library's document layout `<collection>/<ulid>/document.yaml`:
 
 ----
-incidents/<id>/
-  incident.yaml        ← structured fields (schema): times, category, severity, affected services (service:…),
+incidents/<ulid>/
+  document.yaml        ← structured fields (schema): times, category, severity, affected services (service:…),
                          notifications, measures
   narrative/*.adoc     ← free-text sections (course, root-cause analysis, lessons) as AsciiDoc fragments
   report.adoc          ← generated: a template joins the YAML and the fragments
 ----
 
 The structured data stay in YAML; free text may be AsciiDoc with tables and images. `report.adoc` is generated
-reproducibly and committed as readable evidence; a CI check that makes sure it matches the YAML is planned, but does
-not exist yet. PDF for authorities or
+reproducibly and committed as readable evidence; a CI check fails when the committed `report.adoc` differs from a fresh
+generation (xref:../specification/category-incident-reports.adoc#CIFR-IR-1[CIFR-IR-1]). PDF for authorities or
 customers is generated from it as well. The mechanism is the library's
-link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
+xref:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
 template and the workflow.
 
 Personal details in the narrative (a named employee who clicked a link) do not go into the report. The narrative names
@@ -110,11 +111,18 @@ authority asks for (GDPR Art. 33(3)(a), link:https://eur-lex.europa.eu/eli/reg/2
 |Tool |Assessment
 
 |incident.io, FireHydrant, Rootly, PagerDuty
-|Commercial SaaS for operational incidents (SRE); strong in the live phase, produce postmortems; the data lie with
-the vendor
+|Incident management products that also write the review after an incident: post-mortems in incident.io
+(https://incident.io/post-mortems[incident.io post-mortems]), retrospectives in FireHydrant
+(https://docs.firehydrant.com/docs/intro-to-retrospectives[FireHydrant retrospectives]) and Rootly
+(https://docs.rootly.com/workflows/retrospective-workflows[Rootly retrospective workflows]); PagerDuty retires its
+Postmortems feature on 31 October 2026 and moves post-incident reviews into its web app
+(https://docs.pagerduty.com/incident-management/incidents/post-incident-reviews-and-postmortems[PagerDuty post-incident
+reviews and postmortems]). The review is written in the product
 
 |Jira Service Management with Confluence templates
-|Close to the current setup, but free text without a schema
+|Close to the current setup: a Confluence page template for post-incident reviews
+(https://www.atlassian.com/software/confluence/templates/itsm-post-incident-review[ITSM post incident review
+template]), free text without a schema
 
 |Netflix Dispatch
 |Open source, live phase with Slack; archived on GitHub (https://github.com/Netflix/dispatch[Dispatch on GitHub])
@@ -128,8 +136,9 @@ PostgreSQL database and a Docker Compose stack of its own (https://github.com/df
 |Case management for SOC teams; TheHive 5 needs a licence in every edition, the free Community licence is for
 non-commercial use (https://docs.strangebee.com/thehive/installation/licenses/about-licenses/[TheHive licenses])
 
-|Postmortems as Markdown in Git
-|Established practice (template of the Google SRE book); shows that the approach carries, but without form, schema and
+|Postmortems as text files in Git
+|Written after a structure such as the example postmortem of the Google SRE book
+(https://sre.google/sre-book/example-postmortem/[Site Reliability Engineering, Appendix D]); without form, schema and
 deadlines
 |===
 
@@ -146,6 +155,6 @@ them to the ISMS, the threat models and the notification duties. The gap is the 
 
 == Related
 
-* link:category-isms.adoc[ISMS] — risks and measures from incidents
-* link:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the yearly repository
-* link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]
+* xref:category-isms.adoc[ISMS] — risks and measures from incidents
+* xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout] — the yearly repository
+* xref:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]

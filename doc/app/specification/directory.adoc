@@ -1,17 +1,17 @@
 = CISOs-Friend: Directory and Catalogs
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The person directory as the application configures it, the first login, the catalogs and the service catalog the
 application adds to the library's catalogs. Reasoning:
-link:../concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login] and
-link:../concepts/service-catalog.adoc[Service Catalog]. Library contract:
-link:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19: Person Directory Interface] and
-link:../../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2: Person Directory in Git].
+xref:../concepts/authentication-and-identity.adoc#_first_login[Authentication and Identity, First Login] and
+xref:../concepts/service-catalog.adoc[Service Catalog]. Library contract:
+xref:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19: Person Directory Interface] and
+xref:../../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2: Person Directory in Git].
 
 [#CIFR-DIR-1]
 == CIFR-DIR-1: Person Directory
@@ -40,7 +40,8 @@ saved on `main` and signed like every commit; first login and own-entry changes 
   there is no first-login form.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
-* The form must show the configured information text (GDPR Art. 13) before the save button.
+* The form must show the configured information text (GDPR Art. 13,
+  link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]) before the save button.
 * The saved entry must be valid immediately and signed by the application.
 
 . After login the server asks the library for the person of (`iss`, `sub`). The outcome entry-required makes it answer

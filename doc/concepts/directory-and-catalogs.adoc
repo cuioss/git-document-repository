@@ -33,7 +33,7 @@ directory (repository)
   catalog/roles.yaml            ← catalog of roles, not personal
   catalog/teams.yaml            ← catalog of teams, not personal
   catalog/…                     ← catalogs the application declares, not personal
-  persons/<pseudonym>.yaml      ← one entry per person: name, memberships, hash of the login, no issuer, no `sub`
+  persons/<pseudonym>.yaml      ← one entry per person: name, memberships, hash of the login, no issuer, no sub
   erasures.yaml                 ← erased pseudonyms with their date, no person
 ----
 
@@ -75,7 +75,7 @@ The catalogs are xref:schema-driven-documents.adoc[schema-driven documents]: for
 [source,yaml]
 ----
 # persons/<pseudonym>.yaml
-subject: 9f2c…e41a               # SHA-256 over issuer and sub; neither is stored
+subject-hash: 9f2c…e41a          # SHA-256 over issuer and sub, not the OIDC sub; neither is stored
 name: Erika Example
 memberships:                     # role per team, not global
   - team: team:payments
@@ -83,6 +83,7 @@ memberships:                     # role per team, not global
   - team: team:payments
     role: role:developer
 since: 2026-11-12
+confirmed: 2026-11-12            # date of the last confirmation
 ----
 
 *Memberships are pairs of team and role* instead of separate fields: a person often belongs to several teams with a
@@ -120,9 +121,9 @@ Self-entered data age: teams change and nobody updates. Hence:
 
 * Documents refer to roles and teams instead of persons, and the directory resolves `<catalog>:<id>` to entries and a
   role in a team to persons, whether or not the identity provider delivers groups.
-* Every kind of document needs it, so it is a shared part, not one kind among others: the module `git-directory`
-  (see xref:module-structure.adoc[Module Structure]), built on `git-forms`, which also provides the default person
-  directory `git`.
+* Every kind of document that names persons, roles or teams needs it, so it is a shared part, not one kind among
+  others: the optional module `git-directory` (see xref:module-structure.adoc[Module Structure]). It is built on
+  `git-forms`; `git-directory` also provides the default person directory `git`.
 
 [CAUTION]
 ====
@@ -132,11 +133,12 @@ import reduce the drift; they do not remove it. That is why no right depends on 
 
 == Open Questions
 
-. The legal basis of the directory (legitimate interest or employee data protection) is agreed by each operator with
-  their data protection officer. The German rule on employee data protection
+. Which legal basis does the directory rest on, legitimate interest or employee data protection? Each operator
+  settles this with their data protection officer; the library cannot. The German rule on employee data protection
   (link:https://www.gesetze-im-internet.de/bdsg_2018/__26.html[§ 26 BDSG]) is in force, but its general clause in
   § 26(1) sentence 1 is disputed: the CJEU held on 30 March 2023 (C-34/21, _Hauptpersonalrat der Lehrerinnen und
-  Lehrer_) that national rules which do not meet the conditions of Art. 88(2) GDPR are no "more specific rules" and
+  Lehrer_) that national rules which do not meet the conditions of Art. 88(2)
+  link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[GDPR] are no "more specific rules" and
   must be disregarded unless they form a legal basis under another article of the GDPR
   (link:https://curia.europa.eu/site/upload/docs/application/pdf/2023-03/cp230054en.pdf[CJEU press release
   No 54/23]). The ruling concerned § 23(1) sentence 1 HDSIG of Hesse, whose wording largely matches § 26(1)

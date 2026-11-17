@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Block diagram: Git / outbox / three store classes. The dashed box and the dashed
+  Block diagram: Git / post-commit listeners / three store classes. The dashed box and the dashed
   edge mean "referenced only, never fed" (stated in the box and the caption).
   theme-handling: A (theme-neutral)
   see pm-documents:ref-svg-diagrams/standards/theme-handling.md

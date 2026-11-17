@@ -1,17 +1,20 @@
 = CISOs-Friend: MCP Server
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
-The MCP endpoint for AI agents as an OAuth 2.1 protected resource. Reasoning:
-link:../concepts/mcp-server.adoc[MCP Server]. Normative sources: MCP specification revision 2026-07-28,
+The MCP endpoint for AI agents as an OAuth 2.1 protected resource
+(link:https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], the Internet-Draft the
+MCP authorization specification of revision 2026-07-28 is based on). Reasoning:
+xref:../concepts/mcp-server.adoc[MCP Server]. Normative sources: MCP specification revision 2026-07-28,
 link:https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[Authorization] and
 link:https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[Transports] (Streamable HTTP);
-RFC 9728, RFC 8707, RFC 6750. Authorization is optional in MCP; CISOs-Friend uses authorization and follows the MCP
-authorization specification for HTTP transports.
+link:https://www.rfc-editor.org/rfc/rfc9728[RFC 9728], link:https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
+link:https://www.rfc-editor.org/rfc/rfc6750[RFC 6750]. Authorization is optional in MCP; CISOs-Friend uses
+authorization and follows the MCP authorization specification for HTTP transports.
 
 [#CIFR-MCP-1]
 == CIFR-MCP-1: Transport
@@ -63,6 +66,7 @@ identifier; MCP clients try the root path when it is not found.
 
 Unauthenticated request (the header is sent as one line; it is wrapped here for readability):
 
+[source,http]
 ----
 HTTP/1.1 401 Unauthorized
 WWW-Authenticate: Bearer resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource/mcp",
@@ -107,7 +111,7 @@ Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry o
 * A call lacking the scope must be answered with `403`, `error="insufficient_scope"`, the required `scope` and
   `resource_metadata`.
 * The effective permission must be the intersection of the token's scopes and the user's rights
-  (link:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]).
+  (xref:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]).
 
 [cols="1,2"]
 |===
@@ -125,6 +129,7 @@ Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry o
 
 Missing scope (one header line, wrapped here for readability):
 
+[source,http]
 ----
 HTTP/1.1 403 Forbidden
 WWW-Authenticate: Bearer error="insufficient_scope", scope="cisos-friend:write",
@@ -184,7 +189,7 @@ built from typed result objects that carry no credential field.
 
 |`write_draft`
 |`repository`, `id`, `data` (validated against the category schema)
-|`DRAFT_SAVED` or validation errors per field
+|`DRAFT_SAVED`
 
 |`discard_draft`
 |`repository`, `id`
@@ -192,12 +197,18 @@ built from typed result objects that carry no credential field.
 
 |`save`
 |`repository`, `id`, `base_blob_ids`
-|`SAVED`, `CONFLICT` (per file, with the differing fields), `GIT_UNAVAILABLE`
+|`SAVED`
 
 |`request_release`
 |`repository`, `id`, `comment`
-|`RELEASE_REQUESTED` with the request id; the request waits in the user's *Due* lens
+|`RELEASE_REQUESTED` with the request id; the request waits in the user's *Due* lens. The request is saved in Git, so
+`REJECTED` and `GIT_UNAVAILABLE` are possible as well
+(xref:architecture-and-modules.adoc#operation-outcomes[Operation Outcomes])
 |===
+
+The Result column shows a successful call. The complete outcome set of each tool, the same as that of its web-app
+equivalent, is listed once in
+xref:architecture-and-modules.adoc#operation-outcomes[Architecture and Modules, Operation Outcomes].
 
 Tool input sizes are limited to the category schema's `maxLength` and `maxItems`; a document of more than 1 MiB is
 refused.

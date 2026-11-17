@@ -14,21 +14,25 @@ stops.
 == The Problem
 
 Every additional database brings operating effort: provisioning, backup, restore tests, upgrades, access control.
-For an application whose content is hundreds to a few thousand structured documents, that effort dominates the
-value of the store. The documents also need what a plain database does not give for free: a complete history with
-diffs, a release that freezes a state, an approval that survives as evidence, and a format a person can read
-without the application.
+For an application whose content is hundreds to a few thousand structured documents, that effort is the same as for
+a large store, while the data stay small. The documents also need what a plain database does not give for free: a
+complete history with diffs, a release that freezes a state, an approval that survives as evidence, and a format a
+person can read without the application.
 
-Development organisations already operate exactly such a store. GitHub, GitLab or Gitea keep history,
-enforce rights, review changes and are backed up. Reusing that server avoids the extra database.
+Development organisations already operate a store that gives these. A Git server such as GitHub, GitLab, Gitea or
+Forgejo keeps the history of every change and grants rights per repository (see
+xref:data-protection.adoc#_repositories_per_confidentiality_and_retention_class[Data Protection, Repositories per
+Confidentiality and Retention Class]). The organisation already has such a server, with backups (see the assumptions
+below); reusing it avoids the extra database.
 
 == Assumptions
 
 * *Server-based.* One application server manages the Git repositories. No client holds a clone.
 * *Git is the persistence only.* Users never see Git; they see forms, documents and approvals.
 * *A maintained Git server exists*, with backups, in the organisation that runs the application.
-* *Authentication is given.* User login comes from Token Sheriff, a system of its own in a parallel repository. The
-  libraries consume the user's claims and the technical user's credential; they run no login flow.
+* *Authentication is given.* User login runs in the application against the identity provider, with the token
+  libraries of https://github.com/cuioss/TokenSheriff[Token Sheriff], which live in a repository of their own. The
+  libraries of this repository consume the user's claims and the technical user's credential; they run no login flow.
 
 == The Structural Response
 
@@ -45,7 +49,8 @@ merge in core and pushes the result to the repository's remote.
 |xref:storage-engine.adoc[The Storage Engine on Git]
 
 |*Identity by signature.* Only a technical user talks to Git; the application signs every commit and records the
-claims of the logged-in user as trailers. Every approval requires a fresh MFA login (step-up).
+claims of the logged-in user as trailers. Every approval requires an MFA authentication no older than a configured
+maximum age (step-up).
 |xref:identity-and-signing.adoc[Identity and Signing]
 
 |*Data protection by pseudonyms.* Commits and documents name persons only by pseudonym; names lie in one place, the
@@ -62,8 +67,8 @@ index) or lives in a system the organisation already runs.
 approval, deadlines and links. A kind of document becomes configuration of one generic layer.
 |xref:schema-driven-documents.adoc[Schema-Driven Documents]
 
-|*Master data.* A directory of persons under pseudonyms and catalogs of roles, teams and services that every document
-refers to by stable ids.
+|*Master data.* A directory of persons under pseudonyms, catalogs of roles and teams, and the catalogs an application
+declares (for example of its services), which every document refers to by stable ids.
 |xref:directory-and-catalogs.adoc[Directory and Catalogs]
 |===
 
@@ -83,7 +88,9 @@ designs exist.
 |Git in pure Java. Builds commits without a working tree (`ObjectInserter`, in-core `DirCache`), merges in core,
 updates references atomically; pluggable object storage (DFS, `InMemoryRepository`). `InMemoryRepository` lies in
 the internal package `org.eclipse.jgit.internal.storage.dfs`, which the JGit bundle exports only to its own friend
-bundles (checked in JGit 7.8.0); it carries no API stability promise, and `git-testing` builds on it.
+bundles
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/META-INF/MANIFEST.MF[`MANIFEST.MF`,
+`x-friends`], JGit 7.8.0); it carries no API stability promise, and `git-testing` builds on it.
 |Foundation
 
 |Gerrit NoteDb
@@ -102,7 +109,11 @@ optionally with a remote upstream.
 |Read-only, unsuitable
 
 |Dolt, Irmin, Gollum, Decap CMS
-|Git-like databases or Git-based content tools outside Java.
+|Outside Java: Dolt (Go) and Irmin (OCaml) are databases that follow the design of Git; Gollum (Ruby) is a wiki and
+Decap CMS (JavaScript) a content management system, both on Git
+(https://github.com/dolthub/dolt[Dolt], https://github.com/mirage/irmin[Irmin],
+https://github.com/gollum/gollum[Gollum],
+https://github.com/decaporg/decap-cms[Decap CMS]).
 |Comparison only
 |===
 
@@ -132,7 +143,9 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * *Reading*: snapshots of a reference or a commit (reporting dates), change history per path, diff of two states, an
   index interface the domain fills.
 * *Post-commit listeners*: in-process callbacks for the new commits, the hook for the index.
-* *Anchoring*: releases and periodic checkpoints anchored through a provider interface, the proofs as notes.
+* *Anchoring*: releases and periodic checkpoints anchored through a provider interface, the proofs as notes. The own
+  timestamp is part of `git-store`; the client of an RFC 3161 timestamp authority lives in the optional module
+  `git-timestamp`.
 * *Results instead of exceptions* for the expected outcomes (saved, conflict, rejected, unreachable, credentials
   expired).
 
@@ -140,11 +153,9 @@ underneath is generic, and every domain needs it identically. Separating it has 
 
 * the user interface,
 * the domain schemas (assessment models, threat model formats, report formats, register entities),
-* the OAuth flows and the identity provider (Token Sheriff; the libraries only consume credentials),
+* the OAuth flows (Token Sheriff, in the application) and the identity provider; the libraries only consume
+  credentials,
 * integrations with issue trackers and ticket systems.
-
-The own timestamp is part of `git-store`; the client of an RFC 3161 timestamp authority lives in the optional module
-`git-timestamp`.
 
 == Risks and Limits
 
@@ -156,8 +167,11 @@ The own timestamp is part of `git-store`; the client of an RFC 3161 timestamp au
   keeps such conflicts rare.
 * *Removing data from the history stays expensive.* The rules of xref:data-protection.adoc[Data Protection] keep
   personal data out of the history instead.
-* *The content API of the Git server* would be simpler than a clone, but binds to one vendor and runs into rate
-  limits. A JGit clone works with any Git server.
+* *The content API of the Git server* would be simpler than a clone, but binds to one vendor and counts against its
+  rate limits: GitHub limits REST API requests per hour
+  (link:https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api[GitHub Docs]), GitLab applies
+  rate limits to API requests (link:https://docs.gitlab.com/security/rate_limits/[GitLab Docs]). A JGit clone works
+  with any Git server.
 * *JGit's LFS support works through a working tree.* It is the separate bundle `org.eclipse.jgit.lfs`, which uses
   Gson: a clean filter that turns content into a pointer file when it is added, a smudge filter that restores it on
   checkout, and a pre-push hook that uploads the media files
@@ -174,9 +188,11 @@ the mechanisms; they do not certify them.
 
 == Open Questions
 
-. Prototype the store: concurrent saves against one branch, measuring conflicts and retries.
 . Draft the API of the modules together with the repository layout of the first consuming application.
-. Should JGit be added as a dependency of this repository? Like every dependency, it needs the owner's approval.
+. The owner's approval of JGit as a dependency is pending. ADR-0001 and ADR-0004 build on JGit; like every dependency
+  it is added only after that approval.
+
+The prototype of concurrent saves is listed with the xref:storage-engine.adoc#_open_questions[Storage Engine].
 
 == Related
 
@@ -194,5 +210,7 @@ application.
 * Gerrit NoteDb: https://gerrit.googlesource.com/gerrit/+/HEAD/Documentation/note-db.txt[note-db.txt],
   https://gerrit.googlesource.com/homepage/+/md-pages/docs/Notedb.md[What is NoteDb]
 * CrafterCMS:
-  https://craftercms.com/docs/3.1/developers/developer-workflow/developer-workflow.html[Developer workflow (Sandbox and Published)],
+  https://github.com/craftercms/studio/blob/v4.5.1/src/main/java/org/craftercms/studio/api/v1/constant/GitRepositories.java[Studio 4.5.1, `GitRepositories` (`SANDBOX`, `PUBLISHED`)],
+  https://craftercms.com/docs/current/by-role/developer/devcontentops.html[DevContentOps (the sandbox and its remote
+  upstream)],
   https://craftercms.com/blog/technical/git-based-cms-what-it-is-and-why-you-need-it[Git-based CMS]

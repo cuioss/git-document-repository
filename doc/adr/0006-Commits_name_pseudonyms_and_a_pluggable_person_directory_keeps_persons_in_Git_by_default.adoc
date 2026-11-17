@@ -19,7 +19,9 @@ Accepted
 == Decision
 
 Commits and documents name persons: as authors, assessors, approvers or affected persons. Git keeps every old version
-of every file, and the GDPR demands that personal data can be erased. The question is where names and memberships live,
+of every file, and Art. 17 GDPR gives a data subject the right to have personal data concerning them erased
+(link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]). The question is where names and
+memberships live,
 and how much machinery erasure needs.
 
 Comparable systems keep their history and erase only the current record (see
@@ -43,7 +45,7 @@ Handle Erasure]).
 * *Providers for the operator's own source* (for example LDAP, SCIM or the identity provider's user directory) plug
   into the same interface. Names and memberships then stay in that source, no name enters Git, and the operator erases
   there.
-* *Retention per repository* stays: a repository whose retention period ended is deleted as a whole.
+* *Retention per repository:* a repository whose retention period ended is deleted as a whole.
 
 See xref:../concepts/data-protection.adoc[Data Protection].
 
@@ -57,8 +59,12 @@ with a new KEK and destroys the old one, which makes every old version in the hi
 
 *Rejected because* it needs a module of its own, an encryption library, a versioned KEK whose old versions must
 vanish from every backup, a strict order of rotate, push and destroy, and a keyring that is a hot spot for
-compare-and-swap; and whether destroying the key counts as erasure is not settled (EDPB Guidelines 02/2025, version
-2.0, para. 51). An operator who needs more than the default plugs in a provider for a source where erasure is a
+compare-and-swap; and destroying the key does not settle erasure: the EDPB holds that encrypted personal data is
+still personal data, unintelligible after the deletion of its key only until the algorithm is broken or the key turns
+out to have leaked
+(link:https://www.edpb.europa.eu/system/files/2026-07/edpb_guidelines_202502_blockchain_v2_en.pdf[EDPB Guidelines
+02/2025 on processing of personal data through blockchain technologies, version 2.0], para. 51). An operator who needs
+more than the default plugs in a provider for a source where erasure is a
 deletion.
 
 === Person entries as files outside every repository

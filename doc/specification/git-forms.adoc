@@ -40,11 +40,16 @@ chosen by the application.
 == GDR-FORMS-2: Schema Validation
 
 * Data must be validated against the JSON Schema of its kind before every save.
-* A validation failure must be reported per field path (JSON Pointer and message) and must prevent the save.
-* The schema file must be plain JSON Schema, usable unchanged by a validator outside the library.
+* A validation failure must be reported per field path (JSON Pointer,
+  link:https://www.rfc-editor.org/rfc/rfc6901[RFC 6901], and message) and must prevent the save.
+* The schema file must be plain JSON Schema, usable unchanged by a validator outside the library that supports its
+  dialect; link targets (<<GDR-FORMS-8>>) only the library checks.
 
-The dialect is open. Documents hold no personal data beyond pseudonyms and have no encrypted field type: a field that
-names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory` of `git-store`.
+The dialect is open. Apart from the person entries of the `git` person directory
+(xref:git-directory.adoc#GDR-DIR-2[GDR-DIR-2]), the one kind that holds a name
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), documents hold no personal data beyond pseudonyms and have no encrypted
+field type: a field that names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory`
+of `git-store`.
 
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
@@ -55,6 +60,7 @@ names a person holds a pseudonym (`p-…`), resolved for display through the `Pe
 
 Per-document kind, on the document's working branch:
 
+[source,text]
 ----
 <collection>/<ulid>/
   document.yaml          structured fields, validated by the schema
@@ -72,7 +78,9 @@ schema declares the split.
 
 * The template must join data and fragments into one AsciiDoc output file; equal input must produce byte-identical
   output.
-* The output must be committed in the same commit as the data it was generated from.
+* The output must be committed in the same commit as the data it was generated from. A save must regenerate the
+  output from the data of the commit it creates (after re-applying the draft onto the remote tip,
+  xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]); the output file itself is never merged.
 * A check operation must report whether a committed output matches its data, and must run from CI without the
   application.
 * A kind without a template must generate no output; generation and its check must be skipped.
@@ -81,7 +89,9 @@ schema declares the split.
 == GDR-FORMS-5: Workflow
 
 * A workflow must declare states (at least draft, review, approved, superseded) and the allowed transitions.
-* Every transition must map onto a mechanism of the store: `intermediate-save`, `save`, `release` or `tag`.
+* Every transition must map onto a mechanism of the store: `intermediate-save`
+  (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]), `save` (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]) or `release`
+  (xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6]).
 * A transition the workflow does not allow must be refused with the outcome transition refused.
 
 image::../resources/diagrams/document-workflow-states.svg["Document states and transitions",align=center]
@@ -135,9 +145,10 @@ Every commit is signed the same way; step-up changes only the authentication the
 == GDR-FORMS-8: Typed Links
 
 * A link must have the form `<alias>:<kind>/<id>` (for example `register:risk/R-042`) or `<catalog>:<id>` (for
-  example `team:payments`).
-* On save the library must check that every link target exists; a missing target must prevent the save with the
-  outcome invalid.
+  example `team:payments`). A document link may end in `#<fragment>`, naming a part of the target document; the
+  library does not interpret the fragment.
+* On save the library must check that every link target exists, for a link with a fragment the document without
+  the fragment; a missing target must prevent the save with the outcome invalid.
 * A retired target (a catalog entry with `retired: true`) must still resolve.
 
 The schema marks link fields with `"format": "gdr-link"`; targets are resolved through the index or the directory.

@@ -1,13 +1,13 @@
 = CISOs-Friend: Category Threat Models
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-link:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[CISOs-Friend documentation] » Specification
 
 The threat-model category as configuration (`categories/threat-models/`). Reasoning:
-link:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat-models`.
+xref:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat-models`.
 
 [#CIFR-TM-1]
 == CIFR-TM-1: Place of a Threat Model
@@ -19,22 +19,30 @@ link:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat
 [#CIFR-TM-2]
 == CIFR-TM-2: Open Format
 
-* A threat model must be stored in an open format: Threat Dragon JSON, which OWASP Threat Dragon opens and edits, or
-  Open Threat Model; the choice is an open decision.
+* A threat model must be stored as one JSON file in an open, published threat-model format.
 * Diagrams must be stored as data; images must be generated.
+
+Files of a threat model:
 
 * `model.json`: the threat model in the chosen format. The category schema validates the parts the application reads;
   unknown fields are preserved on write.
 * `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`.
 
+The candidate formats are Threat Dragon JSON, the file format OWASP Threat Dragon saves and opens
+(link:https://github.com/OWASP/threat-dragon/blob/v2.6.2/td.vue/src/service/save.js[`td.vue/src/service/save.js` of
+Threat Dragon v2.6.2]), and Open Threat Model
+(link:https://github.com/iriusrisk/OpenThreatModel[OTM on GitHub]); which one is used is an open question of the
+concept (xref:../concepts/category-threat-models.adoc#_open_questions[Threat Models, Open Questions]).
+
 [#CIFR-TM-3]
 == CIFR-TM-3: Review Due Date
 
 * A threat model must be due for review one review interval after its last review; the interval must follow the
-  highest protection need of the service.
+  highest of the service's effective protection needs.
 
 The intervals are deadline data of the category's `workflow.yaml`: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`,
-applied to the effective protection needs of the service (link:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]). A completed
+applied to the highest of the three effective protection needs (confidentiality, integrity, availability) of the
+service (xref:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]). A completed
 review sets `last-review`.
 
 [#CIFR-TM-4]
@@ -43,6 +51,8 @@ review sets `last-review`.
 * Every threat model must refer to exactly one `service:` entry.
 * An accepted or untreated threat must be transferable into an ISMS risk entry.
 * The application must show per service: open threats, untreated threats and the age of the model.
+
+Transfer, issues and evaluation:
 
 * "Transfer to risk register" creates a draft risk in `isms-register` with the reference
   `threat-models:threat-model/<model-id>#<threat-id>`.
@@ -58,4 +68,4 @@ review sets `last-review`.
 
 A recipe is `categories/threat-models/recipes/<id>.yaml`: `title`, ordered `steps`, each with `title`, `guidance`
 (AsciiDoc fragment) and `fills` (JSON Pointer into `model.json`). The web app renders a recipe as `WizardPage`; the MCP
-server exposes recipes through the tool `read_recipe` (link:mcp-server.adoc#CIFR-MCP-6[MCP Server, Tools]).
+server exposes recipes through the tool `read_recipe` (xref:mcp-server.adoc#CIFR-MCP-6[MCP Server, CIFR-MCP-6]).
