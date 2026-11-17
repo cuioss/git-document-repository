@@ -79,8 +79,9 @@ are the maximum over their effective protection needs, which already include wha
 
 == AsciiDoc Is the Output, Not the Truth
 
-When the form produces AsciiDoc and someone edits that AsciiDoc by hand, the form can no longer load it cleanly.
-Hence the library's document layout `<collection>/<ulid>/document.yaml`:
+The report follows the library's document layout of
+xref:../../concepts/schema-driven-documents.adoc[schema-driven documents], in which YAML data are the truth and the
+AsciiDoc output is generated:
 
 ----
 incidents/<ulid>/
@@ -90,12 +91,9 @@ incidents/<ulid>/
   report.adoc          ← generated: a template joins the YAML and the fragments
 ----
 
-The structured data stay in YAML; free text may be AsciiDoc with tables and images. `report.adoc` is generated
-reproducibly and committed as readable evidence; a CI check fails when the committed `report.adoc` differs from a fresh
-generation (xref:../specification/category-incident-reports.adoc#CIFR-IR-1[CIFR-IR-1]). PDF for authorities or
-customers is generated from it as well. The mechanism is the library's
-xref:../../concepts/schema-driven-documents.adoc[schema-driven documents]; this category supplies the schema, the
-template and the workflow.
+A CI check fails when the committed `report.adoc` differs from a fresh generation
+(xref:../specification/category-incident-reports.adoc#CIFR-IR-1[CIFR-IR-1]); PDF for authorities or customers is
+generated from it as well. This category supplies the schema, the template and the workflow.
 
 Personal details in the narrative (a named employee who clicked a link) do not go into the report. The narrative names
 roles and pseudonyms ("a member of `team:payments`"); the details stay in the ticket, referenced by its id, and the UI

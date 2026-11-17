@@ -88,7 +88,7 @@ schema declares the split.
 [#GDR-FORMS-5]
 == GDR-FORMS-5: Workflow
 
-* A workflow must declare states (at least draft, review, approved, superseded) and the allowed transitions.
+* A workflow must declare its states and the allowed transitions; the names of the states are the workflow's own.
 * Every transition must map onto a mechanism of the store: `intermediate-save`
   (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]), `save` (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]) or `release`
   (xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6]).
@@ -104,15 +104,18 @@ transitions:
   - { name: submit,    from: draft,    to: review,     mechanism: save }
   - { name: approve,   from: review,   to: approved,   mechanism: release }
   - { name: rework,    from: review,   to: draft,      mechanism: save }
+  - { name: revise,    from: approved, to: draft,      mechanism: save }
   - { name: supersede, from: approved, to: superseded, mechanism: release }
 deadlines:
   - { state: review,   within: P14D }
   - { state: approved, review-interval: P1Y }
 ----
 
-The current state is the field `state`, written by the transition into `document.yaml` or the entry file. The
-workflow state `draft` is unrelated to the draft references of `git-store`, which hold intermediate saves in any
-state.
+The example is the default workflow. `revise` starts the next version on the working branch while `main` keeps the
+last release until the next `approve`; `supersede` withdraws an approved document, for example when another document
+replaces it, by a last release that records the state; the earlier tags stay. The current state is the field
+`state`, written by the transition into `document.yaml` or the entry file. The workflow state `draft` is unrelated to
+the draft references of `git-store`, which hold intermediate saves in any state.
 
 [#GDR-FORMS-6]
 == GDR-FORMS-6: Deadlines

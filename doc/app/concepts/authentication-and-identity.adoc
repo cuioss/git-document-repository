@@ -29,8 +29,8 @@ Token Sheriff provides authentication and the OAuth flows; this application take
   https://www.rfc-editor.org/rfc/rfc9126[RFC 9126])). The tokens stay
   in the server; the browser holds only cookies
   (xref:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]). This is the
-  backend-for-frontend shape Token Sheriff's client is built for; an API Sheriff BFF in front of the application was
-  considered and not chosen (ADR-0001, alternatives).
+  backend-for-frontend shape Token Sheriff's client is built for; ADR-0001 explains why no API Sheriff BFF stands in
+  front of the application.
 * *MCP server*: AI agents present bearer access tokens. The server validates them with
   `token-sheriff-validation-quarkus` as an OAuth 2.1 resource server
   (https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], an Internet-Draft;

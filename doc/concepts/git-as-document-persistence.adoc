@@ -77,8 +77,7 @@ How these primitives are cut into Maven modules is described in xref:module-stru
 == Existing Solutions
 
 No Java library known to this concept provides this shape: drafts per user and merge on save, in memory, against any
-Git server. None of the candidates surveyed below does. Building blocks and reference
-designs exist.
+Git server. Building blocks and reference designs exist:
 
 [cols="1,2,1"]
 |===
@@ -117,8 +116,7 @@ https://github.com/decaporg/decap-cms[Decap CMS]).
 |Comparison only
 |===
 
-Gerrit and CrafterCMS apply the pattern in their own products. A reusable persistence library for it is not known
-to this concept.
+Gerrit and CrafterCMS apply the pattern inside their own products, not as a reusable library.
 
 == Why a Library of Its Own
 
@@ -168,10 +166,8 @@ underneath is generic, and every domain needs it identically. Separating it has 
 * *Removing data from the history stays expensive.* The rules of xref:data-protection.adoc[Data Protection] keep
   personal data out of the history instead.
 * *The content API of the Git server* would be simpler than a clone, but binds to one vendor and counts against its
-  rate limits: GitHub limits REST API requests per hour
-  (link:https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api[GitHub Docs]), GitLab applies
-  rate limits to API requests (link:https://docs.gitlab.com/security/rate_limits/[GitLab Docs]). A JGit clone works
-  with any Git server.
+  rate limits; a JGit clone works with any Git server
+  (xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]).
 * *JGit's LFS support works through a working tree.* It is the separate bundle `org.eclipse.jgit.lfs`, which uses
   Gson: a clean filter that turns content into a pointer file when it is added, a smudge filter that restores it on
   checkout, and a pre-push hook that uploads the media files

@@ -53,7 +53,7 @@ xref:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Vers
 The push refspec also carries `refs/drafts/*`, so the remote secures the drafts.
 
 *Rejected because* the remote would collect every abandoned draft of every user, and every reader of the remote would
-see half-finished work. Drafts are secured by a backup of the repository directory instead (see Accepted costs).
+see half-finished work. Drafts are secured by a backup of the clone's storage instead (see Accepted costs).
 
 == Consequences
 
@@ -64,8 +64,8 @@ see half-finished work. Drafts are secured by a backup of the repository directo
 
 === Accepted costs
 
-* Drafts are not secured by the remote: a lost repository directory loses them unless the operator backs it up. The
-  directory needs persistent storage and a backup.
+* Drafts are not secured by the remote: a lost clone loses them unless the operator backs up its storage. The clone
+  needs persistent storage and a backup.
 * One application instance serves a repository, because the drafts live in its clone.
 * Abandoned drafts need expiry and a garbage collection.
 

@@ -17,8 +17,8 @@ application adds, and a small directory of persons under pseudonyms, all referen
   and the application.
 * *Hence no staging.* An assignment a user makes is valid at once; there is no pending state and no confirmation by a
   team lead or an administrator. The history of the directory shows who changed what.
-* *Roles and teams come from a catalog.* A user picks them; free text is not allowed. A missing entry is added to the
-  catalog through a review.
+* *Roles and teams come from a catalog.* A user picks them; free text is not allowed. A missing entry is requested
+  and added to the catalog by a user the application lets change it.
 
 A later iteration may derive rights from roles. Then a self-chosen role must not grant them: assignments of such roles
 need a confirmation by a team lead or an administrator, or come from the identity provider, and a workflow counts
@@ -63,7 +63,8 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 * *Stable ids instead of names.* Documents refer to `role:security-champion` and `team:payments`; renaming an entry
   breaks no reference.
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to a retired team.
-* *Changes by review.* A new or renamed entry is a reviewed save, like every other document.
+* *Changes are signed saves.* A new or renamed entry is a save through the catalog's workflow, like every other
+  document; which users may change a catalog is the application's decision.
 * *Further catalogs are configuration.* An application declares its own catalogs (for example of its services) with a
   file, an id prefix and a schema; references of the form `<catalog>:<id>` resolve the same way.
 

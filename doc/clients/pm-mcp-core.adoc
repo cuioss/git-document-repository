@@ -77,9 +77,8 @@ cache repository (`initCache`, `fetchCommit`, `readFile`), and its records
 
 |`LinkedWorktrees`
 |The administration files of git's linked working trees, read and written natively, because JGit has no command
-that adds or removes a linked working tree (JGit 7.0 added read support only; checked in JGit 7.8.0, whose
-link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[`api`
-package] holds no worktree command)
+that adds or removes a linked working tree (see
+xref:../concepts/storage-engine.adoc#_no_working_trees[Storage Engine, No Working Trees])
 |none
 
 |`WorktreeShaDigest`
@@ -104,7 +103,7 @@ policy, a file read at that commit.
   the libraries name.
 * *`git-worktrees`* takes `LinkedWorktrees`, adding, listing and removing working trees, and the commit from a working
   tree, and offers the working-tree status on which `WorktreeShaDigest` builds.
-* *`git-testing`* takes the generator of the transport credential (`GitCredentialGenerator`, `GitGenerators`, today in
+* *`git-testing`* takes the generator of the transport credential (`GitCredentialGenerator`, `GitGenerators`, which lie in
   the test artifact `pm-provider-git:tests`).
 * *`pm-provider-git` keeps* `JGitSourceRepository`, `WorktreeShaDigest` with its ported tests and fixtures (its
   framing is a contract of PM-MCP; it then builds on the working-tree status of `git-worktrees`), and `GitOperations`
