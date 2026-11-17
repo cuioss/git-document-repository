@@ -16,12 +16,15 @@
 package de.cuioss.git.document.testing;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.jgit.util.FileUtils;
 import org.jspecify.annotations.Nullable;
@@ -41,14 +44,33 @@ final class TemporaryDirectories {
 
     /**
      * Creates a new, empty directory in the default temporary-file directory.
+     * <p>
+     * The default temporary-file directory is shared with other users, so the directory is created with explicit
+     * owner-only permissions: on a file system that supports the {@code posix} file attribute view it is created
+     * with the permissions {@code rwx------}. On any other file system no attribute is passed and the directory
+     * keeps the permissions that file system gives a new directory.
      *
      * @return the created directory
      * @throws IOException if the directory cannot be created
      */
     static Path create() throws IOException {
-        var directory = Files.createTempDirectory(PREFIX);
+        var directory = Files.createTempDirectory(PREFIX, ownerOnlyAttributes());
         CREATED.incrementAndGet();
         return directory;
+    }
+
+    /**
+     * Returns the file attributes that restrict a new directory to its owner.
+     *
+     * @return a single {@code rwx------} permission attribute on a file system that supports the {@code posix} file
+     *         attribute view, an empty array otherwise
+     */
+    private static FileAttribute<?>[] ownerOnlyAttributes() {
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            return new FileAttribute<?>[]{
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))};
+        }
+        return new FileAttribute<?>[0];
     }
 
     /**
