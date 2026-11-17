@@ -1,0 +1,11 @@
+{
+  "id": "PLAN-05",
+  "slug": "git-core-merge-read-notes",
+  "workstream": "WS-01",
+  "status": "staged",
+  "lane": "plan-marshall",
+  "plan_marshall_plan_id": "",
+  "pr": "",
+  "landing": "",
+  "seq": 5
+}

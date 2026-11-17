@@ -1,0 +1,36 @@
+{
+  "kind": "orchestrator",
+  "title": "Initial implementation of the libraries",
+  "phase": "orchestrating",
+  "workstreams": [
+    {
+      "id": "WS-01",
+      "slug": "foundation",
+      "status": "active"
+    },
+    {
+      "id": "WS-02",
+      "slug": "git-store",
+      "status": "active"
+    },
+    {
+      "id": "WS-03",
+      "slug": "git-forms",
+      "status": "active"
+    },
+    {
+      "id": "WS-04",
+      "slug": "git-directory",
+      "status": "active"
+    },
+    {
+      "id": "WS-05",
+      "slug": "git-timestamp",
+      "status": "active"
+    }
+  ],
+  "metadata": {
+    "parallelization_scope": "3"
+  },
+  "created": "2026-11-17T16:19:03Z"
+}

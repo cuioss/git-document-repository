@@ -16,3 +16,8 @@
 .plan/*
 !.plan/marshal.json
 !.plan/project-architecture/
+# Orchestrator ledger (git-tracked by design; only its logs stay local)
+!.plan/orchestrator/
+!.plan/archived-orchestrators/
+.plan/orchestrator/*/logs/
+.plan/archived-orchestrators/*/logs/

@@ -1,0 +1,26 @@
+{
+  "repositories": [
+    {
+      "name": "pm-mcp-core",
+      "local_path": "~/git/pm-mcp-core",
+      "role": "source of the foundation code (pm-providers/pm-provider-git), plain copy",
+      "inventoried_at_commit": "287e1a86"
+    }
+  ],
+  "source_documents": [
+    "doc/README.adoc",
+    "doc/concepts/module-structure.adoc",
+    "doc/clients/pm-mcp-core.adoc",
+    "doc/specification/general.adoc",
+    "doc/specification/git-core.adoc",
+    "doc/specification/git-worktrees.adoc",
+    "doc/specification/git-testing.adoc",
+    "doc/specification/git-store.adoc",
+    "doc/specification/git-forms.adoc",
+    "doc/specification/git-directory.adoc",
+    "doc/specification/git-timestamp.adoc"
+  ],
+  "runbooks": [
+    ".claude/skills/release/SKILL.md"
+  ]
+}
