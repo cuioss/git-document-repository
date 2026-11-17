@@ -100,7 +100,7 @@ Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 == Open Questions
 
 . Decide the threat model format (OTM or Threat Dragon JSON). Teams that edit in Threat Dragon need its JSON, or a
-  Threat Dragon release that imports OTM again (see <<_existing_tools>>).
+  Threat Dragon release that imports OTM (see <<_existing_tools>>).
 . Which recipes ship with the application, and whether a recipe is itself a schema-driven document.
 . Deferred: detection of an outdated model from the diffs of the service's repositories since the last review.
 

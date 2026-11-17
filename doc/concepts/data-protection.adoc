@@ -127,9 +127,8 @@ into separate repositories; the concrete cut is the decision of the application.
 
 * The application enforces the rights per repository; the Git server sees only the technical user (see
   xref:identity-and-signing.adoc[Identity and Signing]).
-* *References across repositories* use stable ids of the form `<alias>:<kind>/<id>` for documents (for example
-  `register:risk/R-042`) and `<catalog>:<id>` for entries of the directory catalogs (for example `role:ciso`). The
-  store checks on save that the target exists.
+* *References across repositories* name the target repository by its alias, for example `register:risk/R-042`; the
+  forms of a reference are defined in xref:schema-driven-documents.adoc#_links[Schema-Driven Documents, Links].
 * After its retention period a repository is deleted as a whole.
 
 == Open Questions

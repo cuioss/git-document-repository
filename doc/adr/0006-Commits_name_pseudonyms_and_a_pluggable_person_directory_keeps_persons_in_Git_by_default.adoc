@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: Commits and documents name persons only by a random pseudonym. Names and memberships lie in a person directory behind the service interface PersonDirectory of git-store. The default provider git keeps one plain YAML entry per person in a repository, found at login by a SHA-256 hash of issuer and sub; erasure deletes the entry and records the pseudonym, and the repository's history keeps earlier versions, as comparable systems keep theirs. Operators who need more plug in a provider for their own source (for example LDAP); then no names enter Git. There is no encryption in Git.
+// summary: Commits and documents name persons only by a random pseudonym; names and memberships lie in a pluggable person directory (service interface PersonDirectory of git-store), by default one plain YAML entry per person in a repository, whose history keeps earlier versions after an erasure; an operator who needs more plugs in a provider for an own source. There is no encryption in Git.
 // tags: data-protection, gdpr, pseudonym, directory, erasure, spi
 // affects: git-store, git-directory, git-forms
 // supersedes:
@@ -63,17 +63,15 @@ compare-and-swap; and destroying the key does not settle erasure: the EDPB holds
 still personal data, unintelligible after the deletion of its key only until the algorithm is broken or the key turns
 out to have leaked
 (link:https://www.edpb.europa.eu/system/files/2026-07/edpb_guidelines_202502_blockchain_v2_en.pdf[EDPB Guidelines
-02/2025 on processing of personal data through blockchain technologies, version 2.0], para. 51). An operator who needs
-more than the default plugs in a provider for a source where erasure is a
-deletion.
+02/2025 on processing of personal data through blockchain technologies, version 2.0], para. 51).
 
 === Person entries as files outside every repository
 
 The default provider keeps the entries as plain files on the application's volume, never versioned, so that erasure
 leaves no history.
 
-*Rejected because* it adds a store of its own beside Git, with its own backup.
-An operator who needs erasure without history plugs in a provider for a source that offers it.
+*Rejected because* it adds a store of its own beside Git, with its own backup. An operator who needs erasure without
+history plugs in a provider for a source that offers it.
 
 === Names in commits and documents
 

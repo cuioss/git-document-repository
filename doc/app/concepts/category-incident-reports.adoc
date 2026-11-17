@@ -18,10 +18,9 @@ answered by reading free text. This category replaces the report, not the handli
 * *The report on the incident* (course, cause, impact, lessons, measures, notification duties) is a document with
   structure, review and approval, the kind of document the schema-driven approach on Git is made for.
 
-The live phase therefore stays in the chat, the ticket system, the on-call service and Confluence; only the report
-moves into CISOs-Friend. Handling the live phase in CISOs-Friend would not work: Git is no real-time medium, and a
-commit per chat message would bury the report. The application connects to none of these systems: the report refers
-to tickets and to measures (issues) by the ids the user or an agent enters.
+Only the report moves into CISOs-Friend. Handling the live phase there would not work: Git is no real-time medium, and
+a commit per chat message would bury the report. The application connects to none of the systems of the live phase:
+the report refers to tickets and to measures (issues) by the ids the user or an agent enters.
 
 == What a Form Gains over Confluence
 
@@ -40,7 +39,7 @@ to tickets and to measures (issues) by the ids the user or an agent enters.
   (xref:data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]).
 
 Where Confluence is better: joint live editing and commenting, familiarity for non-technical participants, and it
-runs already. That is why the live phase stays there.
+runs already.
 
 [#_the_deadline_clock]
 == The Deadline Clock
@@ -112,8 +111,8 @@ authority asks for (GDPR Art. 33(3)(a), link:https://eur-lex.europa.eu/eli/reg/2
 |Incident management products that also write the review after an incident: post-mortems in incident.io
 (https://incident.io/post-mortems[incident.io post-mortems]), retrospectives in FireHydrant
 (https://docs.firehydrant.com/docs/intro-to-retrospectives[FireHydrant retrospectives]) and Rootly
-(https://docs.rootly.com/workflows/retrospective-workflows[Rootly retrospective workflows]); PagerDuty retires its
-Postmortems feature on 31 October 2026 and moves post-incident reviews into its web app
+(https://docs.rootly.com/workflows/retrospective-workflows[Rootly retrospective workflows]), and post-incident
+reviews in PagerDuty's web app
 (https://docs.pagerduty.com/incident-management/incidents/post-incident-reviews-and-postmortems[PagerDuty post-incident
 reviews and postmortems]). The review is written in the product
 

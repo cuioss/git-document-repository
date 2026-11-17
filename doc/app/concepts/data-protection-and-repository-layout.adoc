@@ -50,7 +50,7 @@ image::../resources/diagrams/repository-cut.svg["Six repositories by confidentia
 
 |`directory`
 |Catalogs of roles, teams, systems, services and external parties; the person entries (name and memberships under a
-pseudonym) and the record of erasures
+pseudonym), the record of erasures and the record of deleted repositories
 |Everyone in the organisation
 |===
 
@@ -124,7 +124,7 @@ operational concept:
   effective at once (xref:../specification/data-protection.adoc#CIFR-DP-3[CIFR-DP-3]). Documents keep the pseudonym and show "former member"; because responsibilities run through
   roles, they stay understandable.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
-  anchors it.
+  anchors it when an anchor provider is active.
 * *History*: the history of the persons' repository keeps the earlier versions of the entry; what that means, and
   the deadline for answering a request, is set out in
   xref:../../concepts/data-protection.adoc[Data Protection] (_Erasing a Person_ and _What Has to Be Done Right_).

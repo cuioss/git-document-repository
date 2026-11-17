@@ -30,9 +30,11 @@ code.
 
 == Schema
 
-A *JSON Schema* per kind of document produces the form and validates the data before every save. Once the dialect
-is decided (see <<_open_questions>>), any validator that supports that dialect can check the same data outside the
-application.
+A *JSON Schema* per kind of document produces the form and validates the data before every save. Mandatory fields
+are the exception: a save accepts a document with mandatory fields missing, so that unfinished work can be shared,
+and a transition out of the workflow's first state, such as submitting for review, or into a release refuses it. Once
+the dialect is decided (see <<_open_questions>>), any validator that supports that dialect can check the same data
+outside the application.
 
 == Data, Free Text and Generated Output
 

@@ -137,7 +137,10 @@ from these keys: `repositories`, `save.max-attempts`, `drafts.expiry`, `fetch.in
 `signing.key-source` and `signing.key` from `signing.key-ref`, its `anchor.signed.key-source` and
 `anchor.signed.key` from `anchor.signed-key-ref`, its `anchor.signed.allowed-signers` from
 `anchor.signed-allowed-signers`. The `step-up` keys are those of
-xref:../../specification/git-forms.adoc#GDR-FORMS-7[`git-forms`, GDR-FORMS-7].
+xref:../../specification/git-forms.adoc#GDR-FORMS-7[`git-forms`, GDR-FORMS-7]. Where the application's default
+differs from the library's (`anchor.provider`, `fetch.interval`, `directory.confirmation-interval`), the
+application's applies; the library keys not listed here (`anchor.releases`, `anchor.retry-interval`,
+`anchor.signed.max-clock-skew`) are not configurable and keep their library defaults.
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 
@@ -155,8 +158,7 @@ Before the application accepts requests, every rule runs; each violation produce
 violation stops the boot. Besides the schema, the rules refuse what the schema cannot see: two repositories with one
 alias, a `rights` entry or `directory.persons.repository` naming an unknown alias, a `-ref` value in a form its key
 does not accept, an `anchor.signed-key-ref` equal to `signing.key-ref`, and an `mcp.canonical-uri` that is not an
-absolute HTTPS URI without fragment. Offline, `application --validate-config <dir>` runs the same rules and exits `0`
-(valid) or `1` (invalid).
+absolute HTTPS URI without fragment. `--validate-config <dir>` runs the same rules offline.
 
 [#CIFR-CONF-2]
 == CIFR-CONF-2: Repositories and Refresh

@@ -66,8 +66,8 @@ ISO/IEC 27001:2022, among them A.8.25, by a reference to its tag. Both domains r
 * Real-time incident handling with escalation is no case for Git; it stays in the ticket system.
 * Queries across many repositories need an instance that may read all of them, or queries run with the user's rights
   and show only what the user may see.
-* Git replaces no document management system an auditor knows as such; the process description of the control of
-  documented information has to be written once.
+* The process description of the control of documented information has to be written once per organisation (see
+  xref:cisos-friend-overview.adoc#_positioning[Overview, Positioning]).
 
 == Comparison with verinice
 

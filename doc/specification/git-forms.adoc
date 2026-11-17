@@ -39,9 +39,13 @@ chosen by the application.
 [#GDR-FORMS-2]
 == GDR-FORMS-2: Schema Validation
 
-* Data must be validated against the JSON Schema of its kind before every save.
+* Data must be validated against the JSON Schema of its kind before every save, the keyword `required` excepted, so
+  that a document with mandatory fields missing can be saved.
 * A validation failure must be reported per field path (JSON Pointer,
   link:https://www.rfc-editor.org/rfc/rfc6901[RFC 6901], and message) and must prevent the save.
+* A transition that leaves the workflow's first state, and every transition with the mechanism `release`, must also
+  check `required` and be refused with the outcome mandatory fields missing, naming the JSON Pointers of the missing
+  fields.
 * The schema file must be plain JSON Schema, usable unchanged by a validator outside the library that supports its
   dialect; link targets (<<GDR-FORMS-8>>) only the library checks.
 

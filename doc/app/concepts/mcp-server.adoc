@@ -45,7 +45,8 @@ image::../resources/diagrams/mcp-token-flow.svg["Sequence: the agent calls the M
 
 The server speaks Streamable HTTP at `/mcp`, in the shape of revision 2026-07-28: no protocol-level sessions, so every
 request carries and is checked against its own token, and nothing an agent did earlier widens what it may do now.
-`GET` and `DELETE` on `/mcp`, which earlier revisions used for streams and sessions, are answered with `405`. The
+`GET` and `DELETE` on `/mcp` are answered with `405`, because the server opens no stream outside a request and keeps
+no session to delete. The
 server validates the `Origin` header of every request and answers an invalid origin with `403`. A STDIO transport is not
 offered: the specification does not apply its authorization to STDIO, and a local process could not prove a user.
 

@@ -138,8 +138,9 @@ release button says that it needs step-up and triggers the renewed MFA login bef
   (link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/core/postbuild/fallback.js[`fallback.js`],
   link:https://github.com/sveltejs/kit/blob/%40sveltejs/kit%403.2.0/packages/kit/src/runtime/server/page/render.js[`render.js`],
   `@sveltejs/kit` 3.2.0). A `<meta>` policy does not support `frame-ancestors`, `report-uri` and `sandbox`
-  (link:https://www.w3.org/TR/CSP3/#meta-element[Content Security Policy Level 3, section 3.3]); the Quarkus
-  application sends these as a response header.
+  (link:https://www.w3.org/TR/CSP3/#meta-element[Content Security Policy Level 3, section 3.3]), so the Quarkus
+  application also sends the full policy, `frame-ancestors` included, as a response header
+  (xref:../specification/web-app.adoc#CIFR-WEB-8[CIFR-WEB-8]).
 * No third-party origin: fonts, icons and scripts come from the application.
 * AsciiDoc previews and generated reports are rendered by the server and sanitised; the browser never renders raw
   user HTML.

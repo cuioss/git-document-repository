@@ -111,32 +111,10 @@ offline (`--validate-config <dir>`).
 
 == Run-Time State
 
-Everything the application holds in memory is either derived from Git or deliberately volatile:
-
-[cols="1,2,2"]
-|===
-|State |Source |After a restart
-
-|In-memory index (dashboards, deadlines, search)
-|`main`, the open working branches and the collection branches of every repository
-|Rebuilt at start
-
-|Person directory (`git`)
-|The person entries in the persons' repository (by default `directory`)
-|Rebuilt at start
-
-|Drafts
-|`refs/drafts/<pseudonym>/…` in the local repository
-|Survive only on a persistent volume
-
-|Sessions of the web app
-|Server-side, holding the user's tokens
-|Lost; the user logs in again
-
-|Reminders and notifications
-|Computed from the index
-|Recomputed
-|===
+Everything the application holds in memory is either derived from Git or deliberately volatile: the in-memory index,
+the person directory and the reminders are rebuilt from Git at start, the drafts survive only on the persistent
+volume, and the sessions of the web app are lost, so the user logs in again
+(xref:../specification/architecture-and-modules.adoc#CIFR-GEN-3[CIFR-GEN-3]).
 
 The index is refreshed after every save and by a periodic fetch. Even hundreds of SAMM assessments with about ninety
 answers each are estimated at a few megabytes, which
