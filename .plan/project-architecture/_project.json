@@ -1,0 +1,46 @@
+{
+  "description": "Base libraries for Git as the Persistence of Versioned Documents: a server-side Git repository, reached through JGit in memory without working trees, as the persistence of an application in which users maintain versioned documents. A multi-module Maven reactor whose modules are released together and consumed separately.",
+  "description_reasoning": "source: README.adoc 'What is it?' section and AGENTS.md Project section",
+  "extensions_used": [
+    "plan-marshall",
+    "pm-documents"
+  ],
+  "modules": {
+    "documentation": {
+      "description": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR), plus the self-contained CISOs-Friend application docs (prefix CIFR) in doc/app.",
+      "generation": {
+        "by": "architecture",
+        "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+      }
+    },
+    "git-core": {
+      "description": "Foundation library on JGit: hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge and notes. Currently a scaffold (module-info and @NullMarked package only).",
+      "generation": {
+        "by": "architecture",
+        "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+      }
+    },
+    "git-document-repository": {
+      "description": "Root Maven reactor POM (parent de.cuioss:cui-java-parent) that aggregates and versions git-core, git-worktrees and git-testing so they are released together.",
+      "generation": {
+        "by": "architecture",
+        "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+      }
+    },
+    "git-testing": {
+      "description": "Test-support library with generators and fixtures for local and in-memory Git repositories and a local remote, consumed by the other modules' tests. Currently a scaffold.",
+      "generation": {
+        "by": "architecture",
+        "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+      }
+    },
+    "git-worktrees": {
+      "description": "Library for linked working trees on top of git-core: commit from a working tree and working-tree status. Currently a scaffold.",
+      "generation": {
+        "by": "architecture",
+        "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+      }
+    }
+  },
+  "name": "git-document-repository"
+}

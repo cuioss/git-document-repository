@@ -1,0 +1,132 @@
+{
+  "best_practices": [],
+  "generation": {
+    "by": "architecture",
+    "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"
+  },
+  "insights": [],
+  "internal_dependencies": [
+    "git-core"
+  ],
+  "key_dependencies": [
+    "org.jspecify:jspecify"
+  ],
+  "key_dependencies_reasoning": "builds on git-core; JSpecify null safety",
+  "key_packages": {
+    "git-worktrees/src/main/java/de/cuioss/git/document/worktrees": {
+      "description": "Root package de.cuioss.git.document.worktrees (@NullMarked); will hold linked working-tree, commit-from-worktree and status APIs."
+    }
+  },
+  "purpose": "library",
+  "purpose_reasoning": "packaging=jar library depending on git-core",
+  "responsibility": "Library for linked working trees on top of git-core: commit from a working tree and working-tree status. Currently a scaffold.",
+  "responsibility_reasoning": "source: package-info.java and AGENTS.md module table",
+  "skills_by_profile": {
+    "implementation": {
+      "defaults": [
+        {
+          "description": "Foundational agent behavior rules (user interaction, tool usage, research, dependency management)",
+          "skill": "plan-marshall:persona-plan-marshall-agent"
+        },
+        {
+          "description": "Language-agnostic code quality, refactoring, and documentation principles",
+          "skill": "plan-marshall:ref-code-quality"
+        },
+        {
+          "description": "marshalld build-server consumption client (submit/wait/ping/preflight) \u2014 build-dispatch routes builds through the daemon when the project is registered, else falls back in-process",
+          "skill": "plan-marshall:build-server-client"
+        },
+        {
+          "description": "Core Java patterns including modern features and performance optimization",
+          "skill": "pm-dev-java:java-core"
+        },
+        {
+          "description": "JSpecify null safety annotations with @NullMarked, @Nullable, and package-level configuration",
+          "skill": "pm-dev-java:java-null-safety"
+        },
+        {
+          "description": "Java code maintenance standards including prioritization, refactoring triggers, and compliance",
+          "skill": "pm-dev-java:java-maintenance"
+        },
+        "pm-dev-java-cui:cui-logging",
+        "pm-dev-java-cui:cui-http"
+      ]
+    },
+    "module_testing": {
+      "defaults": [
+        {
+          "description": "Foundational agent behavior rules (user interaction, tool usage, research, dependency management)",
+          "skill": "plan-marshall:persona-plan-marshall-agent"
+        },
+        {
+          "description": "Language-agnostic code quality principles (SRP, CQS, complexity, error handling)",
+          "skill": "plan-marshall:ref-code-quality"
+        },
+        {
+          "description": "Language-agnostic testing methodology (AAA, coverage, reliability, determinism)",
+          "skill": "plan-marshall:persona-module-tester"
+        },
+        {
+          "description": "marshalld build-server consumption client (submit/wait/ping/preflight) \u2014 test-run dispatch routes through the daemon when the project is registered, else falls back in-process",
+          "skill": "plan-marshall:build-server-client"
+        },
+        {
+          "description": "Core Java patterns including modern features and performance optimization",
+          "skill": "pm-dev-java:java-core"
+        },
+        {
+          "description": "JUnit 5 testing patterns with AAA structure, coverage analysis, and assertion standards",
+          "skill": "pm-dev-java:junit-core"
+        },
+        {
+          "description": "JSpecify null safety annotations with @NullMarked, @Nullable, and package-level configuration",
+          "skill": "pm-dev-java:java-null-safety"
+        },
+        {
+          "description": "Maven integration testing with Failsafe plugin, IT naming conventions, and profiles",
+          "skill": "pm-dev-java:junit-integration"
+        },
+        "pm-dev-java-cui:cui-logging",
+        "pm-dev-java-cui:cui-testing",
+        "pm-dev-java-cui:cui-http-testing"
+      ]
+    },
+    "quality": {
+      "defaults": [
+        {
+          "description": "Foundational agent behavior rules (user interaction, tool usage, research, dependency management)",
+          "skill": "plan-marshall:persona-plan-marshall-agent"
+        },
+        {
+          "description": "Language-agnostic code quality, refactoring, and documentation principles",
+          "skill": "plan-marshall:ref-code-quality"
+        },
+        {
+          "description": "Core Java patterns including modern features and performance optimization",
+          "skill": "pm-dev-java:java-core"
+        },
+        {
+          "description": "JavaDoc documentation standards including class, method, and code example patterns",
+          "skill": "pm-dev-java:javadoc"
+        },
+        {
+          "description": "JSpecify null safety annotations with @NullMarked, @Nullable, and package-level configuration",
+          "skill": "pm-dev-java:java-null-safety"
+        },
+        "pm-dev-java-cui:cui-logging"
+      ]
+    },
+    "security": {
+      "defaults": [
+        "pm-dev-java-cui:cui-logging",
+        {
+          "description": "CUI HTTP request-sanitization security surface",
+          "skill": "pm-dev-java-cui:cui-http"
+        }
+      ]
+    }
+  },
+  "skills_by_profile_reasoning": "general-dev: build_systems=maven / cross-cutting; operator confirmed with optionals; java: build_systems=maven / cross-cutting; operator confirmed with optionals; java-cui: build_systems=maven / cross-cutting; operator confirmed with optionals",
+  "tips": [],
+  "type": "module"
+}
