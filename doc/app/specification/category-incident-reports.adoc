@@ -37,7 +37,8 @@ awareness.
 |===
 
 The `<ulid>` of an incident names its directory, the working branch `refs/heads/incidents/<ulid>`, the release tag
-and the link target; a readable label is the `title`. Times: `occurred-at` when the incident began, if known (optional); `detected-at` when it was detected; `aware-at` when
+and the link target; a readable label is the `title`. Times: `occurred-at` when the incident began, if known
+(optional); `detected-at` when it was detected; `aware-at` when
 the organisation became aware of it, the start of the GDPR and NIS2 deadlines (GDPR Art. 33(1), NIS2 Art. 23(4);
 sources in <<CIFR-IR-2>>).
 
@@ -102,12 +103,13 @@ periods are a change of the category's `workflow.yaml`, not of code.
 [#CIFR-IR-3]
 == CIFR-IR-3: Mandatory Fields
 
-* Saving a draft must be possible with mandatory fields missing; release must be rejected while any mandatory field of
-  the schema is missing, with a list of the missing fields.
+* Saving must be possible with mandatory fields missing; the transitions into review and into release must be
+  rejected while any mandatory field of the schema is missing, with a list of the missing fields.
 
-States: `draft` → `in-review` → `released`; `incident.release` requires step-up. Draft saves validate types only; the
-transitions to `in-review` and `released` validate `required`; a failure returns `MANDATORY_FIELDS_MISSING` with the
-JSON Pointers of the missing fields.
+States: `draft` → `in-review` → `released`; `incident.release` requires step-up. Saves validate everything but
+`required`; the transitions to `in-review` and `released` validate `required` as well
+(xref:../../specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]); a failure returns `MANDATORY_FIELDS_MISSING` with
+the JSON Pointers of the missing fields.
 
 [#CIFR-IR-4]
 == CIFR-IR-4: Affected Services

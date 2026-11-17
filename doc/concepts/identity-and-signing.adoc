@@ -13,9 +13,9 @@ talks to Git, and a key of the application signs every commit together with the 
 == One Technical User
 
 The application reaches every Git server as one technical user, with a credential per repository. A commit carries
-`author = p-7f3a9c` (the pseudonym of the user) and `committer = docs-bot` (the technical user). The Git server does not
-check the author; the application decides who may read and write a repository, from the groups of the identity
-provider. In the first iteration no right is derived from the roles of the directory (see
+`author = p-01J8Z3K4M5N6P7Q8R9S0T1V2W3` (the pseudonym of the user) and `committer = docs-bot` (the technical user).
+The Git server does not check the author; the application decides who may read and write a repository, from the
+groups of the identity provider. In the first iteration no right is derived from the roles of the directory (see
 xref:directory-and-catalogs.adoc[Directory and Catalogs]).
 
 * *No user needs a Git account.* The users of a compliance application log in at the identity provider only.
@@ -47,7 +47,7 @@ the identity of the logged-in user as *trailers* into the message, so that state
 ----
 Update data/section-a.yaml
 
-Actor: p-7f3a9c <1>
+Actor: p-01J8Z3K4M5N6P7Q8R9S0T1V2W3 <1>
 Actor-Issuer: https://idp.example <2>
 Auth-Time: 2026-11-12T14:03:11Z
 Auth-Context: acr=urn:example:mfa; amr=pwd,otp <3>
@@ -95,9 +95,8 @@ application writes the `acr` / `amr` and the time of that authentication into th
 becomes "… and the user had authenticated with MFA no longer than `step-up.max-age` before this approval". Several
 approvals within that period can rest on the same authentication; the trailers do not bind the MFA to one approval.
 The effort for the user is at most one MFA confirmation per approval; saves need none (see
-xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). In the first
-iteration an approval needs no particular role of the directory; who may approve is a matter of access, not of the
-catalog of roles.
+xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). Who may approve is a matter of access, like
+every other right (see <<_one_technical_user>>).
 
 == What Has to Be Done Right
 
@@ -108,8 +107,8 @@ catalog of roles.
    OpenSSH's allowed-signers format, never from the repository; Git accepts a signature when the key was valid at the
    commit's committer timestamp (xref:../specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]). An administrator
    who can rewrite the repository therefore cannot make a key of their own trusted, and commits stay verifiable after
-   a change of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the signature was
-   made: a holder of a compromised key can date a new commit back into the key's validity period. The time a commit
+   a change of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the
+   signature was made: a holder of a compromised key can date a new commit back into the key's validity period. The time a commit
    existed rests on the anchor (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
    Anchor]).
 ** The application and a CI job check that every commit on `main` carries a valid signature; a stock Git

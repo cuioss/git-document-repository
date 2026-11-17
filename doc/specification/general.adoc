@@ -119,6 +119,7 @@ The outcome list of `git-forms`:
 |Outcome |Raised by
 
 |invalid |schema validation, typed links, a person field without a known pseudonym
+|mandatory fields missing |a transition that checks `required` (xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2])
 |mismatch |check of the generated output
 |transition refused, step-up required |workflow
 |===

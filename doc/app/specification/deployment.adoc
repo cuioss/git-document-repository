@@ -104,10 +104,8 @@ declares no volume.
 
 The two `allowed_signers` files hold public keys only and are no secrets; they are mounted read-only with the
 configuration directory and named by `signing.allowed-signers` and `anchor.signed-allowed-signers`
-(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
-
-Every reference uses one of the forms `file:`, `kms:` or `vault:`
-(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
+(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]), which also lists the reference forms
+each key accepts.
 
 [#CIFR-OPS-3]
 == CIFR-OPS-3: Compose Sample

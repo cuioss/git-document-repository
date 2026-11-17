@@ -107,9 +107,9 @@ application in `doc/app/adr/` follow the same structure.
 [[_specification]]
 == Specification
 
-One document per module. Each lists the module's requirements (prefix `GDR`, numbered per group) as sections, each
-with its "must" statements first and the design that realises them after. No requirement is implemented yet; the
-modules are scaffolds.
+One document per module. Each lists the module's requirements (prefix `GDR`, numbered per group without gaps) as
+sections, each with its "must" statements first and the design that realises them after. No requirement is
+implemented yet; the modules are scaffolds.
 
 [cols="1,3"]
 |===

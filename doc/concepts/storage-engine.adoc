@@ -117,11 +117,11 @@ rule; an organisation that wants one gives the right to approve to other people 
 
 == Reading and Queries
 
-At start and after every fetch the store reads `main`, the open working branches and the collection branches into an
+At start and after every fetch the store reads `main`, every working branch and the collection branches into an
 *in-memory index*. The estimate, to be confirmed by measurement
 (xref:../specification/general.adoc#GDR-NFR-1[GDR-NFR-1]), is a few megabytes for hundreds of documents with dozens
-of fields each. Dashboards, deadlines and evaluations are computed from it. Every save or release updates it at once; a periodic fetch brings changes made on the Git server
-itself.
+of fields each. Dashboards, deadlines and evaluations are computed from it. Every save or release updates it at
+once; a periodic fetch brings changes made on the Git server itself.
 
 * *Reporting dates.* "The register as of the audit on 1 March" is a tag or the commit of that date; the index is built
   from that snapshot instead of from the tip.

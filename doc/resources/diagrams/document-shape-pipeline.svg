@@ -10,7 +10,7 @@
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
   <title id="title">The shape of a schema-driven document</title>
-  <desc  id="desc">Six stages from left to right: a JSON Schema produces the form and validates the data, in the user interface and in CI; the form edits the data; the data are YAML with free-text AsciiDoc fragments and are the truth; a template joins data and text into the generated report.adoc and PDF; review, signature and tag approve and freeze the result. Below, drawn dashed, deadlines, typed links and evaluations are computed from the in-memory index across all documents and never stored. report.adoc is generated and committed; a CI check that it matches the YAML is planned.</desc>
+  <desc  id="desc">Six stages from left to right: a JSON Schema produces the form and validates the data, in the user interface and in CI; the form edits the data; the data are YAML with free-text AsciiDoc fragments and are the truth; a template joins data and text into the generated report.adoc and PDF; review, signature and tag approve and freeze the result. Below, drawn dashed, deadlines, typed links and evaluations are computed from the in-memory index across all documents and never stored. report.adoc is generated and committed; a check that it matches the YAML runs in CI as well.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="9" markerHeight="9" orient="auto">
@@ -66,5 +66,5 @@
   <text x="520" y="224" class="item-c">deadlines · typed links · evaluations</text>
   <text x="520" y="244" class="sub">computed from the in-memory index across all documents; never stored</text>
 
-  <text x="520" y="296" class="caption">The YAML data and AsciiDoc fragments are the truth; report.adoc is generated and committed. A CI check against the YAML is planned.</text>
+  <text x="520" y="296" class="caption">The YAML data and AsciiDoc fragments are the truth; report.adoc is generated and committed. A check against the YAML runs in CI.</text>
 </svg>

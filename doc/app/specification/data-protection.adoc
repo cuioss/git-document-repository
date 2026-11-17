@@ -28,7 +28,7 @@ xref:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Regi
 |`isms-incidents-<year>` |`strongly-restricted` |`P5Y` |Incident reports of one year
 |`samm-assessments` |`public-internal` |`unlimited` |SAMM
 |`threat-models` |`restricted` |`unlimited` |Threat models
-|`directory` |`public-internal` |`unlimited` |Catalogs, person entries under pseudonyms, record of erasures
+|`directory` |`public-internal` |`unlimited` |Catalogs, person entries under pseudonyms, records of erasures and of deleted repositories
 |===
 
 The incident period of `P5Y` is a default; an organisation sets its own with its data protection officer. A category
@@ -66,7 +66,8 @@ process keeps showing the person.
 
 `POST /api/v1/directory/erasures` (right `administer-catalogs`) with the pseudonym calls the library's erasure of the
 active person directory. With `git`, one commit deletes the entry and records pseudonym and date in `erasures.yaml` of
-the persons' repository; the history keeps the earlier versions, and the next checkpoint anchors the commit. A
+the persons' repository; the history keeps the earlier versions, and the next checkpoint anchors the commit when an
+anchor provider is active. A
 provider for the organisation's own source returns managed-by-source; the application answers `409` with the problem
 type `managed-by-source` and names no person.
 
@@ -81,8 +82,9 @@ type `managed-by-source` and names no person.
   by the operator.
 
 A daily job computes `end = created + retention` (for `isms-incidents-<year>`: 31 December of the year + retention)
-and lists expired repositories in the *Due* lens. The deletion is logged in `directory` and anchored by the next
-checkpoint. The operator's duties (xref:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
+and lists expired repositories in the *Due* lens. A confirmed deletion is a commit that appends the alias and the date
+to `repository-deletions.yaml` in the `directory` repository; this record keeps the repository excluded after a
+restart, and the next checkpoint anchors it when an anchor provider is active. The operator's duties (xref:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
 name the deletion of the remote repository and require backup expiry to match the period.
 
 [#CIFR-DP-5]

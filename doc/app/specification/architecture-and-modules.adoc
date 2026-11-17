@@ -234,6 +234,10 @@ xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GE
 |From the index
 |Every minute
 
+|Drafts
+|Not in memory: `refs/drafts/<pseudonym>/…` in the local repository on the persistent volume
+|Not rebuilt; survive a restart only with the volume
+
 |Web sessions
 |On login
 |Not rebuilt; lost on restart
