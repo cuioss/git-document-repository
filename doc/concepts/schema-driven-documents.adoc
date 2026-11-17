@@ -66,10 +66,10 @@ not chosen yet.
 
 == Workflow
 
-image::../resources/diagrams/document-workflow-states.svg["Document states draft, review, approved and superseded with their transitions",align=center]
+image::../resources/diagrams/document-workflow-states.svg["The default workflow: states draft, review, approved and superseded with their transitions",align=center]
 
-A workflow names the *states* of a document -- draft, review, approved, superseded -- and maps the transitions onto
-the mechanisms of the store:
+A workflow names the *states* of a document and maps the transitions onto the mechanisms of the store. The default
+workflow has the states draft, review, approved and superseded; a kind may declare states of its own:
 
 [cols="1,3"]
 |===
@@ -87,8 +87,13 @@ the mechanisms of the store:
 |approve (release)
 |merge into `main` and tag, by the application; the signed release commit names the approver
 
+|revise
+|save onto the working branch; the next version starts as draft, and `main` keeps the last release until the next
+approval
+
 |supersede
-|a later approved version of the same document; the old tag stays
+|a last release that marks the document as withdrawn, for example because another document replaces it; the earlier
+tags stay
 |===
 
 Every release transition, and so every approval, requires *step-up*, an MFA authentication no older than a

@@ -117,10 +117,10 @@ rule; an organisation that wants one gives the right to approve to other people 
 
 == Reading and Queries
 
-At start and after every fetch the store reads `main` and the open working branches into an *in-memory index*. The
-estimate, to be confirmed by the prototype, is a few megabytes for hundreds of documents with dozens of fields each.
-Dashboards, deadlines and evaluations are
-computed from it. Every save or release updates it at once; a periodic fetch brings changes made on the Git server
+At start and after every fetch the store reads `main`, the open working branches and the collection branches into an
+*in-memory index*. The estimate, to be confirmed by measurement
+(xref:../specification/general.adoc#GDR-NFR-1[GDR-NFR-1]), is a few megabytes for hundreds of documents with dozens
+of fields each. Dashboards, deadlines and evaluations are computed from it. Every save or release updates it at once; a periodic fetch brings changes made on the Git server
 itself.
 
 * *Reporting dates.* "The register as of the audit on 1 March" is a tag or the commit of that date; the index is built
@@ -150,6 +150,7 @@ transactions.
 
 == Sources
 
-* JGit: https://projects.eclipse.org/node/30057[JGit 7.0.0 release (read support for worktrees)],
+* JGit: https://projects.eclipse.org/projects/technology.jgit/releases/7.0.0[JGit 7.0 release notes] ("Add worktrees
+  read support"),
   https://www.eclipse.org/lists/jgit-dev/msg02873.html[jgit-dev: commit without working tree through DirCache and
   ObjectInserter]

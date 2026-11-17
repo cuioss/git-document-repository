@@ -65,7 +65,7 @@ repositories:
 |===
 
 * A collection is either per-document or numbered, never both: JGit refuses a reference nested below an existing one
-  and a reference that would contain an existing one (`RefDatabase.getConflictingNames`, checked by
+  and a reference that would contain an existing one (`RefDatabase.isNameConflicting`, checked by
   `RefUpdate.updateImpl`; link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefDatabase.java[JGit 7.8.0 `RefDatabase`]), so
   `refs/heads/risks` and `refs/heads/risks/<id>` cannot exist side by side. A collection is never named `main`
   or `checkpoints`.

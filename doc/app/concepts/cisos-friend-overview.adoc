@@ -19,7 +19,7 @@ interfaces, the parts the application builds on, and the place it takes beside e
 
 The application is always server-based. One server manages the Git repositories; no client holds a clone. Git is the
 persistence only, not a tool the users touch. The organisations that use it are development organisations that
-already operate a maintained Git server (GitHub, GitLab, Gitea) with backups. Every additional database
+already operate a maintained Git server (GitHub, GitLab, Gitea, Forgejo) with backups. Every additional database
 brings operating effort; reusing the existing Git server avoids it.
 
 Whether Git carries this load is answered by the libraries of `git-document-repository`; the reasoning is in
@@ -41,7 +41,8 @@ the first application on them. It adds the categories, the user interfaces, the 
 |xref:category-threat-models.adoc[Threat Models]
 
 |*Incident response reports*
-|Written in Confluence today; here a form that produces AsciiDoc and takes care of review, approval and deadlines.
+|Often written as Confluence pages; here a form that produces AsciiDoc and takes care of review, approval and
+deadlines.
 |xref:category-incident-reports.adoc[Incident Reports]
 
 |*ISMS*

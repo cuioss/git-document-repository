@@ -39,7 +39,7 @@ The details are in xref:../concepts/authentication-and-identity.adoc[Authenticat
 === Tokens in the browser
 
 A public client in the SPA would hold access and refresh tokens. *Rejected because* any script injection could take
-them. RFC 10017, OAuth 2.0 for Browser-Based Applications (BCP 212, formerly draft-ietf-oauth-browser-based-apps),
+them. RFC 10017, OAuth 2.0 for Browser-Based Applications (BCP 212),
 strongly recommends the backend-for-frontend architecture for business applications, sensitive applications and
 applications that handle personal data (section 6.1.4.3).
 

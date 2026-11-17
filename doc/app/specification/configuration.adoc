@@ -80,7 +80,7 @@ their definitions in the `categories` module and the named extension points
 
 |`step-up`
 |yes
-|`acr` (the `acr` value that states multi-factor authentication), `amr` (list of `amr` values accepted instead,
+|`acr` (list of `acr` values that state multi-factor authentication), `amr` (list of `amr` values accepted instead,
 default `mfa`, the value for multiple-factor authentication; a single method such as `otp`, one-time password, is not
 multi-factor; values as registered in link:https://www.rfc-editor.org/rfc/rfc8176#section-2[RFC 8176, §2]),
 `max-age` (default `PT5M`) (xref:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4])
@@ -136,7 +136,8 @@ from these keys: `repositories`, `save.max-attempts`, `drafts.expiry`, `fetch.in
 `anchor.provider`, `anchor.checkpoint-interval` and `directory.persons.provider` under the same names; the library's
 `signing.key-source` and `signing.key` from `signing.key-ref`, its `anchor.signed.key-source` and
 `anchor.signed.key` from `anchor.signed-key-ref`, its `anchor.signed.allowed-signers` from
-`anchor.signed-allowed-signers`.
+`anchor.signed-allowed-signers`. The `step-up` keys are those of
+xref:../../specification/git-forms.adoc#GDR-FORMS-7[`git-forms`, GDR-FORMS-7].
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 

@@ -24,7 +24,7 @@ image::../resources/diagrams/module-dependency-graph.svg["Module dependency grap
 
 The reactor dependencies are the edges of the graph. The build rule that enforces them (Maven Enforcer rule or an
 architecture test) is open; a test consumer project depending on `git-core` alone is to assert that its resolved
-dependency set holds no third-party artifact of the upper modules. The only third-party dependency declared so far is
+dependency set holds no third-party artifact of the upper modules. The only third-party dependency declared is
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`, `requires static
 org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>). Every other dependency below is planned and needs the
 owner's approval:

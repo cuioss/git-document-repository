@@ -24,7 +24,7 @@ awareness.
 |Path |Content
 
 |`incidents/<ulid>/document.yaml`
-|`occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
+|`title`, `occurred-at`, `detected-at`, `aware-at`, `resolved-at`, `category`, `severity`, `personal-data-affected`,
 `data-subjects` (categories and approximate numbers of data subjects and records, no person), `nis2-significant`,
 `affected-services`, `protection-needs`, `notifications`, `measures` (with issue ids), `timeline`, `tickets` (ids),
 `root-causes`
@@ -36,12 +36,8 @@ awareness.
 |Generated; never edited
 |===
 
-`<ulid>`: the name of the incident's directory. The readable number `INC-<year>-<n>` (field `number`) is assigned on
-the first save: the application raises the counter file `.counter` on the branch `refs/heads/incident-numbers` of the
-year's repository by compare-and-swap (xref:../../specification/git-core.adoc#GDR-CORE-5[GDR-CORE-5]) and writes the
-new value into the report. Concurrent first saves therefore receive distinct numbers; a number is unique within the
-year's repository, and a save that fails after the allocation leaves a gap.
-Times: `occurred-at` when the incident began, if known (optional); `detected-at` when it was detected; `aware-at` when
+The `<ulid>` of an incident names its directory, the working branch `refs/heads/incidents/<ulid>`, the release tag
+and the link target; a readable label is the `title`. Times: `occurred-at` when the incident began, if known (optional); `detected-at` when it was detected; `aware-at` when
 the organisation became aware of it, the start of the GDPR and NIS2 deadlines (GDPR Art. 33(1), NIS2 Art. 23(4);
 sources in <<CIFR-IR-2>>).
 

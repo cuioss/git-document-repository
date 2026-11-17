@@ -145,7 +145,7 @@ Everything the application holds in memory is either derived from Git or deliber
 |State |Source |After a restart
 
 |In-memory index (dashboards, deadlines, search)
-|`main` and the open working branches of every repository
+|`main`, the open working branches and the collection branches of every repository
 |Rebuilt at start
 
 |Person directory (`git`)
@@ -165,8 +165,9 @@ Everything the application holds in memory is either derived from Git or deliber
 |Recomputed
 |===
 
-The index is refreshed after every save and by a periodic fetch. Even
-hundreds of SAMM assessments with about ninety answers each are a few megabytes; the index needs no database.
+The index is refreshed after every save and by a periodic fetch. Even hundreds of SAMM assessments with about ninety
+answers each are estimated at a few megabytes, which
+xref:../specification/testing.adoc#CIFR-NFR-1[CIFR-NFR-1] measures; the index needs no database.
 
 == One Instance
 
@@ -184,13 +185,10 @@ anything else depends on it.
 
 == Testing
 
-* *Unit*: JUnit 5, `cui-test-generator` for all test data, EasyMock for test doubles, `cui-test-value-objects` for the
-  contracts of value types, `cui-test-juli-logger` with `LogAsserts` for every `LogRecord`.
-* *Inbound HTTP*: the adversarial generators of `cui-http-testing` (path, header, query attack databases) against the
-  REST API and the MCP endpoint.
-* *Architecture*: ArchUnit for the layering.
-* *Integration*: the native container in a compose stack with Keycloak and a Gitea as Git server.
-* *Web*: Vitest for the components, Playwright with axe-core for the flows.
+Unit tests with the libraries listed above, ArchUnit for the layering, the adversarial generators of
+`cui-http-testing` against the REST API and the MCP endpoint, Vitest for the web components, Playwright with axe-core
+for the flows, and the native container in a compose stack with Keycloak and Gitea for integration. The lanes are
+specified in xref:../specification/testing.adoc[Testing].
 
 == Open Questions
 

@@ -67,8 +67,8 @@ YAML 1.2 is a superset of JSON but goes beyond that model with aliases, non-stri
 
 * A new kind of document needs no new code.
 * The schema is plain JSON Schema, usable by a validator outside the application that supports its dialect. Such a
-  validator does not check link fields: it does not know the custom format `gdr-link`, which JSON Schema 2020-12
-  collects as an annotation unless the format-assertion vocabulary is in use
+  validator does not check link fields: it does not know the custom format `gdr-link`, which a dialect such as JSON
+  Schema 2020-12 collects as an annotation unless the format-assertion vocabulary is in use
   (link:https://json-schema.org/draft/2020-12/json-schema-validation[JSON Schema 2020-12 Validation], 7.2), and only
   the application resolves link targets.
 
@@ -76,7 +76,8 @@ YAML 1.2 is a superset of JSON but goes beyond that model with aliases, non-stri
 
 * Content that does not fit structured fields with free text gains nothing from the layer.
 * A kind of document without a template has no readable output beyond its YAML data.
-* The template engine is still to be chosen.
+* The template engine and the JSON Schema dialect are open questions of
+  xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
 
 === When this is revisited
 

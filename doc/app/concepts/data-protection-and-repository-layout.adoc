@@ -120,8 +120,8 @@ that source replaces it: no name enters Git, and the organisation keeps and eras
 With the default directory an erasure deletes the person's entry in a commit; the application turns this into an
 operational concept:
 
-* *On request or on leaving*: a user with `administer-catalogs` erases a pseudonym in the *Due* lens; the deletion is
-  effective at once. Documents keep the pseudonym and show "former member"; because responsibilities run through
+* *On request or on leaving*: a user with the right `administer-catalogs` erases a pseudonym; the deletion is
+  effective at once (xref:../specification/data-protection.adoc#CIFR-DP-3[CIFR-DP-3]). Documents keep the pseudonym and show "former member"; because responsibilities run through
   roles, they stay understandable.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
   anchors it.
@@ -142,14 +142,9 @@ The application cannot settle these; they are agreed per organisation before go-
   Whether that suffices, or whether the organisation plugs in its own source instead, and who may read the persons'
   repository, are agreed here.
 . The retention periods of the repositories (incident reports above all).
-. The legal basis and the information text of the directory (legitimate interest or employee data protection). The
-  general clause of the German rule, § 26(1) sentence 1 BDSG, is disputed since the CJEU held on 30 March 2023
-  (C-34/21) that national employment rules which do not meet Art. 88(2) GDPR must be disregarded unless they form a
-  legal basis under another article of the GDPR
-  (link:https://curia.europa.eu/site/upload/docs/application/pdf/2023-03/cp230054en.pdf[CJEU press release
-  No 54/23]); the ruling concerned a Hessian rule whose wording largely matches it
-  (link:https://www.gleisslutz.com/de/know-how/unanwendbarkeit-nationaler-generalklauseln-des-beschaeftigtendatenschutzes[Gleiss
-  Lutz, 26 April 2023]).
+. The legal basis and the information text of the directory (legitimate interest or employee data protection; why
+  § 26(1) sentence 1 BDSG is disputed is set out in
+  xref:../../concepts/directory-and-catalogs.adoc#_open_questions[Directory and Catalogs, Open Questions]).
 . Where the read-access log lives: who read a confidential risk is logged to the organisation's existing logging or
   SIEM (A.8.15 of https://www.iso.org/standard/27001[ISO/IEC 27001:2022]), not stored in Git.
 

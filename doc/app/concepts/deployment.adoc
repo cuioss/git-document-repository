@@ -28,7 +28,7 @@ separate port.
 |The local repositories, a cache that can be deleted and fetched again, and the drafts. Without it a restart loses
 every unsaved draft.
 
-|*Git server* (GitHub, GitLab, Gitea)
+|*Git server* (GitHub, GitLab, Gitea, Forgejo)
 |Source of truth and backup; protected branches and tags.
 
 |*Identity provider*
@@ -72,9 +72,10 @@ The release follows the cuioss release process of the application repository; pu
 `cisos-friend.yaml` is a file in a mounted configuration directory, validated at boot and offline
 (`--validate-config`); URLs and client ids come from environment variables, referenced as placeholders. Secrets (the Git
 credential of the
-technical user, the TLS key, the OIDC client credential) are mounted files or Vault references. The commit-signing key
-and the anchor key are best kept in a KMS or HSM: the application signs through its interface and never sees the key;
-a key file is the weakest variant. The full list is in xref:../specification/deployment.adoc#_secrets[Deployment,
+technical user, the TLS key, the OIDC client credential) are mounted files or Vault references; the commit-signing key
+and the anchor key are best kept in a KMS
+(xref:../../concepts/identity-and-signing.adoc#_what_has_to_be_done_right[Identity and Signing]). The full list is
+in xref:../specification/deployment.adoc#_secrets[Deployment,
 Secrets].
 
 == Compose Sample
