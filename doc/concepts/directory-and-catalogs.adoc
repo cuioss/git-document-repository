@@ -98,7 +98,9 @@ the pseudonym; how the entry is protected and erased is described in xref:data-p
 An operator can fill the directory before the people log in, for example from an organisation chart, so that
 documents can name responsibilities from the start. A prefilled entry has a pseudonym, a name and memberships, but no
 subject hash: it is *unbound*, because no login leads to it yet. Documents refer to its pseudonym like to any other;
-it never authors a save. An administrator saves it on `main`, like every person entry.
+it authors no save before it is bound. An administrator saves it on `main`, like every person entry, with at least
+one membership, and keeps name and memberships current until the person binds it: only a matching membership leads
+the first login to it.
 
 When the person logs in, the entry must not be created a second time: a second pseudonym would leave the references
 on the prefilled one behind. The first login therefore offers to *bind* the login to it.

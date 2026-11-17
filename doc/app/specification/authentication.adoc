@@ -135,7 +135,10 @@ A request is permitted only if one of the user's groups maps the action on the t
 * Before a transition that requires step-up the application must check `acr` or `amr`, and `auth_time`, against the
   configured `step-up` values, and re-drive authorization with `acr_values` and `max_age`
   (link:https://www.rfc-editor.org/rfc/rfc9470[RFC 9470]) when they are not met.
-* The transition must be written only after the renewed values were verified; without them nothing is written.
+* The transition must be written only when the session's values pass the check, or when the values of the re-driven
+  authorization pass it; without such values nothing is written.
+* The re-driven authorization must be for the same issuer and `sub` as the session that requested the transition;
+  for another one nothing is written.
 * Through the MCP server a transition that requires step-up must return `STEP_UP_REQUIRED` and write nothing; the
   user completes it in the web app.
 
@@ -147,8 +150,9 @@ Configuration: which transitions require step-up comes from the category's `work
 . The request of a transition that requires step-up checks the session's `acr` or `amr` and its `auth_time`.
 . Not met: the service result is `STEP_UP_REQUIRED`; nothing is written.
 . The REST API returns it with a step-up address, and the web app redirects there. The client re-drives authorization
-  with `acr_values` and `max_age` and verifies the returned `acr` and `auth_time`.
-. The transition is written with the renewed values in the trailers.
+  with `acr_values` and `max_age` and verifies the returned `acr` or `amr`, as configured, `auth_time`, and that issuer
+  and `sub` are those of the session.
+. The transition is written with the values that passed the check in the trailers.
 
 The MCP server offers no tool that completes a release: an agent can only request one with `request_release`, which
 returns `RELEASE_REQUESTED`, and a user completes the release in the web app with step-up

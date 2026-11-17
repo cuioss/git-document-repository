@@ -109,7 +109,9 @@ An operator who needs erasure without history plugs in a provider for a source t
   erasure date and the history even more so; under the GDPR a person who can be identified indirectly is identifiable
   (Art. 4(1)), and data that can be attributed to a person with additional information remain personal data
   (Recital 26). The memberships kept in `erasures.yaml` therefore lie in the persons' repository with its circle of
-  readers, and whether they stay for a sole holder of a role is agreed with the data protection officer.
+  readers. The default provider records them for every erased entry, a sole holder of a role included
+  (xref:../specification/git-directory.adoc#GDR-DIR-6[GDR-DIR-6]); the operator agrees with the data protection
+  officer whether that circle of readers suffices.
 * *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
   directory is for and how long it is kept. A prefilled entry holds data not obtained from the person, for which the
   GDPR requires the information within a reasonable period, at the latest within one month (Art. 14(3)(a)); the
@@ -146,8 +148,8 @@ into separate repositories; the concrete cut is the decision of the application.
 
 . Which provider for an operator's own source ships first (the identity provider's user directory, SCIM, LDAP), and
   how it maps the source's groups onto teams and roles.
-. Whether the erasure records the memberships of a person who held a role in a team alone, or records only the
-  pseudonym and date for them, so that the pseudonym resolves to "former member".
+. Whether the erasure should, unlike GDR-DIR-6 today, record no memberships for a person who held a role in a team
+  alone, so that the pseudonym resolves to "former member".
 . Deferred: restriction instead of erasure (§ 35(3) BDSG) for a person whose attribution falls under a statutory
   retention duty, for example the approvals in incident reports.
 

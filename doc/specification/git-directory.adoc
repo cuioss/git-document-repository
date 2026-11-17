@@ -65,6 +65,14 @@ memory, indexed by subject hash and by pseudonym.
   an entry that is bound or holds none of the entered memberships must be refused with the outcome not bindable.
 * Saving must be a save on `main` of the persons' repository, without review or release; the entry must take effect
   with that save, so that the next resolution of the pseudonym returns it.
+* The commit of a created entry must be authored by the pseudonym held in memory, the commit of a binding by the
+  pseudonym of the bound entry, which that commit binds (xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]).
+* Every attempt of the save, the re-applications of
+  xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3] included, must check against the tip it commits on that no entry
+  holds the subject hash yet and, for a binding, that the chosen entry is still unbound and holds one of the entered
+  memberships; the push with lease makes the check atomic. When the subject hash is bound meanwhile, nothing is
+  written and the pseudonym resolves to that entry; when the chosen entry is bound meanwhile, the save must be
+  refused with the outcome not bindable.
 
 A first login interrupted before the entry is saved leaves nothing in Git; the next login creates a new pseudonym,
 and nothing refers to the old one, because no save happened under it. The binding rests on the user's statement; see
@@ -115,8 +123,10 @@ Erasing a Person].
 
 * The module must save an unbound entry: a person entry without subject hash and without `confirmed`, under a new
   pseudonym (<<GDR-DIR-2>>), as a save on `main` of the persons' repository by an administrator.
+* An unbound entry must hold at least one membership, so that a first login can find it (<<GDR-DIR-3>>); an
+  administrator may change its name and memberships until it is bound.
 * An unbound entry must resolve like a bound one (<<GDR-DIR-4>>) and may be referenced by documents; its pseudonym
-  must never be the author of a save.
+  must author no save before the commit that binds it.
 * An unbound entry must become bound only by a first login that binds it (<<GDR-DIR-3>>).
 
 [source,yaml]

@@ -101,9 +101,10 @@ What counts as MFA and how old it may be is one setting for every transition tha
 `step-up.amr`, `step-up.max-age`); the workflow only decides where it applies. The application writes the `acr` /
 `amr` and the time of the authentication into the signed trailers of every commit. After a transition with step-up the
 statement becomes "… and the user had authenticated with MFA no longer than `step-up.max-age` before this
-transition"; after one without, the trailers record the authentication the session had, and state nothing about a
-second factor. Several transitions within that period can rest on the same authentication; the trailers do not bind
-the MFA to one transition. The effort for the user is at most one MFA confirmation per transition that requires it;
+transition"; after one without, the trailers record the authentication the session had, which may or may not have
+used MFA; the transition neither required nor guarantees a recent one. Several transitions within that period can
+rest on the same authentication; the trailers do not bind the MFA to one transition. The effort for the user is at
+most one MFA confirmation per transition that requires it;
 under the default, saves need none. Who may approve is a matter of access, like every other right (see
 <<_one_technical_user>>).
 
