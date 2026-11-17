@@ -29,11 +29,11 @@ image::../resources/diagrams/repository-cut.svg["Six repositories by confidentia
 |Repository |Content |Readers
 
 |`isms-core`
-|Policies, scope, statement of applicability
+|Policies, scope, internal audit and management review reports
 |Widely readable
 
 |`isms-register`
-|Assets, risks, controls, suppliers, nonconformities
+|The risk register
 |Restricted
 
 |`isms-incidents-<year>`
@@ -45,7 +45,7 @@ image::../resources/diagrams/repository-cut.svg["Six repositories by confidentia
 |Development and security
 
 |`threat-models`
-|Threat model reports, where not in the application's repository
+|The threat models of all services
 |Restricted
 
 |`directory`
@@ -53,9 +53,6 @@ image::../resources/diagrams/repository-cut.svg["Six repositories by confidentia
 pseudonym) and the record of erasures
 |Everyone in the organisation
 |===
-
-Threat models that live in the applications' own repositories (variant A of
-link:category-threat-models.adoc[Threat Models]) inherit the rights of those repositories.
 
 Drafts of every repository, confidential ones included, are never pushed: they stay in the application's local
 repositories on the persistent volume, which the operator backs up
@@ -65,16 +62,17 @@ link:deployment.adoc#_operating_duties[Deployment, Operating Duties]).
 The cut is configuration: an organisation may merge `isms-core` and `isms-register` or split the register further.
 Two rules hold for every configuration:
 
-* *One retention class per repository.* Data with different retention periods never share a repository, because a
-  repository is deleted as a whole when its period ends; no history is rewritten.
+* *One retention period per repository*, declared on the repository and nowhere else. Data with different retention
+  periods never share a repository, because a repository is deleted as a whole when its period ends; no history is
+  rewritten.
 * *One confidentiality class per repository.* Git grants rights per repository only; the application enforces them for
   its users, and the Git server limits who besides the technical user may read a repository.
 
 References across repositories have the form `<alias>:<kind>/<id>`, where the alias is the repository's stable alias
 from the registry (`isms-register:risk/R-042`, `samm-assessments:assessment/<id>`); entries of the directory's catalogs
 are referenced as `<catalog>:<id>` (`service:payment-api`, `role:ciso`). The application checks on save that the target
-exists, and a CI pipeline on every push validates schemas and references with the existing infrastructure. The
-decision is recorded in link:../adr/0007-Repositories_are_cut_by_confidentiality_and_retention_class.adoc[ADR-0007].
+exists. One repository for everything would make read access all or nothing, and deleting one year of incident
+reports would mean rewriting the history of everything else; that is why the data are cut.
 
 == Personal Data in the Categories
 
@@ -109,17 +107,12 @@ the person directory, which stores a pseudonym.
 == The Person Directory
 
 CISOs-Friend uses the library's person directory
-(link:../../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]) and chooses
-the provider by configuration:
-
-* *`git`, the default.* Each person enters name, team and role at the first login
-  (link:authentication-and-identity.adoc[Authentication and Identity]); the entry is saved under its pseudonym in the
-  `directory` repository, with the login only as a hash. An organisation that wants a smaller circle of readers for
-  the persons and their history configures a repository of their own for them.
-* *The organisation's own source.* Where persons and groups are maintained centrally (for example LDAP), a provider
-  for that source plugs into the library's extension point; there is no entry form, no name enters Git, and the
-  organisation keeps and erases the personal data in that source. Which such provider ships first is an open question
-  of the library.
+(link:../../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]). By default
+each person enters name, team and role at the first login, and the entry is saved under its pseudonym in the
+`directory` repository, with the login only as a hash; an organisation that wants a smaller circle of readers gives the
+persons a repository of their own. Where persons and groups are maintained centrally (for example LDAP), a provider for
+that source replaces it: no name enters Git, and the organisation keeps and erases the personal data there
+(link:../specification/directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]).
 
 == The Erasure Concept
 
@@ -129,10 +122,6 @@ operational concept:
 * *On request or on leaving*: a user with `administer-catalogs` erases a pseudonym in the *Due* lens; the deletion is
   effective at once. Documents keep the pseudonym and show "former member"; because responsibilities run through
   roles, they stay understandable.
-* *Restriction instead of erasure*: during a statutory retention period (GDPR Art. 17(3)(b) for the retention
-  obligation; § 35(3) BDSG) that covers the attribution of a person's commits, for example the approvals of incident
-  reports, the erasure sets a restriction date: the entry is hidden from every view and erased on that date. At the
-  end of the period the repository of that retention class is deleted as well.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
   anchors it.
 * *History*: the history of the persons' repository keeps the earlier versions of the entry, as comparable systems
@@ -150,7 +139,7 @@ The application cannot settle these; they are agreed per organisation before go-
 . Erasure by deleting the person entry in a commit: the history of the persons' repository keeps its earlier versions.
   Whether that suffices, or whether the organisation plugs in its own source instead, and who may read the persons'
   repository, are agreed here.
-. The retention classes and their periods (incident reports, ISMS registers, audit reports).
+. The retention periods of the repositories (incident reports above all).
 . The legal basis and the information text of the directory (legitimate interest or employee data protection). The
   general clause of the German rule, § 26(1) sentence 1 BDSG, is disputed since the CJEU held on 30 March 2023
   (C-34/21) that national employment rules which do not meet Art. 88(2) GDPR must be disregarded unless they form a
@@ -166,6 +155,8 @@ The application cannot settle these; they are agreed per organisation before go-
 
 . Agree the points above with the data protection officer of the first adopting organisation.
 . Whether the first adopting organisation uses the default directory in Git or its own source.
+. Deferred: restriction of processing instead of erasure while a statutory retention duty covers the attribution of a
+  person's commits.
 
 == Related
 

@@ -19,50 +19,50 @@ organisations, not a replacement for a complete ISMS product.
 |Clause 7.5 |Git
 
 |Versioning, change history |commits, diff
-|Review and approval |workflow transition in the application, signed release commit with approval trailers,
-protected `main`
+|Review and approval |release in the application with step-up, signed release commit, protected `main`
 |Protection against unauthorised change |repository rights, protected branches and tags
 |Availability and retention |the Git server and its backup
 |===
 
 The ISMS artefacts sort into three groups:
 
-. *Documents, very well suited*: policies, scope, risk methodology, statement of applicability, internal audit and
-  management review reports. Rarely changed, approval-centred, diffable.
+. *Documents, very well suited*: policies, scope, internal audit and management review reports. Rarely changed,
+  approval-centred, diffable.
 . *Registers, well suited*, with the pattern of link:category-samm.adoc[SAMM] (one file per entry, in-memory index,
-  compare-and-swap): risks, controls, suppliers, nonconformities, and the assets that are no applications. The
-  in-memory index rests on the design assumption that a mid-sized ISMS holds at most a few thousand register
-  entries; the prototype measures index build time and memory at that size.
+  compare-and-swap). The first iteration keeps the risk register only. The in-memory index rests on the design
+  assumption that a mid-sized ISMS holds at most a few thousand register entries; the prototype measures index build
+  time and memory at that size.
 . *Operational data, referenced instead of stored*: tasks and deadlines (issue tracker of the Git server or Jira), the
   live handling of incidents (ticket system; the report on an incident is a schema-driven document, see
   link:category-incident-reports.adoc[Incident Response Reports]), training records per employee (learning platform or
-  HR system). Persons, roles, teams and the applications as assets come from the
-  link:../../concepts/directory-and-catalogs.adoc[directory and its catalogs].
+  HR system). Persons, roles and teams come from the library's
+  link:../../concepts/directory-and-catalogs.adoc[directory], the services from the
+  link:service-catalog.adoc[service catalog].
 
 === Mechanisms the ISMS Uses
 
 All of these are library mechanisms; the ISMS category uses them and adds no mechanism of its own.
 
-* *Approvals in the repository*: the application merges every release itself and writes the approvals as trailers of
-  the signed release commit, so the evidence survives a change of Git server
+* *Releases in the repository*: the application merges every release itself; the signed release commit names the
+  releasing user, so the evidence survives a change of Git server
   (link:../../concepts/identity-and-signing.adoc[Identity and Signing]).
 * *Running numbers* (R-042) under concurrent creation: a ULID identifies a new entry until its first save, which
   assigns the readable number that then names the entry file
   (link:../../concepts/schema-driven-documents.adoc[Schema-Driven Documents]).
-* *Reporting dates*: "statement of applicability and risk register as of the audit on 1 March" is a tag or the commit
-  of that date; the index is built from it.
+* *Reporting dates*: "the risk register as of the audit on 1 March" is a tag or the commit of that date; the index
+  is built from it.
 * *Deadlines and reminders* are computed from the index; notifications are runtime state of the application, not
   persistence.
 
 === The Bridge to SAMM
 
-A released SAMM assessment becomes evidence for the secure-development controls (Annex A 8.25 ff.) by a reference to
-its tag; target maturity levels become measures in the issue tracker; gaps between score and target may become risks
-in the register. Both domains run on one engine.
+A gap between a SAMM score and its target may become a risk in the register, with a reference to the released
+assessment. Once controls are kept, a released assessment becomes evidence for the secure-development controls
+(Annex A 8.25 ff.) by a reference to its tag. Both domains run on one engine.
 
 === Limits
 
-* Real-time incident handling with escalation is no case for Git; connect a ticket system.
+* Real-time incident handling with escalation is no case for Git; it stays in the ticket system.
 * Queries across many repositories need an instance that may read all of them, or queries run with the user's rights
   and show only what the user may see.
 * Git replaces no document management system an auditor knows as such; the process description of the control of
@@ -100,52 +100,35 @@ and the veo-history service returns all revisions of a resource and the one curr
 (https://github.com/SerNet/verinice-veo-history[verinice-veo-history]); the History section of the manual names no
 comparison between versions
 
-|Approval, four eyes
-|Workflow approval with step-up, protected branches, approval trailers in signed commits
-|Workflow functions of the application (scope to verify)
-
-|Tamper evidence
-|Hash chain, signed commits, anchored releases and daily checkpoints (own timestamp, optionally RFC 3161),
-verifiable without the application
-|Depends on the database and the administrators' rights
+|Approval and tamper evidence
+|Release with step-up in signed commits, protected branches, anchored releases and daily checkpoints, verifiable
+without the application
+|Workflow functions of the application (scope to verify); tamper evidence depends on the database and the
+administrators' rights
 
 |Rights
-|Coarse per repository, cut by confidentiality; enforced by the application, or by the Git server when pushing in the
-user's name
+|Coarse per repository, cut by confidentiality; enforced by the application
 |Fine-grained per object and role in the application
-
-|Audience
-|Development organisations working with pull requests; editing also directly in the repository (YAML and CI checks)
-|Security officers and business units without Git
 
 |Data sovereignty
 |Plain YAML or AsciiDoc, readable without any software
 |Database, export through exchange formats or REST API
 
-|Integration
-|Everything is files: CI pipelines, scripts, SAMM, issue tracker
-|REST API (veo), import and export
-
 |Acceptance by auditors
 |Has to be explained (process description of the control of documented information)
 |Known, especially for Grundschutz certification
-
-|Time to use
-|SAMM: weeks to months; a complete ISMS at verinice level: rather years
-|Product available; introduction effort not assessed
 |===
 
 === Positioning
 
 From this comparison follows the positioning: CISOs-Friend complements verinice and does not compete with it as a
-complete ISMS. Core and extension are listed in
-link:cisos-friend-overview.adoc#_positioning[Overview, Positioning]; the decision is
-link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006].
+complete ISMS. Core and extension are listed in link:cisos-friend-overview.adoc#_positioning[Overview, Positioning].
 
 == Open Questions
 
 . Verify the verinice statements (approval, licence of veo, catalogue coverage) with a demo instance.
-. Which registers ship in the first ISMS iteration (risks and controls first; suppliers and nonconformities later).
+. Deferred: the registers of controls, suppliers, nonconformities and non-application assets, the statement of
+  applicability, and audit tags that mark a reporting date.
 
 == Related
 

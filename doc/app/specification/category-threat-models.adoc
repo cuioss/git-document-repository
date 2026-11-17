@@ -2,92 +2,59 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-TM-1[CIFR-TM-1: Place of a Threat Model]_
+The threat-model category as configuration (`categories/threat-models/`). Reasoning:
+link:../concepts/category-threat-models.adoc[Threat Models]. Repository: `threat-models`.
 
-Status: PLANNED
+[#CIFR-TM-1]
+== CIFR-TM-1: Place of a Threat Model
 
-The threat-model category as configuration (`categories/threat-models/`) plus the `OutdatedModelDetector` extension
-point. Reasoning: link:../concepts/category-threat-models.adoc[Threat Models].
+* Every threat model must be stored in the central repository `threat-models`, at
+  `services/<service-id>/<model-id>/`, and saved and released like every other document.
 
-== Place
-_See Requirement link:../Requirements.adoc#CIFR-TM-1[CIFR-TM-1: Place of a Threat Model]_
+[#CIFR-TM-2]
+== CIFR-TM-2: Open Format
 
-Status: PLANNED
+* A threat model must be stored in an open format: Threat Dragon JSON, which OWASP Threat Dragon opens and edits, or
+  Open Threat Model; the choice is an open decision.
+* Diagrams must be stored as data; images must be generated.
 
-Per service entry, field `threat-model.place`: `service-repository` (variant A) or `central` (variant B, default).
-Variant A also requires `threat-model.repository`: the alias of the service repository that holds the model, which
-must be one of the repositories of the service entry; a service entry with variant A and without it is a catalog
-validation error.
+* `model.json`: the threat model in the chosen format. The category schema validates the parts the application reads;
+  unknown fields are preserved on write.
+* `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`.
 
-[cols="1,2,2"]
-|===
-|Variant |Location |Write path
+[#CIFR-TM-3]
+== CIFR-TM-3: Review Due Date
 
-|A
-|`threat-model/` in the repository named by `threat-model.repository`
-|Branch `cisos-friend/threat-model/<model-id>` with commits the application signs, pushed by the technical user, then
-a pull or merge request through the Git host API, which the service team merges
+* A threat model must be due for review one review interval after its last review; the interval must follow the
+  highest protection need of the service.
 
-|B
-|`threat-models` repository, `services/<service-id>/<model-id>/`
-|Library save and release
-|===
+The intervals are deadline data of the category's `workflow.yaml`: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`,
+applied to the effective protection needs of the service (link:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]). A completed
+review sets `last-review`.
 
-== Format
-_See Requirement link:../Requirements.adoc#CIFR-TM-2[CIFR-TM-2: Open Format]_
+[#CIFR-TM-4]
+== CIFR-TM-4: Links and Evaluation
 
-Status: PLANNED
+* Every threat model must refer to exactly one `service:` entry.
+* An accepted or untreated threat must be transferable into an ISMS risk entry.
+* The application must show per service: open threats, untreated threats and the age of the model.
 
-* `model.json`: the threat model in the chosen open format (OTM or Threat Dragon JSON; decision open). The category
-  schema validates the parts the application reads; unknown fields are preserved on write.
-* `meta.yaml`: `service`, `owner` (`role:`), `state`, `last-review`, `review-interval`, and `reviewed-heads`: per
-  repository of the service its URL and the commit id that was current at the last review.
-* Diagrams are generated from `model.json` when needed; no image is committed.
+* "Transfer to risk register" creates a draft risk in `isms-register` with the reference
+  `threat-models:threat-model/<model-id>#<threat-id>`.
+* A countermeasure records the ids of its issues, entered by the user or the agent.
+* Evaluation per service: open threats, untreated threats (without countermeasure and not transferred to the risk
+  register), days since `last-review`, review due date.
 
-== Detection
-_See Requirement link:../Requirements.adoc#CIFR-TM-3[CIFR-TM-3: Outdated-Model Detection]_
+[#CIFR-TM-5]
+== CIFR-TM-5: Recipes
 
-Status: PLANNED
-
-`OutdatedModelDetector` inputs: `reviewed-heads` of `meta.yaml`, the current heads of the service's repositories, the
-configured path set, the service's protection needs history. Per repository the detector diffs from its reviewed head
-to its current head; this works the same in variant A and B, because the base always lies in the history of the
-repository it is diffed in. A repository without a reviewed head (newly added to the service) makes the model `DUE`.
-A completed review writes the current heads as the new `reviewed-heads`.
-
-Default path set (`categories.threat-models.detection.paths`, link:configuration.adoc#_categories[Configuration,
-Categories]): `**/openapi*.{yaml,yml,json}`, `**/*.proto`, `**/pom.xml`, `**/package.json`, `**/Dockerfile`,
-`**/*.tf`, `**/Chart.yaml`, `**/values*.yaml`.
-
-Result: `CURRENT`, or `DUE` with the list of changed paths (or the protection-need change) and the due date
-`last-review + review-interval`. `review-interval` defaults by the service's highest protection need, one of the
-levels `normal`, `high`, `very-high` of the service catalog: `very-high` `P6M`, `high` `P12M`, `normal` `P24M`
-(`categories.threat-models.review-intervals`).
-
-== Links
-_See Requirement link:../Requirements.adoc#CIFR-TM-4[CIFR-TM-4: Links and Evaluation]_
-
-Status: PLANNED
-
-* `meta.yaml` `service` is required and must resolve.
-* "Transfer to risk register": creates a draft risk in `isms-register` with the reference
-  `<alias>:threat-model/<model-id>#<threat-id>` (`<alias>`: `threat-models` in variant B, the service repository in
-  variant A).
-* "Create issue": through the issue-tracker integration; the issue id is stored on the countermeasure.
-* Evaluation view per service: number of open threats, untreated threats (without countermeasure and not transferred to
-  the risk register), days since `last-review`, detection result.
-
-== Recipes
-_See Requirement link:../Requirements.adoc#CIFR-TM-5[CIFR-TM-5: Recipes]_
-
-Status: PLANNED
+* The application must guide the filling-in of a threat model by a recipe: an ordered list of steps, each naming the
+  part of the model it fills.
 
 A recipe is `categories/threat-models/recipes/<id>.yaml`: `title`, ordered `steps`, each with `title`, `guidance`
 (AsciiDoc fragment) and `fills` (JSON Pointer into `model.json`). The web app renders a recipe as `WizardPage`; the MCP
-server exposes recipes through the tool `read_recipe` (link:mcp-server.adoc#_tools[MCP Server, Tools]).
+server exposes recipes through the tool `read_recipe` (link:mcp-server.adoc#CIFR-MCP-6[MCP Server, Tools]).

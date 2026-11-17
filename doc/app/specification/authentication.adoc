@@ -2,26 +2,26 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
+Login, rights, the identity values written into commits, step-up and the Git credential. Reasoning:
+link:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library contract for the
+signature, the trailers and the step-up check is in link:../../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12],
+link:../../specification/git-store.adoc#GDR-STORE-13[GDR-STORE-13] and link:../../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7].
 
-Status: PLANNED
+[#CIFR-AUTH-1]
+== CIFR-AUTH-1: Web Login
 
-Login, rights, the identity values written into commits, step-up, the Git credential, the first login and the
-directory flows. Reasoning: link:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library
-contract for trailers, signatures and approvals is in link:../../Requirements.adoc#GDR-SIGN-1[GDR-SIGN-1],
-link:../../Requirements.adoc#GDR-SIGN-2[GDR-SIGN-2], link:../../Requirements.adoc#GDR-SIGN-3[GDR-SIGN-3],
-link:../../Requirements.adoc#GDR-SIGN-4[GDR-SIGN-4] and link:../../Requirements.adoc#GDR-SIGN-5[GDR-SIGN-5].
-
-== Web Login
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-1[CIFR-AUTH-1: Web Login]_
-
-Status: PLANNED
+* The web login must use the authorization code flow with PKCE `S256` as a confidential client through Token Sheriff.
+* No access, refresh or ID token may be sent to the browser.
+* During login the browser must hold only a short-lived login-transaction cookie, afterwards only the session cookie,
+  both `HttpOnly` and `Secure`; the session must end after a configurable idle time (default 30 minutes) and absolute
+  lifetime (default 8 hours).
+* The `return` address of the login must be accepted only as a same-origin relative path that matches a canonical
+  address (link:web-app.adoc#CIFR-WEB-3[CIFR-WEB-3]); any other value must be replaced by `/`.
+* Logout must be RP-initiated and revoke the held tokens.
 
 [cols="1,3"]
 |===
@@ -37,13 +37,14 @@ Status: PLANNED
 |`GET /api/v1/auth/login?return=<address>`, `GET /api/v1/auth/callback`, `POST /api/v1/auth/logout`
 
 |`return`
-|Accepted only as a same-origin relative path: it starts with a single `/` (not `//`, no `\`, no scheme, no
-authority) and matches one of the canonical addresses of link:web-app.adoc#_navigation[Web App, Navigation]; any
-other value is replaced by `/`. The checked value is kept in the server-side login transaction, not in the browser
+|Starts with a single `/` (not `//`, no `\`, no scheme, no authority) and matches one of the canonical addresses of
+link:web-app.adoc#CIFR-WEB-3[Web App, Navigation]; kept in the server-side login transaction, not in the browser
 
 |Transaction cookie
 |`__Host-cisos-friend-login`; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=600`; carries only an opaque
-reference to the server-side login transaction (`state`, `nonce`, PKCE verifier); deleted by the callback
+reference to the server-side login transaction (`state`, `nonce`, PKCE verifier); deleted by the callback. `Lax`,
+because the browser does not send a `SameSite=Strict` cookie on the cross-site redirect back from the identity
+provider
 
 |Session cookie
 |`__Host-cisos-friend-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
@@ -58,11 +59,8 @@ link:https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Coo
 only for requests originating from the same site). The navigation started by the same-origin page is same-site and
 carries the session cookie.
 
-|Idle timeout
-|`web.session.idle-timeout`, default `PT30M`
-
-|Absolute lifetime
-|`web.session.max-lifetime`, default `PT8H`
+|Idle timeout, lifetime
+|`web.session.idle-timeout` (default `PT30M`), `web.session.max-lifetime` (default `PT8H`)
 
 |Logout
 |RP-initiated at the provider's `end_session_endpoint`; held tokens revoked first
@@ -71,10 +69,13 @@ carries the session cookie.
 |Response body names the login address; the web app follows it with the current canonical address as `return`
 |===
 
-== Rights
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-2[CIFR-AUTH-2: Rights]_
+[#CIFR-AUTH-2]
+== CIFR-AUTH-2: Rights
 
-Status: PLANNED
+* Rights must be derived from identity-provider groups through a configured mapping to repositories and the actions
+  *read*, *edit*, *approve* and *administer catalogs*.
+* Every request must be checked; a request without a mapped right must be refused (deny by default).
+* No right may be derived from a directory role.
 
 Input: the `groups` claim (or the claim configured as group source) of the session or bearer token. Mapping:
 `cisos-friend.yaml` → `rights`.
@@ -87,141 +88,69 @@ Input: the `groups` claim (or the claim configured as group source) of the sessi
 |Reading documents, index views and diffs of the repository
 
 |`edit`
-|Drafts and saves
+|Drafts, saves and transitions that are no release
 
 |`approve`
-|Approval transitions (releases and approvals), with step-up where the workflow requires it
+|Releases, with step-up (<<CIFR-AUTH-4>>)
 
 |`administer-catalogs`
-|Changes of the role, team and service catalogs; deletion of expired repositories
+|Changes of the catalogs; erasure of persons; deletion of expired repositories
 |===
 
 A request is permitted only if one of the user's groups maps the action on the target repository. No other source
 (directory role, token scope alone) grants a right.
 
-== Trailer Values
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-3[CIFR-AUTH-3: Identity in the Commit]_
+[#CIFR-AUTH-3]
+== CIFR-AUTH-3: Signed Commits and Identity Trailers
 
-Status: PLANNED
-
-The application supplies these values to the library's trailer schema:
+* Every commit must be signed by the application; there must be no unsigned commit and no other kind of signature.
+* Every commit must carry the user's pseudonym, never the `sub`, and the issuer, the authentication time and the
+  authentication context in the library's trailers.
 
 [cols="1,2"]
 |===
-|Value |Source
+|Trailer |Source
 
-|Pseudonym
-|Person directory lookup of the pair (`iss`, `sub`); created on first login
+|`Actor`
+|The pseudonym from the person directory, looked up by (`iss`, `sub`)
 
-|Issuer
+|`Actor-Issuer`
 |`iss`
 
-|Authentication time
+|`Auth-Time`
 |`auth_time`
 
-|Authentication context
-|`acr`, else `amr` joined by `+`
-
-|Session HMAC
-|HMAC-SHA-256 with the key of `signing.session-hmac-key-ref` over the session id: the `sid` of the login (web app);
-for an MCP bearer token its `sid`, else its `jti`, else the SHA-256 of the token
-
-|Agent client (MCP only)
-|`client_id`, else `azp`
+|`Auth-Context`
+|`acr` and `amr`, in the library's format
 |===
 
-== Step-Up Defaults
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-4[CIFR-AUTH-4: Signed Commits and Step-Up per Transition]_
+[#CIFR-AUTH-4]
+== CIFR-AUTH-4: Step-Up
 
-Status: PLANNED
+* Every release must require step-up; no save and no other transition may require it.
+* Before a release the application must check `acr` or `amr`, and `auth_time`, against the configured `step-up`
+  values, and re-drive authorization with `acr_values` and `max_age` (RFC 9470) when they are not met.
+* The release must be written only after the renewed values were verified; without them nothing is written.
 
-Every commit is signed by the application with the identity trailers. Defaults of `step-up` per transition in
-`categories/<category>/workflow.yaml`; overrides in `cisos-friend.yaml` → `categories`.
+Configuration: `cisos-friend.yaml` → `step-up` (`acr`, `amr`, `max-age`, default `PT5M`), one setting for all
+categories (link:configuration.adoc#_cisos_friend_yaml[Configuration]).
 
-[cols="2,1"]
-|===
-|Transition |Step-up
+. The release request checks the session's `acr` or `amr` and its `auth_time`.
+. Not met: the service result is `STEP_UP_REQUIRED`; nothing is written.
+. The REST API returns it with a step-up address, and the web app redirects there. The client re-drives authorization
+  with `acr_values` and `max_age` and verifies the returned `acr` and `auth_time`.
+. The release is written with the renewed values in the trailers.
 
-|`save` (all categories), `directory-entry`
-|no
+The MCP server returns the tool error `STEP_UP_REQUIRED`; an agent never completes a release
+(link:mcp-server.adoc#CIFR-MCP-6[MCP Server, CIFR-MCP-6]).
 
-|`samm.release`, `threat-model.release`, `incident.release`; `isms.policy.approve`, `isms.scope.approve`,
-`isms.soa.approve`, `isms.audit-report.approve`, `isms.management-review.approve`
-|yes
-|===
+[#CIFR-AUTH-5]
+== CIFR-AUTH-5: Git Credential
 
-A transition that requires step-up and lacks the evidence returns the service result `STEP_UP_REQUIRED`; nothing is
-written. The interfaces map it as follows:
-
-[cols="1,3"]
-|===
-|Interface |Mapping
-
-|REST (`/api/v1`)
-|`STEP_UP_REQUIRED` with the step-up address (Step-Up)
-
-|MCP
-|Tool error `STEP_UP_REQUIRED`; an agent never completes a transition that requires step-up
-(link:mcp-server.adoc#_tools[MCP Server, Tools])
-|===
-
-== Step-Up
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-5[CIFR-AUTH-5: Step-Up]_
-
-Status: PLANNED
-
-Configuration per category in `cisos-friend.yaml` → `categories.<category>.step-up`: `acr` (required `acr` value)
-and `max-age` (default `PT5M`) (link:configuration.adoc#_categories[Configuration, Categories]).
-
-. The approval request checks the session's `acr` and `auth_time`.
-. Not met: the service result is `STEP_UP_REQUIRED`, which the REST API returns with a step-up address
-  (<<_step_up_defaults>>); the web app redirects there.
-. The client re-drives authorization with `acr_values` and `max_age` (RFC 9470) and verifies the returned `acr` and
-  `auth_time`.
-. The approval is written with the renewed values in the trailers.
-
-== Git Credential
-_See Requirement link:../Requirements.adoc#CIFR-AUTH-6[CIFR-AUTH-6: Git Credential]_
-
-Status: PLANNED
+* The application must reach every Git server only as the technical user configured per repository.
+* The application must merge every release itself and push it as the technical user; `main` must be protected so that
+  only the technical user may push to it.
 
 Per repository: `credential-ref`, the credential of the technical user (a deploy key or a bot account token); there is
-no other kind of Git credential. The application pushes every commit, releases included, with it. `main` is protected
-on the Git server so that only the technical user may push and nobody may force-push; a refused push returns
-`REJECTED` and the draft stays.
-
-== First Login
-_See Requirement link:../Requirements.adoc#CIFR-DIR-1[CIFR-DIR-1: First Login]_
-
-Status: PLANNED
-
-. With the default person directory (`git`): after login the server asks the library for the person of (`iss`, `sub`).
-  The outcome entry-required (no pseudonym yet, which the library then creates, or a pseudonym without a saved entry
-  from an interrupted first login) makes it answer every `/api/v1` request outside the allow-list below with
-  `FIRST_LOGIN_REQUIRED`, until the entry is saved.
-. `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
-. The form shows the text referenced by `web.information-text-ref`.
-. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry.
-
-Allow-list during the first login, exactly the requests the form and the shell need:
-
-* `GET` and `PUT /api/v1/directory/me`;
-* `GET /api/v1/catalogs/team` and `GET /api/v1/catalogs/role` (the pickers of the form);
-* `GET /api/v1/session` (the anti-CSRF token) and `GET /api/v1/messages` (the texts);
-* `POST /api/v1/auth/logout` and the login endpoints `/api/v1/auth/login` and `/api/v1/auth/callback`.
-
-The MCP endpoint answers a tool call of such a user with the tool error `FIRST_LOGIN_REQUIRED`.
-
-== Directory Flows
-_See Requirements:_
-
-* _link:../Requirements.adoc#CIFR-DIR-2[CIFR-DIR-2: Keeping the Entry Current]_
-* _link:../Requirements.adoc#CIFR-DIR-3[CIFR-DIR-3: Catalog Maintenance]_
-
-Status: PLANNED
-
-* Own entry: `PUT /api/v1/directory/me` at any time.
-* Confirmation: when the entry's last confirmation is older than `web.directory.confirm-interval` (default `P12M`), the
-  next login shows the form with "Is this still right?"; confirming writes the confirmation date.
-* Catalogs: `PUT /api/v1/catalogs/{catalog}/{id}` requires `administer-catalogs`; `DELETE` is not offered; retiring sets
-  `retired: true`.
+no other kind of Git credential. `main` is protected on the Git server so that only the technical user may push and
+nobody may force-push; a refused push returns `REJECTED` and the draft stays.

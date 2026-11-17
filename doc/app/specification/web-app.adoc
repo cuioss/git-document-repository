@@ -2,15 +2,9 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
-
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-WEB-1[CIFR-WEB-1: Single-Page Application Served Same-Origin]_
-
-Status: PLANNED
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
 The browser interface. Reasoning: link:../concepts/web-app.adoc[Web App]. Reference implementation for structure and
 visuals: link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/pm-web-app[`pm-web-app`]; design rules:
@@ -18,10 +12,11 @@ link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/doc/design/web-ap
 repository. `pm-web-app` has no release; the adopted state is pinned by the commit id of `pm-mcp-clients` recorded in
 the header of `src/styles/tokens.css`, and a change of the token contract is taken over deliberately.
 
-== Stack and Packaging
-_See Requirement link:../Requirements.adoc#CIFR-WEB-1[CIFR-WEB-1: Single-Page Application Served Same-Origin]_
+[#CIFR-WEB-1]
+== CIFR-WEB-1: Single-Page Application Served Same-Origin
 
-Status: PLANNED
+* The web app must be a Svelte single-page application served by the application on its own origin.
+* The built app must load no resource from a third-party origin.
 
 [cols="1,3"]
 |===
@@ -48,51 +43,38 @@ Status: PLANNED
 |Vite dev server proxies `/api` to a running application
 |===
 
-== Visual Language
-_See Requirement link:../Requirements.adoc#CIFR-WEB-2[CIFR-WEB-2: Visual Language and Accessibility]_
+[#CIFR-WEB-2]
+== CIFR-WEB-2: Visual Language and Accessibility
 
-Status: PLANNED
+* The app must use the design-token contract of `pm-web-app` with a light and a dark theme; no raw colour literal may
+  appear in a view or a component (stylelint).
+* Text contrast must meet WCAG 2.1 AA in both themes, verified automatically; the axe-core audit must report no
+  violation of impact `serious` or `critical`.
 
-* `src/styles/tokens.css`: the token contract of `pm-web-app` (colour roles, type scale, 4 px spacing, radius, control,
-  z-index, motion, breakpoints phone < 768, tablet 768–1279, desktop ≥ 1280); `:root` light, dark under
-  `prefers-color-scheme` and `[data-theme]`.
-* `src/lib/theme.ts`: light, dark, system; stored in `localStorage` key `cf_theme`.
+* `src/styles/tokens.css`: the token contract of `pm-web-app`; `:root` light, dark under `prefers-color-scheme` and
+  `[data-theme]`. `src/lib/theme.ts`: light, dark, system; stored in `localStorage` key `cf_theme`.
 * Inter variable font self-hosted in `static/fonts/` with its licence file; own icon set in `src/lib/icons/`.
-* stylelint rule: no colour literal outside `tokens.css`.
 * Contrast: an automated test computes WCAG 2.1 relative luminance for every text/background token pair in both themes;
-  below 4.5:1 (3:1 for large text) fails.
-* axe-core runs in `web-e2e` on every view; any `serious` or `critical` violation fails.
+  below 4.5:1 (3:1 for large text) fails. axe-core runs in `web-e2e` on every view.
 
-== Navigation
-_See Requirement link:../Requirements.adoc#CIFR-WEB-3[CIFR-WEB-3: Navigation]_
+[#CIFR-WEB-3]
+== CIFR-WEB-3: Navigation
 
-Status: PLANNED
+* The app must offer the lenses Due, SAMM, Threat models, Incidents, ISMS, Catalogs, Reports and Settings.
+* Every object kind must have exactly one canonical address; reloading an address must restore the same view.
 
-Shell (`src/lib/shell`): `AppShell`, `NavRail`, `TopBar`, `BottomBar` (phone), `CommandPalette`, `LiveIndicator`.
-Templates (`src/lib/templates`): `DashboardPage`, `TriagePage`, `ObjectPage`, `WizardPage`.
+Canonical addresses: `/` (Due), `/samm/<scope>/<assessment>/<practice>`, `/threat-models/<service>/<model>`,
+`/incidents/<year>/<incident>`, `/isms/risks/<entry>`, `/isms/documents/<id>`, `/catalogs/<catalog>/<id>`,
+`/reports/<report>`, `/settings/<section>`, `/welcome` (first login) and `/<lens path>/release`. `src/lib/routes.ts`
+holds `parseAddress` and `formatAddress`; route files are stubs rendering `AppRouter`.
 
-[cols="1,2,1"]
-|===
-|Lens |Canonical address |Template
+[#CIFR-WEB-4]
+== CIFR-WEB-4: Generated Forms
 
-|Due |`/` |`DashboardPage`
-|SAMM |`/samm/<scope>/<assessment>/<practice>` |`TriagePage`
-|Threat models |`/threat-models/<service>/<model>` |`TriagePage`
-|Incidents |`/incidents/<year>/<incident>` |`TriagePage`
-|ISMS |`/isms/registers/<register>/<entry>`, `/isms/documents/<id>` |`TriagePage`
-|Catalogs |`/catalogs/<catalog>/<id>` |`TriagePage`
-|Reports |`/reports/<report>` |`DashboardPage`
-|Settings |`/settings/<section>` |`WizardPage`
-|First login |`/welcome` |`WizardPage`
-|Release |`/<lens path>/release` |`WizardPage`
-|===
-
-`src/lib/routes.ts` holds `parseAddress` and `formatAddress`; route files are stubs rendering `AppRouter`.
-
-== Forms
-_See Requirement link:../Requirements.adoc#CIFR-WEB-4[CIFR-WEB-4: Generated Forms]_
-
-Status: PLANNED
+* Every document must be edited in a form generated from its category's JSON Schema; no category may have a
+  hand-written view.
+* The browser must validate against the same schema as the server; the server's verdict must be shown when they
+  differ.
 
 `src/lib/forms/SchemaForm.svelte` renders a JSON Schema:
 
@@ -108,47 +90,50 @@ Status: PLANNED
 |`$ref` to a catalog (`x-catalog: service`) |`CatalogPicker`
 |`x-asciidoc: true` |`AsciiDocField` with server-rendered preview
 |`x-person: true` |`PersonPicker` over the person directory; stores the pseudonym
-(link:data-protection.adoc#_personal_details[Data Protection, Personal Details])
 |`x-free-text: true` |Hint `form.hint.no-personal-notes` shown with the field
 |===
 
 Validation: the same schema runs in the browser (Ajv) and in the server; the server's field errors replace the
 browser's on save.
 
-== Editing
-_See Requirement link:../Requirements.adoc#CIFR-WEB-5[CIFR-WEB-5: Drafts, Saving and Conflicts]_
+[#CIFR-WEB-5]
+== CIFR-WEB-5: Drafts, Saving and Conflicts
 
-Status: PLANNED
+* A form must save a draft no later than 5 seconds after the last change.
+* A conflict must be shown with the fields that differ, each with the own and the other value; the draft must be kept.
+* A save by another user to an open document must be visible within 5 seconds through the event stream.
 
 * Draft save: debounced, at most 5 s after the last change, `PUT /api/v1/drafts/{repository}/{id}`.
-* Save: `POST /api/v1/documents/{repository}/{id}/save` with the blob ids loaded; result `SAVED`, `CONFLICT` (list of
-  fields with own and other value), `SAVED_LOCALLY`.
+* Save: `POST /api/v1/documents/{repository}/{id}/save` with the blob ids loaded; result `SAVED`, `CONFLICT` (per
+  file, with the fields that differ and both values) or `GIT_UNAVAILABLE` (the draft is kept; save again later).
 * Event stream: `GET /api/v1/events` (`text/event-stream`); event `document-saved` with repository, id, fields; the
   open form refreshes the fields not edited locally.
 
-== Review and Approval
-_See Requirement link:../Requirements.adoc#CIFR-WEB-6[CIFR-WEB-6: Review and Approval]_
+[#CIFR-WEB-6]
+== CIFR-WEB-6: Review and Release
 
-Status: PLANNED
+* Release must show the diff of the structured data against the last released state.
+* The release control must say that it requires step-up and start it when needed.
 
 * Diff: `GET /api/v1/documents/{repository}/{id}/diff?from=released` returns a structured diff of the YAML data; the
   view groups it by schema section.
-* Approve: `POST /api/v1/approvals/{id}`; responses `APPROVED` and `STEP_UP_REQUIRED` (follow the address; see
-  link:authentication.adoc#_step_up_defaults[Authentication, Step-Up Defaults]).
-* The approve button text says when step-up follows: "Approve (confirm with MFA)".
+* Release: `POST /api/v1/releases/{id}`; responses `RELEASED` and `STEP_UP_REQUIRED` with the step-up address
+  (link:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4]). The button reads "Release (confirm with MFA)".
 
-== Texts
-_See Requirement link:../Requirements.adoc#CIFR-WEB-7[CIFR-WEB-7: Texts]_
+[#CIFR-WEB-7]
+== CIFR-WEB-7: Texts
 
-Status: PLANNED
+* All user-facing text must come from the server's message catalogue in English and German.
 
 `GET /api/v1/messages?lang=en|de` returns the catalogue; `src/lib/i18n` caches it per application version. A lint rule
 fails on string literals in markup outside `src/lib/i18n`.
 
-== Page Security
-_See Requirement link:../Requirements.adoc#CIFR-WEB-8[CIFR-WEB-8: Page Security]_
+[#CIFR-WEB-8]
+== CIFR-WEB-8: Page Security
 
-Status: PLANNED
+* The app must be served with a Content Security Policy that allows no `unsafe-inline` script.
+* Every state-changing request must carry the anti-CSRF header; the server must refuse one without it.
+* Generated AsciiDoc output must be rendered and sanitised by the server.
 
 [cols="1,3"]
 |===

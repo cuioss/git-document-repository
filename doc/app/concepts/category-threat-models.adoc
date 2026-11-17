@@ -10,81 +10,52 @@ link:../README.adoc[CISOs-Friend documentation] » Concepts
 A threat model is written once, in a workshop, with good intentions, and then the architecture moves on without it.
 Nobody notices until the next audit asks for it. Threat models are the second category of CISOs-Friend, and its
 contribution is not the diagram but the life cycle: recipes that guide the filling in, by people or by an AI agent
-through the link:mcp-server.adoc[MCP server], and detection of the moment a model no longer describes its
-application.
+through the link:mcp-server.adoc[MCP server], and a review that falls due when the service's protection needs say so.
 
 == Existing Tools
 
-[cols="1,2,1,2"]
+[cols="1,2,2"]
 |===
-|Tool |Kind |Storage |Assessment
+|Tool |Kind |Assessment
 
 |OWASP Threat Dragon
-|Open source, web and desktop, diagram editor (STRIDE and further methods)
-|JSON files; the web application stores directly in GitHub, GitLab, Bitbucket or locally
-|Best candidate to connect to; shows that Git as storage is common here
+|Open source, web and desktop, diagram editor (STRIDE and further methods); JSON files
+|Best candidate to connect to
 
 |OWASP pytm
-|Open source (MIT), threat model as Python code, generates data-flow and sequence diagrams and a report
-|In the application's repository
-|For developers, no UI; maintained (release v1.4.1 on 2026-11-01;
-https://github.com/OWASP/pytm[pytm on GitHub])
+|Open source (MIT), threat model as Python code, generates diagrams and a report
+|For developers, no UI (https://github.com/OWASP/pytm[pytm on GitHub])
 
 |Threagile
-|Open source (MIT), threat model as YAML, built-in and custom risk rules
-|In the application's repository
-|Fits YAML in Git; last release v0.9.1 on 2024-07-30, last commit on `master` on 2026-04-08 (documentation); its
-README calls a UI far from ready (https://github.com/Threagile/threagile[Threagile on GitHub])
+|Open source (MIT), threat model as YAML with risk rules
+|Fits YAML in Git; its README calls a UI far from ready (https://github.com/Threagile/threagile[Threagile on GitHub])
 
 |Microsoft Threat Modeling Tool
-|Free, Windows only
-|`.tm7` files
+|Free, Windows only, `.tm7` files
 |Rather a single-seat tool
 
 |IriusRisk, ThreatModeler, SD Elements
 |Commercial, with a database
-|Own platform
 |Complete solution, but operation or SaaS and cost
 
 |Open Threat Model (OTM)
-|Open exchange format (JSON or YAML)
-|Format, no tool
-a|Published by IriusRisk under CC BY-SA 4.0, schema version 0.2.0
-(https://github.com/iriusrisk/OpenThreatModel[OTM on GitHub]). Tools that read or write it:
-
-* IriusRisk imports OTM YAML in its UI since release 4.31
-  (https://iriusrisk.com/resources-blog/product-release-4-31[release notes, 2024-07-25]); the `iriusrisk-cli` of
-  IriusRisk imports and exports projects as OTM (https://pypi.org/project/iriusrisk-cli/[iriusrisk-cli 0.6.3]).
-* StartLeft (IriusRisk, Apache-2.0) converts CloudFormation, Terraform, Visio, draw.io and Microsoft Threat Modeling
-  Tool files into OTM and is the import service of IriusRisk (https://iriusrisk.github.io/startleft[StartLeft]).
-* Devici exports OTM 0.2.0 JSON, and SD Elements imports such a file
-  (https://docs.sdelements.com/master/guide/docs/import_from_devici/exporting_otm_from_devici.html[Devici export],
-  https://docs.sdelements.com/master/guide/docs/import_from_devici/importing_into_sd_elements.html[SD Elements import]).
-* Threat Dragon imports and exports OTM in v2.2.0 to v2.4.1 and ships the OTM JSON schema since v2.5.0. From v2.5.0 to
-  v2.6.2 (2026-05-10, the latest release) it exports OTM but rejects an OTM import as "not yet supported"; the import
-  of OTM diagrams is back on `main` since 2026-06-21, not yet released
-  (https://github.com/OWASP/threat-dragon[Threat Dragon on GitHub], `td.vue/src/views/ImportModel.vue` per tag).
+|Open exchange format (JSON or YAML), published by IriusRisk under CC BY-SA 4.0
+(https://github.com/iriusrisk/OpenThreatModel[OTM on GitHub])
+|IriusRisk imports it (https://iriusrisk.com/resources-blog/product-release-4-31[release 4.31]); Threat Dragon
+v2.6.2 (2026-05-10, the latest release) exports OTM but rejects an OTM import
+(https://github.com/OWASP/threat-dragon[Threat Dragon on GitHub], `td.vue/src/views/ImportModel.vue`)
 |===
 
-No existing system known to this concept maintains threat models across many applications, evaluates them and
-detects that they are outdated, without additional operation. That gap is the place of this category.
+No existing system known to this concept maintains threat models across many services and evaluates them without
+additional operation. That gap is the place of this category.
 
 == Where a Threat Model Lives
 
-A threat model describes one application and has to change with its architecture. That raises the question of
-place. Both answers are supported by configuration over the same repository layer.
-
-* *A: in the application's repository* (`threat-model/` beside the code), recommended as the source of truth. It is
-  versioned with the code; a release has its threat model. Outdated models become
-  detectable: the architecture changed since the last commit of the threat model (new interfaces, dependencies,
-  infrastructure files), so a review is due. This works through Git diffs, and only when model and code share the
-  repository. The application reads many repositories, which the library's repository layer does anyway. It writes as
-  the technical user, with commits it signs, into a branch of the service's repository and opens a pull or merge
-  request, because the `main` of the applications belongs to their teams; the service team merges it
-  (link:authentication-and-identity.adoc[Authentication and Identity]).
-* *B: a central repository `threat-models`*, like SAMM. Simpler where teams allow no writes into their repositories or
-  the applications are not in Git; outdated models are then detected only through references to the applications'
-  repositories.
+Every threat model lives in the central repository `threat-models`, under its service, and is saved and released like
+every other document. The application writes into no repository of a development team, so it needs no pull request
+through a Git host API and no write right there, and the repository can be restricted to the readers threat models
+call for. Keeping a model beside the code would make an outdated model detectable from the diffs of the code; that
+detection is deferred (see <<_open_questions>>).
 
 == What the Application Contributes
 
@@ -94,40 +65,27 @@ Not a diagram editor; Threat Dragon has one. The value lies in the life cycle:
 . *Format*: OTM or the JSON of Threat Dragon instead of an own schema. With Threat Dragon JSON teams can go on editing
   the diagram in Threat Dragon and the application reads the same file; with OTM that needs a Threat Dragon release
   that imports OTM (see the open questions).
-. *Maintenance*: detection of outdated models, due dates, review and approval trailers.
-. *Evaluation across applications*: open threats per application, untreated risks, age of the models.
+. *Maintenance*: a review due date from the protection needs of the service, review and release with step-up.
+. *Evaluation across services*: open threats per service, untreated threats, age of the models.
 . *Links*: threat modelling is a stream of the SAMM practice _Threat Assessment_ (business function _Design_), so
   maintained threat models are direct evidence for that practice in a SAMM assessment; accepted or untreated
-  threats become entries of the ISMS risk register (`isms-register:risk/…`), countermeasures become issues.
-
-=== Detecting an Outdated Model
-
-The detection compares two points in the history of each repository of the service: the head that was current at
-the last review, which the model records per repository, and the current head. A model is due for review when,
-between the two, a configured set of paths changed: interface definitions (OpenAPI, protobuf), dependency manifests,
-infrastructure files (Dockerfile, Helm, Terraform), or when the service's entry in the service catalog changed its
-protection needs. The due date then follows the review interval derived from those protection needs. Recording the
-reviewed head per repository matters in variant B: there the model's own commits live in the `threat-models`
-repository, not in the service's history, and could serve as no base for a diff there.
+  threats become entries of the ISMS risk register (`isms-register:risk/…`), countermeasures record their issue ids.
 
 == What to Observe
 
-* *Confidentiality*: threat models describe attack paths. In the application's repository everyone with read access to
-  the code sees them; internally that is mostly intended, for public repositories it is excluded, and variant B with a
-  restricted repository applies.
+* *Confidentiality*: threat models describe attack paths; the `threat-models` repository is restricted.
 * *Personal data*: hardly any, apart from owners; roles instead of names, as elsewhere.
-* *Service*: every threat model refers to its entry in the service catalog (`service:…`), which names its
-  repositories (link:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs]).
+* *Service*: every threat model refers to its entry in the service catalog (`service:…`)
+  (link:service-catalog.adoc[Service Catalog]).
 * *Diagrams* are stored as data (OTM or JSON); images are generated, so diffs stay readable.
 
+[#_open_questions]
 == Open Questions
 
-. Decide the threat model format (OTM or Threat Dragon JSON). OTM is read by IriusRisk and SD Elements, but the
-  released Threat Dragon (v2.6.2) exports OTM without importing it, so editing an OTM file in Threat Dragon needs a
-  release with the OTM import of `main` (see <<_existing_tools>>).
-. Prototype the detection of outdated threat models from Git diffs of the application's repository, including the
-  default path set per technology.
+. Decide the threat model format (OTM or Threat Dragon JSON). Teams that edit in Threat Dragon need its JSON, or a
+  Threat Dragon release that imports OTM again (see <<_existing_tools>>).
 . Which recipes ship with the application, and whether a recipe is itself a schema-driven document.
+. Deferred: detection of an outdated model from the diffs of the service's repositories since the last review.
 
 == Related
 
@@ -135,6 +93,4 @@ repository, not in the service's history, and could serve as no base for a diff 
 * link:category-isms.adoc[ISMS] — risk register
 * link:mcp-server.adoc[MCP Server] — agent-assisted filling in
 * Sources: https://owasp.org/www-project-threat-dragon/docs-2/introduction[Threat Dragon 2.0 introduction],
-  https://owasp.org/www-project-threat-dragon/docs-2/install-webapp[Installing the web application (repository access)],
-  https://owasp.org/www-project-threat-dragon/docs-2/bitbucket-repo[Bitbucket repository access],
   https://www.github.com/OWASP/threat-dragon[Threat Dragon on GitHub]

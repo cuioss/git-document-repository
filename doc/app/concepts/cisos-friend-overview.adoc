@@ -20,7 +20,7 @@ interfaces, the parts the application builds on, and the place it takes beside e
 
 The application is always server-based. One server manages the Git repositories; no client holds a clone. Git is the
 persistence only, not a tool the users touch. The organisations that use it are development organisations that
-already operate a maintained Git server (GitHub, GitLab, Gitea, Bitbucket) with backups. Every additional database
+already operate a maintained Git server (GitHub, GitLab, Gitea) with backups. Every additional database
 brings operating effort; reusing the existing Git server avoids it.
 
 Whether Git carries this load is answered by the libraries of `git-document-repository`; the reasoning is in
@@ -38,7 +38,7 @@ the first application on them. It adds the categories, the user interfaces, the 
 |link:category-samm.adoc[SAMM]
 
 |*Threat models*
-|Filled in and maintained per application, guided by recipes for threat modelling; detection of outdated models.
+|Filled in and maintained per service, guided by recipes for threat modelling; reviews due by protection need.
 |link:category-threat-models.adoc[Threat Models]
 
 |*Incident response reports*
@@ -56,21 +56,20 @@ link:../../concepts/schema-driven-documents.adoc[schema-driven documents]; a cat
 template, workflow, repository), not code. Further categories become cheap: exception approvals, supplier
 assessments, access reviews.
 
-The categories hang together through the master data of the library's
-link:../../concepts/directory-and-catalogs.adoc[directory and catalogs]: persons, roles, teams and above all the
-service catalog.
+The categories hang together through master data: the persons, roles and teams of the library's
+link:../../concepts/directory-and-catalogs.adoc[directory and catalogs], and above all the application's
+link:service-catalog.adoc[service catalog].
 
-image::../resources/diagrams/category-relations.svg["The service catalog as the hub: SAMM scopes, threat models, incident reports and ISMS assets all refer to service entries; the directory resolves roles and teams to persons",align=center]
+image::../resources/diagrams/category-relations.svg["The service catalog as the hub: SAMM scopes, threat models, incident reports and ISMS risks all refer to service entries; the directory resolves roles and teams to persons",align=center]
 
 == Audience
 
 * *Security officers and CISOs* who need released, comparable, auditable states: the SAMM trend, the risk register as
   of the audit date, the incident reports of a year.
-* *Development teams* who fill in assessments in workshops, keep their threat models beside their code and work with
-  pull requests anyway.
+* *Development teams* who fill in assessments in workshops and maintain the threat models of their services.
 * *Incident responders* who write the report after the live phase and must meet notification deadlines.
-* *AI agents* acting for a user: filling in a threat model from a recipe, drafting an incident report from a ticket
-  timeline, answering "which services lack a current threat model".
+* *AI agents* acting for a user: filling in a threat model from a recipe, drafting an incident report from notes the
+  user hands over, answering "which services lack a current threat model".
 
 Users of the ISMS and of incident reports often have no account on the Git server. The application therefore never
 requires one; the identity of a change comes from the login and is signed into the commit (see
@@ -93,7 +92,7 @@ audience-bound tokens that the server validates and never passes on. See link:mc
 |===
 
 Both interfaces call the same application services. Neither carries a rule of its own: what a user may do, whether
-an approval needs step-up and which deadline is due is decided once, in the server.
+a release needs step-up and which deadline is due is decided once, in the server.
 
 == What the Application Builds On
 
@@ -115,18 +114,19 @@ repository; this application takes it as given.
 link:application-architecture.adoc[Application Architecture] and link:deployment.adoc[Deployment].
 
 |The organisation's systems
-|Git server (truth and backup), identity provider, issue and ticket system, KMS or Vault, SIEM, optionally a timestamp
-authority. The application adds no store of its own.
+|Git server (truth and backup), identity provider, KMS or Vault, SIEM. The application adds no store of its own and
+calls no other system.
 |===
 
 == Positioning
 
-CISOs-Friend does not compete with an established ISMS product such as verinice as a complete ISMS; it complements it
-(link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006]).
+CISOs-Friend does not compete with an established ISMS product such as verinice as a complete ISMS; it complements it.
+A complete ISMS on Git would take years to reach the catalogues and methodology such a product ships, and the texts of
+ISO 27001 may not be shipped.
 
 . *Core*: SAMM on Git. No tool known to this concept keeps SAMM assessments as versioned documents in Git.
-. *Extension*: a lean "ISMS as code" for development organisations: policies, statement-of-applicability extracts for
-  secure development, risks from SAMM gaps, threat models and incident reports with their links.
+. *Extension*: a lean "ISMS as code" for development organisations: policies and the risk register, with risks from
+  SAMM gaps, threat models and incident reports.
 . *No bridge*: where an organisation runs an ISMS product, the product refers to a released SAMM assessment by its
   release tag; CISOs-Friend delivers nothing into it.
 
@@ -141,13 +141,12 @@ counted in years, not weeks. SAMM alone takes weeks to months.
 
 == Open Questions
 
-. Clarify with Token Sheriff which claims (`sub`, `sid`, `acr`, `amr`, `auth_time`) and groups reach the application,
-  and how step-up for approvals is triggered
+. Clarify with Token Sheriff which claims (`sub`, `acr`, `amr`, `auth_time`) and groups reach the application,
+  and how step-up for a release is triggered
   (tracked in link:authentication-and-identity.adoc#_open_questions[Authentication and Identity]).
 
 == Related
 
 * link:../README.adoc[CISOs-Friend documentation index] and reading order
 * link:../../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents] (library)
-* link:../adr/0005-Categories_are_configuration_of_git-forms_not_code.adoc[ADR-0005: Categories are configuration of git-forms]
-* link:../adr/0006-CISOs-Friend_complements_verinice_and_does_not_replace_it.adoc[ADR-0006: Complement verinice]
+* link:service-catalog.adoc[Service Catalog]

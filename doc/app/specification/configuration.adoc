@@ -2,24 +2,26 @@
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
-:sectnums:
 :source-highlighter: highlight.js
 
-link:../Specification.adoc[Back to Main Specification]
-
-== Overview
-_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
-
-Status: PLANNED
+link:../README.adoc[CISOs-Friend documentation] » Specification
 
 Two sources: `application.properties` for Quarkus runtime settings, and `cisos-friend.yaml` for the policy of the
 application. Reasoning: link:../concepts/application-architecture.adoc#_configuration[Application Architecture,
 Configuration].
 
-== application.properties
-_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
+[#CIFR-CONF-1]
+== CIFR-CONF-1: Configuration
 
-Status: PLANNED
+* Policy configuration must be one YAML document validated against a bundled JSON Schema; `${NAME:-default}`
+  placeholders must be resolved from the environment.
+* An invalid configuration must stop the boot with one log record per violation.
+* `--validate-config <dir>` must validate offline and exit with `0` for a valid and non-zero for an invalid
+  configuration.
+* Secret values must not be representable in the YAML; the schema must accept only references (mounted file, KMS key
+  id or Vault path).
+
+=== application.properties
 
 [cols="1,1,2"]
 |===
@@ -33,31 +35,20 @@ Status: PLANNED
 |`redirect`
 |Plain HTTP redirects to HTTPS
 
-|`quarkus.management.enabled`
-|`true`
-|Management interface on its own port
+|`quarkus.management.enabled`, `quarkus.management.port`
+|`true`, `9000`
+|Health and metrics on their own port
 
-|`quarkus.management.port`
-|`9000`
-|Health and metrics
-
-|`quarkus.http.ssl.certificate.files`
-|`/run/secrets/tls/tls.crt`
-|TLS certificate chain (PEM), mounted as a secret
-
-|`quarkus.http.ssl.certificate.key-files`
-|`/run/secrets/tls/tls.key`
-|TLS private key (PEM), mounted as a secret
+|`quarkus.http.ssl.certificate.files`, `quarkus.http.ssl.certificate.key-files`
+|`/run/secrets/tls/tls.crt`, `/run/secrets/tls/tls.key`
+|TLS certificate chain and private key (PEM), mounted as a secret
 
 |`cisos-friend.config.dir`
 |`config`
 |Directory holding `cisos-friend.yaml`
 |===
 
-== cisos-friend.yaml
-_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
-
-Status: PLANNED
+=== cisos-friend.yaml
 
 Validated against `schema/cisos-friend.schema.json` (bundled). Top-level keys:
 
@@ -67,7 +58,7 @@ Validated against `schema/cisos-friend.schema.json` (bundled). Top-level keys:
 
 |`repositories`
 |yes
-|List of repositories (see <<_repositories>>)
+|List of repositories (<<CIFR-CONF-2>>)
 
 |`rights`
 |yes
@@ -81,147 +72,67 @@ for `private_key_jwt`), `groups-claim` (default `groups`)
 
 |`categories`
 |yes
-|Enabled categories (see <<_categories>>)
+|List of the enabled categories (`samm`, `threat-models`, `incident-reports`, `isms`); their behaviour comes from
+their definitions in the `categories` module only
 
-|`retention-classes`
+|`step-up`
 |yes
-|Map of retention class name → `unlimited` or an ISO 8601 period (see <<_retention_classes>>)
+|`acr` (the `acr` value that states multi-factor authentication), `amr` (list of `amr` values accepted instead),
+`max-age` (default `PT5M`) (link:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4])
 
 |`signing`
 |yes
-|`key-ref` (commit-signing key), `format` (`ssh` or `gpg`), `session-hmac-key-ref` (key of the session HMAC in the
-`Session` trailer, see link:authentication.adoc#_trailer_values[Trailer Values])
+|`key-ref` (commit-signing key; SSH format)
 
 |`anchor`
 |no
 |Anchoring of releases and checkpoints
 (link:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
-`providers` (default `[signed]`; `[]` switches anchoring off), `releases` (default `true`), `checkpoint-interval`
-(ISO 8601 duration, default `P1D`), `signed-key-ref` (the anchor key of the own timestamp; required while `signed` is
-active; must differ from `signing.key-ref`), `rfc3161.tsa-url` and `rfc3161.trust-ref` (required when `rfc3161` is
-active)
-
-|`mirror`
-|no
-|`url`, `credential-ref`
+`provider` (default `signed`; `none` switches anchoring off), `checkpoint-interval` (ISO 8601 duration, default
+`P1D`), `signed-key-ref` (the anchor key of the own timestamp; must differ from `signing.key-ref`)
 
 |`mcp`
 |yes
-|`canonical-uri`, `authorization-servers`, `allowed-origins`, `rate-limits.read-per-minute` (default `120`),
-`rate-limits.write-per-minute` (default `20`), `dpop` per issuer (`off`, `accepted`, `required`; default `off`)
+|`canonical-uri`, `authorization-servers`, `allowed-origins`
 
 |`web`
 |yes
-|`session.idle-timeout` (default `PT30M`), `session.max-lifetime` (default `PT8H`), `directory.confirm-interval`
-(default `P12M`), `information-text-ref`
+|`session.idle-timeout` (default `PT30M`), `session.max-lifetime` (default `PT8H`), `information-text-ref`
 
 |`directory`
 |no
-|The person directory (link:data-protection.adoc#_person_directory[Data Protection, Person Directory]):
-`persons.provider` (default `git`), `persons.repository` (alias of the repository holding the person entries; default
-`directory`; only for `git`)
-
-|`integrations`
-|no
-|`issue-tracker`, `ticket-system`, `chat`, each with `url` and `credential-ref`
+|The person directory (link:directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]): `persons.provider` (default `git`),
+`persons.repository` (default `directory`), `confirmation-interval` (default `P12M`), `backstage` (the import of
+link:directory.adoc#CIFR-DIR-6[CIFR-DIR-6])
 |===
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 
 * `file:/run/secrets/...`: a mounted file.
-* `kms:<key-id>`: a key held by the KMS and used there (commit-signing key, anchor key).
-* `vault:<path>`: a secret of Vault's key-value engine.
-
-The schema accepts for each key only the forms that fit it: a key used for signing (`signing.key-ref`,
-`anchor.signed-key-ref`) accepts `kms:` and `file:`, every other key `file:` and `vault:`.
+* `kms:<key-id>`: a key held by the KMS and used there; accepted only by the signing keys (`signing.key-ref`,
+  `anchor.signed-key-ref`).
+* `vault:<path>`: a secret of Vault's key-value engine; accepted by every key except the signing keys.
 
 Placeholders: `${NAME}` and `${NAME:-default}` in any string value, resolved from the environment before validation;
 an unresolved placeholder without default is a boot error.
 
-== Categories
-_See Requirements:_
+=== Boot Validation
 
-* _link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
-* _link:../Requirements.adoc#CIFR-AUTH-5[CIFR-AUTH-5: Step-Up]_
-* _link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
+Before the application accepts requests, every rule runs; each violation produces one `ERROR` record, and any
+violation stops the boot. Besides the schema, the rules refuse what the schema cannot see: two repositories with one
+alias, a `rights` entry or `directory.persons.repository` naming an unknown alias, a `-ref` value in a form its key
+does not accept, an `anchor.signed-key-ref` equal to `signing.key-ref`, and an `mcp.canonical-uri` that is not an
+absolute HTTPS URI without fragment. Offline, `application --validate-config <dir>` runs the same rules and exits `0`
+(valid) or `1` (invalid).
 
-Status: PLANNED
+[#CIFR-CONF-2]
+== CIFR-CONF-2: Repositories and Refresh
 
-`categories` maps a category id (`samm`, `threat-models`, `incident-reports`, `isms`) to its settings. Every key
-except `retention-class` is optional and overrides the default of the category's `workflow.yaml`.
-
-[cols="1,1,3"]
-|===
-|Key |Default |Meaning
-
-|`enabled`
-|`true`
-|Whether the category is offered
-
-|`step-up.transitions`
-|from `workflow.yaml`
-|Map of transition → `true` or `false` (link:authentication.adoc#_step_up_defaults[Step-Up Defaults])
-
-|`deadlines`
-|from `workflow.yaml`
-|Overrides of the category's deadline rules
-
-|`step-up.acr`
-|required when a transition of the category requires step-up
-|`acr` value that states multi-factor authentication (link:authentication.adoc#_step_up[Step-Up])
-
-|`step-up.max-age`
-|`PT5M`
-|Maximum age of `auth_time` for an approval
-
-|`retention-class`
-|— (required)
-|Name of a retention class from `retention-classes`, for every document kind of the category
-
-|`kinds.<kind>.retention-class`
-|the category's
-|Retention class of one document kind, where it differs from the category's
-
-|`detection.paths`
-|see link:category-threat-models.adoc#_detection[Detection]
-|`threat-models` only: path set of the outdated-model detection (glob patterns)
-
-|`review-intervals`
-|`very-high` `P6M`, `high` `P12M`, `normal` `P24M`
-|`threat-models` only: review interval per highest protection need of the service
-|===
-
-== Retention Classes
-_See Requirements:_
-
-* _link:../Requirements.adoc#CIFR-DP-1[CIFR-DP-1: Repository Cut]_
-* _link:../Requirements.adoc#CIFR-DP-4[CIFR-DP-4: Retention]_
-
-Status: PLANNED
-
-`retention-classes` names each retention period once. The shipped configuration:
-
-[cols="1,1,2"]
-|===
-|Class |Period |Assigned to
-
-|`unlimited`
-|`unlimited`
-|SAMM, threat models, ISMS documents and registers, directory
-
-|`incident-reports`
-|`P5Y` (default; an organisation sets its own period with its data protection officer)
-|Incident reports
-|===
-
-A category or kind names its class; a repository names the one class of everything stored in it (`retention` in
-<<_repositories>>). The retention job uses the period of the repository's class
-(link:data-protection.adoc#_retention[Data Protection, Retention]).
-
-== Repositories
-_See Requirement link:../Requirements.adoc#CIFR-OPS-5[CIFR-OPS-5: Repository Modes and Refresh]_
-
-Status: PLANNED
+* Every repository must have a remote; a single-server setup uses a local bare repository as its remote.
+* Every repository must declare its confidentiality class and its retention period, and nothing else may declare a
+  retention period.
+* The application must refresh every repository by a periodic fetch, default every 5 minutes, and after its own
+  saves.
 
 [cols="1,1,3"]
 |===
@@ -229,16 +140,11 @@ Status: PLANNED
 
 |`alias`
 |yes
-|Stable alias used in references (`isms-register`)
+|Stable alias used in references (`isms-register`); `isms-incidents-<year>` names one repository per year
 
 |`remote`
 |yes
-|HTTPS URL of the remote, or `none` for local mode
-
-|`host-type`
-|for a remote
-|`github`, `gitlab` or `gitea`; selects the webhook authentication and the Git host API used for pull or merge
-requests and for the deletion of the remote repository
+|URL of the remote: HTTPS, or `file:` for a local bare repository
 
 |`confidentiality`
 |yes
@@ -246,72 +152,14 @@ requests and for the deletion of the remote repository
 
 |`retention`
 |yes
-|Name of a retention class from `retention-classes` (<<_retention_classes>>)
+|`unlimited` or an ISO 8601 period, counted from the repository's creation (for `isms-incidents-<year>` from the end
+of that year)
 
 |`credential-ref`
-|yes
+|for HTTPS
 |Reference to the credential of the technical user, the only Git credential
-
-|`webhook-secret-ref`
-|no
-|Reference to the secret of the Git server's push webhook; without it the webhook endpoint is disabled for this alias
 
 |`fetch-interval`
 |no
 |ISO 8601 duration, default `PT5M`
 |===
-
-Webhook endpoint: `POST /api/v1/hooks/git/{alias}`. Authentication follows `host-type`:
-
-* `github`: HMAC-SHA-256 of the body in `X-Hub-Signature-256`, verified with the referenced secret.
-* `gitea`: HMAC-SHA-256 of the body in `X-Gitea-Signature`, verified with the referenced secret.
-* `gitlab`: `X-Gitlab-Token` carries the secret itself; it is compared with the referenced secret in constant time.
-
-A mismatch is answered with `401` and logged. For an alias without `webhook-secret-ref` (and for a repository in local
-mode) every webhook call is answered with `401`; the periodic fetch alone refreshes that repository.
-
-== Boot Validation
-_See Requirement link:../Requirements.adoc#CIFR-OPS-4[CIFR-OPS-4: Configuration]_
-
-Status: PLANNED
-
-An ordered list of validation rules runs before the application accepts requests. Each violation produces one `ERROR`
-record; any violation stops the boot.
-
-[cols="1,2"]
-|===
-|Rule |Refuses
-
-|Schema
-|Any document that does not validate against the bundled schema
-
-|Unique aliases
-|Two repositories with one alias
-
-|Known retention classes
-|A category, kind or repository naming a class that `retention-classes` does not define
-
-|One retention class per repository
-|A repository whose assigned categories and kinds, taken together across all categories, carry more than one
-retention class, or carry a class other than the repository's `retention`
-
-|Host type
-|A remote repository without `host-type`
-
-|Reference forms
-|A `-ref` value in a form its key does not accept (`signing.key-ref` as `vault:`)
-
-|Step-up assurance
-|A category with a transition that requires step-up and no `step-up.acr`
-
-|Rights reference repositories
-|A rights entry naming an unknown alias
-
-|Person directory path
-|`directory.persons.repository` naming an alias that `repositories` does not configure
-
-|Canonical URI
-|`mcp.canonical-uri` that is not an absolute HTTPS URI without fragment
-|===
-
-Offline: `application --validate-config <dir>` runs the same rules and exits `0` (valid) or `1` (invalid).
