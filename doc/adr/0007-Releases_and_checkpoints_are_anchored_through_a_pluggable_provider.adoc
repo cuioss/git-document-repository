@@ -31,22 +31,20 @@ without making an external service a requirement.
 * *What is anchored* is decided by `git-store`, the same for every provider:
 ** the commit of every release tag, right after the tag exists, unless the configuration turns release anchoring off
    (`anchor.releases`);
-** a *checkpoint* at most once per configured interval (default one day), and only when a pushed reference changed
-   since the previous one. A checkpoint is a commit whose tree lists every pushed reference with its object id; its
-   parent is the previous checkpoint, and it is tagged `refs/tags/checkpoints/<n>`. Anchoring a checkpoint proves
-   every commit reachable from the references it lists, and every earlier checkpoint.
+** a *checkpoint* at most once per configured interval (default one day), and only when a pushed reference changed:
+   a commit listing every pushed reference, chained to the previous checkpoint, so that one proof covers everything
+   it reaches.
 * *Two providers ship with the libraries:*
-** `signed` (`git-store`), an own timestamp on a best-effort basis: a statement of object id, time, sequence number
-   and the hash of the previous proof, signed with an anchor key of its own, never the commit-signing key. It refuses
-   to sign when its clock is behind its previous proof, and it writes every proof as a log record, so the operator's
-   log pipeline keeps a copy outside Git. It needs no service beyond a key source.
+** `signed` (`git-store`), an own timestamp on a best-effort basis: a chain of statements signed with an anchor key
+   of its own, never the commit-signing key, each also written as a log record so that the operator's log pipeline
+   keeps a copy outside Git. It needs no service beyond a key source.
 ** `rfc3161` (`git-timestamp`), the alternative with an external timestamp authority, for organisations that need a
    proof independent of their own operation.
 * The proofs are stored as notes on the anchored commit under `refs/notes/anchors/<provider>`, so they travel with
-  the repository, and are pushed right after they are written. Which subjects still lack a pushed proof is derived
-  from the remote's notes after each fetch, so a proof whose push failed is pushed again and a restart loses nothing.
+  the repository; pending subjects are derived from the remote's notes, so a restart loses nothing.
 
-See xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor].
+See xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor] and
+xref:../specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15 – GDR-STORE-18].
 
 == Alternatives rejected
 

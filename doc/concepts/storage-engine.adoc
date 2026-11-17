@@ -110,8 +110,8 @@ file.
 *Release* is a merge of the working branch into `main` and a tag `<collection>/<id>/v<n>`, where `n` counts the
 releases of the document; no release tag ever moves. The release of an entry of a numbered collection merges that
 entry's path from the collection branch into `main` (a path-level merge in core). The store merges every release
-itself and pushes it as the technical user; `main` and the tags are protected on the Git server so that only the
-technical user may push to `main` and nobody may force-push. An approval is a transition of the document's
+itself and pushes it as the technical user, the only one allowed to push to the protected `main` (see
+xref:identity-and-signing.adoc#_one_technical_user[Identity and Signing]). An approval is a transition of the document's
 workflow (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). The library enforces no four-eyes
 rule; an organisation that wants one gives the right to approve to other people than the right to edit.
 

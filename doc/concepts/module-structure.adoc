@@ -102,15 +102,12 @@ it is added.
 `git-core`, `git-worktrees` and `git-testing` form the foundation: generic Git functionality on JGit that carries no
 term of a domain, so it serves the document store and every other client that works with Git repositories.
 
-* *`git-core`* holds the file system that refuses hooks and process starts (`RefusingFS`), the remote policy
-  (`RemotePolicy`: an HTTPS origin or local only, checked before every fetch and push), commit and reference identity
-  (`GitIdentity`), the result type and the closed list of Git outcomes (`GitResult`, `GitOutcome`), and the repository
-  operations: open and init, the log, fetch and push (with credentials and lease), and the cache repository (one commit
-  fetched into a bare cache under a remote policy, a file read at that commit). For the document store it adds in-core
-  writing, compare-and-swap with retry, in-core merge with conflict results per path, and `git notes`. `GitOutcome`
-  holds the Git outcomes only, the worktree outcomes included, because they are terms of Git; each aspect module
-  defines its own closed list in the same result shape, so adding an aspect module changes nothing in `git-core` (see
-  xref:../specification/general.adoc#GDR-GEN-3[GDR-GEN-3]).
+* *`git-core`* holds the hardening (a file system that refuses hooks and process starts, a remote policy checked
+  before every fetch and push), commit and reference identity, the result type with the closed list of Git outcomes,
+  and the repository operations including a cache repository; for the document store it adds in-core writing,
+  compare-and-swap, in-core merge and `git notes` (xref:../specification/git-core.adoc[`git-core`]). Each aspect
+  module defines its own closed list of outcomes in the same result shape, so adding an aspect module changes nothing
+  in `git-core` (xref:../specification/general.adoc#GDR-GEN-3[GDR-GEN-3]).
 * *`git-worktrees`* holds the linked working trees (administration files in git's own layout, readable by
   `git worktree list` and written natively, because JGit has no command that adds or removes a linked working tree;
   see xref:storage-engine.adoc#_no_working_trees[Storage Engine, No Working Trees]): adding, listing and removing
@@ -118,8 +115,8 @@ term of a domain, so it serves the document store and every other client that wo
   from a working tree, and a working-tree status as a generic primitive (the path set of changed, untracked and deleted
   files), on which a client builds its own digest. The document store does not need this module; clients that work on
   files on disk do.
-* *`git-testing`* holds the generator of transport credentials (`GitCredentialGenerator`, `GitGenerators`) and
-  fixtures for local and in-memory repositories and a local remote.
+* *`git-testing`* holds a generator of transport credentials and fixtures for local and in-memory repositories and a
+  local remote (xref:../specification/git-testing.adoc[`git-testing`]).
 
 Every module except `git-testing` is to work in a GraalVM native image and to ship the metadata it needs
 (xref:../specification/general.adoc#GDR-NFR-4[GDR-NFR-4]), so a client with a native build can use it.

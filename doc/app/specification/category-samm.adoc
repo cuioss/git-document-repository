@@ -97,7 +97,8 @@ releasing user in its trailers. Saves to a released assessment return `DOCUMENT_
 Release, Comparison and Targets]); its result is cached in the index per released tag. Sources: the answer sets of the
 model (link:https://github.com/owaspsamm/core/tree/v2.2.0/model/answer_sets[SAMM core v2.2.0, answer sets]), the
 scoring rules (link:https://owaspsamm.org/blog/samm-relative-scoring/[SAMM blog, 2025-01-21]) and the toolbox
-spreadsheet (link:https://github.com/owaspsamm/core/releases/tag/v2.2.0[`SAMM_spreadsheet.xlsx` of release v2.2.0]).
+spreadsheet (link:https://github.com/owaspsamm/core/releases/tag/v2.2.0[`SAMM_spreadsheet.xlsx` of release v2.2.0], sheets
+_Interview_ and _Scorecard_, which compute the same values without rounding).
 
 * answer value: the `value` of the chosen answer in the model's answer set (0, 0.25, 0.5 or 1 in model v2.2.0); an
   unanswered question counts 0;

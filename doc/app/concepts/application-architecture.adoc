@@ -49,39 +49,12 @@ directly, and no service package knows JGit.
 
 == Maven Modules
 
-The reactor mirrors API Sheriff (parent `de.cuioss:cui-quarkus-parent`, the Quarkus BOM and the Token Sheriff BOM
-imported in the root `dependencyManagement`, `maven.compiler-plugin.release` = `25`).
-
-[cols="1,3"]
-|===
-|Module |Content
-
-|`cisos-friend`
-|The Quarkus application: surfaces, services, configuration, boot validation. Carries the `native` profile.
-
-|`categories`
-|The category definitions as resources: per category a JSON Schema, an AsciiDoc template and a workflow; besides
-them the catalog declarations and the threat-model recipes. Tested on its own against the library's form engine; no
-Java code. The one behaviour a schema cannot express, the SAMM score, sits
-behind the extension point `ScoreCalculator` in `cisos-friend`.
-
-|`web-app`
-|The Svelte single-page application, built by `frontend-maven-plugin` into a resource JAR
-(xref:web-app.adoc[Web App]).
-
-|`web-e2e`
-|Playwright end-to-end tests and the axe-core accessibility audit against the built application.
-
-|`integration-tests`
-|Builds the native image and the distroless container, starts a compose stack, runs the failsafe `*IT` suites.
-
-|`deployment`
-|The compose sample (xref:deployment.adoc[Deployment]).
-|===
-
-The measurements of index size, start time and save latency run as the profile `benchmarks` of the
-`integration-tests` module, against its compose stack, in a CI job of their own; they report each value against its
-target and do not gate the build.
+The reactor mirrors API Sheriff. Its central idea is that a category is data: the module `categories` holds, per
+category, a JSON Schema, an AsciiDoc template and a workflow, and contains no Java code; the one behaviour a schema
+cannot express, the SAMM score, sits behind the extension point `ScoreCalculator` in the application module. The
+other modules separate the application, the web app, the end-to-end tests, the native integration tests and the
+compose sample (xref:../specification/architecture-and-modules.adoc#_maven_modules[Architecture and Modules, Maven
+Modules]).
 
 == Libraries
 

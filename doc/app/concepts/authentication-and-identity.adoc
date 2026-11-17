@@ -73,20 +73,16 @@ The person directory is a library interface (xref:../../concepts/directory-and-c
 Catalogs]); the application supplies the flow and the form. The first login below applies to the default directory
 (`git`); with a directory for the organisation's own source the person already exists there, and there is no form.
 
-. The login yields the issuer, `sub` and usually the name. The application finds no saved entry for that pair
-  (issuer and `sub`; a `sub` is unique only within its issuer) and shows the first-login form; until the entry is
-  saved, no other view opens. The pseudonym is kept only once the entry is saved, so a user who left the form unsaved
-  starts again at the next login.
-. The form is prefilled with the name from the token and, where the identity provider delivers groups or departments,
-  with the team. Team and role are picked from the catalogs; free text is not allowed. A missing entry can be
-  requested for the catalog.
-. The form carries the *information duty* under GDPR Art. 13
-  (https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]): what the directory is for, what it holds
-  (name, team and role only), how long it is kept, and the legal basis agreed with the data protection officer.
-. Saving is a signed commit; the entry is valid at once. There is no pending state in the first iteration,
-  because roles are names only and grant nothing.
-. Later the user changes the own entry in the same form. A periodic confirmation ("Is your team still right?") opens
-  the form yearly or on the first login after a reorganisation.
+The library flow (xref:../../concepts/directory-and-catalogs.adoc#_first_login[Directory and Catalogs, First Login])
+applies unchanged; the application adds three things:
+
+* *A gate.* Until the entry is saved, no other view opens and every other request is refused
+  (xref:../specification/directory.adoc#CIFR-DIR-2[CIFR-DIR-2]).
+* *The information duty* under GDPR Art. 13 (https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU)
+  2016/679]): the form shows the operator's text on what the directory is for, what it holds, how long it is kept, and
+  the legal basis agreed with the data protection officer.
+* *The yearly confirmation* ("Is your team still right?") through the same form
+  (xref:../specification/directory.adoc#CIFR-DIR-3[CIFR-DIR-3]).
 
 [#_rights]
 == Rights
@@ -106,10 +102,8 @@ The application reaches every Git server as one technical user, with a credentia
 bot account token). The commit names the user's pseudonym as author and the bot as committer; the signed trailers carry
 the identity. No user needs an account on the Git server, and nothing is pushed in a user's name.
 
-The operator protects `main` of every repository on the Git server so that only the technical user may push to it and
-nobody may force-push; the application cannot verify this setting
-(xref:deployment.adoc#_operating_duties[Deployment, Operating Duties]). The application merges releases itself, so
-the signed release commit names the releasing user.
+The application merges releases itself, so the signed release commit names the releasing user; protecting `main` on
+the Git server is an operating duty (xref:deployment.adoc#_operating_duties[Deployment, Operating Duties]).
 
 [#_step_up]
 == Step-Up

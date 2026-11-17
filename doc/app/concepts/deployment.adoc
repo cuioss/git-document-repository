@@ -49,20 +49,14 @@ same, and a Git server can take over later with one push.
 
 == The Image
 
-Following API Sheriff:
-
-* *Native binary* built with the Mandrel builder image on the JDK 25 line; no JVM in the runtime image.
-* *Base image* `quay.io/quarkus/quarkus-distroless-image`, pinned by digest; the process runs as `nonroot`.
-* *Health check* answered by the binary itself (`--health-probe`), because the distroless image has no shell or
-  other programs to run a check with: it is built from `gcr.io/distroless/cc`
-  (https://github.com/quarkusio/quarkus-images/blob/95188c0a6a1760b9b5766516c7fc7748e7485aaf/quarkus-distroless-base-image/src/main/java/io/quarkus/images/QuarkusDistroless.java[`QuarkusDistroless.java`]),
-  and distroless images contain no package managers, shells or other programs
-  (https://github.com/GoogleContainerTools/distroless[distroless README]).
-* *Ports*: 8443 (HTTPS), 9000 (management: readiness, liveness, Prometheus metrics), 8080 (plain HTTP, only a
-  redirect to 8443).
-* *OCI labels* for version, revision, source and licence from build arguments.
-* *Multi-architecture*: amd64 and arm64 built natively on separate runners and joined into one image index, published
-  as `ghcr.io/cuioss/cisos-friend`.
+Following API Sheriff, the image holds the native binary on a digest-pinned distroless base, runs as `nonroot`, and
+is published for amd64 and arm64 as `ghcr.io/cuioss/cisos-friend`
+(xref:../specification/deployment.adoc#CIFR-OPS-1[CIFR-OPS-1]). The binary answers the health check itself
+(`--health-probe`), because the distroless image has no shell or other programs to run a check with: it is built
+from `gcr.io/distroless/cc`
+(https://github.com/quarkusio/quarkus-images/blob/95188c0a6a1760b9b5766516c7fc7748e7485aaf/quarkus-distroless-base-image/src/main/java/io/quarkus/images/QuarkusDistroless.java[`QuarkusDistroless.java`]),
+and distroless images contain no package managers, shells or other programs
+(https://github.com/GoogleContainerTools/distroless[distroless README]).
 
 The release follows the cuioss release process of the application repository; publishing the image is part of it.
 

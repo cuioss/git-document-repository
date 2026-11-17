@@ -22,22 +22,15 @@ the MCP server is an OAuth 2.1 resource server
 normative revision is 2026-07-28 (its published pages
 `basic/authorization`, `basic/transports` and `basic/transports/streamable-http`, linked under <<_related>>).
 
-* *Protected Resource Metadata* (RFC 9728) is served at `/.well-known/oauth-protected-resource/mcp` (the URL RFC 9728
-  derives from the resource `…/mcp`; also at the root path for clients that ask there) and names the
-  organisation's authorization server in `authorization_servers` and the scopes in `scopes_supported` (without
-  `offline_access`, which is no resource requirement).
-* *Discovery*: a request without a valid token gets `401` with `WWW-Authenticate: Bearer resource_metadata="…",
-  scope="…"`.
-* *Tokens* arrive in the `Authorization` header of every request, never in the query string.
+* *Discovery*: the server publishes Protected Resource Metadata (RFC 9728) naming the organisation's authorization
+  server and the scopes, and answers a request without a valid token with `401` pointing to that metadata.
 * *Validation*: section 5.2 of draft-ietf-oauth-v2-1-13 requires a resource server to check that a token has not
   expired, is authorized for the requested resource and carries the appropriate scope. The server validates every
-  token through `token-sheriff-validation-quarkus`: signature against the issuer's JWKS, expiry, issuer, and
-  *audience*. The token's
-  `aud` must contain the server's canonical URI, the value MCP clients send as `resource` parameter (RFC 8707). A
-  token issued for any other resource is rejected with `401`, however valid it is otherwise.
-* *Insufficient scope*: a call whose token lacks a scope gets `403` with `error="insufficient_scope"`, the scopes the
-  operation needs and the `resource_metadata` URI, so the client can obtain a new token with exactly those scopes.
-  This scope request is not the step-up of a release, which is a renewed MFA login of the user.
+  token through `token-sheriff-validation-quarkus`, above all its *audience*: the token's `aud` must contain the
+  server's canonical URI, the value MCP clients send as `resource` parameter (RFC 8707), so a token issued for any
+  other resource is rejected however valid it is otherwise.
+* *Insufficient scope* yields `403` naming the scopes needed, so the client can obtain a new token with exactly those
+  scopes. This is not the step-up of a release, which is a renewed MFA login of the user.
 * *No token passthrough*: the server never forwards the token it received to another service. Upstream calls use
   their own credentials (see <<_git_credentials_never_reach_the_agent>>).
 
