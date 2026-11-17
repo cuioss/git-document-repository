@@ -1,0 +1,1 @@
+Ledger landed via chore/orchestrator-ledger-init (gitignore fixed). If that PR is merged and main is pulled: run /plan-orchestrator next slug=libraries-initial-implementation to emit PLAN-01. If not yet merged: wait for it first.

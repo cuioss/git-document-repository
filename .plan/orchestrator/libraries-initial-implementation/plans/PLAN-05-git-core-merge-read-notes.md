@@ -1,0 +1,113 @@
+# PLAN-05: git-core — in-core merge, reading and git notes
+
+epic: libraries-initial-implementation
+workstream: WS-01
+
+> Staged plan spec — one shippable unit of work, ready for `/plan-marshall` hand-off. This spec is SELF-SUFFICIENT:
+> the emitted command is a one-line pointer and carries no brief. See
+> `persona-plan-orchestrator/standards/orchestration-model.md` for the tier and hand-off contract.
+
+## Objective
+
+Complete `git-core` with the remaining store primitives: the path-level in-core merge with its own conflict-path
+computation (GDR-CORE-6), reading snapshots, path history and changed paths between commits (GDR-CORE-9), and git
+notes under a caller-named notes reference written through compare-and-swap (GDR-CORE-10).
+
+## Deliverables
+
+1. In-core merge (GDR-CORE-6): `MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.newMerger(repo)`; success yields a tree id; on
+   failure the conflicting paths are computed by a tree walk over base and both tips (entry — object id or file mode —
+   differing from the base on both sides and between the sides); no commit on conflict. `MergeStrategy.RECURSIVE` is
+   never used (ADR-0001).
+   - Skills: pm-dev-java:java-core, pm-dev-java:javadoc
+   - Persona: implementer
+2. Reading (GDR-CORE-9): snapshot of the tree of a reference, tag or commit; commits that changed a path, newest first,
+   with author, committer, time and message; added / modified / deleted paths between two commits.
+   - Skills: pm-dev-java:java-core
+   - Persona: implementer
+3. Notes (GDR-CORE-10): read and write a note on a commit under a caller-named notes reference through `NoteMap`
+   (`read`, `set`, `writeTree`), the notes-reference update through the compare-and-swap of PLAN-04.
+   - Skills: pm-dev-java:java-core
+   - Persona: implementer
+4. Tests: merge without and with conflicts (content and file-mode conflicts, one-sided changes, deletions), reading on
+   the in-memory fixture, notes concurrency (two writers on one notes reference); `doc/specification/git-core.adoc`
+   and `AGENTS.md` state updated ("git-core implemented").
+   - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing, pm-documents:ref-asciidoc
+   - Persona: module-tester
+
+## Standing Constraints
+
+- Conventions of `AGENTS.md`: JPMS (`module-info.java`, module name `de.cuioss.git.document.<suffix>` repeated as the
+  automatic module name, `exports` added with the first public class of a package), `@NullMarked` packages with
+  `@Nullable` where needed, results instead of exceptions for expected outcomes (GDR-GEN-3), `CuiLogger` with a
+  `LogRecord` holder per module and a documented log-message catalogue for every INFO/WARN/ERROR identifier
+  (GDR-GEN-4), Javadoc on every public type and method, license header via `-Ppre-commit`, tests with JUnit 5 /
+  `cui-test-generator` / EasyMock against the `git-testing` fixtures and without network access.
+- Secrets (GDR-NFR-3): no token, password, key material, session id, `sub`, e-mail address or person name in a result
+  detail, exception message, log message or commit metadata; tests assert it with a JUL log capture
+  (`cui-test-juli-logger`) and with checks of result details.
+- Verify every claim about a JGit API against JGit 7.8.0 source or documentation and name the version (CLAUDE.md).
+- Build only through the canonical commands in `CLAUDE.md` (compile, `verify -Ppre-commit`, `verify`); never call
+  `javac` or `mvn` ad hoc.
+- No dependency without the owner's approval (AGENTS.md). Approved on 2026-11-17: JGit 7.8.0, `cui-test-generator`,
+  JUnit 5, EasyMock, `cui-test-juli-logger`, Lombok, `cui-java-tools`. Any other library is put to the owner through
+  the question tool BEFORE it is added, with the alternatives considered, and the spec document's "open" statement
+  is replaced by the decision.
+- Do not touch `.github/project.yml` (every PR that does starts the release workflow; AGENTS.md § Releases).
+- When a module gains code, update its state in `doc/concepts/module-structure.adoc` (State column), the
+  "Current state" paragraph of `AGENTS.md`, and the "planned / not yet implemented" wording of its specification
+  document. When a module is created, add it to the root `pom.xml` `<modules>`, to the module table of `AGENTS.md`,
+  and to the layering guard of PLAN-06 (GDR-GEN-1).
+- Sonar is configured for this project: an open Sonar finding is fixed in a pushed commit, or DISMISSED ONLY ON THE
+  OPERATOR'S SELECTION — the question tool names each finding key, the progress record records the selection as
+  `operator-selected: {issue-key}: {reason}`, and the key is transmitted through
+  `plan-marshall:workflow-integration-sonar:sonar_rest transition --issue-key {key} --transition
+  {falsepositive|wontfix}`. The lane never records a dismissal of its own; a dismissal the run cannot transmit is a
+  blocker. The merge gate reads the open-finding count at the head — `0`, or every remaining key operator-selected;
+  an `undecidable` read blocks.
+
+## Done when
+
+- `verify` passes at the plan's head with GDR-CORE-6, GDR-CORE-9 and GDR-CORE-10 each covered by a test naming the
+  requirement id; every GDR-CORE requirement is then covered.
+- The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
+  open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
+
+## Claim Labels
+
+- OBSERVED: `pm-provider-git` has no merge, no `NoteMap` and no diff between commits — grep for `Merger`,
+  `MergeStrategy`, `NoteMap`, `DiffEntry` in
+  `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/` at pm-mcp-core
+  `287e1a86` finds none.
+- OBSERVED: the spec states `StrategySimpleTwoWayInCore` reports a path modified by both sides as a conflict and
+  reports no conflicting paths, with its JGit 7.8.0 source link — `doc/specification/git-core.adoc` § GDR-CORE-6.
+- HYPOTHESIS: `NoteMap.read`, `NoteMap.set` and `NoteMap.writeTree` have the needed signatures in JGit 7.8.0 —
+  confirm/refute at JGit `v7.8.0.202609011348-r` `org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteMap.java` §
+  `NoteMap` (verify-at-outline).
+
+## Expected Surface
+
+- OBSERVED: `git-core/src/main/java/de/cuioss/git/document/core/`
+- HYPOTHESIS: `git-core/src/test/java/` (created by PLAN-02)
+- OBSERVED: `doc/specification/git-core.adoc`
+- OBSERVED: `AGENTS.md`
+
+## Dependencies and Sequencing
+
+- Depends on: PLAN-04 (compare-and-swap for the notes reference).
+- Overlaps with: PLAN-04 (same package) — sequential.
+- Adjacent to: nothing in `git-store/` yet — the store's use of merge (save, release) is PLAN-08/09.
+
+## Hand-Off Command
+
+```text
+/plan-marshall task="implement .plan/orchestrator/libraries-initial-implementation/plans/PLAN-05-git-core-merge-read-notes.md"
+```
+
+## Write-Boundary
+
+The plan implementing this spec touches only its own repository source and tests. It creates and edits NO file under
+`.plan/orchestrator/` other than its own `inbox/{sender}-{seq}` message — the orchestrator owns every other ledger
+write — and reports its outcome through its PR and its inbox message. The inbox exception's qualifiers and the sole
+sanctioned write mechanism are stated in `persona-plan-orchestrator/standards/orchestration-model.md` § Ledger
+Write-Boundary.
