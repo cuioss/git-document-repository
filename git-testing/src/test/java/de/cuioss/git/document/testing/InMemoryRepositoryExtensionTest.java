@@ -24,14 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -47,12 +41,12 @@ class InMemoryRepositoryExtensionTest {
     /** Objects inserted by earlier repetitions, which a fresh repository must not hold. */
     private static final List<ObjectId> EARLIER_OBJECTS = new CopyOnWriteArrayList<>();
 
-    private Set<Path> temporaryDirectoriesBefore = Set.of();
+    private long directoriesCreatedBefore;
 
     @BeforeEach
-    void captureTemporaryDirectories() throws IOException {
+    void captureTemporaryDirectories() {
         // runs before the test method's parameters are resolved
-        temporaryDirectoriesBefore = fixtureDirectories();
+        directoriesCreatedBefore = TemporaryDirectories.createdCount();
     }
 
     @Test
@@ -98,14 +92,7 @@ class InMemoryRepositoryExtensionTest {
     void shouldCreateNoDirectory(@InMemory Repository repository) {
         assertAll("no directory",
                 () -> assertNull(repository.getDirectory(), "The in-memory repository has no directory"),
-                () -> assertEquals(temporaryDirectoriesBefore, fixtureDirectories(),
+                () -> assertEquals(directoriesCreatedBefore, TemporaryDirectories.createdCount(),
                         "Resolving the parameter created no temporary directory"));
-    }
-
-    private static Set<Path> fixtureDirectories() throws IOException {
-        try (Stream<Path> entries = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
-            return entries.filter(entry -> entry.getFileName().toString().startsWith("git-testing-"))
-                    .collect(Collectors.toSet());
-        }
     }
 }

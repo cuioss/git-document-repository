@@ -22,6 +22,8 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.concurrent.atomic.AtomicLong;
+import org.eclipse.jgit.util.FileUtils;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -30,6 +32,8 @@ import org.jspecify.annotations.Nullable;
 final class TemporaryDirectories {
 
     private static final String PREFIX = "git-testing-";
+
+    private static final AtomicLong CREATED = new AtomicLong();
 
     private TemporaryDirectories() {
         // static helpers only
@@ -42,14 +46,27 @@ final class TemporaryDirectories {
      * @throws IOException if the directory cannot be created
      */
     static Path create() throws IOException {
-        return Files.createTempDirectory(PREFIX);
+        var directory = Files.createTempDirectory(PREFIX);
+        CREATED.incrementAndGet();
+        return directory;
+    }
+
+    /**
+     * Counts the directories {@link #create()} has created in this JVM, so that a test can observe whether a fixture
+     * created one without looking at the shared temporary-file directory, which other processes write to.
+     *
+     * @return the number of directories created so far
+     */
+    static long createdCount() {
+        return CREATED.get();
     }
 
     /**
      * Deletes a directory and everything below it. A directory that does not exist is left as it is.
      * <p>
      * An entry that disappears while the tree is walked, for example a lock file JGit removes concurrently, counts
-     * as already deleted: a {@link NoSuchFileException} for it is ignored. Every other failure propagates.
+     * as already deleted: a {@link NoSuchFileException} for it is ignored. A read-only file is made writable and
+     * deleted, as JGit's {@code FileUtils.delete} does. Every other failure propagates.
      *
      * @param directory the root of the tree to delete
      * @throws IOException if an entry of the tree cannot be deleted
@@ -59,7 +76,8 @@ final class TemporaryDirectories {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                Files.deleteIfExists(file);
+                // clears the read-only flag of pack and index files and retries, which Windows needs to delete them
+                FileUtils.delete(file.toFile(), FileUtils.SKIP_MISSING);
                 return FileVisitResult.CONTINUE;
             }
 

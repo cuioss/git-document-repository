@@ -24,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtensionContext.Namespace;
 import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
+import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.ExtensionContextScope;
 
 /**
  * Resolves a test parameter annotated with {@link InMemory}: a new repository of JGit's in-memory DFS storage, one per
@@ -56,6 +57,19 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     @Override
     public boolean supportsParameter(ParameterContext parameterContext, ExtensionContext extensionContext) {
         return parameterContext.isAnnotated(InMemory.class);
+    }
+
+    /**
+     * Resolves a constructor parameter in the extension context of the test method, so that a constructor fixture of
+     * a test class with the default per-method lifecycle is created and closed per test, not once in the class
+     * context where the next test's fixture would replace its closing.
+     *
+     * @param rootContext the context of the test class
+     * @return {@link ExtensionContextScope#TEST_METHOD}
+     */
+    @Override
+    public ExtensionContextScope getTestInstantiationExtensionContextScope(ExtensionContext rootContext) {
+        return ExtensionContextScope.TEST_METHOD;
     }
 
     /**

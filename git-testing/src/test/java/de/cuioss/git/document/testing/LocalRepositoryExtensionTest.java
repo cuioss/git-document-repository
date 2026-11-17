@@ -31,6 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ParameterContext;
@@ -78,6 +79,41 @@ class LocalRepositoryExtensionTest {
         assertAll("two local repositories",
                 () -> assertNotSame(first, second, "Each parameter receives its own repository"),
                 () -> assertNotEquals(firstDirectory, secondDirectory, "Each repository has its own directory"));
+    }
+
+    /**
+     * A test class with the default per-method lifecycle whose constructor receives the fixture: every test gets its
+     * own repository, and each one's directory is deleted after its test, asserted by
+     * {@link #everyDirectoryIsDeleted()}.
+     */
+    @Nested
+    @DisplayName("Constructor fixture of a per-method test class")
+    class ConstructorFixture {
+
+        private final Repository repository;
+
+        ConstructorFixture(@LocalRepository Repository repository) {
+            this.repository = repository;
+        }
+
+        @Test
+        @DisplayName("Should provide the first test its own repository")
+        void shouldProvideFirstTestItsRepository() {
+            assertReceivedOwnRepository();
+        }
+
+        @Test
+        @DisplayName("Should provide the second test its own repository")
+        void shouldProvideSecondTestItsRepository() {
+            assertReceivedOwnRepository();
+        }
+
+        private void assertReceivedOwnRepository() {
+            var directory = repository.getDirectory().toPath();
+            assertFalse(RECEIVED_DIRECTORIES.contains(directory), "No other test received this repository");
+            RECEIVED_DIRECTORIES.add(directory);
+            assertTrue(Files.isDirectory(directory), "The repository lies in an existing directory");
+        }
     }
 
     @Test
