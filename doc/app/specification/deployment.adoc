@@ -102,6 +102,10 @@ declares no volume.
 |`anchor.signed-key-ref`: a `kms:` key id or a `file:` reference, never the commit-signing key
 |===
 
+The two `allowed_signers` files hold public keys only and are no secrets; they are mounted read-only with the
+configuration directory and named by `signing.allowed-signers` and `anchor.signed-allowed-signers`
+(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
+
 Every reference uses one of the forms `file:`, `kms:` or `vault:`
 (xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]).
 

@@ -138,7 +138,10 @@ Requests:
 
 * All user-facing text must come from the server's message catalogue in English and German.
 
-`GET /api/v1/messages?lang=en|de` returns the catalogue; `src/lib/i18n` caches it per application version. A lint rule
+`GET /api/v1/messages?lang=en|de` returns the catalogue as `application/json`: one object that maps every message key
+(a string such as `samm.release.confirm`) to its text in the requested language; both languages hold the same keys. A
+missing `lang` returns English; any other value is answered with `400`. `src/lib/i18n` caches the catalogue per
+application version. A lint rule
 fails on string literals in markup outside `src/lib/i18n`.
 
 [#CIFR-WEB-8]

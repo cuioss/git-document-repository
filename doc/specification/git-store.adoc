@@ -232,10 +232,11 @@ caller supplies the claims; the store never receives the access token.
 
 The validity period per key is the `valid-after` and `valid-before` options of the `allowed_signers` format
 (link:https://man.openbsd.org/ssh-keygen.1#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]); Git checks that the
-committer timestamp lies within it, with OpenSSH 8.8 or later (`gpg.ssh.allowedSignersFile` in
-link:https://git-scm.com/docs/git-config[git-config(1)]). A Git administrator who rewrites the repository therefore
+committer timestamp lies within it, with Git 2.35 or later and OpenSSH 8.8 or later (`gpg.ssh.allowedSignersFile` in
+link:https://git-scm.com/docs/git-config[git-config(1)]; Git passes the timestamp as `-Overify-time` since 2.35,
+link:https://github.com/git/git/blob/v2.35.0/gpg-interface.c[`gpg-interface.c` at v2.35.0]). A Git administrator who rewrites the repository therefore
 cannot make a key of their own trusted. A single signature can also be checked with a stock Git installation of version
-2.34 or later: `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`
+2.35 or later: `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`
 (link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).
 
 [#GDR-STORE-15]

@@ -33,7 +33,7 @@ xref:../concepts/application-architecture.adoc#_testing[Application Architecture
 |Native image, distroless container, compose stack with Keycloak and Gitea
 
 |Benchmarks
-|Profile `benchmarks`
+|Profile `benchmarks` of the `integration-tests` module, in a CI job of its own
 |The fixture and measurements of <<CIFR-NFR-1>> and <<CIFR-NFR-2>>; reports, does not gate
 |===
 

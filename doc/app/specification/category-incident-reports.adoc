@@ -36,7 +36,11 @@ awareness.
 |Generated; never edited
 |===
 
-`<ulid>`: the name of the incident's directory; the readable number `INC-<year>-<n>` is assigned on save.
+`<ulid>`: the name of the incident's directory. The readable number `INC-<year>-<n>` (field `number`) is assigned on
+the first save: the application raises the counter file `.counter` on the branch `refs/heads/incident-numbers` of the
+year's repository by compare-and-swap (xref:../../specification/git-core.adoc#GDR-CORE-5[GDR-CORE-5]) and writes the
+new value into the report. Concurrent first saves therefore receive distinct numbers; a number is unique within the
+year's repository, and a save that fails after the allocation leaves a gap.
 Times: `occurred-at` when the incident began, if known (optional); `detected-at` when it was detected; `aware-at` when
 the organisation became aware of it, the start of the GDPR and NIS2 deadlines (GDPR Art. 33(1), NIS2 Art. 23(4);
 sources in <<CIFR-IR-2>>).

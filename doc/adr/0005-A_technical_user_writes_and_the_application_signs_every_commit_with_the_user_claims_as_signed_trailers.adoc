@@ -107,10 +107,13 @@ The commit's author field names the user, without trailers or a signature.
 
 * One path through the store: one credential type, one signature format, one place for approvals.
 * Integrity and origin of every commit are checkable without the Git server, also with a stock Git installation of
-  version 2.34 or later, which verifies SSH signatures against an `allowed_signers` file
+  version 2.35 or later. Git 2.34 verifies SSH signatures against an `allowed_signers` file
   (link:https://github.com/git/git/blob/master/Documentation/RelNotes/2.34.0.adoc[Git 2.34.0 release notes],
   link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)], `gpg.ssh.allowedSignersFile` in
-  link:https://git-scm.com/docs/git-config[git-config(1)]).
+  link:https://git-scm.com/docs/git-config[git-config(1)]); only from 2.35 on does it pass the committer timestamp to
+  `ssh-keygen` (`-Overify-time`,
+  link:https://github.com/git/git/blob/v2.35.0/gpg-interface.c[`gpg-interface.c` at v2.35.0]), so a commit whose
+  committer timestamp lies in the key's validity period still verifies after that period has ended.
 * Evidence is portable across Git servers, and no user needs a Git account.
 
 === Accepted costs

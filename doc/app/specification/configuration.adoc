@@ -111,7 +111,10 @@ rejected (xref:../../specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3])
 |Anchoring of releases and checkpoints
 (xref:../../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The Anchor]):
 `provider` (default `signed`; `none` switches anchoring off), `checkpoint-interval` (ISO 8601 duration, default
-`P1D`), `signed-key-ref` (the anchor key of the own timestamp; must differ from `signing.key-ref`)
+`P1D`), `signed-key-ref` (the anchor key of the own timestamp; must differ from `signing.key-ref`),
+`signed-allowed-signers` (path of a mounted file in the `allowed_signers` format with the public anchor keys and their
+validity periods; required with the provider `signed`; must hold no commit-signing key; never read from a repository,
+xref:../../specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18])
 
 |`mcp`
 |yes
@@ -132,7 +135,8 @@ The library settings of xref:../../specification/git-store.adoc#store-configurat
 from these keys: `repositories`, `save.max-attempts`, `drafts.expiry`, `fetch.interval`, `signing.allowed-signers`,
 `anchor.provider`, `anchor.checkpoint-interval` and `directory.persons.provider` under the same names; the library's
 `signing.key-source` and `signing.key` from `signing.key-ref`, its `anchor.signed.key-source` and
-`anchor.signed.key` from `anchor.signed-key-ref`.
+`anchor.signed.key` from `anchor.signed-key-ref`, its `anchor.signed.allowed-signers` from
+`anchor.signed-allowed-signers`.
 
 Every key ending in `-ref` accepts one of three reference forms; no key accepts a secret value:
 

@@ -52,7 +52,8 @@ xref:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Vers
 == Specification
 
 Each specification document states its requirements as numbered sections (`CIFR-<GROUP>-<n>`): first the rules that
-must hold, then the design that realises them.
+must hold, then the design that realises them. The application is not built yet: the concepts and specifications
+describe its planned design, including every check and CI job they name.
 
 [cols="1,1,3"]
 |===

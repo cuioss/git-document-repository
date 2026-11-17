@@ -67,7 +67,8 @@ Root: `de.cuioss:cisos-friend-parent` (working coordinates). Parent `de.cuioss:c
 
 |`integration-tests`
 |pom
-|Native image, distroless container, compose stack, failsafe `*IT`; profile `integration-tests`
+|Native image, distroless container, compose stack, failsafe `*IT`; profile `integration-tests`; the measurements of
+xref:testing.adoc#CIFR-NFR-1[CIFR-NFR-1] and xref:testing.adoc#CIFR-NFR-2[CIFR-NFR-2] in the profile `benchmarks`
 
 |`deployment`
 |pom
@@ -197,7 +198,8 @@ xref:authentication.adoc#CIFR-AUTH-5[CIFR-AUTH-5]); `GIT_UNAVAILABLE` (<<CIFR-GE
 
 |Request a release
 |`request_release`
-|`RELEASE_REQUESTED` with the request id
+|`RELEASE_REQUESTED` with the request id; `REJECTED`; `GIT_UNAVAILABLE` (an open request is a document saved in Git,
+<<CIFR-GEN-3>>)
 
 |Read, list, search, diff
 |`read_document`, `list_documents`, `search`, `diff`, `list_due`, `read_catalog`, `read_recipe`

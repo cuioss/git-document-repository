@@ -75,6 +75,8 @@ signs the commit before it is inserted; `git-core` signs nothing itself.
 * When the reference moved, the library must re-apply the caller's operation on the new state and retry, up to a
   number of attempts the caller passes.
 * After the last failed attempt the result must report a conflict outcome; the reference must be unchanged.
+* A delete must never adopt a moved reference: when the reference no longer points to the expected old commit, the
+  delete must report a conflict at once and leave the reference unchanged.
 
 The caller supplies an *operation* (a function from the current tree to a list of edits), not a finished commit. Every
 reference change sets the expected old id (`RefUpdate.setExpectedOldObjectId`; `ObjectId.zeroId()` for a reference
@@ -84,8 +86,11 @@ delete has no new value and `RefUpdate` returns `REJECTED` for it without the fl
 success for a delete. In both cases the expected-old check runs first, so a reference that moved yields `LOCK_FAILURE`
 and is unchanged (`RefUpdate.updateImpl`,
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit 7.8.0 `RefUpdate`]).
-`LOCK_FAILURE` (locked, or no longer the expected old id) re-applies the operation and retries; `IO_FAILURE` is an
-exception; every other result is returned at once as rejected, the detail naming it.
+For an update, `LOCK_FAILURE` (locked, or no longer the expected old id) re-applies the operation and retries. For a
+delete, the library reads the reference after `LOCK_FAILURE`: if it still points to the expected old id, the reference
+was only locked and the delete is retried with the same expected old id; if it moved, the delete ends with conflict, so
+a newer draft is kept (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7]).
+`IO_FAILURE` is an exception; every other result is returned at once as rejected, the detail naming it.
 
 [#GDR-CORE-6]
 == GDR-CORE-6: In-Core Merge

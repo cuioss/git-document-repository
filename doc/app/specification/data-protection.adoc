@@ -41,8 +41,9 @@ names its repository in its `workflow.yaml`; `isms-incidents-<year>` is created 
 
 Reference forms, as defined by the library: `<alias>:<kind>/<id>` for a document (`isms-register:risk/R-042`,
 `samm-assessments:assessment/<ulid>`), and `<catalog>:<id>` for a catalog entry (`service:payment-api`, `role:ciso`).
-The application may append `#<fragment>` to name a part of the target document (a practice, a threat); the existence
-check applies to the document.
+The application uses the library's optional `#<fragment>` to name a part of the target document (a practice, a
+threat); the existence check applies to the document
+(xref:../../specification/git-forms.adoc#GDR-FORMS-8[GDR-FORMS-8]).
 
 Schema markers: every reference field carries the library's `"format": "gdr-link"`
 (xref:../../specification/git-forms.adoc#GDR-FORMS-8[GDR-FORMS-8]); a field holding a catalog reference carries in

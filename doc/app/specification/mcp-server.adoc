@@ -201,7 +201,9 @@ built from typed result objects that carry no credential field.
 
 |`request_release`
 |`repository`, `id`, `comment`
-|`RELEASE_REQUESTED` with the request id; the request waits in the user's *Due* lens
+|`RELEASE_REQUESTED` with the request id; the request waits in the user's *Due* lens. The request is saved in Git, so
+`REJECTED` and `GIT_UNAVAILABLE` are possible as well
+(xref:architecture-and-modules.adoc#operation-outcomes[Operation Outcomes])
 |===
 
 The Result column shows a successful call. The complete outcome set of each tool, the same as that of its web-app

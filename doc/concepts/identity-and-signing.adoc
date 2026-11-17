@@ -107,11 +107,14 @@ catalog of roles.
 ** The verifier takes the application's public keys, with validity periods, from its own configuration, in the
    allowed-signers format of OpenSSH that Git reads through `gpg.ssh.allowedSignersFile`, never from the repository.
    The format bounds a key with the options `valid-after` and `valid-before`
-   (link:https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]), and Git accepts a
-   signature when the key was valid at the time the signature was created
+   (link:https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]), and Git 2.35 or later
+   accepts a signature when the key was valid at the commit's committer timestamp
    (link:https://git-scm.com/docs/git-config[git-config(1)], `gpg.ssh.allowedSignersFile`). An administrator who can
    rewrite the repository therefore cannot make a key of their own trusted, and commits stay verifiable after a change
-   of key.
+   of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the signature was
+   made: a holder of a compromised key can date a new commit back into the key's validity period. The time a commit
+   existed rests on the anchor (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
+   Anchor]).
 ** The application and a CI job check that every commit on `main` carries a valid signature; with Git alone,
    `git verify-commit` checks single commits against that file
    (link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).

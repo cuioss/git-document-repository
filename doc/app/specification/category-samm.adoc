@@ -65,7 +65,10 @@ The `<ulid>` of an assessment names its directory, the working branch `refs/head
   (xref:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]).
 
 Every save applies the draft's changes onto the tip of `refs/heads/assessments/<ulid>` as one commit (squash
-merge in core). Conflicts are detected per practice file by blob id; the draft stays unchanged.
+merge in core). Conflicts are detected per practice file by blob id; the draft stays unchanged. A generated
+`report.adoc` takes no part in the conflict check: each save regenerates it from the merged data in the same commit
+(xref:../../specification/git-forms.adoc#GDR-FORMS-4[GDR-FORMS-4]), so saves to different practices never conflict on
+it.
 
 Transition `samm.submit`: `draft` → `in-review`, by a user with `edit`; it validates `required` of the schema. Saves
 stay possible in `in-review`.

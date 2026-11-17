@@ -79,7 +79,9 @@ behind the extension point `ScoreCalculator` in `cisos-friend`.
 |The compose sample (xref:deployment.adoc[Deployment]).
 |===
 
-A `benchmarks` module (k6, non-gating) follows once there is a performance question worth measuring.
+The measurements of index size, start time and save latency run as the profile `benchmarks` of the
+`integration-tests` module, against its compose stack, in a CI job of their own; they report each value against its
+target and do not gate the build.
 
 == Libraries
 
@@ -111,7 +113,7 @@ validation pipelines before use.
 |Test only
 |JUnit 5, `cui-test-generator`, EasyMock, `cui-test-value-objects`, `cui-test-juli-logger`, `cui-http-testing`,
 ArchUnit; for the web app Vitest with jsdom and Testing Library,
-Playwright and axe-core; k6 for the `benchmarks` module (see <<_testing>>).
+Playwright and axe-core (see <<_testing>>).
 |===
 
 Every further dependency is a decision of the owner.
