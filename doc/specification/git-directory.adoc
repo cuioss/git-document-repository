@@ -65,8 +65,9 @@ memory, indexed by subject hash and by pseudonym.
   an entry that is bound or holds none of the entered memberships must be refused with the outcome not bindable.
 * Saving must be a save on `main` of the persons' repository, without review or release; the entry must take effect
   with that save, so that the next resolution of the pseudonym returns it.
-* The commit of a created entry must be authored by the pseudonym held in memory, the commit of a binding by the
-  pseudonym of the bound entry, which that commit binds (xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]).
+* The commit of a created entry must name the pseudonym held in memory, the commit of a binding the pseudonym of the
+  bound entry, which that commit binds, both as author (xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]) and in the
+  `Actor` trailer (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]).
 * Every attempt of the save, the re-applications of
   xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3] included, must check against the tip it commits on that no entry
   holds the subject hash yet and, for a binding, that the chosen entry is still unbound and holds one of the entered
