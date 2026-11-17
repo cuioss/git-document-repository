@@ -124,8 +124,9 @@ stream; a practice another assessor saved refreshes in place.
 
 === Review and Release
 
-Release shows the diff against the last released state, generated from the YAML, not from the AsciiDoc output. The
-release button says that it needs step-up and triggers the renewed MFA login before the release is written.
+Release shows the diff against the last released state, generated from the YAML, not from the AsciiDoc output. A
+control whose transition requires step-up, under the shipped workflows the release button, says so and triggers the
+renewed MFA login before the transition is written.
 
 == Security of the Page
 

@@ -93,7 +93,7 @@ audience-bound tokens that the server validates and never passes on. See xref:mc
 |===
 
 Both interfaces call the same application services. Neither carries a rule of its own: what a user may do, whether
-a release needs step-up and which deadline is due is decided once, in the server.
+a transition needs step-up and which deadline is due is decided once, in the server.
 
 == What the Application Builds On
 

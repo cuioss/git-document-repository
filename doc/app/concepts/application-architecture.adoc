@@ -102,7 +102,8 @@ bundled JSON Schema:
 * one fetch interval for all repositories (`fetch.interval`);
 * the mapping from identity-provider groups to rights per repository;
 * the enabled categories, whose behaviour comes from their definitions alone; there is no second layer of overrides;
-* the one step-up setting for every release;
+* the one step-up setting (accepted `acr` and `amr`, maximum age) for every transition whose workflow requires
+  step-up;
 * the person directory provider and the signing and anchor keys.
 
 Deployment-bound values (URLs, secret paths) are placeholders `${NAME:-default}` resolved from the environment.

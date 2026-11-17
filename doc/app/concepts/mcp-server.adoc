@@ -95,8 +95,9 @@ service account.
 |Obtain Git or KMS credentials
 |===
 
-A release is bound to a human act: the step-up authentication of the user. The MCP server therefore stops at the
-request; the request appears in the user's *Due* lens of the web app.
+A release is bound to a human act in the web app, under the shipped workflows the step-up authentication of the
+user. The MCP server therefore stops at the request; the request appears in the user's *Due* lens of the web app. A
+save whose workflow requires step-up cannot be completed by an agent either; it returns `STEP_UP_REQUIRED`.
 
 [#_git_credentials_never_reach_the_agent]
 == Git Credentials Never Reach the Agent

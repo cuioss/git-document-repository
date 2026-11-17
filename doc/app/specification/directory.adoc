@@ -40,6 +40,8 @@ saved on `main` and signed like every commit; first login and own-entry changes 
   there is no first-login form.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
+* When prefilled entries (<<CIFR-DIR-8>>) hold one of the entered memberships, the form must show them with name and
+  memberships before saving and let the user bind to one of them or create a new entry.
 * The form must show the configured information text (GDPR Art. 13,
   link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]) before the save button.
 * The saved entry must be valid immediately and signed by the application.
@@ -49,7 +51,10 @@ saved on `main` and signed like every commit; first login and own-entry changes 
   pseudonym is kept only once the entry is saved; a user who leaves the form unsaved gets a new one at the next login.
 . `GET /api/v1/directory/me` returns the prefill: `name` from the token, `team` candidates from the groups.
 . The form shows the text referenced by `web.information-text-ref`.
-. `PUT /api/v1/directory/me` validates team and role against the catalogs and saves the entry.
+. `PUT /api/v1/directory/me` validates team and role against the catalogs. Without the field `binding` and with
+  binding candidates it saves nothing and answers `BINDING_CANDIDATES` with their pseudonyms, names and memberships;
+  the form shows them, and the repeated request carries `binding`: `new`, or the pseudonym of the chosen entry. A
+  pseudonym that is no candidate answers `NOT_BINDABLE`. Without candidates it saves a new entry.
 
 Allow-list during the first login, exactly the requests the form and the shell need: `GET` and
 `PUT /api/v1/directory/me`; `GET /api/v1/catalogs/team` and `GET /api/v1/catalogs/role`; `GET /api/v1/session` (the
@@ -141,4 +146,18 @@ Entities]):
 == CIFR-DIR-7: Former Members
 
 * After the erasure of a person, or once the organisation's source no longer knows the person, documents must show the
-  pseudonym as "former member".
+  pseudonym as the memberships of its former-member marker, "former" followed by the names of role and team from the
+  catalogs for each membership (for example "former Security Champion, Payments"), and as "former member" when the
+  marker holds none.
+
+[#CIFR-DIR-8]
+== CIFR-DIR-8: Prefilled Entries
+
+* With the default person directory, a user with the right `administer-catalogs` must be able to save unbound person
+  entries before the persons log in
+  (xref:../../specification/git-directory.adoc#GDR-DIR-7[GDR-DIR-7]).
+* An unbound entry must be selectable wherever a person is picked, and must be marked as not yet bound.
+
+`POST /api/v1/directory/persons` (right `administer-catalogs`) takes a list of entries with name and memberships,
+validates the memberships against the catalogs and saves them as unbound entries in one commit; the answer lists
+their pseudonyms. Binding happens only at the person's first login (<<CIFR-DIR-2>>).

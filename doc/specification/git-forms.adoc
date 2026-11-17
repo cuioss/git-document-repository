@@ -133,11 +133,27 @@ Further forms of a deadline rule are an open question of
 xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
 
 [#GDR-FORMS-7]
-== GDR-FORMS-7: Step-Up for Releases
+== GDR-FORMS-7: Step-Up per Transition
 
-* Every transition with the mechanism `release` (every approval is one) must require step-up; no other transition may.
-* Such a transition must be refused with the outcome step-up required unless the caller's `Auth-Context` holds a value
-  of `step-up.amr` or `step-up.acr` and its `Auth-Time` is not older than `step-up.max-age`.
+* A transition may declare whether it requires step-up with the boolean `step-up`. Without the declaration a
+  transition with the mechanism `release` (every approval is one) must require step-up and every other transition must
+  not.
+* A transition with the mechanism `intermediate-save` must not require step-up; a workflow that declares it for one
+  must be refused when the workflow is loaded.
+* A transition that requires step-up must be refused with the outcome step-up required unless the caller's
+  `Auth-Context` holds a value of `step-up.amr` or `step-up.acr` and its `Auth-Time` is not older than
+  `step-up.max-age`.
+
+[source,yaml]
+----
+transitions:
+  - { name: submit,  from: draft,  to: review,   mechanism: save,    step-up: true }
+  - { name: approve, from: review, to: approved, mechanism: release, step-up: false }
+----
+
+The example deviates from the default in both directions: the submission into review requires step-up, the approval
+does not. The keys below are one setting for every transition that requires step-up; the workflow only decides where
+it applies.
 
 [cols="1,2"]
 |===

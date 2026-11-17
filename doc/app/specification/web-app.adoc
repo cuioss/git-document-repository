@@ -122,7 +122,8 @@ Requests:
 == CIFR-WEB-6: Review and Release
 
 * Release must show the diff of the structured data against the last released state.
-* The release control must say that it requires step-up and start it when needed.
+* Every control whose transition requires step-up, under the shipped workflows the release control, must say so and
+  start it when needed.
 
 Requests:
 
@@ -131,7 +132,7 @@ Requests:
 * Release: `POST /api/v1/releases/{repository}/{id}`; the outcomes are those of the release in
   xref:architecture-and-modules.adoc#operation-outcomes[Architecture and Modules, Operation Outcomes];
   `STEP_UP_REQUIRED` carries the step-up address (xref:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4]).
-  The button reads "Release (confirm with MFA)".
+  When the release requires step-up, the button reads "Release (confirm with MFA)".
 
 [#CIFR-WEB-7]
 == CIFR-WEB-7: Texts

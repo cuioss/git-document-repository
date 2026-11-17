@@ -38,8 +38,8 @@ confines them to the person directory
 * *Repositories per retention period* (last section): after the period the whole repository is deleted; no history
   is rewritten.
 
-References keep working after an erasure: an erased pseudonym resolves to "former member", and responsibilities that
-run through roles stay understandable.
+References keep working after an erasure: an erased pseudonym resolves to the team and role the person held, without
+a name (see <<_erasing_a_person>>), and responsibilities that run through roles stay understandable.
 
 == The Person Directory
 
@@ -55,7 +55,8 @@ xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Store
 |`git` (`git-directory`), the default
 |One plain YAML entry per person, `persons/<pseudonym>.yaml`, in a configured repository, by default the directory's.
 The entry carries no issuer and no `sub`, only the SHA-256 hash of both, through which the login finds it. The user
-enters name and memberships (pairs of team and role) at the first login and keeps them current
+enters name and memberships (pairs of team and role) at the first login, or binds an entry an administrator prefilled,
+and keeps them current
 |A commit deletes the entry and records pseudonym and date; the repository's history keeps the earlier versions
 
 |A provider for the operator's own source (an extension point, for example LDAP, SCIM or the identity provider's user
@@ -85,8 +86,11 @@ not in every commit, and the login identifier is stored only as a hash.
 
 === Erasing a Person
 
-With the default provider one commit deletes the person's entry and records the pseudonym and the date in
-`erasures.yaml`; it names no person. The pseudonym stays in the history and resolves to "former member".
+With the default provider one commit deletes the person's entry and records the pseudonym, the date and the
+memberships the entry held (pairs of team and role) in `erasures.yaml`; it names no person. The pseudonym stays in the
+history and resolves to those memberships instead of a name: a document shows "former Security Champion, Payments"
+with the names of role and team from the catalogs, retired entries included, so a reader still sees in which function
+the person acted. A pseudonym without recorded memberships, an entry that held none, resolves to "former member".
 
 The erasure removes the entry from the current state and from every view of the application. The history of the
 persons' repository keeps the earlier versions, in every clone and every backup of the Git server. Whoever may read
@@ -101,8 +105,15 @@ An operator who needs erasure without history plugs in a provider for a source t
   provider uses such a `sub`, the persons' repository deserves a small circle of readers.
 * *Data minimisation.* Name and memberships only; the email address comes from the token when needed and is not
   stored.
+* *A membership can still identify.* A role in a team that only one person held points to that person, with the
+  erasure date and the history even more so; under the GDPR a person who can be identified indirectly is identifiable
+  (Art. 4(1)), and data that can be attributed to a person with additional information remain personal data
+  (Recital 26). The memberships kept in `erasures.yaml` therefore lie in the persons' repository with its circle of
+  readers, and whether they stay for a sole holder of a role is agreed with the data protection officer.
 * *Information duty.* The entry form carries the information text the operator supplies (GDPR Art. 13): what the
-  directory is for and how long it is kept.
+  directory is for and how long it is kept. A prefilled entry holds data not obtained from the person, for which the
+  GDPR requires the information within a reasonable period, at the latest within one month (Art. 14(3)(a)); the
+  first login may come later, so the operator informs the persons when the entries are prefilled.
 * *Answer within the deadline.* The GDPR asks for an answer without undue delay and in any event within one month of
   receipt of the request; where necessary that period may be extended by two further months, and the data subject is
   told of the extension and its reasons within the first month (Art. 12(3)). The erasure commit is effective at once.
@@ -135,15 +146,17 @@ into separate repositories; the concrete cut is the decision of the application.
 
 . Which provider for an operator's own source ships first (the identity provider's user directory, SCIM, LDAP), and
   how it maps the source's groups onto teams and roles.
+. Whether the erasure records the memberships of a person who held a role in a team alone, or records only the
+  pseudonym and date for them, so that the pseudonym resolves to "former member".
 . Deferred: restriction instead of erasure (§ 35(3) BDSG) for a person whose attribution falls under a statutory
   retention duty, for example the approvals in incident reports.
 
 == Related
 
 * xref:../specification/git-store.adoc#GDR-STORE-19[`git-store`, GDR-STORE-19] and
-  xref:../specification/git-directory.adoc#GDR-DIR-2[`git-directory`, GDR-DIR-2 – GDR-DIR-6] -- the specifications.
+  xref:../specification/git-directory.adoc#GDR-DIR-2[`git-directory`, GDR-DIR-2 – GDR-DIR-7] -- the specifications.
 
 == Sources
 
-* GDPR: https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679], Art. 5(1)(e), 12(3), 13, 17, 25
+* GDPR: https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679], Art. 4(1), 5(1)(e), 12(3), 13, 14, 17, 25, Recital 26
 * BDSG: https://www.gesetze-im-internet.de/bdsg_2018/__35.html[§ 35 BDSG, Right to erasure]
