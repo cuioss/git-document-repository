@@ -125,11 +125,9 @@ operational concept:
   roles, they stay understandable.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint
   anchors it.
-* *History*: the history of the persons' repository keeps the earlier versions of the entry, as comparable systems
-  keep theirs (xref:../../concepts/data-protection.adoc#_how_comparable_systems_handle_erasure[Data Protection, How
-  Comparable Systems Handle Erasure]). The GDPR asks for an answer to a request without undue delay and within one
-  month of its receipt, a period that may be extended by two further months where necessary (Art. 12(3),
-  https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]); the erasure commit is effective at once.
+* *History*: the history of the persons' repository keeps the earlier versions of the entry; what that means, and
+  the deadline for answering a request, is set out in
+  xref:../../concepts/data-protection.adoc[Data Protection] (_Erasing a Person_ and _What Has to Be Done Right_).
 * *With the organisation's own source* the application erases nothing itself; it shows the pseudonym as "former
   member" once the source no longer knows the person.
 

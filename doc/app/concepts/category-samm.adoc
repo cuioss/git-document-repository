@@ -74,17 +74,10 @@ that practice file; the form shows the differing questions with both values, and
   Git server make it immutable. The application merges the release itself; the signed release commit names the
   releasing user, who confirms the release with step-up (see xref:authentication-and-identity.adoc#_step_up[Step-Up]).
 * *Scores* are computed as the OWASP SAMM toolbox computes them, so they stay comparable with toolbox results and the
-  SAMM benchmark. The model has one question per activity, 90 in all (15 practices, 2 streams each, 3 maturity
-  levels), and each answer carries the value of the model's answer set: 0, 0.25, 0.5 or 1
-  (https://github.com/owaspsamm/core/tree/develop/model/answer_sets[SAMM core, answer sets]). A stream score is the
-  sum of its three answers, a practice score the average of its two stream scores (0 to 3), a business function score
-  the average of its three practices, and the overall score the average of the five business functions
-  (https://owaspsamm.org/blog/samm-relative-scoring/[SAMM blog, 2025-01-21]). The toolbox spreadsheet of model
-  v2.2.0 computes the same: per practice and maturity level the average of the two streams' answers, summed over
-  the three levels; business function and overall scores as averages; an unanswered question counts 0; no rounding
-  in the formulas (https://github.com/owaspsamm/core/releases/tag/v2.2.0[`SAMM_spreadsheet.xlsx` of release
-  v2.2.0], sheets _Interview_ and _Scorecard_). The SAMM core team advises against changing the calculation for
-  activities declared not applicable, because the results would no longer compare with the benchmark
+  SAMM benchmark; the formula and its sources are in
+  xref:../specification/category-samm.adoc#CIFR-SAMM-5[CIFR-SAMM-5]. The model has one question per activity, 90 in
+  all (15 practices, 2 streams each, 3 maturity levels). The SAMM core team advises against changing the calculation
+  for activities declared not applicable, because the results would no longer compare with the benchmark
   (https://owaspsamm.org/blog/the-not-applicable-question/[SAMM blog, 2023-02-28]); the application accepts only the
   answers of the model's answer sets, which contain no not-applicable answer.
 * *Comparison* reads two released tags of the same model version from the in-memory index and shows the score

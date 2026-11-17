@@ -104,20 +104,16 @@ catalog of roles.
 . *Protect the signing key.* Best in a KMS or HSM: the application signs through its interface and never sees the
   key. A key as a file is the weakest variant.
 . *Verify independently of the Git server.*
-** The verifier takes the application's public keys, with validity periods, from its own configuration, in the
-   allowed-signers format of OpenSSH that Git reads through `gpg.ssh.allowedSignersFile`, never from the repository.
-   The format bounds a key with the options `valid-after` and `valid-before`
-   (link:https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1), ALLOWED SIGNERS]), and Git 2.35 or later
-   accepts a signature when the key was valid at the commit's committer timestamp
-   (link:https://git-scm.com/docs/git-config[git-config(1)], `gpg.ssh.allowedSignersFile`). An administrator who can
-   rewrite the repository therefore cannot make a key of their own trusted, and commits stay verifiable after a change
-   of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the signature was
+** The verifier takes the application's public keys, each with a validity period, from its own configuration in
+   OpenSSH's allowed-signers format, never from the repository; Git accepts a signature when the key was valid at the
+   commit's committer timestamp (xref:../specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]). An administrator
+   who can rewrite the repository therefore cannot make a key of their own trusted, and commits stay verifiable after
+   a change of key. The committer timestamp is set by whoever creates the commit, so it does not prove when the signature was
    made: a holder of a compromised key can date a new commit back into the key's validity period. The time a commit
    existed rests on the anchor (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
    Anchor]).
-** The application and a CI job check that every commit on `main` carries a valid signature; with Git alone,
-   `git verify-commit` checks single commits against that file
-   (link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).
+** The application and a CI job check that every commit on `main` carries a valid signature; a stock Git
+   installation checks single commits.
 ** The Git server can additionally require signed commits. The conditions under which it marks a commit as verified
    differ per vendor: GitHub requires a signature verifiable against a public key added to an account
    (link:https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification[GitHub Docs]);
@@ -172,5 +168,4 @@ signature is signed outside the application.
 * OpenID Connect: https://openid.net/specs/openid-connect-core-1_0.html[OpenID Connect Core 1.0],
   https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0]
 * Git signatures: https://git-scm.com/docs/gitformat-signature[gitformat-signature(5)],
-  https://git-scm.com/docs/git-config[git-config(1)], https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)],
-  https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS[ssh-keygen(1)]
+  https://git-scm.com/docs/git-config[git-config(1)]

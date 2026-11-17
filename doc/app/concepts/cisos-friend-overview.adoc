@@ -102,17 +102,16 @@ a release needs step-up and which deadline is due is decided once, in the server
 |Part |Role
 
 |`git-document-repository`
-|The libraries: storage engine with drafts and saving, schema-driven documents, commit signature, anchoring,
-directory with persons under pseudonyms. Concepts in xref:../../concepts/module-structure.adoc[Module Structure].
+|All persistence: drafts and saving, schema-driven documents, signature, anchoring, the directory
+(xref:../../concepts/module-structure.adoc[Module Structure]).
 
 |Token Sheriff
-|Authentication and the OAuth flows: the confidential client for the web login (`token-sheriff-client-quarkus`) and the
-validation of bearer tokens for the MCP server (`token-sheriff-validation-quarkus`). Libraries from a parallel
-repository that run inside the application; this application takes them as given.
+|Authentication and the OAuth flows, as libraries inside the application
+(xref:authentication-and-identity.adoc[Authentication and Identity]).
 
 |Quarkus, native
-|The runtime: Java 25, a native image in a distroless container, aligned with API Sheriff. See
-xref:application-architecture.adoc[Application Architecture] and xref:deployment.adoc[Deployment].
+|The runtime: Java 25, a native image in a distroless container
+(xref:application-architecture.adoc[Application Architecture]).
 
 |The organisation's systems
 |Git server (truth and backup), identity provider, KMS or Vault, SIEM, and an RFC 3161 timestamp authority where one

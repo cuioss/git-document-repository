@@ -47,13 +47,9 @@ and failure modes and gains nothing.
 
 The document store writes through linked working trees, like clients whose agents and build tools work on files.
 
-*Rejected because* no tool of the document store works on files. JGit 7.0 also supports linked working trees only for
-reading (https://projects.eclipse.org/projects/technology.jgit/releases/7.0.0[JGit 7.0 release notes]: "Add worktrees
-read support"). JGit 7.8.0 still has no command that creates a linked working tree: its API package holds no worktree
-command; the support is the reading of `commondir` through `BaseRepositoryBuilder.setGitCommonDir`
-(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit
-7.8.0 `api` package]).
-`git-worktrees` stays available for consumers that need files.
+*Rejected because* no tool of the document store works on files, and JGit can read linked working trees but has no
+command that creates one (see xref:../concepts/storage-engine.adoc#_no_working_trees[Storage Engine, No Working
+Trees]). `git-worktrees` stays available for consumers that need files.
 
 === A lock per document instead of compare-and-swap
 

@@ -116,16 +116,12 @@ documents keep their meaning.
 
 == Running Numbers
 
-* *Two kinds of collections.* A per-document collection gives every document a ULID, which names its working
-  branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link target. A ULID is a
-  128-bit identifier of a 48-bit timestamp and 80 random bits, written as 26 characters in Crockford's base32 and
-  sortable by its timestamp (link:https://github.com/ulid/spec[ULID specification]). A numbered collection (a
-  register) keeps all entries on one collection branch `refs/heads/<collection>`, without a branch per entry; its
-  readable number names the entry file, the tag and the link target. A collection is one or the other, never both,
-  because a reference cannot exist together with a reference nested below it: JGit refuses
-  `refs/heads/<collection>/<id>` while `refs/heads/<collection>` exists, and the reverse
-  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefDatabase.java[`RefDatabase.isNameConflicting`],
-  JGit 7.8.0).
+* *Two kinds of collections.* A per-document collection gives every document a ULID, a sortable random identifier
+  that names its working branch `refs/heads/<collection>/<id>`, its data directory, its release tag and the link
+  target. A numbered collection (a register) keeps all entries on one collection branch `refs/heads/<collection>`,
+  without a branch per entry; its readable number names the entry file, the tag and the link target. A collection is
+  one or the other, because Git cannot hold a reference nested below another one
+  (xref:../specification/git-store.adoc#GDR-STORE-2[GDR-STORE-2]).
 * *Running numbers under concurrent creation.* A readable number such as `R-042` (`prefix` and counter) cannot be
   assigned by two creators at once. It is assigned on the first save through a counter file on the collection branch,
   changed in the same commit, and the compare-and-swap makes it unique: the loser re-reads the counter and takes the

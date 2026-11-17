@@ -132,13 +132,6 @@ into separate repositories; the concrete cut is the decision of the application.
   store checks on save that the target exists.
 * After its retention period a repository is deleted as a whole.
 
-[CAUTION]
-====
-With the default provider an erased entry stays in the history of the persons' repository, as a deleted element stays
-in the history of comparable systems. The libraries confine names to one repository and keep the login identifier
-hashed; an operator who must erase without history plugs in a provider for a source that can.
-====
-
 == Open Questions
 
 . Which provider for an operator's own source ships first (the identity provider's user directory, SCIM, LDAP), and
