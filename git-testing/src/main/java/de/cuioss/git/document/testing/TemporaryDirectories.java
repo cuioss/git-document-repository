@@ -18,6 +18,7 @@ package de.cuioss.git.document.testing;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -46,6 +47,9 @@ final class TemporaryDirectories {
 
     /**
      * Deletes a directory and everything below it. A directory that does not exist is left as it is.
+     * <p>
+     * An entry that disappears while the tree is walked, for example a lock file JGit removes concurrently, counts
+     * as already deleted: a {@link NoSuchFileException} for it is ignored. Every other failure propagates.
      *
      * @param directory the root of the tree to delete
      * @throws IOException if an entry of the tree cannot be deleted
@@ -58,16 +62,24 @@ final class TemporaryDirectories {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                Files.delete(file);
+                Files.deleteIfExists(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
+            public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                if (failure instanceof NoSuchFileException) {
+                    return FileVisitResult.CONTINUE;
+                }
+                throw failure;
+            }
+
+            @Override
             public FileVisitResult postVisitDirectory(Path dir, @Nullable IOException failure) throws IOException {
-                if (failure != null) {
+                if (failure != null && !(failure instanceof NoSuchFileException)) {
                     throw failure;
                 }
-                Files.delete(dir);
+                Files.deleteIfExists(dir);
                 return FileVisitResult.CONTINUE;
             }
         });
