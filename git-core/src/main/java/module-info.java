@@ -17,7 +17,10 @@
  * Hardened Git repositories, remote policy, identity, results, transport, reading, cache repository and in-core writing on JGit.
  */
 module de.cuioss.git.document.core {
-    // exports follow with the first public class of the package (javac rejects exporting an empty package)
+    exports de.cuioss.git.document.core;
 
+    requires transitive org.eclipse.jgit;
+    requires de.cuioss.java.tools;
+    requires static lombok;
     requires static org.jspecify;
 }

@@ -1,0 +1,40 @@
+= Log Messages for git-core
+:toc: left
+:toclevels: 2
+
+== Overview
+
+The log-message catalogue of `git-core`
+(xref:../../doc/specification/general.adoc#GDR-GEN-4[GDR-GEN-4]). Every message at level INFO, WARN or ERROR carries a
+stable identifier of the form `GIT_CORE-<identifier>`, rendered by `LogRecord#resolveIdentifierString()` without
+leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO 1-99,
+WARN 100-199, ERROR 200-299). The messages are declared in `de.cuioss.git.document.core.GitCoreLogMessages`.
+
+No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a URL is rendered
+without user information, and neither a credential nor a JGit message that may carry one is logged. Debug and trace
+messages carry no identifier and are not listed.
+
+== INFO Level (1-99)
+
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_CORE-1 |GIT_CORE |Created bare clone at %s from %s |Logged when `cloneIfMissing` created a bare clone: the git
+directory and the URL of the remote without user information.
+|===
+
+== WARN Level (100-199)
+
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_CORE-100 |GIT_CORE |Refused remote %s: outside the remote policy |Logged when a transport operation was refused
+before any contact because the remote policy does not admit the URL (shown without user information); the result is
+`REFUSED_BY_POLICY`.
+|GIT_CORE-101 |GIT_CORE |Refused capability %s |Logged when the refusing file system refused a capability, a present
+hook (`repository_hook`) or a process start (`process_execution`); the result is `REFUSED_BY_POLICY`.
+|===
+
+== ERROR Level (200-299)
+
+`git-core` logs no message at level ERROR: an unexpected failure is returned as the outcome `FAILED`.

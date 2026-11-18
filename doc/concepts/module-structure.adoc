@@ -39,7 +39,8 @@ image::../resources/diagrams/module-dependency-graph.svg["Module dependency grap
 |`git-core`
 |Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository,
 in-core writing, compare-and-swap, in-core merge, notes
-|scaffold
+|implemented in part: hardening, remote policy, identity, results, repository operations, cache repository; the
+rest planned
 
 |`git-worktrees`
 |Linked working trees, commit from a working tree, working-tree status
@@ -94,8 +95,8 @@ have exactly one active provider each, `AnchorProvider` at most one:
 `git-core` takes the push refspec and the names of the reserved notes references as configuration from the modules
 above it instead of hard-coding them. No module knows a term of a domain. The modules above `git-core` carry their own
 third-party dependencies (listed in xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1]), so a consumer of
-`git-core` alone pulls none of them. JGit is approved and its version is managed in the root POM; every other one of
-these dependencies needs the owner's approval before it is added.
+`git-core` alone pulls none of them. The dependencies declared so far were approved by the owner and the version of
+JGit is managed in the root POM; every other one of these dependencies needs the owner's approval before it is added.
 
 == The Foundation Modules
 
@@ -131,9 +132,10 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
 == Order
 
 . Fill `git-core`, `git-worktrees` and `git-testing` with the foundation code and its tests; build and release a
-  first version. The code of `git-core` and `git-worktrees` moves with its history. `git-testing` holds a plain copy
-  of the generator, whose commit names the source repository, the source path and the commit it was copied from,
-  and fixtures written new.
+  first version. The code is taken over as a plain copy without history, whose commit names the source repository,
+  the source path and the commit it was copied from (owner's decision, 2026-11-17); the taken-over code is released
+  under the Apache License 2.0. `git-core` holds the repository part of `pm-provider-git` copied this way, `git-testing`
+  the generator copied this way and fixtures written new.
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
 . Add the aspect modules as the document store needs them: `git-store` first, then `git-forms`, `git-directory`
