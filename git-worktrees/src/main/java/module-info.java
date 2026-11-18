@@ -17,8 +17,10 @@
  * Linked working trees, commit from a working tree and working-tree status.
  */
 module de.cuioss.git.document.worktrees {
-    // exports follow with the first public class of the package (javac rejects exporting an empty package)
-    requires transitive de.cuioss.git.document.core;
+    exports de.cuioss.git.document.worktrees;
 
+    requires transitive de.cuioss.git.document.core;
+    requires de.cuioss.java.tools;
+    requires static lombok;
     requires static org.jspecify;
 }
