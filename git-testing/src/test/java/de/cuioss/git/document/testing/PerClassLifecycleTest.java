@@ -196,8 +196,8 @@ class PerClassLifecycleTest {
      * Observes the closing of the constructor's in-memory repository, which no directory reveals and which the
      * repository's own answers do not show reliably. Once the per-class instance exists, the observer takes the closing the resolver stored
      * for that repository out of the extension context of the test class and puts a counting closing in its place,
-     * which delegates to the stored one. Hand-written, because the module has no mocking library on its test class
-     * path.
+     * which delegates to the stored one. Hand-written, because the resolver creates the repository itself, so no mock
+     * can be handed to it, and the stored {@link ClosingRepository} is a record that cannot be subclassed.
      */
     static final class InMemoryClosingObserver implements TestInstancePostProcessor {
 

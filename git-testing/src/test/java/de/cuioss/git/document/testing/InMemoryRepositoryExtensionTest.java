@@ -16,6 +16,11 @@
 package de.cuioss.git.document.testing;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.easymock.EasyMock.createMockBuilder;
+import static org.easymock.EasyMock.createStrictMock;
+import static org.easymock.EasyMock.expectLastCall;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,7 +45,6 @@ import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
-import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -205,31 +209,42 @@ class InMemoryRepositoryExtensionTest {
     @Test
     @DisplayName("Should close its repository when the stored closing closes")
     void shouldCloseRepositoryWhenClosingCloses() {
-        var repository = new LocalRepositoryExtensionTest.CountingRepository(null);
+        var repository = LocalRepositoryExtensionTest.repositoryExpectingOneClosing(null);
 
         new ClosingRepository(repository).close();
 
-        assertEquals(1, repository.closings, "The repository is closed once");
+        verify(repository);
     }
 
     @Test
     @DisplayName("Should link HEAD of a repository it initialises to refs/heads/master")
     void shouldLinkHeadWhenInitialising() {
-        try (var repository = new UninitialisedRepository(null)) {
-            InMemoryRepositoryExtension.initialise(repository);
+        // a partial mock: the real repository, except that close() is mocked and expected never to be called
+        InMemoryRepository repository = createMockBuilder(InMemoryRepository.class)
+                .withConstructor(new DfsRepositoryDescription("initialised"))
+                .addMockedMethod("close")
+                .createMock();
+        replay(repository);
 
-            assertAll("initialised repository",
-                    () -> assertEquals(Constants.R_HEADS + Constants.MASTER, repository.getFullBranch(),
-                            "HEAD is linked to refs/heads/master"),
-                    () -> assertEquals(0, repository.closings, "A repository initialised is not closed"));
-        }
+        InMemoryRepositoryExtension.initialise(repository);
+
+        assertAll("initialised repository",
+                () -> assertEquals(Constants.R_HEADS + Constants.MASTER, repository.getFullBranch(),
+                        "HEAD is linked to refs/heads/master"),
+                () -> verify(repository));
     }
 
     @Test
     @DisplayName("Should close the repository and name @InMemory when the initialisation fails")
-    void shouldCloseRepositoryWhenInitialisationFails() {
+    void shouldCloseRepositoryWhenInitialisationFails() throws Exception {
         var initialisationFailure = new IOException("The repository cannot be initialised");
-        var repository = new UninitialisedRepository(initialisationFailure);
+        // a strict mock: the repository must be closed after the failed create(true), not before it
+        InMemoryRepository repository = createStrictMock(InMemoryRepository.class);
+        repository.create(true);
+        expectLastCall().andThrow(initialisationFailure).once();
+        repository.close();
+        expectLastCall().once();
+        replay(repository);
 
         var thrown = assertThrows(ParameterResolutionException.class,
                 () -> InMemoryRepositoryExtension.initialise(repository),
@@ -238,7 +253,7 @@ class InMemoryRepositoryExtensionTest {
         assertAll("failed initialisation",
                 () -> assertSame(initialisationFailure, thrown.getCause(), "The failure of JGit is the cause"),
                 () -> assertTrue(thrown.getMessage().contains("@InMemory"), "The message names the annotation"),
-                () -> assertEquals(1, repository.closings, "The repository is closed once"));
+                () -> verify(repository));
     }
 
     @Test
@@ -267,37 +282,6 @@ class InMemoryRepositoryExtensionTest {
                 () -> assertEquals(Repository.class, declared.getParameter().getType(),
                         "The parameter is declared exactly as Repository"),
                 () -> assertInstanceOf(Repository.class, resolved, "The resolved value is a Repository"));
-    }
-
-    /**
-     * An in-memory repository stand-in that counts its closings and, when given a failure, throws it from
-     * {@link #create(boolean)} instead of initialising. It is written by hand because the module has no mocking
-     * library on its test class path.
-     */
-    static final class UninitialisedRepository extends InMemoryRepository {
-
-        private final @Nullable IOException initialisationFailure;
-
-        int closings;
-
-        UninitialisedRepository(@Nullable IOException initialisationFailure) {
-            super(new DfsRepositoryDescription("uninitialised"));
-            this.initialisationFailure = initialisationFailure;
-        }
-
-        @Override
-        public void create(boolean bare) throws IOException {
-            if (initialisationFailure != null) {
-                throw initialisationFailure;
-            }
-            super.create(bare);
-        }
-
-        @Override
-        public void close() {
-            closings++;
-            super.close();
-        }
     }
 
     /**

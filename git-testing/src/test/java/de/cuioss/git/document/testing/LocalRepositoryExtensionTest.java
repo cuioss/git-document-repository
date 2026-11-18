@@ -15,6 +15,10 @@
  */
 package de.cuioss.git.document.testing;
 
+import static org.easymock.EasyMock.createMock;
+import static org.easymock.EasyMock.expectLastCall;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -42,7 +46,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.errors.ConfigInvalidException;
-import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
@@ -319,8 +322,8 @@ class LocalRepositoryExtensionTest {
     }
 
     /**
-     * The closing of a repository and the deletion of its directory, observed with a hand-written repository stand-in
-     * that counts its closings: the cleanup stored for a test and the rollback of a failed creation.
+     * The closing of a repository and the deletion of its directory, observed with an EasyMock repository that expects
+     * exactly one closing: the cleanup stored for a test and the rollback of a failed creation.
      */
     @Nested
     @DisplayName("Closing of a temporary repository")
@@ -329,13 +332,13 @@ class LocalRepositoryExtensionTest {
         @Test
         @DisplayName("Should close the repository and delete its directory when the cleanup closes")
         void shouldCloseRepositoryAndDeleteDirectory() throws Exception {
-            var repository = new CountingRepository(null);
+            var repository = repositoryExpectingOneClosing(null);
             var directory = directoryWithContent();
 
             new LocalRepositoryExtension.TemporaryRepository(repository, directory).close();
 
             assertAll("closed cleanup",
-                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> verify(repository),
                     () -> assertFalse(Files.exists(directory), "The directory is deleted"));
         }
 
@@ -343,7 +346,7 @@ class LocalRepositoryExtensionTest {
         @DisplayName("Should delete the directory also when closing the repository fails")
         void shouldDeleteDirectoryWhenClosingFails() throws Exception {
             var closingFailure = new IllegalStateException("The repository cannot be closed");
-            var repository = new CountingRepository(closingFailure);
+            var repository = repositoryExpectingOneClosing(closingFailure);
             var directory = directoryWithContent();
             var cleanup = new LocalRepositoryExtension.TemporaryRepository(repository, directory);
 
@@ -351,21 +354,21 @@ class LocalRepositoryExtensionTest {
 
             assertAll("cleanup after a failed closing",
                     () -> assertSame(closingFailure, thrown, "The failure of the closing propagates"),
-                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> verify(repository),
                     () -> assertFalse(Files.exists(directory), "The directory is deleted nevertheless"));
         }
 
         @Test
         @DisplayName("Should close the repository and delete its directory on the rollback of a failed creation")
         void shouldCloseRepositoryAndDeleteDirectoryOnRollBack() throws Exception {
-            var repository = new CountingRepository(null);
+            var repository = repositoryExpectingOneClosing(null);
             var directory = directoryWithContent();
             var failure = new ParameterResolutionException("The creation failed");
 
             LocalRepositoryExtension.rollBack(repository, directory, failure);
 
             assertAll("rolled back creation",
-                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> verify(repository),
                     () -> assertFalse(Files.exists(directory), "The directory is deleted"),
                     () -> assertEquals(0, failure.getSuppressed().length,
                             "The closing and the deletion add no suppressed failure"));
@@ -375,7 +378,7 @@ class LocalRepositoryExtensionTest {
         @DisplayName("Should delete the directory and keep the propagated failure when closing fails on the rollback")
         void shouldDeleteDirectoryWhenClosingFailsOnRollBack() throws Exception {
             var closingFailure = new IllegalStateException("The repository cannot be closed");
-            var repository = new CountingRepository(closingFailure);
+            var repository = repositoryExpectingOneClosing(closingFailure);
             var directory = directoryWithContent();
             var failure = new ParameterResolutionException("The creation failed");
 
@@ -383,7 +386,7 @@ class LocalRepositoryExtensionTest {
                     "The failure of the closing does not replace the failure being propagated");
 
             assertAll("rolled back creation after a failed closing",
-                    () -> assertEquals(1, repository.closings, "The closing of the repository is attempted once"),
+                    () -> verify(repository),
                     () -> assertFalse(Files.exists(directory), "The directory is deleted nevertheless"),
                     () -> assertArrayEquals(new Throwable[]{closingFailure}, failure.getSuppressed(),
                             "The failure of the closing is suppressed on the propagated failure"));
@@ -397,28 +400,22 @@ class LocalRepositoryExtensionTest {
     }
 
     /**
-     * A repository stand-in that counts its closings and, when given a failure, throws it from {@link #close()}
-     * instead of closing. It is written by hand because the module has no mocking library on its test class path.
+     * A repository mock in replay state that expects exactly one {@code close()} and, when given a failure, throws it
+     * from that call. Only the closing is expected: any other call on the mock fails the test.
+     *
+     * @param closingFailure the failure the closing throws, or {@code null} for a closing that succeeds
+     * @return the mock; {@code verify(mock)} states that it was closed once
      */
-    static final class CountingRepository extends InMemoryRepository {
-
-        private final @Nullable RuntimeException closingFailure;
-
-        int closings;
-
-        CountingRepository(@Nullable RuntimeException closingFailure) {
-            super(new DfsRepositoryDescription("counting"));
-            this.closingFailure = closingFailure;
+    static InMemoryRepository repositoryExpectingOneClosing(@Nullable RuntimeException closingFailure) {
+        InMemoryRepository repository = createMock(InMemoryRepository.class);
+        repository.close();
+        if (closingFailure == null) {
+            expectLastCall().once();
+        } else {
+            expectLastCall().andThrow(closingFailure).once();
         }
-
-        @Override
-        public void close() {
-            closings++;
-            if (closingFailure != null) {
-                throw closingFailure;
-            }
-            super.close();
-        }
+        replay(repository);
+        return repository;
     }
 
     /**
