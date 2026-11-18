@@ -177,17 +177,25 @@ class RepositoryOperationsRecordsTest {
     @DisplayName("the clone input builder builds the constructor value and renders no URL")
     void cloneInput() {
         var gitDir = path();
-        var url = "https://" + text() + "@" + text() + ".example.invalid/" + text() + ".git";
+        // two distinct sentinels: the user of the URL and the user handed to the credentials provider
+        var urlUser = "urluser" + text();
+        var providerUser = "provideruser" + text();
+        var url = "https://" + urlUser + "@" + text() + ".example.invalid/" + text() + ".git";
         var pushRefSpecs = List.of(text());
-        var credentials = credentials();
+        CredentialsProvider credentials = new UsernamePasswordCredentialsProvider(providerUser,
+                GitGenerators.credentials().next().token());
 
         var built = CloneInput.builder().gitDir(gitDir).url(url).pushRefSpecs(pushRefSpecs).credentials(credentials)
                 .build();
 
+        var rendered = built.toString();
         assertAll(
                 () -> assertEquals(new CloneInput(gitDir, url, pushRefSpecs, credentials), built,
                         "the builder builds the same input"),
-                () -> assertFalse(built.toString().contains(url), "the rendering carries no URL"));
+                () -> assertFalse(rendered.contains(url), "the rendering carries no URL"),
+                () -> assertFalse(rendered.contains(urlUser), "the rendering carries no user of the URL"),
+                () -> assertFalse(rendered.contains(providerUser),
+                        "the rendering carries no user of the credentials provider"));
     }
 
     @Test

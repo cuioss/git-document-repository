@@ -28,7 +28,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 
@@ -53,6 +55,7 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
@@ -213,8 +216,8 @@ class JGitRepositoryOperationsTest {
                     () -> assertEquals(GitOutcome.NOT_FOUND, unknown.outcome(), "an unknown name is not found"),
                     () -> assertEquals(GitOutcome.NOT_FOUND, abbreviation.outcome(),
                             "an abbreviated commit id is never resolved"),
-                    () -> assertTrue(Objects.requireNonNull(abbreviation.detail()).startsWith("abbreviated commit id"),
-                            "the detail names the abbreviation"),
+                    () -> assertEquals("revision: abbreviated commit id", abbreviation.detail(),
+                            "the detail names the field and the abbreviation, not the value"),
                     () -> assertEquals(GitOutcome.AMBIGUOUS, ambiguous.outcome(),
                             "a branch and a tag of one name are ambiguous"),
                     () -> assertTrue(ambiguousDetail.contains(ref), "the branch is a candidate in the detail"),
@@ -252,8 +255,8 @@ class JGitRepositoryOperationsTest {
 
             assertAll(
                     () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the absent id is not found"),
-                    () -> assertTrue(Objects.requireNonNull(result.detail()).contains(absent),
-                            "the detail names the revision"));
+                    () -> assertEquals("revision: not found", result.detail(),
+                            "the detail names the field, not the value"));
         }
 
         @Test
@@ -586,6 +589,25 @@ class JGitRepositoryOperationsTest {
             return new UsernamePasswordCredentialsProvider(credential.username(), credential.token());
         }
 
+        /**
+         * Fetches through a {@link RecordingTransportProtocol} while a process-wide credentials provider is set.
+         *
+         * @return the protocol, holding what the fetch's connection would have used
+         */
+        private RecordingTransportProtocol recordFetch(JGitRepositoryOperations httpsOnly, Repository client,
+                String marker, @Nullable CredentialsProvider credentials) {
+            CredentialsProvider previous = CredentialsProvider.getDefault();
+            CredentialsProvider.setDefault(provider());
+            var recording = new RecordingTransportProtocol(marker);
+            try (recording) {
+                httpsOnly.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of())
+                        .credentials(credentials).build());
+            } finally {
+                CredentialsProvider.setDefault(previous);
+            }
+            return recording;
+        }
+
         private void assertNoSecret(GitResult<?> result) {
             var detail = Objects.requireNonNull(result.detail(), "a non-success carries a detail");
             assertAll(
@@ -646,6 +668,61 @@ class JGitRepositoryOperationsTest {
                     () -> assertEquals(GitOutcome.OK, pushed.outcome(), "the push with credentials succeeds"),
                     () -> assertEquals(GitOutcome.UNREACHABLE, cloned.outcome(), "the gone remote is unreachable"),
                     () -> assertNoSecret(cloned));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an unknown revision or local reference names its field, never the caller's value")
+        void detailsCarryNoInput(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            TestCommits.commitOn(client, branchRef());
+            var mail = TestCommits.name() + "@" + FOREIGN_HOST;
+
+            var logged = operations.log(dir(client), mail, 1);
+            var pushed = operations.push(PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(mail)
+                    .remoteRef(branchRef()).build());
+
+            assertAll(
+                    () -> assertEquals("revision: not found", logged.detail(), "log names the revision field"),
+                    () -> assertEquals("localRef: not found", pushed.detail(), "push names the local reference field"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a refused URL renders neither its query nor its fragment")
+        void refusedUrlRendersNoQuery(@LocalRepository Repository client) throws Exception {
+            // upper case, so it cannot occur by chance in the lower-case host or path of the detail
+            var query = TestCommits.name().toUpperCase(Locale.ROOT);
+            TestCommits.addRemote(client, ORIGIN,
+                    "https://" + FOREIGN_HOST + "/" + TestCommits.name() + ".git?access_token=" + query + "#" + query);
+
+            var fetched = operations.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of())
+                    .build());
+
+            var detail = Objects.requireNonNull(fetched.detail(), "the refusal carries a detail");
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, fetched.outcome(), "the remote is refused"),
+                    () -> assertTrue(detail.contains(FOREIGN_HOST), "the detail names the host"),
+                    () -> assertFalse(detail.contains(query), "the detail carries no query and no fragment"),
+                    () -> assertFalse(TestLoggerFactory.getTestHandler().getRecordsAsString().contains(query),
+                            "no captured log record carries the query"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a fetch without credentials uses none, a fetch with credentials uses exactly them")
+        void onlyCallerCredentials(@LocalRepository Repository client) throws Exception {
+            var marker = TestCommits.name();
+            TestCommits.addRemote(client, ORIGIN, "https://" + FOREIGN_HOST + "/" + marker + ".git");
+            var httpsOnly = new JGitRepositoryOperations(RemotePolicy.httpsOrigin(URI.create("https://" + FOREIGN_HOST)));
+            var caller = provider();
+            var anonymous = recordFetch(httpsOnly, client, marker, null);
+            var authenticated = recordFetch(httpsOnly, client, marker, caller);
+
+            assertAll(
+                    () -> assertTrue(anonymous.connected(), "the anonymous fetch reached the transport"),
+                    () -> assertTrue(anonymous.credentials().isEmpty(),
+                            "the process-wide provider is not used without caller credentials"),
+                    () -> assertTrue(authenticated.connected(), "the authenticated fetch reached the transport"),
+                    () -> assertEquals(Optional.of(caller), authenticated.credentials(),
+                            "the caller's provider is used"));
         }
     }
 }

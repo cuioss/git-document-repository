@@ -34,6 +34,7 @@ import java.util.stream.Collectors;
 
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
@@ -53,6 +54,7 @@ import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefLeaseSpec;
@@ -104,11 +106,23 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The prefix of a detail that names a remote. */
     private static final String REMOTE_PREFIX = "remote ";
 
-    /** The detail prefix of a revision that is not found. */
-    private static final String REVISION_PREFIX = "revision ";
+    /** The input field of the start revision of {@code log}. */
+    private static final String REVISION = "revision";
 
-    /** The detail prefix of a refused abbreviated revision. */
-    private static final String ABBREVIATED_COMMIT_ID = "abbreviated commit id: ";
+    /** The input field of the local reference of {@code push}. */
+    private static final String LOCAL_REF = "localRef";
+
+    /** The input field of a pinned commit. */
+    private static final String COMMIT = "commit";
+
+    /** The detail suffix of an input field whose value names nothing in the repository. */
+    private static final String NOT_FOUND_SUFFIX = ": not found";
+
+    /** The reason of a refused abbreviated revision. */
+    private static final String ABBREVIATED_COMMIT_ID = "abbreviated commit id";
+
+    /** The detail of a value that is no full commit id, after the field name. */
+    private static final String NOT_A_FULL_COMMIT_ID = ": not a full commit id";
 
     /** git's {@code upload-pack} refusing a want it does not serve, lower case. */
     private static final String NOT_OUR_REF = "not our ref";
@@ -215,7 +229,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             if (refused.isPresent()) {
                 return refused.get();
             }
-            FetchResult fetched = git.fetch().setRemote(ORIGIN).setCredentialsProvider(input.credentials()).call();
+            FetchResult fetched = git.fetch().setRemote(ORIGIN)
+                    .setTransportConfigCallback(onlyCredentials(input.credentials())).call();
             linkHead(repository, fetched);
             LOGGER.info(INFO.CLONE_CREATED, gitDir, display(uri));
             return GitResult.ok(info(repository));
@@ -252,13 +267,13 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         Objects.requireNonNull(revision, "revision");
         try (Repository repository = openRepository(root); RevWalk walk = new RevWalk(repository)) {
             var lookup = GitIdentity.lookup(repository, revision);
-            Optional<GitResult<List<CommitInfo>>> refused = refuseUnsupported(lookup, revision);
+            Optional<GitResult<List<CommitInfo>>> refused = refuseUnsupported(lookup, REVISION);
             if (refused.isPresent()) {
                 return refused.get();
             }
             Optional<ObjectId> resolved = resolveCommit(repository, lookup);
             if (resolved.isEmpty()) {
-                return GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + revision);
+                return GitResult.of(GitOutcome.NOT_FOUND, REVISION + NOT_FOUND_SUFFIX);
             }
             ObjectId start = resolved.get();
             if (lookup.resolution() == GitIdentity.Resolution.FULL_COMMIT_ID
@@ -296,7 +311,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             FetchResult result = git.fetch()
                     .setRemote(input.remote())
                     .setRefSpecs(input.refSpecs().stream().map(RefSpec::new).toList())
-                    .setCredentialsProvider(input.credentials())
+                    .setTransportConfigCallback(onlyCredentials(input.credentials()))
                     .call();
             var updates = result.getTrackingRefUpdates().stream()
                     .map(update -> RefUpdate.builder()
@@ -326,18 +341,18 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             }
             target = describeRemote(repository, input.remote(), true);
             var lookup = GitIdentity.lookup(repository, input.localRef());
-            Optional<GitResult<RefUpdate>> unsupported = refuseUnsupported(lookup, input.localRef());
+            Optional<GitResult<RefUpdate>> unsupported = refuseUnsupported(lookup, LOCAL_REF);
             if (unsupported.isPresent()) {
                 return unsupported.get();
             }
             ObjectId local = repository.resolve(lookup.target().orElseThrow());
             if (local == null || !repository.getObjectDatabase().has(local)) {
-                return GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + input.localRef());
+                return GitResult.of(GitOutcome.NOT_FOUND, LOCAL_REF + NOT_FOUND_SUFFIX);
             }
             var command = git.push()
                     .setRemote(input.remote())
                     .setRefSpecs(new RefSpec(local.name() + ":" + input.remoteRef()))
-                    .setCredentialsProvider(input.credentials());
+                    .setTransportConfigCallback(onlyCredentials(input.credentials()));
             String expectedRemoteHead = input.expectedRemoteHead();
             if (expectedRemoteHead != null) {
                 command.setRefLeaseSpecs(new RefLeaseSpec(input.remoteRef(), expectedRemoteHead));
@@ -348,7 +363,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                     return toPushResult(update);
                 }
             }
-            return GitResult.of(GitOutcome.FAILED, "no update reported for " + input.remoteRef());
+            return GitResult.of(GitOutcome.FAILED, "remoteRef: no update reported");
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
@@ -384,7 +399,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         Objects.requireNonNull(input, INPUT_ARGUMENT);
         URIish uri;
         try {
-            uri = new URIish(input.url());
+            // the fetch is anonymous: user information in the URL is removed before the transport sees it
+            uri = new URIish(input.url()).setUser(null).setPass(null);
         } catch (URISyntaxException e) {
             return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
         }
@@ -392,7 +408,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return refusedRemote(uri);
         }
         if (!ObjectId.isId(input.commit())) {
-            return GitResult.of(GitOutcome.NOT_FOUND, "not a full commit id: " + input.commit());
+            return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + NOT_A_FULL_COMMIT_ID);
         }
         var commit = ObjectId.fromString(input.commit());
         try (Repository repository = openCache(input.cache())) {
@@ -403,6 +419,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 if (!input.policy().permits(transport.getURI())) {
                     return refusedRemote(transport.getURI());
                 }
+                if (transport.getURI().getUser() != null || transport.getURI().getPass() != null) {
+                    return GitResult.of(GitOutcome.REFUSED_BY_POLICY,
+                            display(transport.getURI()) + ": user information in an anonymous fetch");
+                }
+                // JGit 7.8.0 Transport starts with CredentialsProvider.getDefault(), the process-wide provider
+                transport.setCredentialsProvider(null);
                 transport.setTimeout(FETCH_TIMEOUT_SECONDS);
                 transport.setTagOpt(TagOpt.NO_TAGS);
                 transport.setCheckFetchedObjects(true);
@@ -431,7 +453,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     public GitResult<byte[]> readFile(ReadFileInput input) {
         Objects.requireNonNull(input, INPUT_ARGUMENT);
         if (!ObjectId.isId(input.commit())) {
-            return GitResult.of(GitOutcome.NOT_FOUND, "not a full commit id: " + input.commit());
+            return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + NOT_A_FULL_COMMIT_ID);
         }
         var commitId = ObjectId.fromString(input.commit());
         try (Repository repository = openCache(input.cache()); RevWalk walk = new RevWalk(repository)) {
@@ -441,7 +463,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             RevCommit commit = walk.parseCommit(commitId);
             try (TreeWalk tree = TreeWalk.forPath(repository, input.path(), commit.getTree())) {
                 if (tree == null || (tree.getRawMode(0) & FileMode.TYPE_MASK) != FileMode.TYPE_FILE) {
-                    return GitResult.of(GitOutcome.NOT_FOUND, "path " + input.path() + " at " + commitId.name());
+                    return GitResult.of(GitOutcome.NOT_FOUND, "path: no file at " + commitId.name());
                 }
                 try (var content = repository.open(tree.getObjectId(0), Constants.OBJ_BLOB).openStream()) {
                     return GitResult.ok(content.readAllBytes());
@@ -450,7 +472,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
         } catch (IllegalArgumentException e) {
-            return GitResult.of(GitOutcome.NOT_FOUND, "path " + input.path() + " is no valid path");
+            return GitResult.of(GitOutcome.NOT_FOUND, "path: not a valid path");
         } catch (IOException | JGitInternalException e) {
             return failure(e);
         }
@@ -507,20 +529,22 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /**
      * Refuses a revision that is no supported identity (GDR-CORE-11): an ambiguous one with its candidates, an
      * abbreviated commit id, and everything else that is neither exactly one reference nor a full commit id, a
-     * revision expression included.
+     * revision expression included. The detail names the field and the reason, never the caller's value (GDR-NFR-3);
+     * the candidates of an ambiguity are references of the repository.
      *
+     * @param field the name of the input field that carries the revision
      * @return the refusal, or empty when the revision may be resolved
      */
-    private static <V> Optional<GitResult<V>> refuseUnsupported(GitIdentity.Lookup lookup, String revision) {
+    private static <V> Optional<GitResult<V>> refuseUnsupported(GitIdentity.Lookup lookup, String field) {
         if (GitIdentity.isAmbiguous(lookup.resolution())) {
             return Optional.of(GitResult.of(GitOutcome.AMBIGUOUS,
-                    revision + " names " + String.join(", ", lookup.candidates())));
+                    field + " names " + String.join(", ", lookup.candidates())));
         }
         if (lookup.resolution() == GitIdentity.Resolution.ABBREVIATED_COMMIT_ID) {
-            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, ABBREVIATED_COMMIT_ID + revision));
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, field + ": " + ABBREVIATED_COMMIT_ID));
         }
         if (!lookup.isSupported()) {
-            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + revision));
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, field + NOT_FOUND_SUFFIX));
         }
         return Optional.empty();
     }
@@ -698,9 +722,34 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         return id == null || ObjectId.zeroId().equals(id) ? Optional.empty() : Optional.of(id.name());
     }
 
-    /** Renders a URL without user information. */
-    private static String display(URIish uri) {
-        return uri.setUser(null).setPass(null).toString();
+    /**
+     * Renders a URL for a detail or a log message from an allowlist of its components: scheme, host, port and path.
+     * User information is omitted, and so are query data and a fragment, which JGit 7.8.0 {@link URIish} keeps in its
+     * path and renders. The URL the transport uses is not changed.
+     */
+    static String display(URIish uri) {
+        String path = uri.getPath();
+        if (path != null) {
+            int end = indexOfQueryOrFragment(path);
+            path = end < 0 ? path : path.substring(0, end);
+        }
+        return new URIish().setScheme(uri.getScheme()).setHost(uri.getHost()).setPort(uri.getPort()).setPath(path)
+                .toString();
+    }
+
+    private static int indexOfQueryOrFragment(String path) {
+        int query = path.indexOf('?');
+        int fragment = path.indexOf('#');
+        if (query < 0) {
+            return fragment;
+        }
+        return fragment < 0 ? query : Math.min(query, fragment);
+    }
+
+    /** A transport configuration that uses exactly the caller's credentials, none when the caller supplies none. */
+    private static TransportConfigCallback onlyCredentials(@Nullable CredentialsProvider credentials) {
+        // JGit 7.8.0 TransportCommand starts with CredentialsProvider.getDefault() and keeps it when given null
+        return transport -> transport.setCredentialsProvider(credentials);
     }
 
     private static boolean isEmptyDirectory(Path path) throws IOException {
@@ -712,8 +761,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
     }
 
+    /** The failure class only: the message of a failure may carry the caller's input (GDR-NFR-3). */
     private static <V> GitResult<V> failure(Exception e) {
-        return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName() + ": " + e.getMessage());
+        return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
     }
 
     /**

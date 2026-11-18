@@ -20,12 +20,14 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -44,10 +46,13 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -71,6 +76,8 @@ class JGitCacheRepositoryTest {
     static final String POINTER = "big.jsonl";
     /** The length of an abbreviated commit id: a boundary of the identity rule. */
     private static final int ABBREVIATED = 12;
+    /** An HTTPS host that is never contacted: the recording transport answers for it. */
+    private static final String FOREIGN_HOST = "example.invalid";
 
     @TempDir
     Path temp;
@@ -344,6 +351,55 @@ class JGitCacheRepositoryTest {
             var result = read(cached.name(), fileName);
 
             assertEquals(GitOutcome.FAILED, result.outcome(), "a lost object is a failure, not a missing path");
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an invalid commit or path names its field, never the caller's value")
+        void detailsCarryNoInput() {
+            var mail = TestCommits.name() + "@example.invalid";
+            assertTrue(fetch(url(), commit, RemotePolicy.localOnly()).isOk(), "the pinned commit is fetched");
+
+            var fetched = fetch(url(), mail, RemotePolicy.localOnly());
+            var badCommit = read(mail, DATA + "/" + CSV);
+            var missing = read(commit, DATA + "/" + mail);
+
+            assertAll(Stream.of(fetched, badCommit, missing).<Executable>map(result -> () -> assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the invalid input is not found"),
+                    () -> assertFalse(Objects.requireNonNull(result.detail()).contains(mail),
+                            "the detail carries no e-mail address of the input"))));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: the fetch is anonymous, and no part of the URL beyond its location reaches a detail")
+        void anonymousFetch() {
+            // upper case, so no secret can occur by chance in the lower-case host or path of the detail
+            var user = TestCommits.name().toUpperCase(Locale.ROOT);
+            var password = TestCommits.name().toUpperCase(Locale.ROOT);
+            var token = TestCommits.name().toUpperCase(Locale.ROOT);
+            var marker = TestCommits.name();
+            var url = "https://" + user + ":" + password + "@" + FOREIGN_HOST + "/" + marker + ".git?token=" + token
+                    + "#" + token;
+            var policy = RemotePolicy.httpsOrigin(URI.create("https://" + FOREIGN_HOST));
+            CredentialsProvider previous = CredentialsProvider.getDefault();
+            CredentialsProvider.setDefault(new UsernamePasswordCredentialsProvider(user, password));
+            try (var recording = new RecordingTransportProtocol(marker)) {
+                var fetched = fetch(url, commit, policy);
+
+                var detail = Objects.requireNonNull(fetched.detail(), "the failed fetch carries a detail");
+                assertAll(
+                        () -> assertTrue(recording.connected(), "the transport was reached"),
+                        () -> assertNull(recording.uri().orElseThrow().getUser(), "the transport sees no user"),
+                        () -> assertNull(recording.uri().orElseThrow().getPass(), "the transport sees no password"),
+                        () -> assertTrue(recording.credentials().isEmpty(),
+                                "the process-wide credentials provider is not used"),
+                        () -> assertFalse(fetched.isOk(), "the recording transport fails the fetch"),
+                        () -> assertTrue(detail.contains(FOREIGN_HOST), "the detail names the host"),
+                        () -> assertFalse(detail.contains(user), "the detail carries no user"),
+                        () -> assertFalse(detail.contains(password), "the detail carries no password"),
+                        () -> assertFalse(detail.contains(token), "the detail carries no query and no fragment"));
+            } finally {
+                CredentialsProvider.setDefault(previous);
+            }
         }
 
         @Test
