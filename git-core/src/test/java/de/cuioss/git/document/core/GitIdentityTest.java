@@ -293,15 +293,17 @@ class GitIdentityTest {
     void supportedLookupNamesOneCandidate() {
         var candidate = names.next();
         var otherCandidate = names.next();
+        List<String> noCandidate = List.of();
+        List<String> twoCandidates = List.of(candidate, otherCandidate);
 
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new GitIdentity.Lookup(Resolution.REF, List.of()), "a reference needs its candidate"),
+                        () -> new GitIdentity.Lookup(Resolution.REF, noCandidate), "a reference needs its candidate"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new GitIdentity.Lookup(Resolution.FULL_COMMIT_ID, List.of()),
+                        () -> new GitIdentity.Lookup(Resolution.FULL_COMMIT_ID, noCandidate),
                         "a full commit id needs its candidate"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new GitIdentity.Lookup(Resolution.REF, List.of(candidate, otherCandidate)),
+                        () -> new GitIdentity.Lookup(Resolution.REF, twoCandidates),
                         "a reference has one candidate, not two"),
                 () -> assertEquals(Optional.of(candidate),
                         new GitIdentity.Lookup(Resolution.REF, List.of(candidate)).target(),
