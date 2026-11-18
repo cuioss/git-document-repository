@@ -98,9 +98,9 @@ policy, a file read at that commit.
 == What Moves Where
 
 * *`git-core`* takes `RefusingFS`, `RemotePolicy`, `GitIdentity`, `GitResult` and `GitOutcome`, and from
-  `GitOperations`/`JGitOperations` the repository part: open and init, the log, fetch and push (with credentials and
-  lease), and the cache repository. The list of `GitOutcome` is kept and extended by the outcomes the requirements of
-  the libraries name.
+  `GitOperations`/`JGitOperations` the repository part as `RepositoryOperations`/`JGitRepositoryOperations`: open and
+  init, the log, fetch and push (with credentials and lease), and the cache repository. The list of `GitOutcome` is
+  reconciled with the outcomes the requirements of the libraries name (see <<_what_git_core_took_and_changed>>).
 * *`git-worktrees`* takes `LinkedWorktrees`, adding, listing and removing working trees, and the commit from a working
   tree, and offers the working-tree status on which `WorktreeShaDigest` builds.
 * *`git-testing`* takes the generator of the transport credential (`GitCredentialGenerator`, `GitGenerators`, which lie in
@@ -109,20 +109,29 @@ policy, a file read at that commit.
   framing is a contract of PM-MCP; it then builds on the working-tree status of `git-worktrees`), and `GitOperations`
   as a facade over the two new interfaces, so the assembly keeps its interface for the first step.
 
+Every class is taken over as a plain copy without history (owner's decision, 2026-11-17): the commit that brings it
+names `pm-mcp-core`, the source path and the commit it was copied from. `git-core` holds the copy of
+`pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/` at commit `287e1a86`, package-renamed to
+`de.cuioss.git.document.core`; `git-testing` holds the copy of the generator. The taken-over code is released under
+the Apache License 2.0 of `git-document-repository`.
+
 The tests move with the classes they test. Test classes that cover both sides (`JGitOperationsTest`,
-`GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces; the
-exact split follows from reading them. The history of the files that move into `git-core` and `git-worktrees` is
-carried over, for example by filtering the source repository down to these paths, so authorship and blame survive.
-The generator that `git-testing` takes is a plain copy without history; its commit names `pm-mcp-core`, the source
-path and the commit it was copied from.
+`GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces. The
+repository part of each moves to `git-core`, rewritten onto the fixtures of `git-testing`; its commits are written
+through an `ObjectInserter` (the helper `TestCommits`) instead of from a working tree. `GitOperationsContractTest`
+tests only the source's `GitCredential` record, which `git-core` does not take, so no part of it moves to `git-core`.
+The worktree part of the split classes is settled when `git-worktrees` takes over its code.
 
 [cols="1,2"]
 |===
 |Module |Test classes
 
 |`git-core`
-|`RefusingFSTest`, `RemotePolicyTest`, `GitIdentityTest`, `JGitCacheRepositoryTest` and `UnservedWantTest` (both test
-the cache repository part of `JGitOperations`), the repository part of the split classes
+|`RefusingFSTest`, `RemotePolicyTest`, `GitIdentityTest`; `JGitRepositoryOperationsTest` (the repository part of
+`JGitOperationsTest`, plus init, bare repositories, the bare clone, fetch and push against a local remote and the
+secrets check), `RepositoryOperationsRecordsTest` (the repository part of `GitOperationsRecordsTest`),
+`AbsenceContractsTest` (its repository part); `JGitCacheRepositoryTest` and `UnservedWantTest` (both test the cache
+repository); `TransportFailuresTest` (new: the classification of a refused authentication)
 
 |`git-worktrees`
 |`LinkedWorktreesTest`, the worktree part of the split classes
@@ -132,6 +141,42 @@ the cache repository part of `JGitOperations`), the repository part of the split
 
 |`pm-provider-git` (stays)
 |`JGitSourceRepositoryTest`, `WorktreeShaDigestTest`, `ported/*`, a test of the facade
+|===
+
+[[_what_git_core_took_and_changed]]
+=== What `git-core` Took and Changed
+
+`git-core` changed the copied code where the requirements of the libraries demand it
+(xref:../specification/git-core.adoc[`git-core`]); the facade of `pm-provider-git` maps the differences at the
+switch-over:
+
+* *Outcomes.* The constants of `GitOutcome` carry the names of the outcomes of
+  xref:../specification/general.adoc#GDR-GEN-3[GDR-GEN-3]; no alias of an old name is kept. The mapping is in the
+  table below.
+* *Credentials.* A JGit `CredentialsProvider` is passed per call instead of the source's `GitCredential` record.
+* *Identity.* `GitIdentity` has no `runtimeRef` (`refs/pm-mcp/`, a term of PM-MCP) and gains `tagRef`, `abbreviate` and
+  `candidates`; `log` puts the candidates of an ambiguous name into the detail.
+* *Hardening.* `CapabilityRefusedException` is a top-level class instead of a class nested in `RefusingFS`; every
+  repository the operations open or create is built on `RefusingFS`.
+* *Operations.* `open` accepts the git directory of a bare repository; `init` is a method of its own; the bare clone
+  of a remote (`cloneIfMissing`) is new; `fetchCommit` writes the reference `refs/pinned/<id>` itself, because JGit
+  7.8.0 ignores the destination of a fetch refspec whose source is an object id (`FetchProcess.expandSingle`); the
+  operations log through `CuiLogger`.
+
+[cols="2,2"]
+|===
+|`GitOutcome` of `pm-provider-git` |`GitOutcome` of `git-core`
+
+|`OK`, `NOT_A_REPOSITORY`, `NOTHING_TO_COMMIT`, `ALREADY_EXISTS`, `BRANCH_CHECKED_OUT`, `WORKTREE_NOT_FOUND`,
+`WORKTREE_DIRTY`, `WORKTREE_LOCKED`, `PATH_REFUSED` |unchanged
+|`UNKNOWN_REVISION`, `PATH_NOT_FOUND` |`NOT_FOUND`; a commit the remote does not serve in `fetchCommit` is `UNSERVED`
+|`REJECTED_NON_FAST_FORWARD` |`REJECTED`, also for the remote's other refusals
+|`REJECTED_LEASE` |`LEASE_REFUSED`
+|`REMOTE_ORIGIN_MISMATCH`, `CAPABILITY_MISSING` |`REFUSED_BY_POLICY`; the detail names the remote or the capability
+|`GIT_IDENTITY_AMBIGUOUS` |`AMBIGUOUS`
+|`GIT_IDENTITY_MISMATCH` |`IDENTITY_MISMATCH`
+|`UNAVAILABLE` |dropped: the worktree digest stays in `pm-provider-git`, whose facade maps its own outcome
+|none |new: `CONFLICT`, `UNREACHABLE`, `CREDENTIALS_INVALID`, `UNSERVED`, `FAILED`
 |===
 
 == What Changes in `pm-mcp-core`
@@ -155,9 +200,10 @@ the size.
 
 == Order of the Switch-Over
 
-. Fill `git-core`, `git-worktrees` and `git-testing`: move the classes and their tests into `git-core` and
-  `git-worktrees` with history, and copy the generator into `git-testing` without history (its commit names the
-  source); build and release a first version.
+. Fill `git-core`, `git-worktrees` and `git-testing`: copy the classes and their tests into `git-core` and
+  `git-worktrees`, and the generator into `git-testing`, each as a plain copy without history whose commit names the
+  source (owner's decision, 2026-11-17); build and release a first version. `git-core` and `git-testing` are filled;
+  `git-worktrees` follows.
 . Work package in `pm-mcp-core`: switch `pm-provider-git` onto the two modules and reduce it to facade, adapter and
   digest, with the changes listed above.
 
@@ -171,8 +217,10 @@ Coupling two life cycles is the price of the shared foundation. A contract chang
 
 == Open Questions
 
-. The exact split of the test classes that cover both repository and worktree operations.
-. The release of the code taken over from `pm-provider-git` under the Apache License 2.0.
+. The exact split of the test classes that cover both repository and worktree operations. Closed for `git-core`: its
+  part is listed in <<_what_moves_where>>. The worktree part stays open until `git-worktrees` takes over its code.
+. The release of the code taken over from `pm-provider-git` under the Apache License 2.0. Closed: the taken-over code
+  is released under the Apache License 2.0 and carries the license header of `git-document-repository`.
 . Whether JGit still works in the native image of `pm-mcpd` against the first `SNAPSHOT`.
 
 == Related
