@@ -48,6 +48,9 @@ import org.jspecify.annotations.Nullable;
 @UtilityClass
 public final class GitIdentity {
 
+    /** The name of the repository argument, reported by the null checks. */
+    private static final String REPOSITORY = "repository";
+
     /** A full commit id: 40 hexadecimal digits, in either case. */
     private static final Pattern FULL_COMMIT_ID = Pattern.compile("[0-9a-f]{40}", Pattern.CASE_INSENSITIVE);
 
@@ -141,7 +144,7 @@ public final class GitIdentity {
      * @throws IOException if the object database cannot be read
      */
     public static String abbreviate(Repository repository, AnyObjectId id) throws IOException {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(id, "id");
         try (ObjectReader reader = repository.newObjectReader()) {
             return reader.abbreviate(id).name();
@@ -157,7 +160,7 @@ public final class GitIdentity {
      * @throws IOException if the reference database cannot be read
      */
     public static Resolution resolution(Repository repository, String name) throws IOException {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(name, "name");
         int refCount = matchingRefs(repository, name).size();
         // A full 40-character id is an identity by its syntax: a reference of the same name is ambiguous whether or
@@ -192,7 +195,7 @@ public final class GitIdentity {
      * @throws IOException if the reference database cannot be read
      */
     public static List<String> candidates(Repository repository, String name) throws IOException {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(name, "name");
         List<String> candidates = new ArrayList<>(matchingRefs(repository, name));
         if (isFullCommitId(name)) {

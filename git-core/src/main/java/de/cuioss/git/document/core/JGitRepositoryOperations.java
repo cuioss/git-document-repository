@@ -97,6 +97,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The references that keep the pinned commits of a cache repository reachable. */
     static final String PINNED_REFS = "refs/pinned/";
 
+    /** The name of the input argument, reported by the null checks. */
+    private static final String INPUT_ARGUMENT = "input";
+
+    /** The prefix of a detail that names a remote. */
+    private static final String REMOTE_PREFIX = "remote ";
+
     /** The detail prefix of a refused abbreviated revision. */
     private static final String ABBREVIATED_COMMIT_ID = "abbreviated commit id: ";
 
@@ -148,7 +154,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     @Override
     public GitResult<RepositoryInfo> cloneIfMissing(CloneInput input) {
-        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(input, INPUT_ARGUMENT);
         Path gitDir = input.gitDir();
         boolean existed = Files.exists(gitDir);
         try {
@@ -276,8 +282,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     @Override
     public GitResult<List<RefUpdate>> fetch(FetchInput input) {
-        Objects.requireNonNull(input, "input");
-        String target = "remote " + input.remote();
+        Objects.requireNonNull(input, INPUT_ARGUMENT);
+        String target = REMOTE_PREFIX + input.remote();
         try (Repository repository = openRepository(input.root()); Git git = Git.wrap(repository)) {
             Optional<GitResult<List<RefUpdate>>> refused = checkRemote(repository, input.remote(), false);
             if (refused.isPresent()) {
@@ -308,8 +314,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     @Override
     public GitResult<RefUpdate> push(PushInput input) {
-        Objects.requireNonNull(input, "input");
-        String target = "remote " + input.remote();
+        Objects.requireNonNull(input, INPUT_ARGUMENT);
+        String target = REMOTE_PREFIX + input.remote();
         try (Repository repository = openRepository(input.root()); Git git = Git.wrap(repository)) {
             Optional<GitResult<RefUpdate>> refused = checkRemote(repository, input.remote(), true);
             if (refused.isPresent()) {
@@ -367,7 +373,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     @Override
     public GitResult<String> fetchCommit(FetchCommitInput input) {
-        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(input, INPUT_ARGUMENT);
         URIish uri;
         try {
             uri = new URIish(input.url());
@@ -415,7 +421,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     @Override
     public GitResult<byte[]> readFile(ReadFileInput input) {
-        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(input, INPUT_ARGUMENT);
         if (!ObjectId.isId(input.commit())) {
             return GitResult.of(GitOutcome.NOT_FOUND, "not a full commit id: " + input.commit());
         }
@@ -516,7 +522,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             throws URISyntaxException {
         List<URIish> uris = remoteUris(repository, remote, push);
         if (uris.isEmpty()) {
-            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, "remote " + remote));
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, REMOTE_PREFIX + remote));
         }
         for (URIish uri : uris) {
             if (!remotePolicy.permits(uri)) {
@@ -535,7 +541,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     private static String describeRemote(Repository repository, String remote, boolean push)
             throws URISyntaxException {
-        return "remote " + remote + " ("
+        return REMOTE_PREFIX + remote + " ("
                 + remoteUris(repository, remote, push).stream().map(JGitRepositoryOperations::display)
                 .collect(Collectors.joining(", "))
                 + ")";
@@ -544,7 +550,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static <V> GitResult<V> refusedRemote(URIish uri) {
         String shown = display(uri);
         LOGGER.warn(WARN.REMOTE_REFUSED, shown);
-        return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "remote " + shown + " is outside the remote policy");
+        return GitResult.of(GitOutcome.REFUSED_BY_POLICY, REMOTE_PREFIX + shown + " is outside the remote policy");
     }
 
     private static <V> GitResult<V> refusedCapability(CapabilityRefusedException refusal) {
@@ -562,13 +568,13 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return refusedCapability(refusal.get());
         }
         if (failure instanceof URISyntaxException) {
-            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "remote " + remote + " has no valid URL");
+            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, REMOTE_PREFIX + remote + " has no valid URL");
         }
         if (cause(failure, NoRemoteRepositoryException.class).isPresent()) {
             return GitResult.of(GitOutcome.UNREACHABLE, target + ": no repository");
         }
         if (failure instanceof InvalidRemoteException) {
-            return GitResult.of(GitOutcome.NOT_FOUND, "remote " + remote);
+            return GitResult.of(GitOutcome.NOT_FOUND, REMOTE_PREFIX + remote);
         }
         if (failure instanceof org.eclipse.jgit.api.errors.TransportException
                 || cause(failure, TransportException.class).isPresent()) {

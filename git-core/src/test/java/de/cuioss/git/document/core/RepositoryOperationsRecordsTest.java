@@ -91,12 +91,14 @@ class RepositoryOperationsRecordsTest {
     @DisplayName("the fetch-commit input builder refuses a missing cache, and the read input a missing path")
     void cacheInputsRefuseMissingComponents() {
         var builder = FetchCommitInput.builder().url(text()).commit(text()).policy(RemotePolicy.localOnly());
+        var readCache = path();
+        var readCommit = text();
 
         assertAll(
                 () -> assertEquals("cache", assertThrows(NullPointerException.class, builder::build,
                         "the builder names the missing cache").getMessage(), "the refusal names the missing cache"),
                 () -> assertEquals("path", assertThrows(NullPointerException.class,
-                                () -> new ReadFileInput(path(), text(), null), "a read without path is refused").getMessage(),
+                                () -> new ReadFileInput(readCache, readCommit, null), "a read without path is refused").getMessage(),
                         "the refusal names the missing path"));
     }
 

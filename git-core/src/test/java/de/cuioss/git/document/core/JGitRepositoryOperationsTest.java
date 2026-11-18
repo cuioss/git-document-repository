@@ -118,7 +118,7 @@ class JGitRepositoryOperationsTest {
 
         @Test
         @DisplayName("init creates a repository with a working tree on an unborn branch, and open reports its facts")
-        void initAndOpen() throws Exception {
+        void initAndOpen() {
             var branch = TestCommits.name();
             var root = temp.resolve(TestCommits.name());
 

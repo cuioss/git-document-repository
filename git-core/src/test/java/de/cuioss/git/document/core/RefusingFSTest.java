@@ -61,6 +61,7 @@ class RefusingFSTest {
         var input = word();
         var command = word();
         var noArgs = new String[0];
+        var emptyStream = new ByteArrayInputStream(new byte[0]);
 
         var shell = assertThrows(CapabilityRefusedException.class, () -> fs.runInShell(command, noArgs),
                 "a shell command is refused");
@@ -69,10 +70,10 @@ class RefusingFSTest {
                 () -> assertThrows(CapabilityRefusedException.class,
                         () -> fs.runProcess(builder, out, out, input), "a process with text input is refused"),
                 () -> assertThrows(CapabilityRefusedException.class,
-                        () -> fs.runProcess(builder, out, out, new ByteArrayInputStream(new byte[0])),
+                        () -> fs.runProcess(builder, out, out, emptyStream),
                         "a process with stream input is refused"),
                 () -> assertThrows(CapabilityRefusedException.class,
-                        () -> fs.execute(builder, new ByteArrayInputStream(new byte[0])),
+                        () -> fs.execute(builder, emptyStream),
                         "an executed process is refused"),
                 () -> assertEquals("process_execution", shell.getReason(), "the refusal names process execution"),
                 () -> assertTrue(shell.getMessage().startsWith("refused_by_policy{reason: process_execution}"),
@@ -89,7 +90,7 @@ class RefusingFSTest {
 
     @Test
     @DisplayName("GDR-CORE-1: reports an absent hook as not present on both entry points")
-    void absentHook(@LocalRepository Repository repository) throws Exception {
+    void absentHook(@LocalRepository Repository repository) {
         var out = new ByteArrayOutputStream();
 
         ProcessResult viaPublic = fs.runHookIfPresent(repository, PRE_COMMIT, new String[0], out, out, null);
