@@ -18,7 +18,9 @@ package de.cuioss.git.document.core;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -46,7 +48,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The builders of the value records of {@link RepositoryOperations} build the value the canonical constructor builds,
- * the records copy their lists, and the constructors refuse a missing required component. Every value is generated;
+ * the records copy their lists, the constructors refuse a missing required component, and {@link GitResult} keeps a
+ * value for a success and a detail for a non-success. Every value is generated;
  * the component names the refusal tests assert are contract vocabulary rather than test data.
  */
 @EnableGeneratorController
@@ -198,6 +201,44 @@ class RepositoryOperationsRecordsTest {
         var built = RefUpdate.builder().ref(ref).oldId(oldId).newId(newId).status(status).build();
 
         assertEquals(new RefUpdate(ref, oldId, newId, status), built, "the builder builds the same ref update");
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-3: a success carries no detail, with or without a value")
+    void successCarriesNoDetail() {
+        var value = text();
+        var detail = text();
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new GitResult<>(GitOutcome.OK, value, detail),
+                        "a success with a value and a detail is refused"),
+                () -> assertThrows(IllegalArgumentException.class, () -> new GitResult<>(GitOutcome.OK, null, detail),
+                        "a success without a value but with a detail is refused"),
+                () -> assertTrue(new GitResult<>(GitOutcome.OK, null, null).isOk(),
+                        "a success without a value and without a detail is valid"),
+                () -> assertNull(GitResult.ok(value).detail(), "ok(value) builds a success without a detail"));
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-3: a non-success carries no value but always a detail")
+    void nonSuccessCarriesNoValue() {
+        var value = text();
+        var detail = text();
+
+        var result = GitResult.<String>of(GitOutcome.NOT_FOUND, detail);
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new GitResult<>(GitOutcome.NOT_FOUND, value, detail),
+                        "a non-success with a value is refused"),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new GitResult<>(GitOutcome.NOT_FOUND, null, " "),
+                        "a non-success with a blank detail is refused"),
+                () -> assertThrows(IllegalArgumentException.class, () -> GitResult.of(GitOutcome.OK, detail),
+                        "of(...) builds no success"),
+                () -> assertNull(result.value(), "of(...) builds a non-success without a value"),
+                () -> assertEquals(detail, result.detail(), "of(...) keeps the detail"),
+                () -> assertFalse(result.isOk(), "the non-success is no success"));
     }
 
     @Test

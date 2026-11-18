@@ -15,8 +15,10 @@
  */
 package de.cuioss.git.document.core;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The remote policy of the transport. Every remote URL below is a literal by design: the scheme, host, port and
@@ -86,5 +89,50 @@ class RemotePolicyTest {
 
         assertThrows(IllegalArgumentException.class, () -> RemotePolicy.httpsOrigin(origin),
                 "an origin without a host is refused");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"https:example.invalid", "http://example.invalid", "https://example.invalid:0",
+            "https://example.invalid:65536"})
+    @DisplayName("GDR-CORE-2: the canonical constructor refuses what httpsOrigin refuses (URLs are the policy grammar)")
+    void canonicalConstructorRefusesOrigin(String origin) {
+        var uri = URI.create(origin);
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class, () -> new RemotePolicy(uri),
+                        "the canonical constructor refuses the origin"),
+                () -> assertThrows(IllegalArgumentException.class, () -> RemotePolicy.httpsOrigin(uri),
+                        "httpsOrigin refuses the origin"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-2: the canonical constructor builds what the factories build")
+    void canonicalConstructorMatchesFactories() {
+        assertAll(
+                () -> assertEquals(RemotePolicy.httpsOrigin(ORIGIN), new RemotePolicy(ORIGIN),
+                        "an https origin is valid through both paths"),
+                () -> assertEquals(RemotePolicy.localOnly(), new RemotePolicy(null),
+                        "no origin is the local-only policy"));
+    }
+
+    @ParameterizedTest(name = "{0} -> {1}")
+    @CsvSource({
+            "https://github.com:0/cuioss/x.git, false",
+            "https://github.com:65536/cuioss/x.git, false",
+            "https://github.com:443/cuioss/x.git, true"
+    })
+    @DisplayName("GDR-CORE-2: refuses an explicit remote port outside 1 to 65535 (JGit 7.8.0 sends port 0 to 443)")
+    void remotePortRange(String remote, boolean permitted) throws Exception {
+        var policy = RemotePolicy.httpsOrigin(ORIGIN);
+
+        assertEquals(permitted, policy.permits(new URIish(remote)), "the policy decides the explicit port");
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-2: an origin with explicit port 443 admits a remote with an omitted port")
+    void explicitDefaultPort() throws Exception {
+        var policy = RemotePolicy.httpsOrigin(URI.create("https://github.com:443"));
+
+        assertTrue(policy.permits(new URIish("https://github.com/cuioss/x.git")), "an omitted port means 443");
     }
 }

@@ -60,7 +60,10 @@ public enum GitOutcome {
     /**
      * Refused by policy: a remote outside the {@link RemotePolicy} (refused before any contact), or a capability the
      * {@link RefusingFS} refuses (a present hook or a process start). The detail names the refused remote or
-     * capability. Raised by every operation that opens or contacts a repository.
+     * capability. Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
+     * {@code cloneIfMissing} and {@code fetchCommit}), and for a capability by an operation that would run the hook or
+     * start the process. {@code open} checks no configured remote: it reports a valid repository as {@link #OK}
+     * whatever its remotes are.
      */
     REFUSED_BY_POLICY,
 

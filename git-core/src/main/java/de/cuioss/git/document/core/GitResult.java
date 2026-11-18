@@ -25,10 +25,11 @@ import org.jspecify.annotations.Nullable;
  * non-success (the failing step, the refused remote or capability, the rejected reference).
  * <p>
  * A detail never carries anything GDR-NFR-3 forbids: no token, password, key material, session id, {@code sub},
- * e-mail address or person name, and no URL with user information.
+ * e-mail address or person name, and no URL with user information. The result cannot check this: whoever calls the
+ * canonical constructor or {@link #of(GitOutcome, String)} must pass a detail that is already safe.
  *
  * @param outcome the outcome
- * @param value   the value of a success that yields one; {@code null} otherwise
+ * @param value   the value of a success that yields one; {@code null} otherwise, and always for a non-success
  * @param detail  the detail, present for every non-success; {@code null} for {@link GitOutcome#OK}
  * @param <V>     the value type
  * @since 0.1
@@ -39,15 +40,25 @@ public record GitResult<V>(GitOutcome outcome, @Nullable V value, @Nullable Stri
      * Checks the invariants of the result.
      *
      * @param outcome the outcome
-     * @param value   the value
-     * @param detail  the detail
+     * @param value   the value, {@code null} unless the outcome is {@link GitOutcome#OK}
+     * @param detail  the detail, already free of anything GDR-NFR-3 forbids
      * @throws NullPointerException     if {@code outcome} is {@code null}
-     * @throws IllegalArgumentException if a non-success carries no detail or a blank one
+     * @throws IllegalArgumentException if a success carries a detail, or a non-success carries a value, no detail or a
+     *                                  blank one
      */
     public GitResult {
         Objects.requireNonNull(outcome, "outcome");
-        if (outcome != GitOutcome.OK && (detail == null || detail.isBlank())) {
-            throw new IllegalArgumentException("a non-success needs a detail: " + outcome);
+        if (outcome == GitOutcome.OK) {
+            if (detail != null) {
+                throw new IllegalArgumentException("a success carries no detail");
+            }
+        } else {
+            if (detail == null || detail.isBlank()) {
+                throw new IllegalArgumentException("a non-success needs a detail: " + outcome);
+            }
+            if (value != null) {
+                throw new IllegalArgumentException("a non-success carries no value: " + outcome);
+            }
         }
     }
 
@@ -67,7 +78,7 @@ public record GitResult<V>(GitOutcome outcome, @Nullable V value, @Nullable Stri
      * Creates a non-success.
      *
      * @param outcome the non-success outcome
-     * @param detail  the detail, not blank
+     * @param detail  the detail, not blank and already free of anything GDR-NFR-3 forbids
      * @param <V>     the value type
      * @return a result without value
      * @throws IllegalArgumentException if {@code outcome} is {@link GitOutcome#OK} or {@code detail} is blank
