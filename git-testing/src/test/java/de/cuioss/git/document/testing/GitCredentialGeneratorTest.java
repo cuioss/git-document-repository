@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import java.util.Arrays;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,20 @@ class GitCredentialGeneratorTest {
                 () -> assertEquals(generated, copy, "Credentials with equal values are equal"),
                 () -> assertEquals(generated.hashCode(), copy.hashCode(),
                         "Credentials with equal values have equal hash codes"));
+    }
+
+    @Test
+    @DisplayName("Should draw fresh values for successive credentials")
+    void shouldDrawFreshValuesForSuccessiveCredentials() {
+        var credentials = Stream.generate(generator::next).limit(10).toList();
+
+        // user names of one to twenty letters may legitimately repeat, so only a constant run is excluded
+        assertAll("successive credentials",
+                () -> assertEquals(credentials.size(),
+                        credentials.stream().map(credential -> new String(credential.token())).distinct().count(),
+                        "Every token differs from the others"),
+                () -> assertTrue(credentials.stream().map(GitCredential::username).distinct().count() > 1,
+                        "The user names are not all equal"));
     }
 
     @Test

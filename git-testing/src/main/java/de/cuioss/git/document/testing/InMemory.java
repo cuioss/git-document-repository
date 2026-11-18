@@ -25,7 +25,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Selects the in-memory-repository fixture for a test parameter of type {@link org.eclipse.jgit.lib.Repository}: the
  * parameter receives a new repository of JGit's in-memory DFS storage, typed only as {@code Repository}, without any
- * directory. The repository is closed after the test.
+ * directory. The repository starts like the bare fixtures, with {@code HEAD} linked to the unborn branch
+ * {@code refs/heads/master}. It is closed after the test.
  * <p>
  * The annotation registers {@link InMemoryRepositoryExtension} for the parameter it is placed on. It may be used on
  * several parameters of one test, each of which receives its own repository, and combined with
