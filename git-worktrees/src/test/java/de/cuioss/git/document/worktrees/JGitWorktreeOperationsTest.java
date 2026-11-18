@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -39,6 +40,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
@@ -230,6 +232,13 @@ class JGitWorktreeOperationsTest {
     private Worktree added(MainTree main, String branch) {
         var result = operations.worktreeAdd(onNewBranch(main, main.root().resolve(name()), branch));
         return Objects.requireNonNull(result.value(), "the fixture working tree is added: " + result.detail());
+    }
+
+    /** Every path below {@code root}, including itself, so that a comparison shows any file created or removed. */
+    private static Set<Path> tree(Path root) throws IOException {
+        try (Stream<Path> paths = Files.walk(root)) {
+            return paths.collect(Collectors.toSet());
+        }
     }
 
     private List<Worktree> listed(MainTree main) {
@@ -545,6 +554,99 @@ class JGitWorktreeOperationsTest {
                     () -> assertEquals(GitOutcome.PATH_REFUSED, outsideResult.outcome(), "a path outside is refused"),
                     () -> assertEquals(GitOutcome.PATH_REFUSED, rootResult.outcome(), "the main root is refused"),
                     () -> assertFalse(Files.exists(outside), "nothing is created outside"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a branch name that is no valid reference name is refused before anything is written")
+        void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var escape = name();
+            // git's reference-name rules: a '..' component, a space and a trailing '.lock' are invalid
+            var hostile = List.of("../../../" + escape, name() + " " + name(), name() + ".lock");
+            var existing = name();
+            branchOn(main, existing);
+            var before = tree(main.root());
+
+            var results = new ArrayList<GitResult<Worktree>>();
+            var paths = new ArrayList<Path>();
+            for (String branch : hostile) {
+                var path = main.root().resolve(name());
+                paths.add(path);
+                results.add(operations.worktreeAdd(onNewBranch(main, path, branch)));
+            }
+            var existingPath = main.root().resolve(name());
+            var onExisting = operations.worktreeAdd(
+                    onExistingBranch(main, existingPath, "../" + existing, Constants.HEAD));
+
+            var after = tree(main.root());
+            assertAll(
+                    () -> assertTrue(results.stream().allMatch(r -> r.outcome() == GitOutcome.REFUSED_BY_POLICY),
+                            "every invalid new branch name is refused"),
+                    () -> assertTrue(results.stream().allMatch(r -> "branch: not a valid branch name".equals(
+                            r.detail())), "the detail names the field and the reason"),
+                    () -> assertTrue(hostile.stream().noneMatch(branch -> results.stream()
+                                    .anyMatch(r -> Objects.requireNonNull(r.detail()).contains(branch))),
+                            "no detail carries the caller's name"),
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, onExisting.outcome(),
+                            "an invalid existing branch name is refused"),
+                    () -> assertEquals("branch: not a valid branch name", onExisting.detail(),
+                            "the detail names the field only"),
+                    () -> assertFalse(Files.exists(main.root().resolve(escape), LinkOption.NOFOLLOW_LINKS),
+                            "no reference file escapes refs/ of the common directory"),
+                    () -> assertTrue(paths.stream().noneMatch(Files::exists), "no target is claimed"),
+                    () -> assertFalse(Files.exists(existingPath), "no target is claimed for the existing branch"),
+                    () -> assertEquals(before, after, "nothing in the main working tree or its git directory changes"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is created"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a linked working tree as root is refused and nothing is created")
+        void linkedRootRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var path = linked.path().resolve(name());
+            var branch = name();
+
+            var result = operations.worktreeAdd(WorktreeAddInput.builder().root(linked.path()).path(path)
+                    .branch(branch).createBranch(true).startPoint(Constants.HEAD).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, result.outcome(), "a linked root is refused"),
+                    () -> assertEquals("root: not the main working tree", result.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertFalse(Files.exists(path), "no target is claimed"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "no branch is created"),
+                    () -> assertEquals(2, listed(main).size(), "no working tree is added"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a target inside the git directory, its administration area or another linked working "
+                + "tree is refused")
+        void targetInsideAdministrationRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var gitDir = main.root().resolve(Constants.DOT_GIT);
+            var inGitDir = gitDir.resolve(name());
+            var inAdministration = gitDir.resolve(LinkedWorktrees.WORKTREES).resolve(name());
+            var inLinked = linked.path().resolve(name());
+            var before = tree(gitDir);
+
+            var gitDirResult = operations.worktreeAdd(onNewBranch(main, inGitDir, name()));
+            var administrationResult = operations.worktreeAdd(onNewBranch(main, inAdministration, name()));
+            var linkedResult = operations.worktreeAdd(onNewBranch(main, inLinked, name()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, gitDirResult.outcome(),
+                            "a target inside the git directory is refused"),
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, administrationResult.outcome(),
+                            "a target inside the administration area is refused"),
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, linkedResult.outcome(),
+                            "a target inside another linked working tree is refused"),
+                    () -> assertFalse(Files.exists(inGitDir), "nothing is left in the git directory"),
+                    () -> assertFalse(Files.exists(inAdministration), "nothing is left in the administration area"),
+                    () -> assertFalse(Files.exists(inLinked), "nothing is left in the linked working tree"),
+                    () -> assertEquals(before, tree(gitDir), "the git directory is unchanged"),
+                    () -> assertEquals(2, listed(main).size(), "no working tree is added"));
         }
 
         @Test

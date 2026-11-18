@@ -88,6 +88,14 @@ import org.jspecify.annotations.Nullable;
  * The start point and the branch of a new working tree are classified by {@link GitIdentity}: an ambiguous name is
  * refused as {@link GitOutcome#AMBIGUOUS} with its candidates, an abbreviated or unknown one as
  * {@link GitOutcome#NOT_FOUND}, and only a supported identity, exactly one reference or a full commit id, is resolved.
+ * <p>
+ * Before an addition claims anything, it is guarded in this order: the root must be the main working tree, not a
+ * linked one ({@link GitOutcome#PATH_REFUSED}); the branch, new or existing, must form a valid reference name
+ * {@code refs/heads/<branch>} by JGit 7.8.0 {@link Repository#isValidRefName(String)}
+ * ({@link GitOutcome#REFUSED_BY_POLICY}, the detail naming the field, never the string); the target must lie inside
+ * the root, outside the git directory with its administration area and outside every registered linked working tree
+ * ({@link GitOutcome#PATH_REFUSED}). Only then is the start point classified and the target claimed.
+ * <p>
  * Details name the input field, a path, a reference of the repository or a commit id, and log messages a commit id,
  * never an author or committer name, an e-mail address, a commit message or the message of a failure (GDR-NFR-3).
  *
@@ -105,6 +113,12 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
     /** The input field of the branch. */
     private static final String BRANCH = "branch";
+
+    /** The input field of the root. */
+    private static final String ROOT = "root";
+
+    /** The detail of a branch name that is no valid reference name; it never carries the caller's string. */
+    private static final String INVALID_BRANCH = BRANCH + ": not a valid branch name";
 
     /** The detail suffix of an input field whose value names nothing in the repository. */
     private static final String NOT_FOUND_SUFFIX = ": not found";
@@ -132,21 +146,8 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     @Override
     public GitResult<Worktree> worktreeAdd(WorktreeAddInput input) {
         Objects.requireNonNull(input, INPUT_ARGUMENT);
-        Path target;
-        try {
-            Path root = input.root().toRealPath();
-            target = canonical(input.path());
-            if (!target.startsWith(root) || target.equals(root)) {
-                return GitResult.of(GitOutcome.PATH_REFUSED, input.path() + " is not inside " + root);
-            }
-            if (Files.exists(target) && !isEmptyDirectory(target)) {
-                return GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString());
-            }
-        } catch (IOException e) {
-            return failure(e);
-        }
         try (Repository main = openRepository(input.root())) {
-            return addWorktree(main, input, target);
+            return addWorktree(main, input);
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (IOException | JGitInternalException | IllegalArgumentException e) {
@@ -154,13 +155,34 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         }
     }
 
-    private GitResult<Worktree> addWorktree(Repository main, WorktreeAddInput input, Path target) throws IOException {
+    /**
+     * Adds the working tree after the guards, in this order: the root must be the main working tree, the branch
+     * name must be valid, the target must lie inside the root and outside the git directory and every registered
+     * linked working tree, and the start point must be supported. Nothing is claimed before every guard passed.
+     */
+    private GitResult<Worktree> addWorktree(Repository main, WorktreeAddInput input) throws IOException {
+        Path commonDir = main.getCommonDirectory().toPath().toRealPath();
+        if (!Files.isSameFile(main.getDirectory().toPath(), commonDir)) {
+            return GitResult.of(GitOutcome.PATH_REFUSED, ROOT + ": not the main working tree");
+        }
+        String branch = input.branch();
+        if (branch != null) {
+            Optional<GitResult<Worktree>> invalid = refuseBranchName(branch);
+            if (invalid.isPresent()) {
+                return invalid.get();
+            }
+        }
+        Path target = canonical(input.path());
+        Optional<GitResult<Worktree>> refusedTarget = refuseTarget(input, commonDir, target);
+        if (refusedTarget.isPresent()) {
+            return refusedTarget.get();
+        }
         var startLookup = GitIdentity.lookup(main, input.startPoint());
         Optional<GitResult<Worktree>> refused = refuseStartPoint(startLookup);
         if (refused.isPresent()) {
             return refused.get();
         }
-        var attempt = new AddAttempt(main, main.getCommonDirectory().toPath().toRealPath(), input, target);
+        var attempt = new AddAttempt(main, commonDir, input, target);
         try {
             GitResult<Worktree> result = attempt.run(startLookup);
             if (!result.isOk()) {
@@ -468,6 +490,49 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         }
         if (!lookup.isSupported()) {
             return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, START_POINT + NOT_FOUND_SUFFIX));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Refuses a branch name whose full reference {@code refs/heads/<branch>} is no valid reference name by JGit 7.8.0
+     * {@link Repository#isValidRefName(String)}, which rejects among others a {@code ..} component, a leading
+     * {@code /} and the characters git forbids, so no caller string reaches a reference update or a file name of the
+     * repository. The detail names the field only, never the string (GDR-NFR-3).
+     */
+    private static <V> Optional<GitResult<V>> refuseBranchName(String branch) {
+        if (Repository.isValidRefName(Constants.R_HEADS + branch)) {
+            return Optional.empty();
+        }
+        return Optional.of(GitResult.of(GitOutcome.REFUSED_BY_POLICY, INVALID_BRANCH));
+    }
+
+    /**
+     * Refuses a target outside the root or equal to it, inside the git directory (which holds the administration
+     * area of the linked working trees) or inside a registered linked working tree, and a target that is not empty
+     * or is itself registered. The registered working trees are compared by their real paths.
+     */
+    private static Optional<GitResult<Worktree>> refuseTarget(WorktreeAddInput input, Path commonDir, Path target)
+            throws IOException {
+        Path root = input.root().toRealPath();
+        if (!target.startsWith(root) || target.equals(root)) {
+            return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED, input.path() + " is not inside " + root));
+        }
+        if (target.startsWith(commonDir)) {
+            return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED, target + " is inside the git directory"));
+        }
+        for (Worktree linked : LinkedWorktrees.list(commonDir)) {
+            Path linkedRoot = canonical(linked.path());
+            if (target.equals(linkedRoot)) {
+                return Optional.of(GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString()));
+            }
+            if (target.startsWith(linkedRoot)) {
+                return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED,
+                        target + " is inside another working tree"));
+            }
+        }
+        if (Files.exists(target) && !isEmptyDirectory(target)) {
+            return Optional.of(GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString()));
         }
         return Optional.empty();
     }

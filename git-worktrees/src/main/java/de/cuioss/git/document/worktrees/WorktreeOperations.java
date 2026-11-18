@@ -64,8 +64,10 @@ public interface WorktreeOperations {
      *         {@link GitOutcome#BRANCH_CHECKED_OUT} also for a branch another addition reserved,
      *         {@link GitOutcome#NOT_FOUND} for an unknown branch or an unknown or abbreviated start point,
      *         {@link GitOutcome#AMBIGUOUS}, {@link GitOutcome#IDENTITY_MISMATCH}, {@link GitOutcome#PATH_REFUSED} for a
-     *         path outside the main working tree, {@link GitOutcome#REFUSED_BY_POLICY},
-     *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}
+     *         path outside the main working tree, for a root that is a linked working tree and for a path inside the
+     *         git directory or inside another linked working tree, {@link GitOutcome#REFUSED_BY_POLICY} for a branch
+     *         name that is no valid branch name and for a refused capability, {@link GitOutcome#NOT_A_REPOSITORY} or
+     *         {@link GitOutcome#FAILED}
      */
     GitResult<Worktree> worktreeAdd(WorktreeAddInput input);
 
