@@ -34,6 +34,9 @@ tree or the administration files of a prunable one; the message carries no argum
 |ID |Component |Message |Description
 |GIT_WORKTREES-100 |GIT_WORKTREES |Refused capability %s |Logged when the refusing file system refused a capability,
 a present hook (`repository_hook`) or a process start (`process_execution`); the result is `REFUSED_BY_POLICY`.
+|GIT_WORKTREES-101 |GIT_WORKTREES |Created commit %s, its reflog entry was not written |Logged when `commit` created
+a commit in a linked working tree but could not append its reflog entries: the commit id only. The commit and its
+branch are stored, so the result stays `OK` with the commit.
 |===
 
 == ERROR Level (200-299)

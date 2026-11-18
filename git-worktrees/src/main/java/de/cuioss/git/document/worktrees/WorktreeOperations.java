@@ -76,7 +76,7 @@ public interface WorktreeOperations {
      *
      * @param root any working-tree root of the repository
      * @return {@link GitOutcome#OK} with the working trees, {@link GitOutcome#NOT_A_REPOSITORY} or
-     *         {@link GitOutcome#FAILED}
+     *         {@link GitOutcome#FAILED}, also for a repository without a working tree
      */
     GitResult<List<Worktree>> worktreeList(Path root);
 
@@ -95,7 +95,7 @@ public interface WorktreeOperations {
      *         {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED},
      *         {@link GitOutcome#IDENTITY_MISMATCH} for another repository at the root, {@link GitOutcome#PATH_REFUSED}
      *         for the main working tree, {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#NOT_A_REPOSITORY} or
-     *         {@link GitOutcome#FAILED}
+     *         {@link GitOutcome#FAILED}, also for a repository without a working tree
      */
     GitResult<Path> worktreeRemove(Path root, Path worktree);
 
@@ -104,12 +104,13 @@ public interface WorktreeOperations {
      * root of a registered linked working tree inside it is not staged. A present {@code pre-commit},
      * {@code commit-msg} or {@code post-commit} hook ends the operation before anything is staged or committed. A
      * commit in a linked working tree writes its {@code HEAD} reflog entry to that working tree's own log, as git
-     * does.
+     * does. A reflog entry that cannot be written does not fail a created commit: the result is
+     * {@link GitOutcome#OK} with the commit, and the omission is logged with the commit id.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the commit, {@link GitOutcome#NOTHING_TO_COMMIT},
      *         {@link GitOutcome#REFUSED_BY_POLICY} for a present hook, {@link GitOutcome#NOT_A_REPOSITORY} or
-     *         {@link GitOutcome#FAILED}
+     *         {@link GitOutcome#FAILED}, also for a repository without a working tree
      */
     GitResult<CommitInfo> commit(CommitInput input);
 
@@ -119,8 +120,9 @@ public interface WorktreeOperations {
      * than one set: a file removed from the index but still on disk is both deleted and untracked.
      *
      * @param root the working-tree root, of the main or of a linked working tree
-     * @return {@link GitOutcome#OK} with the status, {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED},
-     *         also for a repository without a working tree
+     * @return {@link GitOutcome#OK} with the status, {@link GitOutcome#REFUSED_BY_POLICY} for a capability the
+     *         policy refuses, {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}, also for a repository
+     *         without a working tree
      */
     GitResult<WorktreeStatus> worktreeStatus(Path root);
 

@@ -23,7 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -31,6 +33,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -40,12 +43,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.GitResult;
+import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.git.document.worktrees.WorktreeOperations.CommitInput;
@@ -1243,6 +1248,186 @@ class JGitWorktreeOperationsTest {
                 assertNotNull(walk, "the path " + path + " is in the commit");
                 return new String(repository.open(walk.getObjectId(0)).getBytes(), StandardCharsets.UTF_8);
             }
+        }
+    }
+
+    /**
+     * A refusing file system whose checkout of the working tree at {@code armed} fails once with an unchecked
+     * exception, after running {@code before}: JGit 7.8.0 {@code Checkout.checkout} reads the modification time of
+     * every file it wrote through {@link org.eclipse.jgit.util.FS#lastModifiedInstant(File)}, so the failure strikes
+     * after the branch was created and the administration directory was written.
+     */
+    private static final class FailingCheckoutFS extends RefusingFS {
+
+        /** An action of the fixture, run just before the failure. */
+        @FunctionalInterface
+        interface Action {
+
+            void run() throws IOException;
+        }
+
+        private final Path armed;
+        private final Action before;
+        private final AtomicBoolean fired = new AtomicBoolean();
+
+        FailingCheckoutFS(Path armed, Action before) {
+            this.armed = armed;
+            this.before = before;
+        }
+
+        @Override
+        public Instant lastModifiedInstant(File f) {
+            if (f.toPath().toAbsolutePath().normalize().startsWith(armed) && fired.compareAndSet(false, true)) {
+                try {
+                    before.run();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                throw new IllegalStateException("an unchecked failure of the checkout");
+            }
+            return super.lastModifiedInstant(f);
+        }
+    }
+
+    /** The branch reservation files in the common directory of the main working tree. */
+    private static List<Path> reservations(MainTree main) throws IOException {
+        try (Stream<Path> entries = Files.list(main.root().resolve(Constants.DOT_GIT))) {
+            return entries.filter(path -> path.getFileName().toString().startsWith("worktree-branch-")).toList();
+        }
+    }
+
+    @Nested
+    @DisplayName("result contract")
+    class ResultContract {
+
+        @Test
+        @DisplayName("GDR-GEN-3: list, remove and commit on a repository without a working tree fail as a result")
+        void bareRepositoryFails() throws Exception {
+            var bare = temp.resolve(name());
+            Git.init().setBare(true).setDirectory(bare.toFile()).call().close();
+
+            var listed = operations.worktreeList(bare);
+            var removed = operations.worktreeRemove(bare, bare.resolve(name()));
+            var committed = operations.commit(commitInput(bare));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, listed.outcome(), "the list fails"),
+                    () -> assertEquals("NoWorkTreeException", listed.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, removed.outcome(), "the removal fails"),
+                    () -> assertEquals("NoWorkTreeException", removed.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, committed.outcome(), "the commit fails"),
+                    () -> assertEquals("NoWorkTreeException", committed.detail(), "the detail is the failure class"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: an unchecked failure of the addition is a result and leaves nothing behind")
+        void uncheckedFailureRolledBack(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            var existing = name();
+            branchOn(main, existing);
+            var onExisting = main.root().resolve(name());
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> {
+            }));
+            var failingExisting = new JGitWorktreeOperations(new FailingCheckoutFS(onExisting, () -> {
+            }));
+
+            var result = failing.worktreeAdd(onNewBranch(main, path, branch));
+            var existingResult = failingExisting.worktreeAdd(
+                    onExistingBranch(main, onExisting, existing, Constants.HEAD));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the unchecked failure is a result"),
+                    () -> assertEquals("IllegalStateException", result.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, existingResult.outcome(),
+                            "the unchecked failure on an existing branch is a result"),
+                    () -> assertFalse(Files.exists(path), "the target is removed again"),
+                    () -> assertFalse(Files.exists(onExisting), "the target on the existing branch is removed again"),
+                    () -> assertFalse(Files.exists(main.admin(path.getFileName().toString())),
+                            "the administration directory is removed again"),
+                    () -> assertFalse(Files.exists(main.admin(onExisting.getFileName().toString())),
+                            "the administration directory on the existing branch is removed again"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "the created branch is deleted"),
+                    () -> assertNotNull(refId(main.root(), Constants.R_HEADS + existing),
+                            "the existing branch is kept"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is registered"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a created branch another writer advanced is kept, one that cannot be deleted stays")
+        void branchDeletionResultRead(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var advancedBranch = name();
+            var advancedPath = main.root().resolve(name());
+            var advancedTo = new ObjectId[1];
+            var advancing = new JGitWorktreeOperations(new FailingCheckoutFS(advancedPath, () -> {
+                try (Repository repository = open(main.root())) {
+                    advancedTo[0] = commit(repository, main.head(), List.of(name()));
+                    setRef(repository, Constants.R_HEADS + advancedBranch, advancedTo[0]);
+                }
+            }));
+            var currentBranch = name();
+            var currentPath = main.root().resolve(name());
+            // the branch becomes the main working tree's own branch, which JGit 7.8.0 RefUpdate.delete rejects
+            var checkingOut = new JGitWorktreeOperations(new FailingCheckoutFS(currentPath, () -> {
+                try (Repository repository = open(main.root())) {
+                    var link = repository.updateRef(Constants.HEAD).link(Constants.R_HEADS + currentBranch);
+                    assertEquals(RefUpdate.Result.FORCED, link, "the main working tree switches branch");
+                }
+            }));
+
+            var advanced = advancing.worktreeAdd(onNewBranch(main, advancedPath, advancedBranch));
+            var undeletable = checkingOut.worktreeAdd(onNewBranch(main, currentPath, currentBranch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, advanced.outcome(), "the failed addition is a result"),
+                    () -> assertEquals(advancedTo[0], refId(main.root(), Constants.R_HEADS + advancedBranch),
+                            "the branch another writer advanced is kept at its new commit"),
+                    () -> assertFalse(Files.exists(advancedPath), "the target is removed again"),
+                    () -> assertEquals(GitOutcome.FAILED, undeletable.outcome(),
+                            "the addition whose branch cannot be deleted fails as a result"),
+                    () -> assertEquals(main.head(), refId(main.root(), Constants.R_HEADS + currentBranch),
+                            "the branch whose deletion was rejected stays"),
+                    () -> assertFalse(Files.exists(currentPath), "the target is removed although the deletion failed"),
+                    () -> assertFalse(Files.exists(main.admin(currentPath.getFileName().toString())),
+                            "the administration directory is removed although the deletion failed"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: a reflog entry that cannot be written does not fail the created commit")
+        void reflogFailureKeepsCommit(@LocalRepository Repository source) throws Exception {
+            var upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
+            var main = mainTree(source, temp);
+            var branch = name();
+            var worktree = added(main, branch);
+            // a directory where the linked working tree's HEAD reflog belongs, so the append cannot write it
+            var linkedLog = main.admin(Objects.requireNonNull(worktree.name())).resolve(Constants.LOGS)
+                    .resolve(Constants.HEAD);
+            Files.createDirectories(linkedLog);
+            Files.writeString(worktree.path().resolve(name()), content());
+            var author = new Identity(upper.next(), upper.next() + "@example.invalid");
+            var committer = new Identity(upper.next(), upper.next() + "@example.invalid");
+            var message = upper.next();
+
+            var result = operations.commit(CommitInput.builder().root(worktree.path()).message(message)
+                    .author(author).committer(committer).build());
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            var logs = TestLoggerFactory.getTestHandler().getRecordsAsString();
+            var forbidden = List.of(worktree.path().toString(), author.name(), author.email(), committer.name(),
+                    committer.email(), message);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the created commit is reported"),
+                    () -> assertEquals(ObjectId.fromString(info.id()), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch HEAD names is at the reported commit"),
+                    () -> assertTrue(Files.isDirectory(linkedLog), "the reflog was not written"),
+                    () -> assertTrue(logs.contains(info.id()), "the warning names the commit id"),
+                    () -> assertAll(forbidden.stream().<Executable>map(value -> () -> assertFalse(
+                            logs.contains(value), "no log message carries " + value))));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
         }
     }
 

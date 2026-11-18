@@ -140,7 +140,16 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
     /** Creates the operations on a {@link RefusingFS}. */
     public JGitWorktreeOperations() {
-        this.fs = new RefusingFS();
+        this(new RefusingFS());
+    }
+
+    /**
+     * Creates the operations on the given file system; the test seam for failures no file-system condition provokes.
+     *
+     * @param fs the file system every repository is opened with
+     */
+    JGitWorktreeOperations(FS fs) {
+        this.fs = Objects.requireNonNull(fs, "fs");
     }
 
     @Override
@@ -189,13 +198,19 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 attempt.rollBack();
             }
             return result;
-        } catch (IOException | JGitInternalException | IllegalArgumentException e) {
+        }
+        // every failure of the attempt, an unchecked one of JGit included, is rolled back and ends as a result
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (IOException | RuntimeException e) {
             try {
                 attempt.rollBack();
-            } catch (IOException | JGitInternalException cleanup) {
+            }
+            // an unchecked failure of the rollback must not replace the failure it is rolling back
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
+            catch (IOException | RuntimeException cleanup) {
                 e.addSuppressed(cleanup);
             }
-            throw e;
+            return failure(e);
         }
     }
 
@@ -369,7 +384,9 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
         /**
          * Deletes the branch this attempt created, only while it still points at the commit it was created at, so a
-         * branch another writer advanced in the meantime is kept.
+         * branch another writer advanced in the meantime is kept. The result of the deletion is read: a forced
+         * update or no change is the deleted branch, a lock failure or a rejection keeps a branch another writer
+         * advanced, and every other result, an I/O failure among them, is raised so the rollback reports it.
          */
         private void deleteCreatedBranch() throws IOException {
             String branchRef = createdBranchRef;
@@ -381,7 +398,13 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             RefUpdate delete = main.updateRef(branchRef);
             delete.setExpectedOldObjectId(id);
             delete.setForceUpdate(true);
-            delete.delete();
+            Result result = delete.delete();
+            switch (result) {
+                case FORCED, NO_CHANGE, LOCK_FAILURE, REJECTED -> {
+                    // deleted, or kept because another writer advanced it
+                }
+                default -> throw new IOException("branch deletion: " + result);
+            }
         }
 
         /** Undoes the attempt in reverse order; every step runs, the first failure is thrown with the others. */
@@ -599,7 +622,7 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             return GitResult.ok(List.copyOf(worktrees));
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
-        } catch (IOException | IllegalArgumentException | JGitInternalException e) {
+        } catch (IOException | IllegalArgumentException | JGitInternalException | NoWorkTreeException e) {
             return failure(e);
         }
     }
@@ -680,15 +703,29 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             }
             RevCommit commit = command.call();
             if (linked) {
-                appendLinkedReflogs(repository, commonDir, previous, commit);
+                writeLinkedReflogs(repository, commonDir, previous, commit);
             }
             return GitResult.ok(toInfo(commit));
         } catch (EmptyCommitException e) {
             return GitResult.of(GitOutcome.NOTHING_TO_COMMIT, "no changes");
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
-        } catch (GitAPIException | IOException | JGitInternalException e) {
+        } catch (GitAPIException | IOException | JGitInternalException | NoWorkTreeException e) {
             return failure(e);
+        }
+    }
+
+    /**
+     * Writes the reflog entries of a created commit in a linked working tree. The commit and its branch are already
+     * stored, so a reflog entry that cannot be written does not fail the commit: it is logged with the commit id only,
+     * never the path or the message of the failure (GDR-NFR-3).
+     */
+    private static void writeLinkedReflogs(Repository linked, Path commonDir, @Nullable ObjectId previous,
+            RevCommit commit) {
+        try {
+            appendLinkedReflogs(linked, commonDir, previous, commit);
+        } catch (IOException e) {
+            LOGGER.warn(WARN.REFLOG_NOT_WRITTEN, commit.name());
         }
     }
 

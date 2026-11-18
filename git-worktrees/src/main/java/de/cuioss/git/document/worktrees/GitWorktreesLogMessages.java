@@ -73,5 +73,12 @@ public final class GitWorktreesLogMessages {
                 .prefix(PREFIX)
                 .identifier(100)
                 .build();
+
+        /** A commit was created in a linked working tree but its reflog entry was not written: the commit id. */
+        public static final LogRecord REFLOG_NOT_WRITTEN = LogRecordModel.builder()
+                .template("Created commit %s, its reflog entry was not written")
+                .prefix(PREFIX)
+                .identifier(101)
+                .build();
     }
 }
