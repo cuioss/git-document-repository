@@ -16,8 +16,8 @@
 package de.cuioss.git.document.testing;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.easymock.EasyMock.createMock;
 import static org.easymock.EasyMock.createMockBuilder;
+import static org.easymock.EasyMock.createStrictMock;
 import static org.easymock.EasyMock.expectLastCall;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
@@ -218,7 +218,7 @@ class InMemoryRepositoryExtensionTest {
 
     @Test
     @DisplayName("Should link HEAD of a repository it initialises to refs/heads/master")
-    void shouldLinkHeadWhenInitialising() throws Exception {
+    void shouldLinkHeadWhenInitialising() {
         // a partial mock: the real repository, except that close() is mocked and expected never to be called
         InMemoryRepository repository = createMockBuilder(InMemoryRepository.class)
                 .withConstructor(new DfsRepositoryDescription("initialised"))
@@ -238,7 +238,8 @@ class InMemoryRepositoryExtensionTest {
     @DisplayName("Should close the repository and name @InMemory when the initialisation fails")
     void shouldCloseRepositoryWhenInitialisationFails() throws Exception {
         var initialisationFailure = new IOException("The repository cannot be initialised");
-        InMemoryRepository repository = createMock(InMemoryRepository.class);
+        // a strict mock: the repository must be closed after the failed create(true), not before it
+        InMemoryRepository repository = createStrictMock(InMemoryRepository.class);
         repository.create(true);
         expectLastCall().andThrow(initialisationFailure).once();
         repository.close();
