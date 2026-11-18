@@ -21,12 +21,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.GitOutcome;
+import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeStatus;
@@ -244,6 +246,69 @@ class WorktreeStatusTest {
                 () -> assertEquals(Set.of(edited), linkedStatus.changed(), "the edit of the linked tree is changed"),
                 () -> assertEquals(Set.of(), linkedStatus.untracked(), "the linked tree has no untracked file"),
                 () -> assertEquals(Set.of(), linkedStatus.deleted(), "the linked tree has no deleted file"));
+    }
+
+    /**
+     * Settles a hypothesis on JGit 7.8.0 by observation: a linked working tree registered inside the main working tree.
+     * {@code FileTreeIterator} reports its root, a directory holding a {@code .git} file, as a gitlink, so the status of
+     * the main working tree lists that root as untracked, while {@code commit} unstages every registered linked root
+     * and therefore has nothing to commit. The two operations deliberately disagree on that one path.
+     */
+    @Test
+    @DisplayName("GDR-WT-3: a nested linked root is untracked in the main status, but commit has nothing to commit")
+    void nestedLinkedRootStatusAgainstCommit(@LocalRepository Repository source) throws Exception {
+        var main = JGitWorktreeOperationsTest.mainTree(source, temp);
+        var added = operations.worktreeAdd(WorktreeAddInput.builder().root(main.root())
+                .path(main.root().resolve(name())).branch(name()).createBranch(true).startPoint(Constants.HEAD)
+                .build());
+        var linked = Objects.requireNonNull(added.value(), "the linked working tree is added").path();
+        var linkedRoot = main.root().relativize(linked).toString().replace('\\', '/');
+
+        var mainStatus = status(main.root());
+        var committed = operations.commit(WorktreeOperations.CommitInput.builder().root(main.root())
+                .message(content()).author(identity()).committer(identity()).build());
+
+        assertAll(
+                () -> assertEquals(Set.of(linkedRoot), mainStatus.untracked(),
+                        "observed: the main status lists the nested linked root as untracked"),
+                () -> assertEquals(Set.of(), mainStatus.changed(), "the main working tree has no changed file"),
+                () -> assertEquals(Set.of(), mainStatus.deleted(), "the main working tree has no deleted file"),
+                () -> assertEquals(GitOutcome.NOTHING_TO_COMMIT, committed.outcome(),
+                        "observed: commit unstages the linked root and has nothing to commit"));
+    }
+
+    /**
+     * Settles a hypothesis on JGit 7.8.0 by observation: a clean filter driver configured through the repository's own
+     * {@code .gitattributes}. When the modification time of a tracked file no longer matches the index,
+     * {@code StatusCommand} compares its content through the clean filter, which starts the driver's process; the
+     * {@code RefusingFS} refuses it, so the status ends {@link GitOutcome#REFUSED_BY_POLICY} with
+     * {@code process_execution}. The attribute and configuration keys are git's own vocabulary.
+     */
+    @Test
+    @DisplayName("GDR-WT-3: a clean filter in .gitattributes is run by the status and refused")
+    void cleanFilterRefused(@LocalRepository Repository source) throws Exception {
+        var main = JGitWorktreeOperationsTest.mainTree(source, temp);
+        var driver = name();
+        Files.writeString(main.root().resolve(Constants.DOT_GIT_ATTRIBUTES), "* filter=" + driver + "\n");
+        try (Git git = Git.open(main.root().toFile())) {
+            var config = git.getRepository().getConfig();
+            config.setString("filter", driver, "clean", "cat");
+            config.save();
+        }
+        var file = main.root().resolve(main.files().getFirst());
+        Files.setLastModifiedTime(file, FileTime.fromMillis(Files.getLastModifiedTime(file).toMillis() - 60_000));
+
+        var result = operations.worktreeStatus(main.root());
+
+        assertAll(
+                () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(),
+                        "observed: the status runs the clean filter, which is refused"),
+                () -> assertEquals("process_execution", result.detail(), "the detail names the refused capability"));
+    }
+
+    private static Identity identity() {
+        var name = name();
+        return new Identity(name, name + "@example.invalid");
     }
 
     @Test

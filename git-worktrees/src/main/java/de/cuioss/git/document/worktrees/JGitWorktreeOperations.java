@@ -88,6 +88,14 @@ import org.jspecify.annotations.Nullable;
  * The start point and the branch of a new working tree are classified by {@link GitIdentity}: an ambiguous name is
  * refused as {@link GitOutcome#AMBIGUOUS} with its candidates, an abbreviated or unknown one as
  * {@link GitOutcome#NOT_FOUND}, and only a supported identity, exactly one reference or a full commit id, is resolved.
+ * <p>
+ * Before an addition claims anything, it is guarded in this order: the root must be the main working tree, not a
+ * linked one ({@link GitOutcome#PATH_REFUSED}); the branch, new or existing, must form a valid reference name
+ * {@code refs/heads/<branch>} by JGit 7.8.0 {@link Repository#isValidRefName(String)}
+ * ({@link GitOutcome#REFUSED_BY_POLICY}, the detail naming the field, never the string); the target must lie inside
+ * the root, outside the git directory with its administration area and outside every registered linked working tree
+ * ({@link GitOutcome#PATH_REFUSED}). Only then is the start point classified and the target claimed.
+ * <p>
  * Details name the input field, a path, a reference of the repository or a commit id, and log messages a commit id,
  * never an author or committer name, an e-mail address, a commit message or the message of a failure (GDR-NFR-3).
  *
@@ -105,6 +113,12 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
     /** The input field of the branch. */
     private static final String BRANCH = "branch";
+
+    /** The input field of the root. */
+    private static final String ROOT = "root";
+
+    /** The detail of a branch name that is no valid reference name; it never carries the caller's string. */
+    private static final String INVALID_BRANCH = BRANCH + ": not a valid branch name";
 
     /** The detail suffix of an input field whose value names nothing in the repository. */
     private static final String NOT_FOUND_SUFFIX = ": not found";
@@ -126,27 +140,23 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
     /** Creates the operations on a {@link RefusingFS}. */
     public JGitWorktreeOperations() {
-        this.fs = new RefusingFS();
+        this(new RefusingFS());
+    }
+
+    /**
+     * Creates the operations on the given file system; the test seam for failures no file-system condition provokes.
+     *
+     * @param fs the file system every repository is opened with
+     */
+    JGitWorktreeOperations(FS fs) {
+        this.fs = Objects.requireNonNull(fs, "fs");
     }
 
     @Override
     public GitResult<Worktree> worktreeAdd(WorktreeAddInput input) {
         Objects.requireNonNull(input, INPUT_ARGUMENT);
-        Path target;
-        try {
-            Path root = input.root().toRealPath();
-            target = canonical(input.path());
-            if (!target.startsWith(root) || target.equals(root)) {
-                return GitResult.of(GitOutcome.PATH_REFUSED, input.path() + " is not inside " + root);
-            }
-            if (Files.exists(target) && !isEmptyDirectory(target)) {
-                return GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString());
-            }
-        } catch (IOException e) {
-            return failure(e);
-        }
         try (Repository main = openRepository(input.root())) {
-            return addWorktree(main, input, target);
+            return addWorktree(main, input);
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (IOException | JGitInternalException | IllegalArgumentException e) {
@@ -154,26 +164,53 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         }
     }
 
-    private GitResult<Worktree> addWorktree(Repository main, WorktreeAddInput input, Path target) throws IOException {
+    /**
+     * Adds the working tree after the guards, in this order: the root must be the main working tree, the branch
+     * name must be valid, the target must lie inside the root and outside the git directory and every registered
+     * linked working tree, and the start point must be supported. Nothing is claimed before every guard passed.
+     */
+    private GitResult<Worktree> addWorktree(Repository main, WorktreeAddInput input) throws IOException {
+        Path commonDir = main.getCommonDirectory().toPath().toRealPath();
+        if (!Files.isSameFile(main.getDirectory().toPath(), commonDir)) {
+            return GitResult.of(GitOutcome.PATH_REFUSED, ROOT + ": not the main working tree");
+        }
+        String branch = input.branch();
+        if (branch != null) {
+            Optional<GitResult<Worktree>> invalid = refuseBranchName(branch);
+            if (invalid.isPresent()) {
+                return invalid.get();
+            }
+        }
+        Path target = canonical(input.path());
+        Optional<GitResult<Worktree>> refusedTarget = refuseTarget(input, commonDir, target);
+        if (refusedTarget.isPresent()) {
+            return refusedTarget.get();
+        }
         var startLookup = GitIdentity.lookup(main, input.startPoint());
         Optional<GitResult<Worktree>> refused = refuseStartPoint(startLookup);
         if (refused.isPresent()) {
             return refused.get();
         }
-        var attempt = new AddAttempt(main, main.getCommonDirectory().toPath().toRealPath(), input, target);
+        var attempt = new AddAttempt(main, commonDir, input, target);
         try {
             GitResult<Worktree> result = attempt.run(startLookup);
             if (!result.isOk()) {
                 attempt.rollBack();
             }
             return result;
-        } catch (IOException | JGitInternalException | IllegalArgumentException e) {
+        }
+        // every failure of the attempt, an unchecked one of JGit included, is rolled back and ends as a result
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (IOException | RuntimeException e) {
             try {
                 attempt.rollBack();
-            } catch (IOException | JGitInternalException cleanup) {
+            }
+            // an unchecked failure of the rollback must not replace the failure it is rolling back
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
+            catch (IOException | RuntimeException cleanup) {
                 e.addSuppressed(cleanup);
             }
-            throw e;
+            return failure(e);
         }
     }
 
@@ -214,16 +251,17 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             String branch = input.branch();
             String branchRef = branch == null ? null : Constants.R_HEADS + branch;
             boolean existingBranch = branchRef != null && !input.createBranch();
-            StartPoint resolved;
-            if (existingBranch) {
+            // every branch, new or existing, is reserved before it is checked, so of two additions for one branch
+            // exactly one gets past the check (the atomic Files.createFile reservation in the common directory)
+            if (branchRef != null) {
                 reservation = LinkedWorktrees.reserveBranch(commonDir, branchRef).orElse(null);
                 if (reservation == null) {
                     return GitResult.of(GitOutcome.BRANCH_CHECKED_OUT, CHECKED_OUT);
                 }
-                resolved = existingBranchStart(main, commonDir, Objects.requireNonNull(branch), branchRef);
-            } else {
-                resolved = newStart(main, input, startLookup, branchRef);
             }
+            StartPoint resolved = existingBranch
+                    ? existingBranchStart(main, commonDir, Objects.requireNonNull(branch), branchRef)
+                    : newStart(main, input, startLookup, branchRef);
             GitResult<Worktree> refusal = resolved.refusal();
             if (refusal != null) {
                 return refusal;
@@ -242,7 +280,6 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             }
             Path created = LinkedWorktrees.create(commonDir, target, branchRef != null ? branchRef : start.name());
             admin = created;
-            releaseReservation();
             try (Repository linked = openRepository(target); RevWalk walk = new RevWalk(linked)) {
                 RevCommit commit = walk.parseCommit(start);
                 var checkout = new DirCacheCheckout(linked, linked.lockDirCache(), commit.getTree());
@@ -250,6 +287,9 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 checkout.checkout();
             }
             LinkedWorktrees.unlock(created);
+            // the reservation is held until the working tree is complete, so no other addition registers the branch
+            // while a failed checkout is still being rolled back
+            releaseReservation();
             LOGGER.info(INFO.WORKTREE_ADDED, start.name());
             return GitResult.ok(Worktree.builder()
                     .path(target)
@@ -347,7 +387,11 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
 
         /**
          * Deletes the branch this attempt created, only while it still points at the commit it was created at, so a
-         * branch another writer advanced in the meantime is kept.
+         * branch another writer advanced in the meantime is kept. The result of the deletion is read: a forced
+         * update or no change is the deleted branch; after a lock failure or a rejection the branch is read again
+         * (JGit 7.8.0 {@code RefUpdate.delete} returns {@code LOCK_FAILURE} both for a held reference lock and for an
+         * expected id the branch is no longer at), and every other result, an I/O failure among them, is raised so the
+         * rollback reports it.
          */
         private void deleteCreatedBranch() throws IOException {
             String branchRef = createdBranchRef;
@@ -359,10 +403,33 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             RefUpdate delete = main.updateRef(branchRef);
             delete.setExpectedOldObjectId(id);
             delete.setForceUpdate(true);
-            delete.delete();
+            Result result = delete.delete();
+            switch (result) {
+                case FORCED, NO_CHANGE -> {
+                    // deleted
+                }
+                case LOCK_FAILURE, REJECTED -> confirmNotLeft(branchRef, id, result);
+                default -> throw new IOException("branch deletion: " + result);
+            }
         }
 
-        /** Undoes the attempt in reverse order; every step runs, the first failure is thrown with the others. */
+        /**
+         * Reads the branch again after a deletion that did not delete it: an absent branch was deleted, a branch at
+         * another commit was advanced by another writer and is kept, and a branch still at the commit this attempt
+         * created it at is left behind, which is raised so the rollback reports it rather than leaving it silently.
+         */
+        private void confirmNotLeft(String branchRef, ObjectId id, Result result) throws IOException {
+            Ref current = main.exactRef(branchRef);
+            if (current != null && id.equals(current.getObjectId())) {
+                throw new IOException("branch deletion incomplete: " + result);
+            }
+        }
+
+        /**
+         * Undoes the attempt in reverse order; every step runs, the first failure is thrown with the others. The
+         * created branch is deleted before the reservation is released, so no other addition registers the branch
+         * while this attempt may still delete it. An incomplete rollback is logged without an argument.
+         */
         void rollBack() throws IOException {
             IOException failure = null;
             Path written = admin;
@@ -371,9 +438,10 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 failure = attempt(failure, () -> LinkedWorktrees.deleteTree(written));
             }
             failure = attempt(failure, this::releaseTarget);
-            failure = attempt(failure, this::releaseReservation);
             failure = attempt(failure, this::deleteCreatedBranch);
+            failure = attempt(failure, this::releaseReservation);
             if (failure != null) {
+                LOGGER.warn(WARN.ROLLBACK_INCOMPLETE);
                 throw failure;
             }
         }
@@ -472,6 +540,49 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         return Optional.empty();
     }
 
+    /**
+     * Refuses a branch name whose full reference {@code refs/heads/<branch>} is no valid reference name by JGit 7.8.0
+     * {@link Repository#isValidRefName(String)}, which rejects among others a {@code ..} component, a leading
+     * {@code /} and the characters git forbids, so no caller string reaches a reference update or a file name of the
+     * repository. The detail names the field only, never the string (GDR-NFR-3).
+     */
+    private static <V> Optional<GitResult<V>> refuseBranchName(String branch) {
+        if (Repository.isValidRefName(Constants.R_HEADS + branch)) {
+            return Optional.empty();
+        }
+        return Optional.of(GitResult.of(GitOutcome.REFUSED_BY_POLICY, INVALID_BRANCH));
+    }
+
+    /**
+     * Refuses a target outside the root or equal to it, inside the git directory (which holds the administration
+     * area of the linked working trees) or inside a registered linked working tree, and a target that is not empty
+     * or is itself registered. The registered working trees are compared by their real paths.
+     */
+    private static Optional<GitResult<Worktree>> refuseTarget(WorktreeAddInput input, Path commonDir, Path target)
+            throws IOException {
+        Path root = input.root().toRealPath();
+        if (!target.startsWith(root) || target.equals(root)) {
+            return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED, input.path() + " is not inside " + root));
+        }
+        if (target.startsWith(commonDir)) {
+            return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED, target + " is inside the git directory"));
+        }
+        for (Worktree linked : LinkedWorktrees.list(commonDir)) {
+            Path linkedRoot = canonical(linked.path());
+            if (target.equals(linkedRoot)) {
+                return Optional.of(GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString()));
+            }
+            if (target.startsWith(linkedRoot)) {
+                return Optional.of(GitResult.of(GitOutcome.PATH_REFUSED,
+                        target + " is inside another working tree"));
+            }
+        }
+        if (Files.exists(target) && !isEmptyDirectory(target)) {
+            return Optional.of(GitResult.of(GitOutcome.ALREADY_EXISTS, target.toString()));
+        }
+        return Optional.empty();
+    }
+
     private static String candidates(String field, GitIdentity.Lookup lookup) {
         return field + " names " + String.join(", ", lookup.candidates());
     }
@@ -534,7 +645,7 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             return GitResult.ok(List.copyOf(worktrees));
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
-        } catch (IOException | IllegalArgumentException | JGitInternalException e) {
+        } catch (IOException | IllegalArgumentException | JGitInternalException | NoWorkTreeException e) {
             return failure(e);
         }
     }
@@ -549,13 +660,17 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         }
         try {
             Path target = worktree.toAbsolutePath().normalize();
-            Path real = Files.exists(target) ? target.toRealPath() : target;
-            Optional<Worktree> match = Objects.requireNonNull(listed.value(), "value").stream()
-                    .filter(w -> w.path().equals(real) || w.path().equals(target)).findFirst();
-            if (match.isEmpty()) {
+            Path real = realPath(target);
+            Worktree found = null;
+            for (Worktree candidate : Objects.requireNonNull(listed.value(), "value")) {
+                if (realPath(candidate.path()).equals(real) || candidate.path().equals(target)) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found == null) {
                 return GitResult.of(GitOutcome.WORKTREE_NOT_FOUND, target.toString());
             }
-            Worktree found = match.get();
             if (found.main()) {
                 return GitResult.of(GitOutcome.PATH_REFUSED, "the main working tree cannot be removed");
             }
@@ -571,16 +686,18 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 LinkedWorktrees.deleteAdmin(commonDir, name);
             } else {
                 Path admin = commonDir.resolve(LinkedWorktrees.WORKTREES).resolve(name);
-                try (Repository linked = openRepository(found.path())) {
+                // the real root, so a working tree registered through a symbolic link is deleted, not the link
+                Path registered = realPath(found.path());
+                try (Repository linked = openRepository(registered)) {
                     if (!Files.isSameFile(linked.getDirectory().toPath(), admin)) {
-                        return GitResult.of(GitOutcome.IDENTITY_MISMATCH,
+                        return GitResult.of(GitOutcome.WORKTREE_NOT_FOUND,
                                 found.path() + " is not the registered working tree");
                     }
                     if (!Git.wrap(linked).status().call().isClean()) {
                         return GitResult.of(GitOutcome.WORKTREE_DIRTY, found.path().toString());
                     }
                 }
-                LinkedWorktrees.delete(commonDir, name, found.path());
+                LinkedWorktrees.delete(commonDir, name, registered);
             }
             LOGGER.info(INFO.WORKTREE_REMOVED);
             return GitResult.ok(found.path());
@@ -615,29 +732,49 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             }
             RevCommit commit = command.call();
             if (linked) {
-                appendLinkedReflogs(repository, commonDir, previous, commit);
+                writeLinkedReflogs(repository, commonDir, previous, commit);
             }
             return GitResult.ok(toInfo(commit));
         } catch (EmptyCommitException e) {
             return GitResult.of(GitOutcome.NOTHING_TO_COMMIT, "no changes");
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
-        } catch (GitAPIException | IOException | JGitInternalException e) {
+        } catch (GitAPIException | IOException | JGitInternalException | NoWorkTreeException e) {
             return failure(e);
+        }
+    }
+
+    /**
+     * Writes the reflog entries of a created commit in a linked working tree. The commit and its branch are already
+     * stored, so a reflog entry that cannot be written does not fail the commit: it is logged with the commit id only,
+     * never the path or the message of the failure (GDR-NFR-3). An invalid {@code core.logAllRefUpdates} value is such
+     * a case: JGit 7.8.0 {@code Config.getEnum} throws {@link IllegalArgumentException} for a value that names no
+     * constant.
+     */
+    private static void writeLinkedReflogs(Repository linked, Path commonDir, @Nullable ObjectId previous,
+            RevCommit commit) {
+        try {
+            appendLinkedReflogs(linked, commonDir, previous, commit);
+        } catch (IOException | IllegalArgumentException e) {
+            LOGGER.warn(WARN.REFLOG_NOT_WRITTEN, commit.name());
         }
     }
 
     /**
      * Removes from the index of a working tree the root of every registered linked working tree inside it: JGit 7.8.0
      * {@code FileTreeIterator} reports a directory holding a {@code .git} entry as a gitlink, which {@code AddCommand}
-     * stages, so without this the main working tree would commit its linked working trees.
+     * stages, so without this the main working tree would commit its linked working trees. The registered roots are
+     * compared as real paths, so a root registered through a symbolic link is found as well.
      */
     private static void unstageLinkedRoots(Repository repository, Path commonDir) throws IOException {
         Path workTree = repository.getWorkTree().toPath().toRealPath();
-        List<String> roots = LinkedWorktrees.list(commonDir).stream().map(Worktree::path)
-                .filter(path -> path.startsWith(workTree) && !path.equals(workTree))
-                .map(path -> workTree.relativize(path).toString().replace(File.separatorChar, '/'))
-                .toList();
+        var roots = new ArrayList<String>();
+        for (Worktree linked : LinkedWorktrees.list(commonDir)) {
+            Path path = realPath(linked.path());
+            if (path.startsWith(workTree) && !path.equals(workTree)) {
+                roots.add(workTree.relativize(path).toString().replace(File.separatorChar, '/'));
+            }
+        }
         if (roots.isEmpty()) {
             return;
         }
@@ -720,6 +857,40 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     }
 
     /**
+     * {@inheritDoc}
+     * <p>
+     * The branch name is guarded before any path is derived from it, by the same check as an addition's branch, so
+     * no caller string reaches a file name of the repository. The reservation file is resolved in the real common
+     * directory and deleted with one {@link Files#delete}; a missing file is {@link GitOutcome#NOT_FOUND}. The detail
+     * of a refusal names the field only, never the string (GDR-NFR-3), and the log message carries no argument.
+     */
+    @Override
+    public GitResult<String> releaseBranchReservation(Path root, String branch) {
+        Objects.requireNonNull(root, ROOT);
+        Objects.requireNonNull(branch, BRANCH);
+        try (Repository repository = openRepository(root)) {
+            // a repository without a working tree has no addition to release: JGit 7.8.0 getWorkTree() throws
+            // NoWorkTreeException for it, which ends FAILED
+            repository.getWorkTree();
+            Optional<GitResult<String>> invalid = refuseBranchName(branch);
+            if (invalid.isPresent()) {
+                return invalid.get();
+            }
+            Path commonDir = repository.getCommonDirectory().toPath().toRealPath();
+            String branchRef = Constants.R_HEADS + branch;
+            if (!LinkedWorktrees.releaseBranch(commonDir, branchRef)) {
+                return GitResult.of(GitOutcome.NOT_FOUND, BRANCH + ": no reservation");
+            }
+            LOGGER.info(INFO.BRANCH_RESERVATION_RELEASED);
+            return GitResult.ok(branchRef);
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
+        } catch (IOException | JGitInternalException | IllegalArgumentException | NoWorkTreeException e) {
+            return failure(e);
+        }
+    }
+
+    /**
      * Opens the repository at {@code root}: the working tree containing a {@code .git} entry (a directory, or the file
      * of a linked working tree), or the repository found by walking up from {@code root}.
      */
@@ -766,6 +937,11 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             existing = existing.getParent();
         }
         return existing.toRealPath().resolve(existing.relativize(absolute));
+    }
+
+    /** The real path of a path that exists, the normalized absolute path of one that does not. */
+    private static Path realPath(Path path) throws IOException {
+        return Files.exists(path) ? path.toRealPath() : path.toAbsolutePath().normalize();
     }
 
     private static boolean isEmptyDirectory(Path path) throws IOException {

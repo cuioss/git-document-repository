@@ -17,7 +17,7 @@ package de.cuioss.git.document.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
@@ -37,11 +37,13 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 /**
- * The builders of the value records of {@link WorktreeOperations} build the value the canonical constructor builds,
- * and the constructors refuse a missing required component, also through the builder. Every value is generated; the
- * component names the refusal tests assert are contract vocabulary rather than test data.
+ * The behaviour the value records of {@link WorktreeOperations} add: equality over every component, the builders
+ * building the value the canonical constructor builds, the null checks naming the missing component, also through the
+ * builder, and the sorted, unmodifiable defensive copy of the status sets. Every value is generated; the component
+ * names the refusal tests assert are contract vocabulary rather than test data.
  */
 @EnableGeneratorController
 @DisplayName("WorktreeOperations value records")
@@ -60,8 +62,8 @@ class WorktreeOperationsRecordsTest {
     }
 
     @Test
-    @DisplayName("the worktree builder builds the constructor value")
-    void worktreeBuilderEqualsConstructor() {
+    @DisplayName("worktrees are equal with equal hash codes exactly when every component is equal")
+    void worktreeEqualsOverEveryComponent() {
         var path = path();
         var name = text();
         var branch = text();
@@ -69,33 +71,47 @@ class WorktreeOperationsRecordsTest {
         var main = Generators.booleans().next();
         var locked = Generators.booleans().next();
         var prunable = Generators.booleans().next();
+        var worktree = new Worktree(path, name, branch, head, main, locked, prunable);
 
-        var built = Worktree.builder()
-                .path(path)
-                .name(name)
-                .branch(branch)
-                .head(head)
-                .main(main)
-                .locked(locked)
-                .prunable(prunable)
-                .build();
-        var constructed = new Worktree(path, name, branch, head, main, locked, prunable);
+        var built = Worktree.builder().path(path).name(name).branch(branch).head(head).main(main).locked(locked)
+                .prunable(prunable).build();
+        var differing = List.of(
+                new Worktree(Path.of(path + text()), name, branch, head, main, locked, prunable),
+                new Worktree(path, name + text(), branch, head, main, locked, prunable),
+                new Worktree(path, name, branch + text(), head, main, locked, prunable),
+                new Worktree(path, name, branch, head + text(), main, locked, prunable),
+                new Worktree(path, name, branch, head, !main, locked, prunable),
+                new Worktree(path, name, branch, head, main, !locked, prunable),
+                new Worktree(path, name, branch, head, main, locked, !prunable),
+                new Worktree(path, null, null, null, main, locked, prunable));
 
-        assertEquals(constructed, built, "the builder builds the same worktree value");
+        assertAll(
+                () -> assertEquals(worktree, built, "the builder builds the same worktree value"),
+                () -> assertEquals(worktree.hashCode(), built.hashCode(), "equal worktrees have equal hash codes"),
+                () -> assertAll(differing.stream().<Executable>map(other -> () -> assertNotEquals(worktree, other,
+                        "a worktree differing in one component is not equal: " + other))));
     }
 
     @Test
-    @DisplayName("the worktree of a main working tree carries no name, branch or head")
-    void worktreeAcceptsAbsentOptionalComponents() {
-        var path = path();
+    @DisplayName("GDR-WT-3: statuses with the same paths are equal whatever the order or type of the input sets")
+    void worktreeStatusEqualsOverPaths() {
+        var paths = new HashSet<String>();
+        while (paths.size() < 3) {
+            paths.add(text());
+        }
+        var reversed = new TreeSet<String>(Comparator.reverseOrder());
+        reversed.addAll(paths);
+        var status = new WorktreeStatus(paths, Set.of(), paths);
 
-        var worktree = Worktree.builder().path(path).main(true).build();
+        var same = new WorktreeStatus(reversed, new HashSet<>(), reversed);
+        var moved = new WorktreeStatus(Set.of(), paths, paths);
 
         assertAll(
-                () -> assertEquals(path, worktree.path(), "the path is kept"),
-                () -> assertNull(worktree.name(), "the main working tree has no administrative name"),
-                () -> assertNull(worktree.branch(), "a detached working tree has no branch"),
-                () -> assertNull(worktree.head(), "an unborn working tree has no head"));
+                () -> assertEquals(status, same, "the same paths make an equal status"),
+                () -> assertEquals(status.hashCode(), same.hashCode(), "equal statuses have equal hash codes"),
+                () -> assertEquals(List.copyOf(new TreeSet<>(paths)), List.copyOf(same.changed()),
+                        "a reverse-ordered input is stored sorted by path"),
+                () -> assertNotEquals(status, moved, "the same paths in another set make another status"));
     }
 
     @Test

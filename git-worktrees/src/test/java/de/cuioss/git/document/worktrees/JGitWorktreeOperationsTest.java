@@ -23,13 +23,17 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -39,11 +43,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.GitResult;
+import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.git.document.worktrees.WorktreeOperations.CommitInput;
@@ -230,6 +237,13 @@ class JGitWorktreeOperationsTest {
     private Worktree added(MainTree main, String branch) {
         var result = operations.worktreeAdd(onNewBranch(main, main.root().resolve(name()), branch));
         return Objects.requireNonNull(result.value(), "the fixture working tree is added: " + result.detail());
+    }
+
+    /** Every path below {@code root}, including itself, so that a comparison shows any file created or removed. */
+    private static Set<Path> tree(Path root) throws IOException {
+        try (Stream<Path> paths = Files.walk(root)) {
+            return paths.collect(Collectors.toSet());
+        }
     }
 
     private List<Worktree> listed(MainTree main) {
@@ -545,6 +559,99 @@ class JGitWorktreeOperationsTest {
                     () -> assertEquals(GitOutcome.PATH_REFUSED, outsideResult.outcome(), "a path outside is refused"),
                     () -> assertEquals(GitOutcome.PATH_REFUSED, rootResult.outcome(), "the main root is refused"),
                     () -> assertFalse(Files.exists(outside), "nothing is created outside"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a branch name that is no valid reference name is refused before anything is written")
+        void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var escape = name();
+            // git's reference-name rules: a '..' component, a space and a trailing '.lock' are invalid
+            var hostile = List.of("../../../" + escape, name() + " " + name(), name() + ".lock");
+            var existing = name();
+            branchOn(main, existing);
+            var before = tree(main.root());
+
+            var results = new ArrayList<GitResult<Worktree>>();
+            var paths = new ArrayList<Path>();
+            for (String branch : hostile) {
+                var path = main.root().resolve(name());
+                paths.add(path);
+                results.add(operations.worktreeAdd(onNewBranch(main, path, branch)));
+            }
+            var existingPath = main.root().resolve(name());
+            var onExisting = operations.worktreeAdd(
+                    onExistingBranch(main, existingPath, "../" + existing, Constants.HEAD));
+
+            var after = tree(main.root());
+            assertAll(
+                    () -> assertTrue(results.stream().allMatch(r -> r.outcome() == GitOutcome.REFUSED_BY_POLICY),
+                            "every invalid new branch name is refused"),
+                    () -> assertTrue(results.stream().allMatch(r -> "branch: not a valid branch name".equals(
+                            r.detail())), "the detail names the field and the reason"),
+                    () -> assertTrue(hostile.stream().noneMatch(branch -> results.stream()
+                                    .anyMatch(r -> Objects.requireNonNull(r.detail()).contains(branch))),
+                            "no detail carries the caller's name"),
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, onExisting.outcome(),
+                            "an invalid existing branch name is refused"),
+                    () -> assertEquals("branch: not a valid branch name", onExisting.detail(),
+                            "the detail names the field only"),
+                    () -> assertFalse(Files.exists(main.root().resolve(escape), LinkOption.NOFOLLOW_LINKS),
+                            "no reference file escapes refs/ of the common directory"),
+                    () -> assertTrue(paths.stream().noneMatch(Files::exists), "no target is claimed"),
+                    () -> assertFalse(Files.exists(existingPath), "no target is claimed for the existing branch"),
+                    () -> assertEquals(before, after, "nothing in the main working tree or its git directory changes"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is created"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a linked working tree as root is refused and nothing is created")
+        void linkedRootRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var path = linked.path().resolve(name());
+            var branch = name();
+
+            var result = operations.worktreeAdd(WorktreeAddInput.builder().root(linked.path()).path(path)
+                    .branch(branch).createBranch(true).startPoint(Constants.HEAD).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, result.outcome(), "a linked root is refused"),
+                    () -> assertEquals("root: not the main working tree", result.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertFalse(Files.exists(path), "no target is claimed"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "no branch is created"),
+                    () -> assertEquals(2, listed(main).size(), "no working tree is added"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a target inside the git directory, its administration area or another linked working "
+                + "tree is refused")
+        void targetInsideAdministrationRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var gitDir = main.root().resolve(Constants.DOT_GIT);
+            var inGitDir = gitDir.resolve(name());
+            var inAdministration = gitDir.resolve(LinkedWorktrees.WORKTREES).resolve(name());
+            var inLinked = linked.path().resolve(name());
+            var before = tree(gitDir);
+
+            var gitDirResult = operations.worktreeAdd(onNewBranch(main, inGitDir, name()));
+            var administrationResult = operations.worktreeAdd(onNewBranch(main, inAdministration, name()));
+            var linkedResult = operations.worktreeAdd(onNewBranch(main, inLinked, name()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, gitDirResult.outcome(),
+                            "a target inside the git directory is refused"),
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, administrationResult.outcome(),
+                            "a target inside the administration area is refused"),
+                    () -> assertEquals(GitOutcome.PATH_REFUSED, linkedResult.outcome(),
+                            "a target inside another linked working tree is refused"),
+                    () -> assertFalse(Files.exists(inGitDir), "nothing is left in the git directory"),
+                    () -> assertFalse(Files.exists(inAdministration), "nothing is left in the administration area"),
+                    () -> assertFalse(Files.exists(inLinked), "nothing is left in the linked working tree"),
+                    () -> assertEquals(before, tree(gitDir), "the git directory is unchanged"),
+                    () -> assertEquals(2, listed(main).size(), "no working tree is added"));
         }
 
         @Test
@@ -906,7 +1013,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a replaced repository at the root is refused, a reused prunable path is kept")
+        @DisplayName("GDR-WT-1: a replaced repository at the root is not found, a reused prunable path is kept")
         void replacedRepositoryAndReusedPath(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var replaced = added(main, name());
@@ -921,8 +1028,10 @@ class JGitWorktreeOperationsTest {
             var reusedResult = operations.worktreeRemove(main.root(), reused.path());
 
             assertAll(
-                    () -> assertEquals(GitOutcome.IDENTITY_MISMATCH, replacedResult.outcome(),
+                    () -> assertEquals(GitOutcome.WORKTREE_NOT_FOUND, replacedResult.outcome(),
                             "another repository at the root is not the registered working tree"),
+                    () -> assertEquals(replaced.path() + " is not the registered working tree",
+                            replacedResult.detail(), "the detail names the path and the reason"),
                     () -> assertTrue(Files.isRegularFile(replaced.path().resolve(main.files().getFirst())),
                             "the replaced repository's files are kept"),
                     () -> assertTrue(Files.isDirectory(replaced.path().resolve(Constants.DOT_GIT)),
@@ -1141,6 +1250,513 @@ class JGitWorktreeOperationsTest {
                 assertNotNull(walk, "the path " + path + " is in the commit");
                 return new String(repository.open(walk.getObjectId(0)).getBytes(), StandardCharsets.UTF_8);
             }
+        }
+    }
+
+    /**
+     * Registers a linked working tree through a symbolic link: the link is created outside the main working tree and
+     * the administration directory's {@code gitdir} is rewritten to point through it, as {@code git worktree add}
+     * records a path given through a link. Skips the test where the file system creates no symbolic links.
+     */
+    private Path registerThroughSymlink(MainTree main, Worktree worktree) throws IOException {
+        var link = temp.resolve(name());
+        try {
+            Files.createSymbolicLink(link, worktree.path());
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "The file system creates symbolic links");
+        }
+        Files.writeString(main.admin(Objects.requireNonNull(worktree.name())).resolve(Constants.GITDIR_FILE),
+                link.resolve(Constants.DOT_GIT) + "\n");
+        return link;
+    }
+
+    @Nested
+    @DisplayName("reservation and registered paths")
+    class RegisteredIdentity {
+
+        @Test
+        @DisplayName("GDR-WT-1: a new or an existing branch whose reservation another addition holds is checked out")
+        void reservedBranchCheckedOut(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var commonDir = main.root().resolve(Constants.DOT_GIT);
+            // a concurrent new-branch addition between its reservation and its HEAD holds these reservations
+            var newBranch = name();
+            var heldNew = LinkedWorktrees.reserveBranch(commonDir, Constants.R_HEADS + newBranch).orElseThrow();
+            var existing = name();
+            branchOn(main, existing);
+            var heldExisting = LinkedWorktrees.reserveBranch(commonDir, Constants.R_HEADS + existing)
+                    .orElseThrow();
+            var newPath = main.root().resolve(name());
+            var existingPath = main.root().resolve(name());
+
+            var onNew = operations.worktreeAdd(onNewBranch(main, newPath, newBranch));
+            var onExisting = operations.worktreeAdd(onExistingBranch(main, existingPath, existing, Constants.HEAD));
+            var createdBeforeRelease = refId(main.root(), Constants.R_HEADS + newBranch);
+            var heldKept = Files.exists(heldNew) && Files.exists(heldExisting);
+            LinkedWorktrees.release(heldNew);
+            LinkedWorktrees.release(heldExisting);
+            var retried = operations.worktreeAdd(onNewBranch(main, newPath, newBranch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, onNew.outcome(),
+                            "a new branch another addition reserved is checked out"),
+                    () -> assertEquals("branch: checked out in another working tree", onNew.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, onExisting.outcome(),
+                            "an existing branch a new-branch addition reserved is checked out"),
+                    () -> assertNull(createdBeforeRelease, "the refused addition creates no branch"),
+                    () -> assertTrue(heldKept, "the other addition's reservations are kept"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "once released, the addition succeeds"),
+                    () -> assertFalse(Files.exists(existingPath), "the refused addition claims no target"),
+                    () -> assertEquals(List.of(), reservations(main), "no reservation is left"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a working tree registered through a symbolic link is found and removed by its real path")
+        void removeThroughSymlink(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var worktree = added(main, name());
+            var link = registerThroughSymlink(main, worktree);
+
+            var result = operations.worktreeRemove(main.root(), worktree.path());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the working tree is found by its real path"),
+                    () -> assertFalse(Files.exists(worktree.path()), "the real working tree is deleted"),
+                    () -> assertFalse(Files.exists(main.admin(Objects.requireNonNull(worktree.name()))),
+                            "the administration directory is deleted"),
+                    () -> assertTrue(Files.isSymbolicLink(link), "the link itself is not followed into a deletion"),
+                    () -> assertEquals(List.of(main.root()), listed(main).stream().map(Worktree::path).toList(),
+                            "only the main working tree is listed"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: a commit in the main working tree stages no root registered through a symbolic link")
+        void linkedRootThroughSymlinkNotStaged(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            registerThroughSymlink(main, linked);
+            var file = name();
+            Files.writeString(main.root().resolve(file), content());
+
+            var result = operations.commit(commitInput(main.root()));
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            var linkedRoot = main.root().relativize(linked.path()).toString();
+            try (Repository repository = open(main.root()); RevWalk walk = new RevWalk(repository)) {
+                RevCommit commit = walk.parseCommit(ObjectId.fromString(info.id()));
+                assertAll(
+                        () -> assertNotNull(TreeWalk.forPath(repository, file, commit.getTree()),
+                                "the new file is committed"),
+                        () -> assertNull(TreeWalk.forPath(repository, linkedRoot, commit.getTree()),
+                                "the linked root is not committed"),
+                        () -> assertNull(repository.readDirCache().getEntry(linkedRoot),
+                                "the linked root is not in the index"));
+            }
+        }
+    }
+
+    /**
+     * A refusing file system whose checkout of the working tree at {@code armed} fails once with an unchecked
+     * exception, after running {@code before}: JGit 7.8.0 {@code Checkout.checkout} reads the modification time of
+     * every file it wrote through {@link org.eclipse.jgit.util.FS#lastModifiedInstant(File)}, so the failure strikes
+     * after the branch was created and the administration directory was written.
+     */
+    private static final class FailingCheckoutFS extends RefusingFS {
+
+        /** An action of the fixture, run just before the failure. */
+        @FunctionalInterface
+        interface Action {
+
+            void run() throws IOException;
+        }
+
+        private final Path armed;
+        private final Action before;
+        private final AtomicBoolean fired = new AtomicBoolean();
+
+        FailingCheckoutFS(Path armed, Action before) {
+            this.armed = armed;
+            this.before = before;
+        }
+
+        @Override
+        public Instant lastModifiedInstant(File f) {
+            if (f.toPath().toAbsolutePath().normalize().startsWith(armed) && fired.compareAndSet(false, true)) {
+                try {
+                    before.run();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                throw new IllegalStateException("an unchecked failure of the checkout");
+            }
+            return super.lastModifiedInstant(f);
+        }
+    }
+
+    /** The branch reservation files in the common directory of the main working tree. */
+    private static List<Path> reservations(MainTree main) throws IOException {
+        try (Stream<Path> entries = Files.list(main.root().resolve(Constants.DOT_GIT))) {
+            return entries.filter(path -> path.getFileName().toString().startsWith("worktree-branch-")).toList();
+        }
+    }
+
+    @Nested
+    @DisplayName("release of a branch reservation")
+    class ReleaseBranchReservation {
+
+        /** The common directory of the main working tree, as a reservation of an addition is created in it. */
+        private Path commonDir(MainTree main) {
+            return main.root().resolve(Constants.DOT_GIT);
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a reservation a crashed process left is released, and the addition succeeds again")
+        void crashedProcessRecovered(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var tip = branchOn(main, branch);
+            // the reservation of an addition whose process ended between reserving and releasing
+            var left = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+            var path = main.root().resolve(name());
+
+            var blocked = operations.worktreeAdd(onExistingBranch(main, path, branch, Constants.HEAD));
+            var released = operations.releaseBranchReservation(main.root(), branch);
+            var leftAfterRelease = Files.exists(left);
+            var retried = operations.worktreeAdd(onExistingBranch(main, path, branch, Constants.HEAD));
+
+            var handler = TestLoggerFactory.getTestHandler();
+            assertAll(
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, blocked.outcome(),
+                            "the left reservation blocks the branch no working tree has checked out"),
+                    () -> assertEquals(GitOutcome.OK, released.outcome(), "the reservation is released"),
+                    () -> assertEquals(Constants.R_HEADS + branch, released.value(),
+                            "the result names the full branch name"),
+                    () -> assertFalse(leftAfterRelease, "the reservation file is deleted"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "the addition succeeds again"),
+                    () -> assertEquals(tip.name(), Objects.requireNonNull(retried.value()).head(),
+                            "the working tree is at the branch tip"),
+                    () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO, branch).isEmpty(),
+                            "no INFO message carries the branch name"),
+                    () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO,
+                            main.root().toString()).isEmpty(), "no INFO message carries a path"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
+                    GitWorktreesLogMessages.INFO.BRANCH_RESERVATION_RELEASED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a branch without a reservation is not found")
+        void noReservation(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+
+            var result = operations.releaseBranchReservation(main.root(), name());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "there is no reservation"),
+                    () -> assertEquals("branch: no reservation", result.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertNull(result.value(), "no branch is reported"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: an invalid branch name is refused and deletes nothing in or outside the common directory")
+        void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var escape = name();
+            var hostile = "../../../" + escape;
+            Files.writeString(temp.resolve(escape), content());
+            var held = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + name()).orElseThrow();
+            var before = tree(temp);
+
+            var result = operations.releaseBranchReservation(main.root(), hostile);
+
+            var detail = Objects.requireNonNull(result.detail(), "a refusal has a detail");
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the branch name is refused"),
+                    () -> assertEquals("branch: not a valid branch name", detail, "the detail names the field only"),
+                    () -> assertFalse(detail.contains(escape), "the detail does not carry the caller's name"),
+                    () -> assertTrue(Files.exists(held), "another reservation is kept"),
+                    () -> assertEquals(before, tree(temp), "no file is deleted in or outside the common directory"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a path without a repository is not a repository")
+        void notARepository() throws Exception {
+            var plain = Files.createDirectories(temp.resolve(name()));
+
+            var result = operations.releaseBranchReservation(plain, name());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_A_REPOSITORY, result.outcome(), "a plain directory is no repository"),
+                    () -> assertEquals(plain.toString(), result.detail(), "the detail names the path"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a repository without a working tree fails as a result")
+        void bareRepositoryFails() throws Exception {
+            var bare = temp.resolve(name());
+            Git.init().setBare(true).setDirectory(bare.toFile()).call().close();
+            var branch = name();
+            var held = LinkedWorktrees.reserveBranch(bare.toRealPath(), Constants.R_HEADS + branch).orElseThrow();
+
+            var result = operations.releaseBranchReservation(bare, branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the release fails"),
+                    () -> assertEquals("NoWorkTreeException", result.detail(), "the detail is the failure class"),
+                    () -> assertTrue(Files.exists(held), "nothing is deleted"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: called from a linked working tree it releases the reservation in the common directory")
+        void fromLinkedRoot(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var branch = name();
+            var left = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+
+            var result = operations.releaseBranchReservation(linked.path(), branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reservation is released"),
+                    () -> assertEquals(Constants.R_HEADS + branch, result.value(),
+                            "the result names the full branch name"),
+                    () -> assertFalse(Files.exists(left), "the reservation in the common directory is deleted"),
+                    () -> assertEquals(List.of(), reservations(main), "no reservation is left"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: the release deletes only the named branch's reservation")
+        void onlyNamedReservation(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var other = name();
+            var named = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+            var kept = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + other).orElseThrow();
+
+            var result = operations.releaseBranchReservation(main.root(), branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the named reservation is released"),
+                    () -> assertFalse(Files.exists(named), "the named reservation is deleted"),
+                    () -> assertTrue(Files.exists(kept), "the other branch's reservation stays"),
+                    () -> assertEquals(List.of(kept), reservations(main), "only the other reservation is left"));
+        }
+    }
+
+    @Nested
+    @DisplayName("result contract")
+    class ResultContract {
+
+        @Test
+        @DisplayName("GDR-GEN-3: list, remove and commit on a repository without a working tree fail as a result")
+        void bareRepositoryFails() throws Exception {
+            var bare = temp.resolve(name());
+            Git.init().setBare(true).setDirectory(bare.toFile()).call().close();
+
+            var listed = operations.worktreeList(bare);
+            var removed = operations.worktreeRemove(bare, bare.resolve(name()));
+            var committed = operations.commit(commitInput(bare));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, listed.outcome(), "the list fails"),
+                    () -> assertEquals("NoWorkTreeException", listed.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, removed.outcome(), "the removal fails"),
+                    () -> assertEquals("NoWorkTreeException", removed.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, committed.outcome(), "the commit fails"),
+                    () -> assertEquals("NoWorkTreeException", committed.detail(), "the detail is the failure class"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: an unchecked failure of the addition is a result and leaves nothing behind")
+        void uncheckedFailureRolledBack(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            var existing = name();
+            branchOn(main, existing);
+            var onExisting = main.root().resolve(name());
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> {
+            }));
+            var failingExisting = new JGitWorktreeOperations(new FailingCheckoutFS(onExisting, () -> {
+            }));
+
+            var result = failing.worktreeAdd(onNewBranch(main, path, branch));
+            var existingResult = failingExisting.worktreeAdd(
+                    onExistingBranch(main, onExisting, existing, Constants.HEAD));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the unchecked failure is a result"),
+                    () -> assertEquals("IllegalStateException", result.detail(), "the detail is the failure class"),
+                    () -> assertEquals(GitOutcome.FAILED, existingResult.outcome(),
+                            "the unchecked failure on an existing branch is a result"),
+                    () -> assertFalse(Files.exists(path), "the target is removed again"),
+                    () -> assertFalse(Files.exists(onExisting), "the target on the existing branch is removed again"),
+                    () -> assertFalse(Files.exists(main.admin(path.getFileName().toString())),
+                            "the administration directory is removed again"),
+                    () -> assertFalse(Files.exists(main.admin(onExisting.getFileName().toString())),
+                            "the administration directory on the existing branch is removed again"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "the created branch is deleted"),
+                    () -> assertNotNull(refId(main.root(), Constants.R_HEADS + existing),
+                            "the existing branch is kept"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is registered"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a created branch another writer advanced is kept, one that cannot be deleted stays")
+        void branchDeletionResultRead(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var advancedBranch = name();
+            var advancedPath = main.root().resolve(name());
+            var advancedTo = new ObjectId[1];
+            var advancing = new JGitWorktreeOperations(new FailingCheckoutFS(advancedPath, () -> {
+                try (Repository repository = open(main.root())) {
+                    advancedTo[0] = commit(repository, main.head(), List.of(name()));
+                    setRef(repository, Constants.R_HEADS + advancedBranch, advancedTo[0]);
+                }
+            }));
+            var currentBranch = name();
+            var currentPath = main.root().resolve(name());
+            // the branch becomes the main working tree's own branch, which JGit 7.8.0 RefUpdate.delete rejects
+            var checkingOut = new JGitWorktreeOperations(new FailingCheckoutFS(currentPath, () -> {
+                try (Repository repository = open(main.root())) {
+                    var link = repository.updateRef(Constants.HEAD).link(Constants.R_HEADS + currentBranch);
+                    assertEquals(RefUpdate.Result.FORCED, link, "the main working tree switches branch");
+                }
+            }));
+
+            var advanced = advancing.worktreeAdd(onNewBranch(main, advancedPath, advancedBranch));
+            var undeletable = checkingOut.worktreeAdd(onNewBranch(main, currentPath, currentBranch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, advanced.outcome(), "the failed addition is a result"),
+                    () -> assertEquals(advancedTo[0], refId(main.root(), Constants.R_HEADS + advancedBranch),
+                            "the branch another writer advanced is kept at its new commit"),
+                    () -> assertFalse(Files.exists(advancedPath), "the target is removed again"),
+                    () -> assertEquals(GitOutcome.FAILED, undeletable.outcome(),
+                            "the addition whose branch cannot be deleted fails as a result"),
+                    () -> assertEquals(main.head(), refId(main.root(), Constants.R_HEADS + currentBranch),
+                            "the branch whose deletion was rejected stays"),
+                    () -> assertFalse(Files.exists(currentPath), "the target is removed although the deletion failed"),
+                    () -> assertFalse(Files.exists(main.admin(currentPath.getFileName().toString())),
+                            "the administration directory is removed although the deletion failed"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: the branch stays reserved until the rollback of a failed addition has deleted it")
+        void reservationOutlivesRollback(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            var second = main.root().resolve(name());
+            var during = new ArrayList<GitResult<Worktree>>();
+            // the failing addition's administration directory loses its HEAD, as the rollback's first step removes
+            // it, so no listed working tree has the branch checked out while the created branch still exists
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> {
+                Files.delete(main.admin(path.getFileName().toString()).resolve(Constants.HEAD));
+                during.add(operations.worktreeAdd(onExistingBranch(main, second, branch, Constants.HEAD)));
+            }));
+
+            var failed = failing.worktreeAdd(onNewBranch(main, path, branch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, failed.outcome(), "the failed addition is a result"),
+                    () -> assertEquals(1, during.size(), "the second addition ran during the first one"),
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, during.getFirst().outcome(),
+                            "the branch of the failing addition is still reserved"),
+                    () -> assertFalse(Files.exists(second), "the second addition claims no target"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "the created branch is deleted"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is registered"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a created branch a held reference lock keeps at its start commit is reported")
+        void heldRefLockReported(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            // git's lock file of the branch, as a concurrent writer holds it without moving the branch
+            var lock = main.root().resolve(Constants.DOT_GIT).resolve(Constants.R_HEADS + branch + ".lock");
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> Files.writeString(lock, "")));
+
+            var result = failing.worktreeAdd(onNewBranch(main, path, branch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the failed addition is a result"),
+                    () -> assertEquals("IllegalStateException", result.detail(),
+                            "the detail is the class of the failure that was rolled back"),
+                    () -> assertEquals(main.head(), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch the lock kept is still at its start commit"),
+                    () -> assertFalse(Files.exists(path), "the target is removed again"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.ROLLBACK_INCOMPLETE.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: a reflog entry that cannot be written does not fail the created commit")
+        void reflogFailureKeepsCommit(@LocalRepository Repository source) throws Exception {
+            var upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
+            var main = mainTree(source, temp);
+            var branch = name();
+            var worktree = added(main, branch);
+            // a directory where the linked working tree's HEAD reflog belongs, so the append cannot write it
+            var linkedLog = main.admin(Objects.requireNonNull(worktree.name())).resolve(Constants.LOGS)
+                    .resolve(Constants.HEAD);
+            Files.createDirectories(linkedLog);
+            Files.writeString(worktree.path().resolve(name()), content());
+            var author = new Identity(upper.next(), upper.next() + "@example.invalid");
+            var committer = new Identity(upper.next(), upper.next() + "@example.invalid");
+            var message = upper.next();
+
+            var result = operations.commit(CommitInput.builder().root(worktree.path()).message(message)
+                    .author(author).committer(committer).build());
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            var logs = TestLoggerFactory.getTestHandler().getRecordsAsString();
+            var forbidden = List.of(worktree.path().toString(), author.name(), author.email(), committer.name(),
+                    committer.email(), message);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the created commit is reported"),
+                    () -> assertEquals(ObjectId.fromString(info.id()), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch HEAD names is at the reported commit"),
+                    () -> assertTrue(Files.isDirectory(linkedLog), "the reflog was not written"),
+                    () -> assertTrue(logs.contains(info.id()), "the warning names the commit id"),
+                    () -> assertAll(forbidden.stream().<Executable>map(value -> () -> assertFalse(
+                            logs.contains(value), "no log message carries " + value))));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: an invalid core.logAllRefUpdates value does not fail the created commit")
+        void invalidLogAllRefUpdatesKeepsCommit(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var worktree = added(main, branch);
+            // the generated letters spell none of the values JGit 7.8.0 Config.getEnum accepts for LogRefUpdates
+            var invalid = name();
+            try (Repository repository = open(main.root())) {
+                var config = repository.getConfig();
+                config.setString(ConfigConstants.CONFIG_CORE_SECTION, null,
+                        ConfigConstants.CONFIG_KEY_LOGALLREFUPDATES, invalid);
+                config.save();
+            }
+            Files.writeString(worktree.path().resolve(name()), content());
+
+            var result = operations.commit(commitInput(worktree.path()));
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the created commit is reported"),
+                    () -> assertEquals(ObjectId.fromString(info.id()), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch is at the stored commit"),
+                    () -> assertTrue(TestLoggerFactory.getTestHandler().getRecordsAsString().contains(info.id()),
+                            "the warning names the commit id"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
         }
     }
 

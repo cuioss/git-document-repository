@@ -25,8 +25,8 @@ import lombok.experimental.UtilityClass;
  * {@code git-worktrees/doc/LogMessages.adoc}.
  * <p>
  * No message carries anything GDR-NFR-3 forbids: a message names a commit id or a refused capability, never a path, an
- * administrative name derived from the caller's path, an author or committer name, an e-mail address or a commit
- * message.
+ * administrative name derived from the caller's path, a branch name, an author or committer name, an e-mail address or
+ * a commit message.
  *
  * @since 0.1
  */
@@ -57,6 +57,15 @@ public final class GitWorktreesLogMessages {
                 .prefix(PREFIX)
                 .identifier(2)
                 .build();
+
+        /**
+         * A branch reservation was released; the message carries no argument, neither the branch name nor a path.
+         */
+        public static final LogRecord BRANCH_RESERVATION_RELEASED = LogRecordModel.builder()
+                .template("Released a branch reservation")
+                .prefix(PREFIX)
+                .identifier(3)
+                .build();
     }
 
     /**
@@ -72,6 +81,23 @@ public final class GitWorktreesLogMessages {
                 .template("Refused capability %s")
                 .prefix(PREFIX)
                 .identifier(100)
+                .build();
+
+        /** A commit was created in a linked working tree but its reflog entry was not written: the commit id. */
+        public static final LogRecord REFLOG_NOT_WRITTEN = LogRecordModel.builder()
+                .template("Created commit %s, its reflog entry was not written")
+                .prefix(PREFIX)
+                .identifier(101)
+                .build();
+
+        /**
+         * The rollback of a refused or failed addition did not undo everything it created, for example a created
+         * branch it could not delete; the message carries no argument, neither the branch name nor a path.
+         */
+        public static final LogRecord ROLLBACK_INCOMPLETE = LogRecordModel.builder()
+                .template("The rollback of a failed working-tree addition is incomplete")
+                .prefix(PREFIX)
+                .identifier(102)
                 .build();
     }
 }
