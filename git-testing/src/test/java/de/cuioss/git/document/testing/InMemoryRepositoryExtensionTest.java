@@ -31,13 +31,16 @@ import de.cuioss.git.document.testing.LocalRepositoryExtensionTest.ExtensionCont
 import de.cuioss.git.document.testing.LocalRepositoryExtensionTest.ReflectedParameter;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import java.io.IOException;
 import java.lang.reflect.Parameter;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -210,6 +213,35 @@ class InMemoryRepositoryExtensionTest {
     }
 
     @Test
+    @DisplayName("Should link HEAD of a repository it initialises to refs/heads/master")
+    void shouldLinkHeadWhenInitialising() {
+        try (var repository = new UninitialisedRepository(null)) {
+            InMemoryRepositoryExtension.initialise(repository);
+
+            assertAll("initialised repository",
+                    () -> assertEquals(Constants.R_HEADS + Constants.MASTER, repository.getFullBranch(),
+                            "HEAD is linked to refs/heads/master"),
+                    () -> assertEquals(0, repository.closings, "A repository initialised is not closed"));
+        }
+    }
+
+    @Test
+    @DisplayName("Should close the repository and name @InMemory when the initialisation fails")
+    void shouldCloseRepositoryWhenInitialisationFails() {
+        var initialisationFailure = new IOException("The repository cannot be initialised");
+        var repository = new UninitialisedRepository(initialisationFailure);
+
+        var thrown = assertThrows(ParameterResolutionException.class,
+                () -> InMemoryRepositoryExtension.initialise(repository),
+                "A failed initialisation is reported as a parameter resolution failure");
+
+        assertAll("failed initialisation",
+                () -> assertSame(initialisationFailure, thrown.getCause(), "The failure of JGit is the cause"),
+                () -> assertTrue(thrown.getMessage().contains("@InMemory"), "The message names the annotation"),
+                () -> assertEquals(1, repository.closings, "The repository is closed once"));
+    }
+
+    @Test
     @DisplayName("Should reject an annotated parameter of the in-memory implementation type")
     void shouldRejectAnnotatedParameterOfImplementationType(ExtensionContext context) throws Exception {
         var implementationType = new ReflectedParameter(signatureParameter(2), 2);
@@ -235,6 +267,37 @@ class InMemoryRepositoryExtensionTest {
                 () -> assertEquals(Repository.class, declared.getParameter().getType(),
                         "The parameter is declared exactly as Repository"),
                 () -> assertInstanceOf(Repository.class, resolved, "The resolved value is a Repository"));
+    }
+
+    /**
+     * An in-memory repository stand-in that counts its closings and, when given a failure, throws it from
+     * {@link #create(boolean)} instead of initialising. It is written by hand because the module has no mocking
+     * library on its test class path.
+     */
+    static final class UninitialisedRepository extends InMemoryRepository {
+
+        private final @Nullable IOException initialisationFailure;
+
+        int closings;
+
+        UninitialisedRepository(@Nullable IOException initialisationFailure) {
+            super(new DfsRepositoryDescription("uninitialised"));
+            this.initialisationFailure = initialisationFailure;
+        }
+
+        @Override
+        public void create(boolean bare) throws IOException {
+            if (initialisationFailure != null) {
+                throw initialisationFailure;
+            }
+            super.create(bare);
+        }
+
+        @Override
+        public void close() {
+            closings++;
+            super.close();
+        }
     }
 
     /**

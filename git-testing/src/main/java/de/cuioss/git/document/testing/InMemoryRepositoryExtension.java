@@ -93,6 +93,22 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     public Object resolveParameter(ParameterContext parameterContext, ExtensionContext extensionContext) {
         LocalRepositoryExtension.requireType(parameterContext, InMemory.class, Repository.class);
         Repository repository = new InMemoryRepository(new DfsRepositoryDescription("in-memory-" + UUID.randomUUID()));
+        initialise(repository);
+        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext),
+                new ClosingRepository(repository));
+        return repository;
+    }
+
+    /**
+     * Initialises a new repository like the bare fixtures, so that {@code HEAD} is linked to the unborn branch
+     * {@code refs/heads/master}. A repository that cannot be initialised is closed again. Package-private so that a
+     * test can drive the failure with a repository double, since a fresh in-memory repository never fails to
+     * initialise.
+     *
+     * @param repository the new repository to initialise
+     * @throws ParameterResolutionException when the repository cannot be initialised; the repository is closed
+     */
+    static void initialise(Repository repository) {
         try {
             // links HEAD to refs/heads/master, as FileRepository#create does for the bare fixtures (JGit 7.8.0)
             repository.create(true);
@@ -100,8 +116,5 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
             repository.close();
             throw new ParameterResolutionException("@InMemory could not initialise the in-memory repository", e);
         }
-        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext),
-                new ClosingRepository(repository));
-        return repository;
     }
 }

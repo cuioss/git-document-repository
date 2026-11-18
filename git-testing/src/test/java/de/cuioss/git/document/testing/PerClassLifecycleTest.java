@@ -128,14 +128,14 @@ class PerClassLifecycleTest {
         @Test
         @Order(1)
         @DisplayName("Should provide the constructor fixtures to the first test")
-        void shouldProvideConstructorFixturesToFirstTest() throws Exception {
+        void shouldProvideConstructorFixturesToFirstTest() {
             assertConstructorFixturesShared();
         }
 
         @Test
         @Order(2)
         @DisplayName("Should keep the same constructor fixtures open for the second test")
-        void shouldKeepConstructorFixturesOpenForSecondTest() throws Exception {
+        void shouldKeepConstructorFixturesOpenForSecondTest() {
             assertConstructorFixturesShared();
         }
 
@@ -176,7 +176,7 @@ class PerClassLifecycleTest {
                             "The constructor fixture is still there"));
         }
 
-        private void assertConstructorFixturesShared() throws Exception {
+        private void assertConstructorFixturesShared() {
             recorded = true;
             assertAll("shared constructor fixtures",
                     () -> assertEquals(1, CONSTRUCTIONS.get(), "The per-class test class is constructed once"),

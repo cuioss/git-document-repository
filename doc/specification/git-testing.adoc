@@ -153,6 +153,12 @@ express that only by pinning the number of platform queries JGit makes internall
 stays a real repository for every other call, which the cleanup under test also uses, so a subclass is the smaller
 double.
 
+|`UninitialisedRepository` (in `InMemoryRepositoryExtensionTest`)
+|A subclass of JGit's `InMemoryRepository` that counts its closings and can throw a given `IOException` from
+`create(boolean)`. A fresh in-memory repository never fails to initialise, so the failure path of
+`InMemoryRepositoryExtension.initialise` is reachable only through such a double; for every other call it stays a real
+repository, so a subclass is the smaller double, as for `CountingRepository`.
+
 |`ReflectedParameter` (in `LocalRepositoryExtensionTest`)
 |A record implementing JUnit's `ParameterContext` over a reflected method parameter, for calling an extension
 directly. A record of three methods is shorter than the equivalent mock and its expectations.
