@@ -47,7 +47,12 @@ Every repository the operations open or create (also `init`, the bare clone and 
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/FS.java[JGit 7.8.0 `FS`])
 so that they throw `CapabilityRefusedException`. A hook that is not present is reported as not present, as JGit does,
 so a repository without hooks works unchanged; the discovery of the `git` executable reports none, so JGit never runs
-`git` to locate the system configuration.
+`git` to locate the system configuration. Setting the execute permission of a file is done in process: JGit's
+`FS_POSIX.setExecute(file, true)` reads the umask by running `sh -c umask` through `Runtime.exec`, outside every process
+entry point of `FS`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/FS_POSIX.java[JGit 7.8.0 `FS_POSIX`]),
+so `RefusingFS` grants the owner the execute permission and the group and others exactly when they may read. A refusal
+names the capability, never the refused command or its arguments.
 
 `CapabilityRefusedException` is a public class of `git-core` that extends JGit's unchecked
 `org.eclipse.jgit.api.errors.JGitInternalException`, so JGit propagates it unchanged through its callers of `FS`. Its
@@ -63,6 +68,20 @@ reason names the refused capability (`repository_hook` or `process_execution`); 
 * The policy must be checked before every fetch and every push; a remote that violates it must be refused without any
   network contact.
 
+`RemotePolicy` validates its origin in the canonical constructor, so every construction path refuses an origin that
+is no absolute `https` URI with a host. A port is either omitted, which means 443, or explicit within 1 to 65535; an
+explicit port outside that range is refused on the origin and on the remote, because JGit's `URIish` keeps a parsed
+port 0 but omits it when it formats the transport URL, so the request would go to 443
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/URIish.java[JGit 7.8.0 `URIish`]).
+
+The configured URLs are checked first, and then every transport a fetch, a push or the clone's fetch opens is checked
+again before it connects, through its `TransportConfigCallback`: `FetchCommand` and `PushCommand` resolve the remote
+name once more, and `FileRepository.getConfig()` reloads a configuration saved after the first check
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/FileRepository.java[JGit 7.8.0 `FileRepository`]),
+so only the transport's own URL is the destination the command uses. A fetch does not recurse into submodules, which
+`FetchCommand` would fetch on demand from their own remotes
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/FetchCommand.java[JGit 7.8.0 `FetchCommand`]).
+
 [#GDR-CORE-3]
 == GDR-CORE-3: Bare Clone of a Remote
 
@@ -75,9 +94,21 @@ The operation is `cloneIfMissing`. An existing bare repository at the git direct
 remote; a directory that holds anything else is `NOT_A_REPOSITORY`. Otherwise the URL is checked against the remote
 policy (`REFUSED_BY_POLICY` without contact), a bare repository is initialised, and its remote `origin` is configured
 and fetched. The fetch refspecs mirror the remote's branches, tags and notes into the clone:
-`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`. The push refspecs are
-configuration supplied by the caller (for `git-store`: `refs/heads/*`, `refs/tags/*`, `refs/notes/*`). A clone that
-could not be completed is removed; a transport failure is reported as in <<GDR-CORE-7>>.
+`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`.
+
+The push refspecs are configuration supplied by the caller (for `git-store`: `refs/heads/*`, `refs/tags/*`,
+`refs/notes/*`). A source-only refspec, a wildcard included, pushes to the reference of the same name and is configured
+as `<source>:<source>`; JGit's `new RefSpec("refs/heads/*")` rejects a source-only wildcard
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/RefSpec.java[JGit 7.8.0 `RefSpec`]).
+A clone restores exactly what it mirrors, so a push destination must lie below `refs/heads/`, `refs/tags/` or
+`refs/notes/`; a refspec with another destination (for example `refs/releases/*`), a deleting or a matching refspec
+and one that is no refspec are `REFUSED_BY_POLICY` before anything is created.
+
+The clone is built in a private staging directory beside the git directory and published by one atomic move after
+the fetch succeeded, so the git directory holds nothing, the empty directory the caller prepared, or a complete clone,
+never a partial one. Each attempt removes only its own staging directory; an attempt that finds a clone published
+concurrently opens it. A clone that could not be completed leaves the git directory as it was; a transport failure is
+reported as in <<GDR-CORE-7>>.
 
 [#GDR-CORE-4]
 == GDR-CORE-4: In-Core Writing
@@ -113,7 +144,9 @@ For an update, `LOCK_FAILURE` (locked, or no longer the expected old id) re-appl
 delete, the library reads the reference after `LOCK_FAILURE`: if it still points to the expected old id, the reference
 was only locked and the delete is retried with the same expected old id; if it moved, the delete ends with conflict, so
 a newer draft is kept (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7]).
-`IO_FAILURE` is an exception; every other result is returned at once as rejected, the detail naming it.
+`IO_FAILURE` is an unexpected I/O failure and is returned as `FAILED`, as
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3] requires; it is neither retried nor a conflict. Every other result is returned
+at once as rejected, the detail naming it.
 
 [#GDR-CORE-6]
 == GDR-CORE-6: In-Core Merge
@@ -152,11 +185,30 @@ and `CloneInput`. The outcomes:
   link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/resources/org/eclipse/jgit/internal/JGitText.properties[JGit
   7.8.0 `JGitText.properties`]);
 * `UNREACHABLE`: every other transport failure;
-* `REFUSED_BY_POLICY`: the remote's effective URL, after `insteadOf` rewriting, is outside the remote policy; nothing
-  is sent.
+* `REFUSED_BY_POLICY`: the remote's effective URL, after `insteadOf` rewriting, is outside the remote policy, or a
+  push names a remote with more than one push URL; nothing is sent.
 
-A detail names the remote with a URL without user information and never carries a credential or a JGit message that
-may carry one (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+A call uses exactly the caller's `CredentialsProvider`, and none when the caller passes `null`: JGit's
+`TransportCommand` and `Transport` start with the process-wide `CredentialsProvider.getDefault()` and keep it when given
+`null`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/TransportCommand.java[JGit 7.8.0 `TransportCommand`]),
+so the operations set the provider on every transport they open.
+
+A push has exactly one destination. JGit's `PushCommand` pushes to every push URL of a remote and reports one
+`PushResult` each
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/PushCommand.java[JGit 7.8.0 `PushCommand`]),
+so destinations could disagree; a remote with more than one push URL is refused before any contact instead. A lease
+holds only when the remote reference is at the expected head, also when it is already at the pushed commit: JGit's
+`PushProcess` reports `UP_TO_DATE` before it compares the lease and before it sets the expected old id
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/PushProcess.java[JGit 7.8.0 `PushProcess.prepareRemoteUpdates`]),
+so an up-to-date update is checked against the advertised reference of the same push, and its old id is the advertised
+id; an old id of `null` means only that the push created the reference.
+
+A detail and a log message never carry anything xref:general.adoc#GDR-NFR-3[GDR-NFR-3] forbids. A URL is rendered from
+its scheme, host, port and path only, without user information, query data or fragment, which JGit's `URIish` keeps
+in its path and would render. An invalid or unknown input value (a revision, a local reference, a commit, a path) is
+named by its field and the reason, never by the caller's value, and a failure detail names the exception class without
+its message.
 
 [#GDR-CORE-8]
 == GDR-CORE-8: Cache Repository
@@ -167,10 +219,15 @@ may carry one (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 The operations are `initCache` (create or open a bare cache repository), `fetchCommit` and `readFile`. `fetchCommit`
 fetches one commit by its full id from a URL the remote policy of the call admits, within a transport timeout, and
-keeps it reachable under `refs/pinned/<id>`; a commit already in the cache is not fetched again. A commit the remote
-does not serve is `UNSERVED`; a URL outside the policy or a process start is `REFUSED_BY_POLICY`; a remote that does
-not answer is `UNREACHABLE`. `readFile` reads the raw blob of a path at a commit of the cache, without any filter;
-a commit not in the cache or a path that is no regular file is `NOT_FOUND`.
+keeps it reachable under `refs/pinned/<id>`; a commit already in the cache is not fetched again, and its pin is
+written again when an earlier fetch stored the object but could not write the pin. The fetch is anonymous: user
+information in the URL is removed before the transport sees it, and no credentials provider is set. A commit the
+remote does not serve is `UNSERVED`; a URL outside the policy or a process start is `REFUSED_BY_POLICY`; a remote that
+does not answer is `UNREACHABLE`. `readFile` reads the raw blob of a path at a commit of the cache, without any filter;
+a commit not in the cache or a path that is no regular file is `NOT_FOUND`. Both operations open the cache as its
+configuration describes it and refuse anything but a bare repository as `NOT_A_REPOSITORY`, so the git directory of a
+working tree is never used as a cache; JGit's `BaseRepositoryBuilder.setBare()` would override `core.bare`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/BaseRepositoryBuilder.java[JGit 7.8.0 `BaseRepositoryBuilder`]).
 
 [#GDR-CORE-9]
 == GDR-CORE-9: Reading
@@ -196,11 +253,26 @@ reserves no notes reference itself.
 * A name that resolves to more than one object must be reported as ambiguous, with the candidates in the detail.
 
 `GitIdentity` holds the rules. A commit is passed and compared as its full 40-digit id. "Provide" means producing:
-`abbreviate(Repository, AnyObjectId)` returns the shortest unique abbreviation through JGit's
-`ObjectReader.abbreviate(AnyObjectId)`, for display only; an abbreviated id is never resolved as an identity, and an
-operation given one reports `NOT_FOUND` with the detail `abbreviated commit id`. `branchRef`, `tagRef` and
-`remoteBranchRef` return the full references `refs/heads/<name>`, `refs/tags/<name>` and
-`refs/remotes/<remote>/<name>`; `resolution(Repository, String)` classifies a name. A name that matches two
-references, or a reference and a full commit id, is `AMBIGUOUS`; `candidates(Repository, String)` lists the full
-reference names, and the id when the name is a full commit id, and `log` puts them into the detail. A full commit id
+`abbreviate(Repository, AnyObjectId)` returns the shortest prefix of at least seven hexadecimal digits that is unique
+in the repository, through JGit's one-argument `ObjectReader.abbreviate(AnyObjectId)`, which starts at seven digits
+and lengthens the prefix only while it is ambiguous, so it returns seven digits even when six would identify the
+object
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectReader.java[JGit 7.8.0 `ObjectReader`]).
+The abbreviation is for display only; an identity input is always a full id or a reference name.
+
+`branchRef`, `tagRef` and `remoteBranchRef` return the full references `refs/heads/<name>`, `refs/tags/<name>` and
+`refs/remotes/<remote>/<name>`. `lookup(Repository, String)` classifies a name and lists its candidates from one read
+of the reference database, so the candidates always belong to the classification; `resolution` and `candidates`
+return one half of it. A name names a reference when it is the reference's full or short name, `HEAD` included. A name
+that matches two references, or a reference and a full commit id, is `AMBIGUOUS`, and the detail lists the full
+reference names, and the id when the name is a full commit id.
+
+`log` (its start revision) and `push` (its local reference) resolve only a supported identity: exactly one reference
+or a full commit id, resolved by the full reference name or by the id itself. Everything else is not resolved and is
+`NOT_FOUND`: an abbreviated id (detail `revision: abbreviated commit id` or `localRef: abbreviated commit id`), a
+shorter prefix, and a revision expression such as `main~1` or `<prefix>~0`. JGit's `Repository.resolve` would accept
+an abbreviation from two digits on and an expression on an abbreviated base
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Repository.java[JGit 7.8.0 `Repository.resolveSimple`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/AbbreviatedObjectId.java[`AbbreviatedObjectId.isId`]),
+so none of them reaches it. A full commit id absent from the repository is `NOT_FOUND`, not `FAILED`; a full commit id
 that reaches another commit is `IDENTITY_MISMATCH`.
