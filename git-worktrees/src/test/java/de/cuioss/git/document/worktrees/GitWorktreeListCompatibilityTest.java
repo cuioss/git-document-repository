@@ -17,6 +17,7 @@ package de.cuioss.git.document.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 
 
 import de.cuioss.git.document.testing.LocalRepository;
+import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
 import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.Constants;
@@ -43,9 +45,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The working trees {@link JGitWorktreeOperations#worktreeAdd} creates are read by an installed git: {@code git worktree
- * list --porcelain} lists each with its path, its branch and its {@code HEAD} (GDR-WT-1). The test is skipped through a
- * JUnit assumption when no {@code git} binary is found. Only this test starts a process, never the library. The
- * porcelain keys ({@code worktree}, {@code HEAD}, {@code branch}, {@code detached}) are git's own vocabulary.
+ * list --porcelain} lists each with its path, its branch and its {@code HEAD}, a locked one {@code locked} and one
+ * whose directory is gone {@code prunable}, and {@code git worktree remove} removes one (GDR-WT-1). The tests are
+ * skipped through a JUnit assumption when no {@code git} binary is found. Only this test starts a process, never the
+ * library. The porcelain keys ({@code worktree}, {@code HEAD}, {@code branch}, {@code detached}, {@code locked},
+ * {@code prunable}) are git's own vocabulary.
  */
 @EnableGeneratorController
 @DisplayName("git worktree list compatibility")
@@ -84,6 +88,60 @@ class GitWorktreeListCompatibilityTest {
                 () -> assertTrue(detachedRecord.containsKey("detached"), "the detached tree is listed detached"));
     }
 
+    @Test
+    @DisplayName("GDR-WT-1: git worktree list --porcelain lists a locked tree locked and one whose directory is gone "
+            + "prunable")
+    void installedGitListsLockedAndPrunable(@LocalRepository Repository source) throws Exception {
+        assumeTrue(gitInstalled(), "a git binary is installed");
+        var main = JGitWorktreeOperationsTest.mainTree(source, temp);
+        var operations = new JGitWorktreeOperations();
+        var locked = added(operations, main);
+        var gone = added(operations, main);
+        Files.writeString(main.admin(Objects.requireNonNull(locked.name())).resolve(LinkedWorktrees.LOCKED),
+                JGitWorktreeOperationsTest.name());
+        LinkedWorktrees.deleteTree(gone.path());
+
+        var listed = porcelain(main.root());
+
+        var lockedRecord = Objects.requireNonNull(listed.get(locked.path()), "git lists the locked working tree");
+        var goneRecord = Objects.requireNonNull(listed.get(gone.path()), "git lists the working tree that is gone");
+        assertAll(
+                () -> assertEquals(3, listed.size(), "git lists the main and both linked working trees"),
+                () -> assertTrue(lockedRecord.containsKey("locked"), "git reads the locked file of the library"),
+                () -> assertFalse(lockedRecord.containsKey("prunable"), "the locked working tree is present"),
+                () -> assertTrue(goneRecord.containsKey("prunable"), "git finds the gone working tree prunable"),
+                () -> assertFalse(goneRecord.containsKey("locked"), "the gone working tree is not locked"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-1: git worktree remove removes a working tree the library added")
+    void installedGitRemovesAddedWorktree(@LocalRepository Repository source) throws Exception {
+        assumeTrue(gitInstalled(), "a git binary is installed");
+        var main = JGitWorktreeOperationsTest.mainTree(source, temp);
+        var operations = new JGitWorktreeOperations();
+        var worktree = added(operations, main);
+
+        var removed = run(List.of("-C", main.root().toString(), "worktree", "remove", worktree.path().toString()));
+
+        var listed = Objects.requireNonNull(operations.worktreeList(main.root()).value(), "the library lists");
+        assertAll(
+                () -> assertTrue(removed.isPresent(), "git ends in time"),
+                () -> assertEquals(0, removed.orElseThrow().exitCode(), "git removes the working tree"),
+                () -> assertFalse(Files.exists(worktree.path()), "the working-tree directory is deleted"),
+                () -> assertFalse(Files.exists(main.admin(Objects.requireNonNull(worktree.name()))),
+                        "the administration directory is deleted"),
+                () -> assertEquals(List.of(main.root()), listed.stream().map(Worktree::path).toList(),
+                        "the library lists only the main working tree"));
+    }
+
+    /** Adds a linked working tree on a new branch at {@code HEAD} through the library and fails unless it is added. */
+    private static Worktree added(JGitWorktreeOperations operations, JGitWorktreeOperationsTest.MainTree main) {
+        var result = operations.worktreeAdd(WorktreeAddInput.builder().root(main.root())
+                .path(main.root().resolve(JGitWorktreeOperationsTest.name()))
+                .branch(JGitWorktreeOperationsTest.name()).createBranch(true).startPoint(Constants.HEAD).build());
+        return Objects.requireNonNull(result.value(), "the working tree is added: " + result.detail());
+    }
+
     /** Whether {@code git --version} runs and succeeds in time. */
     private boolean gitInstalled() throws InterruptedException {
         try {
@@ -110,7 +168,9 @@ class GitWorktreeListCompatibilityTest {
                 int space = line.indexOf(' ');
                 attributes.put(space < 0 ? line : line.substring(0, space), space < 0 ? "" : line.substring(space + 1));
             }
-            records.put(Path.of(attributes.get("worktree")).toRealPath(), attributes);
+            // a prunable working tree's directory is gone, so only an existing path is resolved to its real path
+            var path = Path.of(attributes.get("worktree"));
+            records.put(Files.exists(path) ? path.toRealPath() : path.toAbsolutePath().normalize(), attributes);
         }
         return records;
     }
