@@ -21,10 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -759,6 +761,8 @@ class JGitRepositoryOperationsTest {
         @Test
         @DisplayName("GDR-CORE-1: a hook present in the pushing repository is refused and never run")
         void hookRefused(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                    "The default file system supports the posix file attribute view");
             TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
             var ref = branchRef();
             TestCommits.commitOn(client, ref);
@@ -768,6 +772,11 @@ class JGitRepositoryOperationsTest {
             Files.createDirectories(hook.getParent());
             Files.writeString(hook, "#!/bin/sh\ntouch " + marker + "\n");
             Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+            // a repository-local hooks path, so the developer's core.hooksPath does not decide which hook is found
+            var config = client.getConfig();
+            config.setString(ConfigConstants.CONFIG_CORE_SECTION, null, ConfigConstants.CONFIG_KEY_HOOKS_PATH,
+                    hook.getParent().toAbsolutePath().toString());
+            config.save();
 
             var result = operations.push(push(client, ref, null));
 
