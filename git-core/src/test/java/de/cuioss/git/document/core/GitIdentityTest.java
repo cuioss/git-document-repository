@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 
 import de.cuioss.git.document.core.GitIdentity.Resolution;
@@ -225,6 +226,65 @@ class GitIdentityTest {
                 () -> assertEquals(Resolution.UNKNOWN, resolution, "an unknown name is unknown"),
                 () -> assertFalse(GitIdentity.isAmbiguous(resolution), "an unknown name is not ambiguous"),
                 () -> assertTrue(GitIdentity.candidates(repository, name).isEmpty(), "an unknown name has no candidate"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-11: a full reference name and HEAD name one reference each and are supported identities")
+    void fullRefNameAndHead(@InMemory Repository repository) throws Exception {
+        var commit = commit(repository);
+        var branch = GitIdentity.branchRef(names.next());
+        createRef(repository, branch, commit);
+        repository.updateRef(Constants.HEAD).link(branch);
+
+        var byFullName = GitIdentity.lookup(repository, branch);
+        var head = GitIdentity.lookup(repository, Constants.HEAD);
+
+        assertAll(
+                () -> assertEquals(Resolution.REF, byFullName.resolution(), "a full reference name is one reference"),
+                () -> assertEquals(List.of(branch), byFullName.candidates(), "the full name is its own candidate"),
+                () -> assertEquals(Optional.of(branch), byFullName.target(), "the full name is resolved by itself"),
+                () -> assertEquals(Resolution.REF, head.resolution(), "HEAD is one reference"),
+                () -> assertTrue(head.isSupported(), "HEAD is a supported identity"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-11: one lookup returns the resolution together with its candidates")
+    void lookupCarriesCandidates(@InMemory Repository repository) throws Exception {
+        var commit = commit(repository);
+        var duplicate = names.next();
+        createRef(repository, GitIdentity.branchRef(duplicate), commit);
+        createRef(repository, GitIdentity.tagRef(duplicate), commit);
+        var id = commit.name();
+
+        var twoRefs = GitIdentity.lookup(repository, duplicate);
+        var fullId = GitIdentity.lookup(repository, id);
+
+        assertAll(
+                () -> assertEquals(Resolution.TWO_REFS, twoRefs.resolution(), "the name is two references"),
+                () -> assertEquals(List.of(GitIdentity.branchRef(duplicate), GitIdentity.tagRef(duplicate)),
+                        twoRefs.candidates(), "both references come with the same lookup"),
+                () -> assertFalse(twoRefs.isSupported(), "an ambiguous name is no supported identity"),
+                () -> assertTrue(twoRefs.target().isEmpty(), "an ambiguous name has nothing to resolve"),
+                () -> assertEquals(Resolution.FULL_COMMIT_ID, fullId.resolution(), "a full id is an identity"),
+                () -> assertEquals(Optional.of(id), fullId.target(), "a full id is resolved by itself"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-11: a short prefix and an expression on an abbreviation are no supported identity")
+    void unsupportedForms(@InMemory Repository repository) throws Exception {
+        var id = commit(repository).name();
+
+        var abbreviated = GitIdentity.lookup(repository, id.substring(0, ABBREVIATED));
+        var shortPrefix = GitIdentity.lookup(repository, id.substring(0, 3));
+        var expression = GitIdentity.lookup(repository, id.substring(0, ABBREVIATED) + "~0");
+
+        assertAll(
+                () -> assertFalse(abbreviated.isSupported(), "an abbreviated id is never resolved"),
+                () -> assertEquals(Resolution.UNKNOWN, shortPrefix.resolution(), "a three-digit prefix is unknown"),
+                () -> assertFalse(shortPrefix.isSupported(), "a three-digit prefix is never resolved"),
+                () -> assertEquals(Resolution.UNKNOWN, expression.resolution(), "an expression is unknown"),
+                () -> assertFalse(expression.isSupported(), "an expression on an abbreviation is never resolved"),
+                () -> assertTrue(expression.target().isEmpty(), "an expression has nothing to resolve"));
     }
 
     /**

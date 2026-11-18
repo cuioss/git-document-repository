@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.CloneInput;
@@ -38,6 +39,7 @@ import de.cuioss.git.document.core.RepositoryOperations.PushInput;
 import de.cuioss.git.document.core.RepositoryOperations.RefUpdate;
 import de.cuioss.git.document.testing.GitCredential;
 import de.cuioss.git.document.testing.GitGenerators;
+import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRemote;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.git.document.testing.Remote;
@@ -59,6 +61,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -217,6 +220,54 @@ class JGitRepositoryOperationsTest {
                     () -> assertTrue(ambiguousDetail.contains(ref), "the branch is a candidate in the detail"),
                     () -> assertTrue(ambiguousDetail.contains(GitIdentity.tagRef(duplicate)),
                             "the tag is a candidate in the detail"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: a short prefix and an expression on an abbreviated base are never resolved")
+        void unsupportedRevisions(@LocalRepository Repository repository) throws Exception {
+            var commit = TestCommits.commitOn(repository, branchRef());
+            // JGit 7.8.0 resolves an abbreviation from two digits on and an expression on an abbreviated base
+            var shortPrefix = commit.name().substring(0, 3);
+            var expression = commit.name().substring(0, 8) + "~0";
+
+            var prefix = operations.log(dir(repository), shortPrefix, 1);
+            var onAbbreviation = operations.log(dir(repository), expression, 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, prefix.outcome(), "a three-digit prefix is not found"),
+                    () -> assertEquals(GitOutcome.NOT_FOUND, onAbbreviation.outcome(),
+                            "an expression on an abbreviated base is not found"),
+                    () -> assertNull(prefix.value(), "no history is returned for the prefix"),
+                    () -> assertNull(onAbbreviation.value(), "no history is returned for the expression"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: a full commit id absent from the repository is not found, not a failure")
+        void absentFullCommitId(@LocalRepository Repository repository, @InMemory Repository other)
+                throws Exception {
+            TestCommits.commitOn(repository, branchRef());
+            var absent = TestCommits.commit(other, null).name();
+
+            var result = operations.log(dir(repository), absent, 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the absent id is not found"),
+                    () -> assertTrue(Objects.requireNonNull(result.detail()).contains(absent),
+                            "the detail names the revision"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: HEAD, a short and a full reference name and a full id start the history")
+        void supportedRevisions(@LocalRepository Repository repository) throws Exception {
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(repository, ref);
+            repository.updateRef(Constants.HEAD).link(ref);
+
+            assertAll(Stream.of(Constants.HEAD, Repository.shortenRefName(ref), ref, commit.name())
+                    .<Executable>map(revision -> () -> assertEquals(List.of(commit.name()),
+                            Objects.requireNonNull(operations.log(dir(repository), revision, 1).value(),
+                                    revision + " yields a history").stream().map(CommitInfo::id).toList(),
+                            revision + " starts at the commit")));
         }
     }
 
@@ -472,6 +523,22 @@ class JGitRepositoryOperationsTest {
                             "an unknown remote is not found"),
                     () -> assertEquals(GitOutcome.NOT_FOUND, operations.push(push(client, branchRef(), null)).outcome(),
                             "an unknown local reference is not found"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: a push of an abbreviated commit id is not found and leaves the remote unchanged")
+        void abbreviatedLocalRef(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(client, ref);
+            var abbreviated = commit.name().substring(0, 7);
+
+            var result = operations.push(PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(abbreviated)
+                    .remoteRef(ref).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the abbreviation is never resolved"),
+                    () -> assertNull(remote.repository().exactRef(ref), "the remote is unchanged"));
         }
 
         @Test

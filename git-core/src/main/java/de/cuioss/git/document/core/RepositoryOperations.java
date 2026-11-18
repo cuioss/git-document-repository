@@ -75,13 +75,15 @@ public interface RepositoryOperations {
 
     /**
      * The history of a revision, newest first. The revision is classified by {@link GitIdentity}: an ambiguous name is
-     * refused with its candidates in the detail, an abbreviated commit id is never resolved (GDR-CORE-11).
+     * refused with its candidates in the detail, and only a supported identity is resolved, exactly one reference or
+     * a full commit id; an abbreviated commit id and a revision expression are never resolved (GDR-CORE-11).
      *
      * @param root     a working-tree root or the git directory of a bare repository
-     * @param revision the start revision, e.g. {@code HEAD}, a branch name or a full commit id
+     * @param revision the start revision: {@code HEAD}, a reference by its short or full name, or a full commit id
      * @param maxCount the maximum number of commits; a value below 1 is taken as 1
-     * @return {@link GitOutcome#OK} with the commits, {@link GitOutcome#NOT_FOUND} for an unknown or abbreviated
-     *         revision, {@link GitOutcome#AMBIGUOUS}, {@link GitOutcome#IDENTITY_MISMATCH},
+     * @return {@link GitOutcome#OK} with the commits, {@link GitOutcome#NOT_FOUND} for an unknown, abbreviated or
+     *         unsupported revision and for a full commit id absent from the repository, {@link GitOutcome#AMBIGUOUS},
+     *         {@link GitOutcome#IDENTITY_MISMATCH},
      *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}
      */
     GitResult<List<CommitInfo>> log(Path root, String revision, int maxCount);
@@ -97,12 +99,15 @@ public interface RepositoryOperations {
     GitResult<List<RefUpdate>> fetch(FetchInput input);
 
     /**
-     * Pushes one reference to a configured remote, optionally bound to the expected remote head (lease).
+     * Pushes one reference to a configured remote, optionally bound to the expected remote head (lease). The local
+     * reference is classified by {@link GitIdentity} as in {@link #log(Path, String, int)}: only exactly one reference
+     * or a full commit id of the repository is pushed (GDR-CORE-11).
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the reference update, {@link GitOutcome#REJECTED},
      *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (nothing was sent, or a hook was
-     *         refused), {@link GitOutcome#NOT_FOUND} for an unknown remote or local reference,
+     *         refused), {@link GitOutcome#AMBIGUOUS} for an ambiguous local reference, {@link GitOutcome#NOT_FOUND}
+     *         for an unknown remote or an unknown, abbreviated or unsupported local reference,
      *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
      *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}
      */

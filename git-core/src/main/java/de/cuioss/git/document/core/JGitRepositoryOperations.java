@@ -37,6 +37,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.NoRemoteRepositoryException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.errors.TransportException;
@@ -102,6 +103,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     /** The prefix of a detail that names a remote. */
     private static final String REMOTE_PREFIX = "remote ";
+
+    /** The detail prefix of a revision that is not found. */
+    private static final String REVISION_PREFIX = "revision ";
 
     /** The detail prefix of a refused abbreviated revision. */
     private static final String ABBREVIATED_COMMIT_ID = "abbreviated commit id: ";
@@ -247,19 +251,18 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         Objects.requireNonNull(root, "root");
         Objects.requireNonNull(revision, "revision");
         try (Repository repository = openRepository(root); RevWalk walk = new RevWalk(repository)) {
-            var resolution = GitIdentity.resolution(repository, revision);
-            if (GitIdentity.isAmbiguous(resolution)) {
-                return GitResult.of(GitOutcome.AMBIGUOUS,
-                        revision + " names " + String.join(", ", GitIdentity.candidates(repository, revision)));
+            var lookup = GitIdentity.lookup(repository, revision);
+            Optional<GitResult<List<CommitInfo>>> refused = refuseUnsupported(lookup, revision);
+            if (refused.isPresent()) {
+                return refused.get();
             }
-            if (resolution == GitIdentity.Resolution.ABBREVIATED_COMMIT_ID) {
-                return GitResult.of(GitOutcome.NOT_FOUND, ABBREVIATED_COMMIT_ID + revision);
+            Optional<ObjectId> resolved = resolveCommit(repository, lookup);
+            if (resolved.isEmpty()) {
+                return GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + revision);
             }
-            ObjectId start = repository.resolve(revision + "^{commit}");
-            if (start == null) {
-                return GitResult.of(GitOutcome.NOT_FOUND, "revision " + revision);
-            }
-            if (resolution == GitIdentity.Resolution.FULL_COMMIT_ID && !start.name().equalsIgnoreCase(revision)) {
+            ObjectId start = resolved.get();
+            if (lookup.resolution() == GitIdentity.Resolution.FULL_COMMIT_ID
+                    && !start.name().equalsIgnoreCase(revision)) {
                 return GitResult.of(GitOutcome.IDENTITY_MISMATCH,
                         "the pin " + revision + " reached " + start.name());
             }
@@ -322,9 +325,14 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return refused.get();
             }
             target = describeRemote(repository, input.remote(), true);
-            ObjectId local = repository.resolve(input.localRef());
-            if (local == null) {
-                return GitResult.of(GitOutcome.NOT_FOUND, "revision " + input.localRef());
+            var lookup = GitIdentity.lookup(repository, input.localRef());
+            Optional<GitResult<RefUpdate>> unsupported = refuseUnsupported(lookup, input.localRef());
+            if (unsupported.isPresent()) {
+                return unsupported.get();
+            }
+            ObjectId local = repository.resolve(lookup.target().orElseThrow());
+            if (local == null || !repository.getObjectDatabase().has(local)) {
+                return GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + input.localRef());
             }
             var command = git.push()
                     .setRemote(input.remote())
@@ -494,6 +502,42 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return false;
         }
         return message.toLowerCase(Locale.ROOT).contains(NOT_OUR_REF) || WANT_REFUSED.matcher(message).find();
+    }
+
+    /**
+     * Refuses a revision that is no supported identity (GDR-CORE-11): an ambiguous one with its candidates, an
+     * abbreviated commit id, and everything else that is neither exactly one reference nor a full commit id, a
+     * revision expression included.
+     *
+     * @return the refusal, or empty when the revision may be resolved
+     */
+    private static <V> Optional<GitResult<V>> refuseUnsupported(GitIdentity.Lookup lookup, String revision) {
+        if (GitIdentity.isAmbiguous(lookup.resolution())) {
+            return Optional.of(GitResult.of(GitOutcome.AMBIGUOUS,
+                    revision + " names " + String.join(", ", lookup.candidates())));
+        }
+        if (lookup.resolution() == GitIdentity.Resolution.ABBREVIATED_COMMIT_ID) {
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, ABBREVIATED_COMMIT_ID + revision));
+        }
+        if (!lookup.isSupported()) {
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, REVISION_PREFIX + revision));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Resolves a supported identity to its commit. A full commit id whose object is absent from the repository is not
+     * found: JGit 7.8.0 {@code Repository.resolve("<id>^{commit}")} throws {@link MissingObjectException} for it.
+     *
+     * @return the commit, or empty when the identity names no commit of the repository
+     */
+    private static Optional<ObjectId> resolveCommit(Repository repository, GitIdentity.Lookup lookup)
+            throws IOException {
+        try {
+            return Optional.ofNullable(repository.resolve(lookup.target().orElseThrow() + "^{commit}"));
+        } catch (MissingObjectException e) {
+            return Optional.empty();
+        }
     }
 
     private static GitResult<RefUpdate> toPushResult(RemoteRefUpdate update) {

@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 
@@ -41,7 +42,10 @@ import org.jspecify.annotations.Nullable;
  * {@code refs/remotes/<remote>/<name>}.
  * <p>
  * A name that resolves both as a reference and as an object id, or as two references, is ambiguous and is reported
- * as {@link GitOutcome#AMBIGUOUS}, with the {@link #candidates(Repository, String)} in the detail.
+ * as {@link GitOutcome#AMBIGUOUS}, with the {@link #candidates(Repository, String)} in the detail. Only a
+ * {@linkplain Lookup#isSupported() supported identity} is resolved: exactly one reference or a full commit id. JGit
+ * 7.8.0 {@code Repository.resolve} accepts an abbreviation of two or more digits and a revision expression on an
+ * abbreviated base ({@code <prefix>~0}), so everything else is refused before it reaches JGit.
  *
  * @since 0.1
  */
@@ -152,20 +156,76 @@ public final class GitIdentity {
     }
 
     /**
-     * Classifies a revision string against the repository.
+     * How a revision string is addressed, together with what it may name, both taken from one read of the reference
+     * database, so the candidates always belong to the resolution even while another writer changes the references.
+     *
+     * @param resolution how the string is addressed
+     * @param candidates the full name of every reference the string names, in the order of the reference database,
+     *                   followed by the string itself when it is a full commit id; empty when it names nothing
+     * @since 0.1
+     */
+    public record Lookup(Resolution resolution, List<String> candidates) {
+
+        /**
+         * Checks and copies the components.
+         *
+         * @param resolution how the string is addressed
+         * @param candidates what the string may name
+         * @throws NullPointerException if a component is {@code null}
+         */
+        public Lookup {
+            Objects.requireNonNull(resolution, "resolution");
+            candidates = List.copyOf(candidates);
+        }
+
+        /**
+         * Tells whether the string is a supported identity: exactly one reference, or a full commit id that names no
+         * reference. Everything else, an abbreviated id and a revision expression such as {@code main~1} included, is
+         * not resolved.
+         *
+         * @return whether the string may be resolved
+         */
+        public boolean isSupported() {
+            return resolution == Resolution.REF || resolution == Resolution.FULL_COMMIT_ID;
+        }
+
+        /**
+         * Returns the unambiguous name to resolve a supported identity by: the full reference name of a reference,
+         * the commit id itself for a full commit id. Resolving by it never reaches JGit's abbreviation parser.
+         *
+         * @return the name to resolve, empty when the string is no supported identity
+         */
+        public Optional<String> target() {
+            return isSupported() ? Optional.of(candidates.getFirst()) : Optional.empty();
+        }
+    }
+
+    /**
+     * Classifies a revision string against the repository and lists its candidates, from one read of the reference
+     * database. A string names a reference when it is the reference's full name or its short name; {@code HEAD} is
+     * such a reference.
      *
      * @param repository the repository
      * @param name       the revision string
-     * @return how the string is addressed
+     * @return how the string is addressed and what it may name
      * @throws IOException if the reference database cannot be read
      */
-    public static Resolution resolution(Repository repository, String name) throws IOException {
+    public static Lookup lookup(Repository repository, String name) throws IOException {
         Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(name, "name");
-        int refCount = matchingRefs(repository, name).size();
+        List<String> refs = matchingRefs(repository, name);
         // A full 40-character id is an identity by its syntax: a reference of the same name is ambiguous whether or
         // not the object is present in this clone (a shallow clone or a GC must not turn the pin back into a name).
         var fullCommitId = isFullCommitId(name);
+        List<String> candidates = new ArrayList<>(refs);
+        if (fullCommitId) {
+            candidates.add(name);
+        }
+        return new Lookup(classify(repository, name, refs.size(), fullCommitId), candidates);
+    }
+
+    private static Resolution classify(Repository repository, String name, int refCount, boolean fullCommitId)
+            throws IOException {
         if (refCount > 1) {
             return Resolution.TWO_REFS;
         }
@@ -185,9 +245,22 @@ public final class GitIdentity {
     }
 
     /**
-     * Lists what a revision string may name: the full name of every reference whose short name is the string, in the
-     * order of the reference database, followed by the string itself when it is a full commit id. The list is the
-     * detail of {@link GitOutcome#AMBIGUOUS}.
+     * Classifies a revision string against the repository.
+     *
+     * @param repository the repository
+     * @param name       the revision string
+     * @return how the string is addressed
+     * @throws IOException if the reference database cannot be read
+     */
+    public static Resolution resolution(Repository repository, String name) throws IOException {
+        return lookup(repository, name).resolution();
+    }
+
+    /**
+     * Lists what a revision string may name: the full name of every reference whose full or short name is the string,
+     * in the order of the reference database, followed by the string itself when it is a full commit id. The list is
+     * the detail of {@link GitOutcome#AMBIGUOUS}; a caller that also needs the resolution takes both from
+     * {@link #lookup(Repository, String)}.
      *
      * @param repository the repository
      * @param name       the revision string
@@ -195,13 +268,7 @@ public final class GitIdentity {
      * @throws IOException if the reference database cannot be read
      */
     public static List<String> candidates(Repository repository, String name) throws IOException {
-        Objects.requireNonNull(repository, REPOSITORY);
-        Objects.requireNonNull(name, "name");
-        List<String> candidates = new ArrayList<>(matchingRefs(repository, name));
-        if (isFullCommitId(name)) {
-            candidates.add(name);
-        }
-        return List.copyOf(candidates);
+        return lookup(repository, name).candidates();
     }
 
     /**
@@ -217,7 +284,8 @@ public final class GitIdentity {
     private static List<String> matchingRefs(Repository repository, String name) throws IOException {
         return repository.getRefDatabase().getRefs().stream()
                 .map(Ref::getName)
-                .filter(refName -> name.equals(Repository.shortenRefName(refName)))
+                .filter(refName -> name.equals(refName) || name.equals(Repository.shortenRefName(refName)))
+                .distinct()
                 .toList();
     }
 
