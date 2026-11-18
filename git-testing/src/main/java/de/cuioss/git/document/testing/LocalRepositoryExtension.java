@@ -41,7 +41,11 @@ import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.Extension
  */
 public final class LocalRepositoryExtension implements ParameterResolver {
 
-    private static final Namespace NAMESPACE = Namespace.create(LocalRepositoryExtension.class);
+    /**
+     * The namespace under which the cleanup of every resolved parameter is stored; package-private so that a test
+     * can read the stored cleanup back.
+     */
+    static final Namespace NAMESPACE = Namespace.create(LocalRepositoryExtension.class);
 
     /**
      * Creates the extension; JUnit Jupiter instantiates it for {@link LocalRepository}.
@@ -156,13 +160,14 @@ public final class LocalRepositoryExtension implements ParameterResolver {
 
     /**
      * Closes a repository created before a failure and deletes its directory. A failure to delete the directory is
-     * added to the failure being propagated as a suppressed exception.
+     * added to the failure being propagated as a suppressed exception. Package-private so that a test can drive the
+     * rollback with a repository double.
      *
      * @param repository the repository created before the failure, or {@code null} when none was constructed
      * @param directory  the directory created for the repository
      * @param failure    the failure that is propagated after the rollback
      */
-    private static void rollBack(@Nullable Repository repository, Path directory,
+    static void rollBack(@Nullable Repository repository, Path directory,
             ParameterResolutionException failure) {
         if (repository != null) {
             repository.close();

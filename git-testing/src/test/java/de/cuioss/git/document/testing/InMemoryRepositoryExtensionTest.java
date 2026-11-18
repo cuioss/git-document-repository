@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,6 +32,7 @@ import de.cuioss.test.generator.junit.EnableGeneratorController;
 import java.lang.reflect.Parameter;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -157,19 +159,50 @@ class InMemoryRepositoryExtensionTest {
                         "The message names the expected type"));
     }
 
+    @Test
+    @DisplayName("Should reject an annotated parameter of the in-memory implementation type")
+    void shouldRejectAnnotatedParameterOfImplementationType(ExtensionContext context) throws Exception {
+        var implementationType = new ReflectedParameter(signatureParameter(2), 2);
+
+        var thrown = assertThrows(ParameterResolutionException.class,
+                () -> extension.resolveParameter(implementationType, context),
+                "The DFS implementation type does not leak to the test");
+
+        assertAll("failure message",
+                () -> assertTrue(thrown.getMessage().contains("@InMemory"), "The message names the annotation"),
+                () -> assertTrue(thrown.getMessage().contains(Repository.class.getName()),
+                        "The message names the expected type"));
+    }
+
+    @Test
+    @DisplayName("Should resolve an annotated parameter declared exactly as Repository")
+    void shouldResolveParameterDeclaredAsRepository(ExtensionContext context) throws Exception {
+        var declared = new ReflectedParameter(signatureParameter(3), 3);
+
+        var resolved = extension.resolveParameter(declared, context);
+
+        assertAll("resolved repository",
+                () -> assertEquals(Repository.class, declared.getParameter().getType(),
+                        "The parameter is declared exactly as Repository"),
+                () -> assertInstanceOf(Repository.class, resolved, "The resolved value is a Repository"));
+    }
+
     /**
      * Supplies the reflected parameters for the direct calls of the extension; never invoked.
      *
-     * @param unannotated a repository parameter without the annotation
-     * @param wrongType   an annotated parameter of a type the fixture does not provide
+     * @param unannotated        a repository parameter without the annotation
+     * @param wrongType          an annotated parameter of a type the fixture does not provide
+     * @param implementationType an annotated parameter of the in-memory implementation type, which must not leak
+     * @param declared           an annotated parameter declared exactly as {@link Repository}
      */
     @SuppressWarnings("unused")
-    static void signature(Repository unannotated, @InMemory String wrongType) {
+    static void signature(Repository unannotated, @InMemory String wrongType,
+            @InMemory InMemoryRepository implementationType, @InMemory Repository declared) {
         // only the parameters are read, by reflection
     }
 
     static Parameter signatureParameter(int index) throws NoSuchMethodException {
-        return InMemoryRepositoryExtensionTest.class.getDeclaredMethod("signature", Repository.class, String.class)
-                .getParameters()[index];
+        return InMemoryRepositoryExtensionTest.class.getDeclaredMethod("signature", Repository.class, String.class,
+                InMemoryRepository.class, Repository.class).getParameters()[index];
     }
 }

@@ -16,31 +16,43 @@
 package de.cuioss.git.document.testing;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Parameter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.errors.ConfigInvalidException;
+import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
+import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.SystemReader;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
@@ -59,11 +71,64 @@ class LocalRepositoryExtensionTest {
 
     private final LocalRepositoryExtension extension = new LocalRepositoryExtension();
 
+    private int receivedBefore;
+
+    @BeforeEach
+    void captureReceivedDirectories() {
+        receivedBefore = RECEIVED_DIRECTORIES.size();
+    }
+
+    @AfterEach
+    void fixtureTestRecordedItsDirectory(TestInfo testInfo) {
+        if (consumesFixture(testInfo, LocalRepository.class)) {
+            assertTrue(RECEIVED_DIRECTORIES.size() > receivedBefore,
+                    "A test consuming @LocalRepository records the directory it received: "
+                            + testInfo.getDisplayName());
+        }
+    }
+
     @AfterAll
     static void everyDirectoryIsDeleted() {
         assertAll("deleted directories", RECEIVED_DIRECTORIES.stream()
                 .map(directory -> () -> assertFalse(Files.exists(directory),
                         "The directory of the repository is deleted after the test: " + directory)));
+    }
+
+    /**
+     * Tells whether the running test consumes one of the given fixtures, through a parameter of its test method or
+     * of a constructor of its test class. The annotations of all parameters are searched, regardless of their index,
+     * so that the implicit outer instance of an inner class constructor does not shift them.
+     *
+     * @param testInfo    the running test
+     * @param annotations the qualifier annotations of the fixtures
+     * @return {@code true} when a parameter of the test method or of a constructor carries one of the annotations
+     */
+    @SafeVarargs
+    static boolean consumesFixture(TestInfo testInfo, Class<? extends Annotation>... annotations) {
+        var executables = new ArrayList<Executable>();
+        testInfo.getTestMethod().ifPresent(executables::add);
+        testInfo.getTestClass().ifPresent(testClass -> executables.addAll(List.of(testClass.getDeclaredConstructors())));
+        var wanted = List.of(annotations);
+        return executables.stream()
+                .flatMap(executable -> Arrays.stream(executable.getParameterAnnotations()))
+                .flatMap(Arrays::stream)
+                .anyMatch(annotation -> wanted.contains(annotation.annotationType()));
+    }
+
+    @Test
+    @DisplayName("Should store the cleanup of the very repository it returns")
+    void shouldStoreCleanupOfReturnedRepository(ExtensionContext context) throws Exception {
+        var declared = new ReflectedParameter(signatureParameter(2), 2);
+
+        var resolved = extension.resolveParameter(declared, context);
+        var stored = context.getStore(LocalRepositoryExtension.NAMESPACE)
+                .get(LocalRepositoryExtension.storeKey(declared), LocalRepositoryExtension.TemporaryRepository.class);
+        RECEIVED_DIRECTORIES.add(stored.directory());
+
+        assertAll("stored cleanup",
+                () -> assertSame(resolved, stored.repository(), "The stored cleanup holds the returned repository"),
+                () -> assertEquals(stored.directory(), ((Repository) resolved).getDirectory().toPath(),
+                        "The stored cleanup deletes the directory of the returned repository"));
     }
 
     @Test
@@ -174,8 +239,8 @@ class LocalRepositoryExtensionTest {
         }
 
         @Test
-        @DisplayName("Should close the repository and delete its directory on an unchecked failure of the creation")
-        void shouldRollBackOnUncheckedFailureOfCreation() {
+        @DisplayName("Should delete the directory on an unchecked failure of the creation")
+        void shouldDeleteDirectoryOnUncheckedFailureOfCreation() {
             var reader = new FailingPlatformQuery(SystemReader.getInstance());
 
             var thrown = createBareRepositoryWith(reader);
@@ -207,6 +272,90 @@ class LocalRepositoryExtensionTest {
             var message = thrown.getMessage();
             assertTrue(message.startsWith(FAILURE_PREFIX), "The failure names the annotation: " + message);
             return Path.of(message.substring(FAILURE_PREFIX.length()));
+        }
+    }
+
+    /**
+     * The closing of a repository and the deletion of its directory, observed with a hand-written repository stand-in
+     * that counts its closings: the cleanup stored for a test and the rollback of a failed creation.
+     */
+    @Nested
+    @DisplayName("Closing of a temporary repository")
+    class Closing {
+
+        @Test
+        @DisplayName("Should close the repository and delete its directory when the cleanup closes")
+        void shouldCloseRepositoryAndDeleteDirectory() throws Exception {
+            var repository = new CountingRepository(null);
+            var directory = directoryWithContent();
+
+            new LocalRepositoryExtension.TemporaryRepository(repository, directory).close();
+
+            assertAll("closed cleanup",
+                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> assertFalse(Files.exists(directory), "The directory is deleted"));
+        }
+
+        @Test
+        @DisplayName("Should delete the directory also when closing the repository fails")
+        void shouldDeleteDirectoryWhenClosingFails() throws Exception {
+            var closingFailure = new IllegalStateException("The repository cannot be closed");
+            var repository = new CountingRepository(closingFailure);
+            var directory = directoryWithContent();
+            var cleanup = new LocalRepositoryExtension.TemporaryRepository(repository, directory);
+
+            var thrown = assertThrows(IllegalStateException.class, cleanup::close);
+
+            assertAll("cleanup after a failed closing",
+                    () -> assertSame(closingFailure, thrown, "The failure of the closing propagates"),
+                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> assertFalse(Files.exists(directory), "The directory is deleted nevertheless"));
+        }
+
+        @Test
+        @DisplayName("Should close the repository and delete its directory on the rollback of a failed creation")
+        void shouldCloseRepositoryAndDeleteDirectoryOnRollBack() throws Exception {
+            var repository = new CountingRepository(null);
+            var directory = directoryWithContent();
+            var failure = new ParameterResolutionException("The creation failed");
+
+            LocalRepositoryExtension.rollBack(repository, directory, failure);
+
+            assertAll("rolled back creation",
+                    () -> assertEquals(1, repository.closings, "The repository is closed once"),
+                    () -> assertFalse(Files.exists(directory), "The directory is deleted"),
+                    () -> assertEquals(0, failure.getSuppressed().length, "The deletion adds no suppressed failure"));
+        }
+
+        private static Path directoryWithContent() throws IOException {
+            var directory = TemporaryDirectories.create();
+            Files.writeString(directory.resolve("HEAD"), "ref: refs/heads/main\n");
+            return directory;
+        }
+    }
+
+    /**
+     * A repository stand-in that counts its closings and, when given a failure, throws it from {@link #close()}
+     * instead of closing. It is written by hand because the module has no mocking library on its test class path.
+     */
+    static final class CountingRepository extends InMemoryRepository {
+
+        private final @Nullable RuntimeException closingFailure;
+
+        int closings;
+
+        CountingRepository(@Nullable RuntimeException closingFailure) {
+            super(new DfsRepositoryDescription("counting"));
+            this.closingFailure = closingFailure;
+        }
+
+        @Override
+        public void close() {
+            closings++;
+            if (closingFailure != null) {
+                throw closingFailure;
+            }
+            super.close();
         }
     }
 
@@ -264,14 +413,17 @@ class LocalRepositoryExtensionTest {
      *
      * @param unannotated a repository parameter without the annotation
      * @param wrongType   an annotated parameter of a type the fixture does not provide
+     * @param declared    an annotated repository parameter, resolved directly
      */
     @SuppressWarnings("unused")
-    static void signature(Repository unannotated, @LocalRepository String wrongType) {
+    static void signature(Repository unannotated, @LocalRepository String wrongType,
+            @LocalRepository Repository declared) {
         // only the parameters are read, by reflection
     }
 
     static Parameter signatureParameter(int index) throws NoSuchMethodException {
-        return LocalRepositoryExtensionTest.class.getDeclaredMethod("signature", Repository.class, String.class)
+        return LocalRepositoryExtensionTest.class
+                .getDeclaredMethod("signature", Repository.class, String.class, Repository.class)
                 .getParameters()[index];
     }
 

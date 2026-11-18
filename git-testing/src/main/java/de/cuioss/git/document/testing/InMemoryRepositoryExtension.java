@@ -38,7 +38,11 @@ import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.Extension
  */
 public final class InMemoryRepositoryExtension implements ParameterResolver {
 
-    private static final Namespace NAMESPACE = Namespace.create(InMemoryRepositoryExtension.class);
+    /**
+     * The namespace under which the closing of every resolved parameter is stored; package-private so that a test can
+     * read the stored repository back.
+     */
+    static final Namespace NAMESPACE = Namespace.create(InMemoryRepositoryExtension.class);
 
     /**
      * Creates the extension; JUnit Jupiter instantiates it for {@link InMemory}.

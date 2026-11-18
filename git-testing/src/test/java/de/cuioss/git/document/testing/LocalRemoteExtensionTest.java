@@ -43,9 +43,12 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.transport.RefSpec;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ParameterResolutionException;
 import org.junit.jupiter.api.extension.ParameterResolver;
@@ -65,9 +68,24 @@ class LocalRemoteExtensionTest {
 
     private final LocalRemoteExtension extension = new LocalRemoteExtension();
 
+    private int receivedBefore;
+
+    @BeforeEach
+    void captureReceivedDirectories() {
+        receivedBefore = RECEIVED_DIRECTORIES.size();
+    }
+
+    @AfterEach
+    void fixtureTestRecordedItsDirectory(TestInfo testInfo) {
+        if (LocalRepositoryExtensionTest.consumesFixture(testInfo, Remote.class, LocalRepository.class)) {
+            assertTrue(RECEIVED_DIRECTORIES.size() > receivedBefore,
+                    "A test consuming @Remote or @LocalRepository records the directory it received: "
+                            + testInfo.getDisplayName());
+        }
+    }
+
     @AfterAll
     static void everyDirectoryIsDeleted() {
-        assertFalse(RECEIVED_DIRECTORIES.isEmpty(), "The tests received at least one directory");
         assertAll("deleted directories", RECEIVED_DIRECTORIES.stream()
                 .map(directory -> () -> assertFalse(Files.exists(directory),
                         "The directory of the remote is deleted after the test: " + directory)));
