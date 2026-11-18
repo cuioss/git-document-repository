@@ -185,8 +185,6 @@ the mechanisms; they do not certify them.
 == Open Questions
 
 . Draft the API of the modules together with the repository layout of the first consuming application.
-. The owner's approval of JGit as a dependency is pending. ADR-0001 and ADR-0004 build on JGit; like every dependency
-  it is added only after that approval.
 
 The prototype of concurrent saves is listed with the xref:storage-engine.adoc#_open_questions[Storage Engine].
 

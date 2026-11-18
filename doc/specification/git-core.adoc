@@ -6,7 +6,8 @@
 
 `git-core` is the JGit level of the reactor: module and package `de.cuioss.git.document.core`, a scaffold. It depends
 on no other module of the reactor. Its declared third-party dependency is `org.jspecify:jspecify` (annotations,
-`requires static`); JGit is planned and needs the owner's approval (see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]). The
+`requires static`). JGit is approved and its version is managed in the root POM; `git-core` does not declare it yet
+and will declare it with its first code (see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]). The
 JGit APIs named here are checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of
 https://github.com/eclipse-jgit/jgit). Rationale: xref:../concepts/module-structure.adoc#_the_foundation_modules[Module
 Structure, The Foundation Modules] and xref:../concepts/storage-engine.adoc[Storage Engine].

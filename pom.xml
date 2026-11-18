@@ -37,6 +37,16 @@
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <!-- JGit 7.8.0: the Maven version string of the tag v7.8.0.202609011348-r, as served by Maven Central. -->
+            <dependency>
+                <groupId>org.eclipse.jgit</groupId>
+                <artifactId>org.eclipse.jgit</artifactId>
+                <version>7.8.0.202609011348-r</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <modules>
         <module>git-core</module>
         <module>git-worktrees</module>

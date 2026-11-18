@@ -30,9 +30,11 @@ released together and consumed separately.
 Planned but not yet created: `git-store`, `git-forms`, `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
-**Current state:** the modules are scaffolds. Each has a `pom.xml`, a `module-info.java` and a `@NullMarked`
-package, and no classes yet. The `exports` directive is missing on purpose: javac rejects exporting a package
-that contains only `package-info.java`. Add it together with the first public class of a package.
+**Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
+(`GitCredentialGenerator`, `GitGenerators`) and the three repository fixtures (`@LocalRepository`, `@InMemory`,
+`@Remote`). `git-core` and `git-worktrees` remain scaffolds: each has a `pom.xml`, a `module-info.java` and a
+`@NullMarked` package, no classes and no `exports` directive. The directive is missing on purpose: javac rejects
+exporting a package that contains only `package-info.java`. Add it together with the first public class of a package.
 
 ## Build
 

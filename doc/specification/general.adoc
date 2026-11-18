@@ -5,9 +5,10 @@
 :source-highlighter: highlight.js
 
 The requirements every module meets: layering, platform modules, results, logging, secrets, testing and the
-non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module Structure]. Every requirement of the
-libraries is planned: `git-core`, `git-worktrees` and `git-testing` are scaffolds, the other modules are not yet
-created.
+non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module Structure]. `git-testing` implements
+its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]);
+every other requirement of the libraries is planned: `git-core` and `git-worktrees` are scaffolds, the other modules
+are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -24,10 +25,11 @@ image::../resources/diagrams/module-dependency-graph.svg["Module dependency grap
 
 The reactor dependencies are the edges of the graph. The build rule that enforces them (Maven Enforcer rule or an
 architecture test) is open; a test consumer project depending on `git-core` alone is to assert that its resolved
-dependency set holds no third-party artifact of the upper modules. The only third-party dependency declared is
+dependency set holds no third-party artifact of the upper modules. The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`, `requires static
-org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>). Every other dependency below is planned and needs the
-owner's approval:
+org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>), and JGit, `cui-test-generator` and JUnit 5 in
+`git-testing`. JGit is approved and its version is managed in the root POM. Every other dependency below is planned
+and needs the owner's approval before it is added:
 
 [cols="1,3"]
 |===
@@ -35,10 +37,10 @@ owner's approval:
 
 |every module |`org.jspecify:jspecify` (declared), annotations only; `cui-test-juli-logger` in test scope for the log
 capture of <<GDR-NFR-3>> (planned)
-|`git-core` |JGit
+|`git-core` |JGit (approved, not yet declared)
 |`git-worktrees` |none beyond those of `git-core`
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
-`cui-test-generator`, JUnit 5
+`cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |possibly JGit's `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
 |`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
 |`git-timestamp` |an RFC 3161 client library (open)

@@ -17,7 +17,10 @@
  * Generators and fixtures for local and in-memory Git repositories and a local remote.
  */
 module de.cuioss.git.document.testing {
-    // exports follow with the first public class of the package (javac rejects exporting an empty package)
+    exports de.cuioss.git.document.testing;
 
+    requires transitive org.eclipse.jgit;
+    requires transitive de.cuioss.test.generator;
+    requires transitive org.junit.jupiter.api;
     requires static org.jspecify;
 }
