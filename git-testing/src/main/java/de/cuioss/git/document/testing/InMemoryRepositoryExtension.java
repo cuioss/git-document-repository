@@ -15,6 +15,7 @@
  */
 package de.cuioss.git.document.testing;
 
+import java.io.IOException;
 import java.util.UUID;
 import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
@@ -28,7 +29,8 @@ import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.Extension
 
 /**
  * Resolves a test parameter annotated with {@link InMemory}: a new repository of JGit's in-memory DFS storage, one per
- * annotated parameter, returned only as {@link Repository}. No directory is created. The repository is closed when the
+ * annotated parameter, returned only as {@link Repository}. No directory is created. The repository starts like the
+ * bare fixtures, with {@code HEAD} linked to the unborn branch {@code refs/heads/master}. It is closed when the
  * extension context of the test closes.
  * <p>
  * The extension only resolves parameters that carry {@link InMemory}; the parameter type alone never selects it. It
@@ -77,18 +79,27 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     }
 
     /**
-     * Creates a new in-memory repository and registers its closing in the extension context's store as a
+     * Creates a new in-memory repository, initialises it like the bare fixtures so that {@code HEAD} is linked to the
+     * unborn branch {@code refs/heads/master}, and registers its closing in the extension context's store as a
      * {@link ClosingRepository}, which Jupiter closes whatever its auto-close setting.
      *
      * @param parameterContext the context of the parameter to resolve
      * @param extensionContext the context of the test
      * @return the new in-memory repository, typed as {@link Repository}
-     * @throws ParameterResolutionException when the parameter is not of type {@link Repository}
+     * @throws ParameterResolutionException when the parameter is not of type {@link Repository} or the repository
+     *                                      cannot be initialised
      */
     @Override
     public Object resolveParameter(ParameterContext parameterContext, ExtensionContext extensionContext) {
         LocalRepositoryExtension.requireType(parameterContext, InMemory.class, Repository.class);
         Repository repository = new InMemoryRepository(new DfsRepositoryDescription("in-memory-" + UUID.randomUUID()));
+        try {
+            // links HEAD to refs/heads/master, as FileRepository#create does for the bare fixtures (JGit 7.8.0)
+            repository.create(true);
+        } catch (IOException e) {
+            repository.close();
+            throw new ParameterResolutionException("@InMemory could not initialise the in-memory repository", e);
+        }
         extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext),
                 new ClosingRepository(repository));
         return repository;

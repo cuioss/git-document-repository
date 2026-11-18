@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -103,6 +104,26 @@ class InMemoryRepositoryExtensionTest {
         }
 
         assertEquals(List.of(), repository.getRefDatabase().getRefs(), "A fresh repository has no references");
+    }
+
+    @Test
+    @DisplayName("Should link HEAD to the unborn branch refs/heads/master")
+    void shouldLinkHeadToMaster(@InMemory Repository repository) throws Exception {
+        var head = repository.exactRef(Constants.HEAD);
+
+        assertNotNull(head, "HEAD exists");
+        assertAll("initial HEAD",
+                () -> assertTrue(head.isSymbolic(), "HEAD is a symbolic reference"),
+                () -> assertEquals(Constants.R_HEADS + Constants.MASTER, head.getTarget().getName(),
+                        "HEAD is linked to refs/heads/master"));
+    }
+
+    @Test
+    @DisplayName("Should start on the same branch as the bare local repository")
+    void shouldStartOnSameBranchAsLocalRepository(@InMemory Repository inMemory, @LocalRepository Repository local)
+            throws Exception {
+        assertEquals(local.getFullBranch(), inMemory.getFullBranch(),
+                "The in-memory and the bare local repository start on the same branch");
     }
 
     @Test

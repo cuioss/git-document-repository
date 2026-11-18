@@ -33,8 +33,11 @@ per annotated parameter, closed and deleted when the test ends, also when it fai
 (distributed file system) storage
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/dfs/package-info.java[JGit 7.8.0, package `dfs`]: "Distributed file system based repository storage").
 JGit's `org.eclipse.jgit.internal.storage.dfs.InMemoryRepository` lives in that internal package: the fixture wraps
-it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type. No directory is
-created; the repository is closed when the test ends
+it and exposes only `org.eclipse.jgit.lib.Repository`, so no consumer depends on the internal type. The fixture
+initialises the repository with `create(true)`, so it starts like the bare fixtures, with `HEAD` linked to the unborn
+branch `refs/heads/master`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/dfs/DfsRepository.java[JGit 7.8.0, `DfsRepository#create`]).
+No directory is created; the repository is closed when the test ends
 |local remote |`@Remote` |`LocalRemoteExtension` |A `LocalRemote` record holding a second bare repository and the
 `file:` URL (`URIish`) it is reached by, which the remote policy local only admits; closed and deleted when the test
 ends, also when it fails
