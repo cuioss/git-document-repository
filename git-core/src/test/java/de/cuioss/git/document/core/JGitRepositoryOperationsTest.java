@@ -18,13 +18,16 @@ package de.cuioss.git.document.core;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.net.Proxy;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
@@ -70,8 +73,10 @@ import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.HttpConfig;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.eclipse.jgit.util.FS;
@@ -310,6 +315,59 @@ class JGitRepositoryOperationsTest {
                             Objects.requireNonNull(operations.log(dir(repository), revision, 1).value(),
                                     revision + " yields a history").stream().map(CommitInfo::id).toList(),
                             revision + " starts at the commit")));
+        }
+    }
+
+    @Nested
+    @DisplayName("HTTP connections (GDR-CORE-2)")
+    class HttpConnections {
+
+        /** The host the policy of these tests admits; nothing connects to it. */
+        private static final String ADMITTED_HOST = "admitted.example.invalid";
+
+        @Test
+        @DisplayName("GDR-CORE-2: every HTTP connection of a guarded transport is checked, also with redirects enabled")
+        void everyConnectionChecked(@LocalRepository Repository repository) throws Exception {
+            var config = repository.getConfig();
+            // repository configuration is attacker-influenced state: enabling every redirect must change nothing
+            config.setString(HttpConfig.HTTP, null, HttpConfig.FOLLOW_REDIRECTS_KEY, "true");
+            config.save();
+            var policy = RemotePolicy.httpsOrigin(URI.create("https://" + ADMITTED_HOST));
+            var path = "/" + TestCommits.name() + ".git/info/refs";
+
+            // fully qualified: the nested test class Transport shadows JGit's Transport here
+            try (var transport = org.eclipse.jgit.transport.Transport.open(repository,
+                         new URIish("https://" + ADMITTED_HOST + "/" + TestCommits.name() + ".git"))) {
+                JGitRepositoryOperations.guard(transport, policy);
+                var factory = ((TransportHttp) transport).getHttpConnectionFactory();
+                var redirect = URI.create("https://" + FOREIGN_HOST + path).toURL();
+                var admitted = URI.create("https://" + ADMITTED_HOST + path).toURL();
+
+                var refusal = assertThrows(JGitRepositoryOperations.RemoteRefusedException.class,
+                        () -> factory.create(redirect, Proxy.NO_PROXY), "a connection to another host is refused");
+                assertAll(
+                        () -> assertInstanceOf(JGitRepositoryOperations.PolicyCheckedConnectionFactory.class, factory,
+                                "the transport connects through the policy-checked factory"),
+                        () -> assertEquals(FOREIGN_HOST, refusal.uri().getHost(), "the refused host is named"),
+                        () -> assertTrue(refusal.redirect(), "the refusal is one of a further connection"),
+                        () -> assertNotNull(factory.create(admitted, Proxy.NO_PROXY),
+                                "a connection to the admitted host is created"),
+                        () -> assertNotNull(factory.create(admitted), "also without a proxy argument"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-2: a transport whose own URL is outside the policy is refused before any connection")
+        void transportUrlChecked(@LocalRepository Repository repository) throws Exception {
+            var policy = RemotePolicy.httpsOrigin(URI.create("https://" + ADMITTED_HOST));
+
+            try (var transport = org.eclipse.jgit.transport.Transport.open(repository,
+                         new URIish("https://" + FOREIGN_HOST + "/" + TestCommits.name() + ".git"))) {
+                var refusal = assertThrows(JGitRepositoryOperations.RemoteRefusedException.class,
+                        () -> JGitRepositoryOperations.guard(transport, policy), "the transport is refused");
+
+                assertFalse(refusal.redirect(), "the refusal is one of the transport's own URL");
+            }
         }
     }
 

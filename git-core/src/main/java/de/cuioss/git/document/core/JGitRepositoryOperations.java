@@ -20,7 +20,9 @@ import static de.cuioss.git.document.core.GitCoreLogMessages.WARN;
 
 import java.io.IOException;
 import java.io.Serial;
+import java.net.Proxy;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -68,7 +70,11 @@ import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.TagOpt;
 import org.eclipse.jgit.transport.Transport;
+import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.URIish;
+import org.eclipse.jgit.transport.http.HttpConnection;
+import org.eclipse.jgit.transport.http.HttpConnectionFactory;
+import org.eclipse.jgit.transport.http.HttpConnectionFactory2;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.FileUtils;
@@ -528,9 +534,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return GitResult.ok(commit.name());
             }
             try (Transport transport = Transport.open(repository, uri)) {
-                if (!input.policy().permits(transport.getURI())) {
-                    return refusedRemote(transport.getURI());
-                }
+                guard(transport, input.policy());
                 if (transport.getURI().getUser() != null || transport.getURI().getPass() != null) {
                     return GitResult.of(GitOutcome.REFUSED_BY_POLICY,
                             display(transport.getURI()) + ": user information in an anonymous fetch");
@@ -552,7 +556,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
         } catch (CapabilityRefusedException e) {
             return refusedCapability(e);
+        } catch (RemoteRefusedException e) {
+            return refused(e);
         } catch (TransportException e) {
+            if (cause(e, RemoteRefusedException.class).isPresent()) {
+                return transportFailure(e, display(uri), display(uri));
+            }
             return isUnservedWant(e.getMessage())
                     ? GitResult.of(GitOutcome.UNSERVED, display(uri) + " did not serve " + commit.name())
                     : transportFailure(e, display(uri), display(uri));
@@ -778,7 +787,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static <V> GitResult<V> transportFailure(Exception failure, String remote, String target) {
         Optional<RemoteRefusedException> refusedDestination = cause(failure, RemoteRefusedException.class);
         if (refusedDestination.isPresent()) {
-            return refusedRemote(refusedDestination.get().uri());
+            return refused(refusedDestination.get());
         }
         Optional<CapabilityRefusedException> refusal = cause(failure, CapabilityRefusedException.class);
         if (refusal.isPresent()) {
@@ -909,11 +918,83 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      */
     private TransportConfigCallback guardedTransport(@Nullable CredentialsProvider credentials) {
         return transport -> {
-            if (!remotePolicy.permits(transport.getURI())) {
-                throw new RemoteRefusedException(transport.getURI());
-            }
+            guard(transport, remotePolicy);
             transport.setCredentialsProvider(credentials);
         };
+    }
+
+    /**
+     * Binds a transport to a policy before it connects, for the named remotes and for {@code fetchCommit} alike: its
+     * destination must be admitted, and an HTTP transport opens every connection, a redirect target included, through
+     * a {@link PolicyCheckedConnectionFactory}.
+     * <p>
+     * JGit 7.8.0 {@code TransportHttp} follows a redirect of the first request ({@code http.followRedirects},
+     * default {@code initial}) and its {@code isValidRedirect} accepts any host of the same scheme, so an admitted
+     * remote could send the request on to a host the policy refuses. The check sits in the connection factory of this
+     * one transport ({@code TransportHttp.setHttpConnectionFactory}), not in the process-wide
+     * {@code HttpTransport.setConnectionFactory}, and no repository or user configuration can switch it off.
+     *
+     * @throws RemoteRefusedException if the destination is outside the policy
+     */
+    static void guard(Transport transport, RemotePolicy policy) {
+        if (!policy.permits(transport.getURI())) {
+            throw new RemoteRefusedException(transport.getURI(), false);
+        }
+        if (transport instanceof TransportHttp http) {
+            http.setHttpConnectionFactory(new PolicyCheckedConnectionFactory(http.getHttpConnectionFactory(), policy));
+        }
+    }
+
+    /**
+     * Opens an HTTP connection only to a URL the policy admits, and refuses every other one before the request is
+     * sent; the connections themselves come from the factory it wraps.
+     */
+    static final class PolicyCheckedConnectionFactory implements HttpConnectionFactory2 {
+
+        private final HttpConnectionFactory delegate;
+        private final RemotePolicy policy;
+
+        PolicyCheckedConnectionFactory(HttpConnectionFactory delegate, RemotePolicy policy) {
+            this.delegate = delegate;
+            this.policy = policy;
+        }
+
+        @Override
+        public HttpConnection create(URL url) throws IOException {
+            return delegate.create(checked(url));
+        }
+
+        @Override
+        public HttpConnection create(URL url, Proxy proxy) throws IOException {
+            return delegate.create(checked(url), proxy);
+        }
+
+        @Override
+        public GitSession newSession() {
+            if (delegate instanceof HttpConnectionFactory2 sessions) {
+                return sessions.newSession();
+            }
+            return new GitSession() {
+
+                @Override
+                public HttpConnection configure(HttpConnection connection, boolean sslVerify) {
+                    return connection;
+                }
+
+                @Override
+                public void close() {
+                    // nothing to release
+                }
+            };
+        }
+
+        private URL checked(URL url) {
+            var uri = new URIish(url);
+            if (!policy.permits(uri)) {
+                throw new RemoteRefusedException(uri, true);
+            }
+            return url;
+        }
     }
 
     /** Aborts a command whose transport would contact a destination outside the policy, before it connects. */
@@ -925,14 +1006,32 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         /** The refused destination. */
         private final URIish uri;
 
-        RemoteRefusedException(URIish uri) {
+        /** Whether the destination is an HTTP connection other than the transport's own URL, such as a redirect. */
+        private final boolean redirect;
+
+        RemoteRefusedException(URIish uri, boolean redirect) {
             super("remote outside the remote policy", null, false, false);
             this.uri = uri;
+            this.redirect = redirect;
         }
 
         URIish uri() {
             return uri;
         }
+
+        boolean redirect() {
+            return redirect;
+        }
+    }
+
+    /** The refusal of a destination: a redirect is named by its host only (GDR-NFR-3). */
+    private static <V> GitResult<V> refused(RemoteRefusedException refusal) {
+        if (!refusal.redirect()) {
+            return refusedRemote(refusal.uri());
+        }
+        String host = String.valueOf(refusal.uri().getHost());
+        LOGGER.warn(WARN.REMOTE_REFUSED, host);
+        return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "redirect to " + host + " is outside the remote policy");
     }
 
     private static boolean isEmptyDirectory(Path path) throws IOException {

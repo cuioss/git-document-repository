@@ -92,7 +92,20 @@ The configured URLs are checked first, and then every transport a fetch, a push 
 again before it connects, through its `TransportConfigCallback`: `FetchCommand` and `PushCommand` resolve the remote
 name once more, and `FileRepository.getConfig()` reloads a configuration saved after the first check
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/FileRepository.java[JGit 7.8.0 `FileRepository`]),
-so only the transport's own URL is the destination the command uses. A fetch does not recurse into submodules, which
+so only the transport's own URL is the destination the command uses. The same check binds the transport of
+`fetchCommit` to the policy of its call.
+
+The policy also covers redirect targets. JGit's `TransportHttp` follows a redirect of the first request
+(`http.followRedirects`, default `initial`) and its `isValidRedirect` accepts any host of the same scheme
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TransportHttp.java[JGit 7.8.0 `TransportHttp`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/HttpConfig.java[`HttpConfig`]),
+so an admitted remote could send a request on to a host the policy refuses. Every HTTP transport the operations open
+therefore creates each connection through a policy-checking `HttpConnectionFactory`, installed on that transport with
+`TransportHttp.setHttpConnectionFactory`, so a redirect target is checked before any request reaches it. The
+mechanism is scoped to these transports: the process-wide `HttpTransport.setConnectionFactory` is not touched, and
+`http.followRedirects` in a repository or user configuration cannot re-enable a refused redirect, because the check
+does not depend on it. A refused redirect is `REFUSED_BY_POLICY` with a detail that names the host only, and it is
+logged with the `REMOTE_REFUSED` warning. A fetch does not recurse into submodules, which
 `FetchCommand` would fetch on demand from their own remotes
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/FetchCommand.java[JGit 7.8.0 `FetchCommand`]).
 
