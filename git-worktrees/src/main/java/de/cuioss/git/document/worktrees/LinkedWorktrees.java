@@ -150,36 +150,18 @@ final class LinkedWorktrees {
                 .build());
     }
 
-    /**
-     * Deletes a worktree directory (never following symbolic links) and its administration directory.
-     *
-     * @param commonDir the common git directory
-     * @param name      the administrative name
-     * @param worktree  the worktree root
-     * @throws IOException if a file cannot be deleted
-     */
+    /** Deletes a worktree directory (never following symbolic links) and its administration directory. */
     static void delete(Path commonDir, String name, Path worktree) throws IOException {
         deleteTree(worktree);
         deleteAdmin(commonDir, name);
     }
 
-    /**
-     * Deletes the administration directory of a worktree and nothing else.
-     *
-     * @param commonDir the common git directory
-     * @param name      the administrative name
-     * @throws IOException if a file cannot be deleted
-     */
+    /** Deletes the administration directory of a worktree and nothing else. */
     static void deleteAdmin(Path commonDir, String name) throws IOException {
         deleteTree(commonDir.resolve(WORKTREES).resolve(name));
     }
 
-    /**
-     * Removes the initialization lock.
-     *
-     * @param admin the administration directory
-     * @throws IOException if the lock cannot be deleted
-     */
+    /** Removes the initialization lock of the administration directory {@code admin}. */
     static void unlock(Path admin) throws IOException {
         Files.deleteIfExists(admin.resolve(LOCKED));
     }
@@ -205,12 +187,7 @@ final class LinkedWorktrees {
         }
     }
 
-    /**
-     * Releases a branch reservation.
-     *
-     * @param reservation the reservation returned by {@link #reserveBranch(Path, String)}
-     * @throws IOException if the reservation file cannot be deleted
-     */
+    /** Releases a branch reservation returned by {@link #reserveBranch(Path, String)}. */
     static void release(Path reservation) throws IOException {
         Files.deleteIfExists(reservation);
     }
