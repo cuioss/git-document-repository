@@ -117,6 +117,7 @@ class LocalRepositoryExtensionTest {
 
     @Test
     @DisplayName("Should store the cleanup of the very repository it returns")
+    @SuppressWarnings("deprecation") // CloseableResource is the store type closed with auto-closing switched off
     void shouldStoreCleanupOfReturnedRepository(ExtensionContext context) throws Exception {
         var declared = new ReflectedParameter(signatureParameter(2), 2);
 
@@ -128,7 +129,10 @@ class LocalRepositoryExtensionTest {
         assertAll("stored cleanup",
                 () -> assertSame(resolved, stored.repository(), "The stored cleanup holds the returned repository"),
                 () -> assertEquals(stored.directory(), ((Repository) resolved).getDirectory().toPath(),
-                        "The stored cleanup deletes the directory of the returned repository"));
+                        "The stored cleanup deletes the directory of the returned repository"),
+                () -> assertInstanceOf(AutoCloseable.class, stored, "Jupiter closes it with auto-closing on"),
+                () -> assertInstanceOf(ExtensionContext.Store.CloseableResource.class, stored,
+                        "Jupiter closes it with auto-closing off"));
     }
 
     @Test

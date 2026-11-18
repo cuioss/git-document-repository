@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -157,6 +158,34 @@ class InMemoryRepositoryExtensionTest {
                 () -> assertTrue(thrown.getMessage().contains("@InMemory"), "The message names the annotation"),
                 () -> assertTrue(thrown.getMessage().contains(Repository.class.getName()),
                         "The message names the expected type"));
+    }
+
+    @Test
+    @DisplayName("Should store a closing of the very repository it returns that Jupiter closes in either setting")
+    @SuppressWarnings("deprecation") // CloseableResource is the store type closed with auto-closing switched off
+    void shouldStoreClosingOfReturnedRepository(ExtensionContext context) throws Exception {
+        var declared = new ReflectedParameter(signatureParameter(3), 3);
+
+        var resolved = extension.resolveParameter(declared, context);
+        var stored = context.getStore(InMemoryRepositoryExtension.NAMESPACE)
+                .get(LocalRepositoryExtension.storeKey(declared));
+
+        var closing = assertInstanceOf(ClosingRepository.class, stored, "The store holds a ClosingRepository");
+        assertAll("stored closing",
+                () -> assertSame(resolved, closing.repository(), "The stored closing holds the returned repository"),
+                () -> assertInstanceOf(AutoCloseable.class, stored, "Jupiter closes it with auto-closing on"),
+                () -> assertInstanceOf(ExtensionContext.Store.CloseableResource.class, stored,
+                        "Jupiter closes it with auto-closing off"));
+    }
+
+    @Test
+    @DisplayName("Should close its repository when the stored closing closes")
+    void shouldCloseRepositoryWhenClosingCloses() {
+        var repository = new LocalRepositoryExtensionTest.CountingRepository(null);
+
+        new ClosingRepository(repository).close();
+
+        assertEquals(1, repository.closings, "The repository is closed once");
     }
 
     @Test

@@ -40,7 +40,7 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
 
     /**
      * The namespace under which the closing of every resolved parameter is stored; package-private so that a test can
-     * read the stored repository back.
+     * read the stored closing back.
      */
     static final Namespace NAMESPACE = Namespace.create(InMemoryRepositoryExtension.class);
 
@@ -77,7 +77,8 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     }
 
     /**
-     * Creates a new in-memory repository and registers its closing in the extension context's store.
+     * Creates a new in-memory repository and registers its closing in the extension context's store as a
+     * {@link ClosingRepository}, which Jupiter closes whatever its auto-close setting.
      *
      * @param parameterContext the context of the parameter to resolve
      * @param extensionContext the context of the test
@@ -88,8 +89,8 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     public Object resolveParameter(ParameterContext parameterContext, ExtensionContext extensionContext) {
         LocalRepositoryExtension.requireType(parameterContext, InMemory.class, Repository.class);
         Repository repository = new InMemoryRepository(new DfsRepositoryDescription("in-memory-" + UUID.randomUUID()));
-        // Repository is an AutoCloseable, so the store closes it itself
-        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext), repository);
+        extensionContext.getStore(NAMESPACE).put(LocalRepositoryExtension.storeKey(parameterContext),
+                new ClosingRepository(repository));
         return repository;
     }
 }

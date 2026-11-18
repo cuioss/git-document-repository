@@ -181,12 +181,19 @@ public final class LocalRepositoryExtension implements ParameterResolver {
 
     /**
      * A repository in a temporary directory, stored in the extension context so that JUnit Jupiter closes it after
-     * the test.
+     * the test. It is both an {@link AutoCloseable} and an {@link ExtensionContext.Store.CloseableResource} with one
+     * {@link #close()}, so Jupiter closes it exactly once whether
+     * {@code junit.jupiter.extensions.store.close.autocloseable.enabled} is {@code true} or {@code false}.
      *
      * @param repository the repository handed to the test
      * @param directory  the directory of the repository, deleted on {@link #close()}
      */
-    record TemporaryRepository(Repository repository, Path directory) implements AutoCloseable {
+    // CloseableResource is deprecated, but it is the only store type Jupiter closes while
+    // junit.jupiter.extensions.store.close.autocloseable.enabled=false (junit-jupiter-engine 6.1.3,
+    // AbstractExtensionContext)
+    @SuppressWarnings("deprecation")
+    record TemporaryRepository(Repository repository, Path directory)
+            implements AutoCloseable, ExtensionContext.Store.CloseableResource {
 
         /**
          * Closes the repository and deletes its directory, also when closing fails.
