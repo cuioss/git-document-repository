@@ -4,13 +4,37 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-worktrees` (module `de.cuioss.git.document.worktrees`, a scaffold) holds the linked working trees. It depends on
-`git-core` alone. The document store does not use it; clients that work on files on disk do. JGit 7.8.0 has no
+`git-worktrees` holds the linked working trees: module and package `de.cuioss.git.document.worktrees`. It depends on
+`git-core` alone; its third-party dependencies are `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`) and
+`org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. The document store does not use it; clients that
+work on files on disk do. <<GDR-WT-1>>, <<GDR-WT-2>> and <<GDR-WT-3>> are implemented. The JGit APIs named here are
+checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of https://github.com/eclipse-jgit/jgit). JGit 7.8.0 has no
 command that creates a linked working tree: its `api` package holds no worktree command
-(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit 7.8.0 `api` package]). The module is therefore to read and write Git's administration files of
-linked working trees itself (planned class `LinkedWorktrees`) and to offer the operations below on JGit, in process
-(planned class `WorktreeOperations`). Rationale:
+(link:https://github.com/eclipse-jgit/jgit/tree/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api[JGit 7.8.0 `api` package]),
+so the module reads and writes Git's administration files of linked working trees itself. `LinkedWorktrees` is a
+plain copy from `pm-provider-git`
+(xref:../clients/pm-mcp-core.adoc#_what_git_worktrees_took_and_changed[Client: `pm-mcp-core`, What `git-worktrees`
+Took and Changed]). Rationale:
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules].
+
+[cols="1,3"]
+|===
+|Type |Role
+
+|`WorktreeOperations` |The working-tree operations below and their input and value records (`Worktree`,
+`WorktreeAddInput`, `CommitInput`, `WorktreeStatus`)
+|`JGitWorktreeOperations` |The implementation of `WorktreeOperations` on JGit, in process and without a `git`
+installation; every repository it opens is built on `RefusingFS` of `git-core`
+|`LinkedWorktrees` |The administration files of Git's linked working trees, read and written natively (package-private)
+|`GitWorktreesLogMessages` |The `LogRecord` holder of the module, catalogued in `git-worktrees/doc/LogMessages.adoc`
+(xref:general.adoc#GDR-GEN-4[GDR-GEN-4])
+|===
+
+Every operation returns a `GitResult` with one constant of `GitOutcome` of `git-core`
+(xref:general.adoc#GDR-GEN-3[GDR-GEN-3]). A refused capability (a present hook, a filter driver that would start a
+process) is `REFUSED_BY_POLICY` with the capability as detail; every other unexpected failure is `FAILED` with the
+failure class only. No detail and no log message carries an author or committer name, an e-mail address or a commit
+message (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-WT-1]
 == GDR-WT-1: Linked Working Trees
@@ -19,15 +43,37 @@ xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure,
 * The administration files must follow Git's own layout, so that `git worktree list` of a Git installation lists the
   working trees the library created.
 
-`worktreeAdd` is to create a linked working tree for a branch at a path and write the administration directory
-`$GIT_DIR/worktrees/<id>/` with `gitdir` (the absolute path back to the working tree's `.git` file), `commondir` (the
-path of the main repository's `$GIT_DIR`) and `HEAD`, and in the working tree the `.git` file holding
-`gitdir: <path>` that points to the administration directory
+`worktreeAdd` creates a linked working tree for a branch, or detached at a commit, at a path inside the main working
+tree and writes the administration directory `$GIT_DIR/worktrees/<id>/` with `gitdir` (the absolute path back to the
+working tree's `.git` file), `commondir` (the path of the main repository's `$GIT_DIR`) and `HEAD`, and in the working
+tree the `.git` file holding `gitdir: <path>` that points to the administration directory
 (link:https://git-scm.com/docs/gitrepository-layout[gitrepository-layout(5)], entries `worktrees`,
-`worktrees/<id>/gitdir` and `commondir`; link:https://git-scm.com/docs/git-worktree[git-worktree(1)], DETAILS).
-`worktreeList` is to list the main and the linked working trees; `worktreeRemove` is to remove the working tree
-directory and its administration directory. The tests are to assert the compatibility with `git worktree list` where a
-Git binary is present.
+`worktrees/<id>/gitdir` and `commondir`; link:https://git-scm.com/docs/git-worktree[git-worktree(1)], DETAILS). The
+administration directory is claimed atomically under the next free numeric suffix and is locked while the start commit
+is checked out. The start point and the branch are classified by `GitIdentity` of `git-core`: only `HEAD`, exactly one
+reference or a full commit id is resolved, and an abbreviated commit id never.
+
+[cols="1,3"]
+|===
+|Operation |Outcomes
+
+|`worktreeAdd` |`OK` with the new working tree; `ALREADY_EXISTS` for a non-empty path or an existing branch to create;
+`BRANCH_CHECKED_OUT` for a branch checked out in the main or another linked working tree; `NOT_FOUND` for an unknown
+branch or an unknown, absent or abbreviated start point; `AMBIGUOUS` with the candidates; `IDENTITY_MISMATCH` for a full
+commit id the existing branch is not at, or one that reaches another commit; `PATH_REFUSED` for a path outside the main
+working tree or the main working tree itself; `REFUSED_BY_POLICY`; `NOT_A_REPOSITORY`; `FAILED`. A refused or failed
+checkout leaves neither the working tree nor its administration directory behind.
+|`worktreeList` |`OK` with the main working tree first, then the linked working trees by administrative name, each with
+its branch, its `HEAD` where recorded as a commit id, and whether it is locked or prunable; `NOT_A_REPOSITORY`;
+`FAILED`
+|`worktreeRemove` |`OK` with the removed root, deleting the working tree and its administration directory, a prunable
+one by its administration directory; `WORKTREE_NOT_FOUND`; `WORKTREE_DIRTY`; `WORKTREE_LOCKED`; `PATH_REFUSED` for the
+main working tree; `REFUSED_BY_POLICY`; `NOT_A_REPOSITORY`; `FAILED`. The removal is never forced.
+|===
+
+`JGitWorktreeOperationsTest` covers every outcome of the three operations; `GitWorktreeListCompatibilityTest` asserts
+that `git worktree list --porcelain` of an installed Git lists the added working trees with path, branch and `HEAD`. It
+is skipped through a JUnit assumption when no `git` binary is found; only this test starts a process, never the library.
 
 [#GDR-WT-2]
 == GDR-WT-2: Commit from a Working Tree
@@ -35,7 +81,12 @@ Git binary is present.
 * The library must stage every change of a working tree (changed, untracked and deleted files) and commit it in one
   operation, with caller-supplied author, committer and message.
 
-Hooks stay refused through `RefusingFS` of `git-core`.
+`commit` stages every addition, modification and deletion of the main or a linked working tree and commits it on the
+working tree's branch, never signed, whatever the repository configuration asks. Its outcomes are `OK` with the commit,
+`NOTHING_TO_COMMIT`, `REFUSED_BY_POLICY` for a present hook, which is never run (`RefusingFS` of `git-core`),
+`NOT_A_REPOSITORY` and `FAILED`. The commit tests of `JGitWorktreeOperationsTest` cover each outcome, and its secrets
+test asserts with a JUL log capture and on the result details that no author or committer name, e-mail address or
+message reaches a log message or a detail.
 
 [#GDR-WT-3]
 == GDR-WT-3: Working-Tree Status
@@ -44,4 +95,23 @@ Hooks stay refused through `RefusingFS` of `git-core`.
   `untracked` (present and not tracked) and `deleted` (tracked and missing).
 * The status must consist of these three path sets and nothing else.
 
-A consumer that needs a digest of the status builds its own on the path sets.
+`worktreeStatus` returns the record `WorktreeStatus(changed, untracked, deleted)`: three unmodifiable sets of
+repository-relative paths with `/` separators, sorted by path; its outcomes are `OK`, `NOT_A_REPOSITORY` and `FAILED`,
+also for a repository without a working tree. The sets are mapped from JGit's `Status` by its definitions in JGit 7.8.0
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/Status.java[`org.eclipse.jgit.api.Status`]):
+
+[cols="1,3"]
+|===
+|Set |JGit `Status` categories
+
+|`changed` |`getAdded` (in the index, not in `HEAD`), `getChanged` (changed from `HEAD` to the index), `getModified`
+(modified on disk relative to the index), `getConflicting` (in conflict)
+|`deleted` |`getRemoved` (in `HEAD`, not in the index), `getMissing` (in the index, not on disk)
+|`untracked` |`getUntracked` (neither ignored nor in the index)
+|===
+
+Ignored files are in no set. The sets are not disjoint: a file removed from the index but still on disk is both removed
+and untracked, so it is in `deleted` and in `untracked`. The union of the three sets is the path union of the seven
+categories, the digest input a consumer such as `WorktreeShaDigest` of `pm-provider-git` builds on.
+`WorktreeStatusTest` covers one scenario per category and the union; `WorktreeOperationsRecordsTest` covers the
+record's null checks, its defensive copy and its immutability.

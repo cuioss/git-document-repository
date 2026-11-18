@@ -38,8 +38,9 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
-repository operations and the cache repository. `git-testing` holds its credential generator and its repository
-fixtures. `git-worktrees` is scaffolded; its foundation code is taken over from the same client in a later step (see
+repository operations and the cache repository. `git-worktrees` holds the worktree part taken over from the same
+client: adding, listing and removing linked working trees and the commit from a working tree, plus a new working-tree
+status. `git-testing` holds its credential generator and its repository fixtures (see
 link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
 The aspect modules (`git-store`, `git-forms`, `git-timestamp`,
 `git-directory`) follow as the document store needs them.

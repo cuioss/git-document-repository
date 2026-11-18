@@ -7,8 +7,9 @@
 The requirements every module meets: layering, platform modules, results, logging, secrets, testing and the
 non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module Structure]. `git-testing` implements
 its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]), and
-`git-core` implements part of its own (xref:git-core.adoc[`git-core`]); every other requirement of the libraries is
-planned: `git-worktrees` is a scaffold, the other modules are not yet created.
+`git-core` implements part of its own (xref:git-core.adoc[`git-core`]), and `git-worktrees` implements all of its own
+(xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is planned, and the other modules
+are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -28,8 +29,9 @@ architecture test) is open; a test consumer project depending on `git-core` alon
 dependency set holds no third-party artifact of the upper modules. The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`,
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
-JUnit 5 in `git-testing`; and JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5, `cui-test-generator`
-and `cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5, `cui-test-generator`
+and `cui-test-juli-logger` in its test scope; and `cui-java-tools` and Lombok in `git-worktrees`, with `git-testing`,
+JUnit 5, `cui-test-generator` and `cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
 `cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17. The version of JGit is managed in the
 root POM, the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
 approval before it is added:
@@ -41,7 +43,8 @@ approval before it is added:
 |every module |`org.jspecify:jspecify` (declared), annotations only
 |`git-core` |JGit (`requires transitive`), `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `cui-test-juli-logger` for the log capture of <<GDR-NFR-3>>, `cui-test-generator` and JUnit 5 (each declared)
-|`git-worktrees` |none beyond those of `git-core`
+|`git-worktrees` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
+`git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |possibly JGit's `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
@@ -209,8 +212,8 @@ read from the application's configuration for the call; never stored, logged, co
 entry; never in the metadata of a commit (author, committer, message, trailers), a document or a log
 |===
 
-Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`,
-see <<GDR-GEN-1>>) and with checks of result details.
+Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`
+and `git-worktrees`, see <<GDR-GEN-1>>) and with checks of result details.
 
 [#GDR-NFR-4]
 == GDR-NFR-4: Native Image
