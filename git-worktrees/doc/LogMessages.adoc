@@ -12,8 +12,8 @@ WARN 100-199, ERROR 200-299). The messages are declared in
 `de.cuioss.git.document.worktrees.GitWorktreesLogMessages`.
 
 No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message names a
-commit id or a refused capability, never a path, an administrative name derived from the caller's path, an author or
-committer name, an e-mail address or a commit message.
+commit id or a refused capability, never a path, an administrative name derived from the caller's path, a branch name,
+an author or committer name, an e-mail address or a commit message.
 Debug and trace messages carry no identifier and are not listed.
 
 == INFO Level (1-99)
@@ -25,6 +25,8 @@ Debug and trace messages carry no identifier and are not listed.
 linked working tree: the commit id it starts at.
 |GIT_WORKTREES-2 |GIT_WORKTREES |Removed a linked working tree |Logged when `worktreeRemove` removed a linked working
 tree or the administration files of a prunable one; the message carries no argument.
+|GIT_WORKTREES-3 |GIT_WORKTREES |Released a branch reservation |Logged when `releaseBranchReservation` deleted the
+reservation file of a branch; the message carries no argument, neither the branch name nor a path.
 |===
 
 == WARN Level (100-199)

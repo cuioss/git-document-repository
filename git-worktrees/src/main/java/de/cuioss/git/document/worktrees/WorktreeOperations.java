@@ -33,9 +33,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The operations on the working trees of a repository: adding, listing and removing linked working trees (GDR-WT-1),
- * the commit from a working tree (GDR-WT-2) and the status of a working tree. One method per operation, typed inputs,
- * and results carrying the
- * closed {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
+ * the commit from a working tree (GDR-WT-2), the status of a working tree and the release of a branch reservation left
+ * by an ended process (GDR-WT-4). One method per operation, typed inputs, and results carrying the closed
+ * {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
  * <p>
  * Every repository an implementation opens is built on {@link RefusingFS}, so no operation starts a process through
  * the repository's file system; an operation that would run a hook ends {@link GitOutcome#REFUSED_BY_POLICY} with the
@@ -56,7 +56,9 @@ public interface WorktreeOperations {
      * claimed exclusively and the branch, a new one like an existing one, is reserved until the new working tree is
      * registered, so of two concurrent additions for one target or one branch exactly one succeeds. A refused or failed addition removes only
      * what it created itself: the target directory or its contents, its administration directory and the branch it
-     * created, the latter only while it still points at the start.
+     * created, the latter only while it still points at the start. A reservation left by a process that ended during an
+     * addition keeps its branch {@link GitOutcome#BRANCH_CHECKED_OUT}; {@link #releaseBranchReservation(Path, String)}
+     * is the way out of it.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the new working tree, {@link GitOutcome#ALREADY_EXISTS} if the path is not
@@ -126,6 +128,31 @@ public interface WorktreeOperations {
      *         without a working tree
      */
     GitResult<WorktreeStatus> worktreeStatus(Path root);
+
+    /**
+     * Releases the reservation of a branch (GDR-WT-4). An addition reserves its branch, a new one like an existing one,
+     * with a reservation file in the common git directory, {@code worktree-branch-<SHA-1 of the full branch name>.lock},
+     * and deletes it once the new working tree is registered or the addition ended. A process that ends between the two
+     * leaves the reservation behind, and every later addition of that branch ends
+     * {@link GitOutcome#BRANCH_CHECKED_OUT} although no working tree has it checked out; this operation is the way out.
+     * <p>
+     * The caller guarantees that no addition of that branch runs, in any process, from the call until it returns: a
+     * reservation held by a running addition cannot be told apart from a left one, so releasing it would let a second
+     * addition of the branch proceed. The deletion itself is one atomic {@link java.nio.file.Files#delete} of the
+     * reservation file, so of two concurrent releases exactly one reports it. The operation deletes the reservation
+     * file and nothing else, and starts no process.
+     *
+     * @param root   any working-tree root of the repository
+     * @param branch the short branch name, as given to {@link #worktreeAdd(WorktreeAddInput)}
+     * @return {@link GitOutcome#OK} with the full branch name ({@code refs/heads/<branch>}) whose reservation was
+     *         deleted, {@link GitOutcome#NOT_FOUND} if the branch has no reservation,
+     *         {@link GitOutcome#REFUSED_BY_POLICY} for a branch name that is no valid branch name,
+     *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}, also for a repository without a working
+     *         tree
+     * @throws NullPointerException if {@code root} or {@code branch} is {@code null}
+     * @since 0.1
+     */
+    GitResult<String> releaseBranchReservation(Path root, String branch);
 
     /**
      * The status of a working tree: the paths that differ from its index or its {@code HEAD}, by kind. Each set is

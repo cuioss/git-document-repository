@@ -46,13 +46,14 @@ import org.jspecify.annotations.Nullable;
  * worktree's {@code .git} file pointing back with {@code gitdir: <admin dir>}. The layout is git's own, so
  * {@code git worktree list} reads it.
  * <p>
- * The code is taken from {@code pm-provider-git} and changed in four points. The administration directory is claimed
+ * The code is taken from {@code pm-provider-git} and changed in five points. The administration directory is claimed
  * atomically: {@link #create(Path, Path, String)} creates it with {@link Files#createDirectory} and moves to the next
  * numeric suffix when the name is taken, so two concurrent creations on one repository never share an administration
  * directory. Every file is written to a partial file and moved into place, {@code HEAD} last, and a creation that
  * fails removes the administration directory it claimed. {@link #list(Path)} skips an entry whose {@code gitdir} or
  * {@code HEAD} is not (yet, or no longer) present, and resolves a relative {@code gitdir} against the administration
- * directory. {@link #reserveBranch(Path, String)} reserves an existing branch for one creation.
+ * directory. {@link #reserveBranch(Path, String)} reserves a branch, a new one like an existing one, for one creation,
+ * and {@link #releaseBranch(Path, String)} deletes a reservation an ended process left behind.
  *
  * @since 0.1
  */
@@ -167,10 +168,12 @@ final class LinkedWorktrees {
     }
 
     /**
-     * Reserves a branch for one worktree creation: the reservation file of the branch in the common directory is
-     * created with {@link Files#createFile}, which fails when it exists, so of two concurrent reservations exactly one
-     * succeeds. The holder releases it with {@link #release(Path)} once the branch is registered in the worktree's
-     * {@code HEAD}, or once the creation failed. A reservation left by an ended process stays until it is deleted.
+     * Reserves a branch for one worktree creation: the reservation file of the branch in the common directory,
+     * {@code worktree-branch-<SHA-1 of the full branch name>.lock}, is created with {@link Files#createFile}, which
+     * fails when it exists, so of two concurrent reservations exactly one succeeds. The holder releases it with
+     * {@link #release(Path)} once the branch is registered in the worktree's {@code HEAD}, or once the creation failed.
+     * A reservation left by an ended process stays until {@link #releaseBranch(Path, String)} deletes it, which
+     * {@link WorktreeOperations#releaseBranchReservation(Path, String)} offers to the caller.
      *
      * @param commonDir the common git directory
      * @param branchRef the full name of the branch
@@ -178,10 +181,8 @@ final class LinkedWorktrees {
      * @throws IOException if the reservation file cannot be created
      */
     static Optional<Path> reserveBranch(Path commonDir, String branchRef) throws IOException {
-        var digest = Constants.newMessageDigest().digest(branchRef.getBytes(StandardCharsets.UTF_8));
-        Path reservation = commonDir.resolve(RESERVATION_PREFIX + ObjectId.fromRaw(digest).name() + ".lock");
         try {
-            return Optional.of(Files.createFile(reservation));
+            return Optional.of(Files.createFile(reservationFile(commonDir, branchRef)));
         } catch (FileAlreadyExistsException e) {
             return Optional.empty();
         }
@@ -190,6 +191,30 @@ final class LinkedWorktrees {
     /** Releases a branch reservation returned by {@link #reserveBranch(Path, String)}. */
     static void release(Path reservation) throws IOException {
         Files.deleteIfExists(reservation);
+    }
+
+    /**
+     * Deletes the reservation file of a branch, whoever created it, with one atomic {@link Files#delete}, so of two
+     * concurrent deletions exactly one reports it. Nothing else is deleted.
+     *
+     * @param commonDir the common git directory
+     * @param branchRef the full name of the branch, a valid reference name
+     * @return whether a reservation was deleted; {@code false} if the branch had none
+     * @throws IOException if the reservation file cannot be deleted
+     */
+    static boolean releaseBranch(Path commonDir, String branchRef) throws IOException {
+        try {
+            Files.delete(reservationFile(commonDir, branchRef));
+            return true;
+        } catch (NoSuchFileException e) {
+            return false;
+        }
+    }
+
+    /** The reservation file of a branch: named by the SHA-1 of its full name, so no caller string forms the name. */
+    private static Path reservationFile(Path commonDir, String branchRef) {
+        var digest = Constants.newMessageDigest().digest(branchRef.getBytes(StandardCharsets.UTF_8));
+        return commonDir.resolve(RESERVATION_PREFIX + ObjectId.fromRaw(digest).name() + ".lock");
     }
 
     static void deleteTree(Path root) throws IOException {

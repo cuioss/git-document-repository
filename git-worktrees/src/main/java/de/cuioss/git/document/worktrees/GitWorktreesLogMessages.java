@@ -25,8 +25,8 @@ import lombok.experimental.UtilityClass;
  * {@code git-worktrees/doc/LogMessages.adoc}.
  * <p>
  * No message carries anything GDR-NFR-3 forbids: a message names a commit id or a refused capability, never a path, an
- * administrative name derived from the caller's path, an author or committer name, an e-mail address or a commit
- * message.
+ * administrative name derived from the caller's path, a branch name, an author or committer name, an e-mail address or
+ * a commit message.
  *
  * @since 0.1
  */
@@ -56,6 +56,15 @@ public final class GitWorktreesLogMessages {
                 .template("Removed a linked working tree")
                 .prefix(PREFIX)
                 .identifier(2)
+                .build();
+
+        /**
+         * A branch reservation was released; the message carries no argument, neither the branch name nor a path.
+         */
+        public static final LogRecord BRANCH_RESERVATION_RELEASED = LogRecordModel.builder()
+                .template("Released a branch reservation")
+                .prefix(PREFIX)
+                .identifier(3)
                 .build();
     }
 

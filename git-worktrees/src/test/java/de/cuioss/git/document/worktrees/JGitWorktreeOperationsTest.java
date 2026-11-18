@@ -1402,6 +1402,149 @@ class JGitWorktreeOperationsTest {
     }
 
     @Nested
+    @DisplayName("release of a branch reservation")
+    class ReleaseBranchReservation {
+
+        /** The common directory of the main working tree, as a reservation of an addition is created in it. */
+        private Path commonDir(MainTree main) {
+            return main.root().resolve(Constants.DOT_GIT);
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a reservation a crashed process left is released, and the addition succeeds again")
+        void crashedProcessRecovered(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var tip = branchOn(main, branch);
+            // the reservation of an addition whose process ended between reserving and releasing
+            var left = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+            var path = main.root().resolve(name());
+
+            var blocked = operations.worktreeAdd(onExistingBranch(main, path, branch, Constants.HEAD));
+            var released = operations.releaseBranchReservation(main.root(), branch);
+            var leftAfterRelease = Files.exists(left);
+            var retried = operations.worktreeAdd(onExistingBranch(main, path, branch, Constants.HEAD));
+
+            var handler = TestLoggerFactory.getTestHandler();
+            assertAll(
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, blocked.outcome(),
+                            "the left reservation blocks the branch no working tree has checked out"),
+                    () -> assertEquals(GitOutcome.OK, released.outcome(), "the reservation is released"),
+                    () -> assertEquals(Constants.R_HEADS + branch, released.value(),
+                            "the result names the full branch name"),
+                    () -> assertFalse(leftAfterRelease, "the reservation file is deleted"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "the addition succeeds again"),
+                    () -> assertEquals(tip.name(), Objects.requireNonNull(retried.value()).head(),
+                            "the working tree is at the branch tip"),
+                    () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO, branch).isEmpty(),
+                            "no INFO message carries the branch name"),
+                    () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO,
+                            main.root().toString()).isEmpty(), "no INFO message carries a path"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
+                    GitWorktreesLogMessages.INFO.BRANCH_RESERVATION_RELEASED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a branch without a reservation is not found")
+        void noReservation(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+
+            var result = operations.releaseBranchReservation(main.root(), name());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "there is no reservation"),
+                    () -> assertEquals("branch: no reservation", result.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertNull(result.value(), "no branch is reported"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: an invalid branch name is refused and deletes nothing in or outside the common directory")
+        void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var escape = name();
+            var hostile = "../../../" + escape;
+            Files.writeString(temp.resolve(escape), content());
+            var held = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + name()).orElseThrow();
+            var before = tree(temp);
+
+            var result = operations.releaseBranchReservation(main.root(), hostile);
+
+            var detail = Objects.requireNonNull(result.detail(), "a refusal has a detail");
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the branch name is refused"),
+                    () -> assertEquals("branch: not a valid branch name", detail, "the detail names the field only"),
+                    () -> assertFalse(detail.contains(escape), "the detail does not carry the caller's name"),
+                    () -> assertTrue(Files.exists(held), "another reservation is kept"),
+                    () -> assertEquals(before, tree(temp), "no file is deleted in or outside the common directory"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a path without a repository is not a repository")
+        void notARepository() throws Exception {
+            var plain = Files.createDirectories(temp.resolve(name()));
+
+            var result = operations.releaseBranchReservation(plain, name());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_A_REPOSITORY, result.outcome(), "a plain directory is no repository"),
+                    () -> assertEquals(plain.toString(), result.detail(), "the detail names the path"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: a repository without a working tree fails as a result")
+        void bareRepositoryFails() throws Exception {
+            var bare = temp.resolve(name());
+            Git.init().setBare(true).setDirectory(bare.toFile()).call().close();
+            var branch = name();
+            var held = LinkedWorktrees.reserveBranch(bare.toRealPath(), Constants.R_HEADS + branch).orElseThrow();
+
+            var result = operations.releaseBranchReservation(bare, branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the release fails"),
+                    () -> assertEquals("NoWorkTreeException", result.detail(), "the detail is the failure class"),
+                    () -> assertTrue(Files.exists(held), "nothing is deleted"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: called from a linked working tree it releases the reservation in the common directory")
+        void fromLinkedRoot(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            var branch = name();
+            var left = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+
+            var result = operations.releaseBranchReservation(linked.path(), branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reservation is released"),
+                    () -> assertEquals(Constants.R_HEADS + branch, result.value(),
+                            "the result names the full branch name"),
+                    () -> assertFalse(Files.exists(left), "the reservation in the common directory is deleted"),
+                    () -> assertEquals(List.of(), reservations(main), "no reservation is left"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-4: the release deletes only the named branch's reservation")
+        void onlyNamedReservation(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var other = name();
+            var named = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
+            var kept = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + other).orElseThrow();
+
+            var result = operations.releaseBranchReservation(main.root(), branch);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the named reservation is released"),
+                    () -> assertFalse(Files.exists(named), "the named reservation is deleted"),
+                    () -> assertTrue(Files.exists(kept), "the other branch's reservation stays"),
+                    () -> assertEquals(List.of(kept), reservations(main), "only the other reservation is left"));
+        }
+    }
+
+    @Nested
     @DisplayName("result contract")
     class ResultContract {
 

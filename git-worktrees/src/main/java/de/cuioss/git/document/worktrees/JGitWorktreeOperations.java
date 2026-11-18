@@ -833,6 +833,40 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     }
 
     /**
+     * {@inheritDoc}
+     * <p>
+     * The branch name is guarded before any path is derived from it, by the same check as an addition's branch, so
+     * no caller string reaches a file name of the repository. The reservation file is resolved in the real common
+     * directory and deleted with one {@link Files#delete}; a missing file is {@link GitOutcome#NOT_FOUND}. The detail
+     * of a refusal names the field only, never the string (GDR-NFR-3), and the log message carries no argument.
+     */
+    @Override
+    public GitResult<String> releaseBranchReservation(Path root, String branch) {
+        Objects.requireNonNull(root, ROOT);
+        Objects.requireNonNull(branch, BRANCH);
+        try (Repository repository = openRepository(root)) {
+            // a repository without a working tree has no addition to release: JGit 7.8.0 getWorkTree() throws
+            // NoWorkTreeException for it, which ends FAILED
+            repository.getWorkTree();
+            Optional<GitResult<String>> invalid = refuseBranchName(branch);
+            if (invalid.isPresent()) {
+                return invalid.get();
+            }
+            Path commonDir = repository.getCommonDirectory().toPath().toRealPath();
+            String branchRef = Constants.R_HEADS + branch;
+            if (!LinkedWorktrees.releaseBranch(commonDir, branchRef)) {
+                return GitResult.of(GitOutcome.NOT_FOUND, BRANCH + ": no reservation");
+            }
+            LOGGER.info(INFO.BRANCH_RESERVATION_RELEASED);
+            return GitResult.ok(branchRef);
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
+        } catch (IOException | JGitInternalException | IllegalArgumentException | NoWorkTreeException e) {
+            return failure(e);
+        }
+    }
+
+    /**
      * Opens the repository at {@code root}: the working tree containing a {@code .git} entry (a directory, or the file
      * of a linked working tree), or the repository found by walking up from {@code root}.
      */
