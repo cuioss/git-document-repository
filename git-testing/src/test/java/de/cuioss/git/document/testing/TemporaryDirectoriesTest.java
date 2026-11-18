@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.abort;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -29,8 +30,10 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import java.io.IOException;
 import java.nio.file.AccessDeniedException;
+import java.nio.file.FileSystemException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.attribute.PosixFilePermissions;
 import org.junit.jupiter.api.DisplayName;
@@ -67,6 +70,36 @@ class TemporaryDirectoriesTest {
         TemporaryDirectories.delete(directory);
 
         assertFalse(Files.exists(directory), "The tree is deleted together with its read-only file");
+    }
+
+    /**
+     * A dangling symbolic link is deleted like any other entry: JGit's {@code FileUtils#delete} with
+     * {@code SKIP_MISSING} returns early only for a path its existence check reports missing, and that check does not
+     * follow links (JGit 7.8.0, {@code FileUtils#exists} with {@code NOFOLLOW_LINKS}). The test is skipped only where
+     * the platform refuses to create a symbolic link.
+     */
+    @Test
+    @DisplayName("Should delete a tree holding a dangling symbolic link")
+    void shouldDeleteTreeWithDanglingSymbolicLink() throws Exception {
+        var directory = TemporaryDirectories.create();
+        var nested = Files.createDirectories(directory.resolve("refs").resolve("heads"));
+        var link = nested.resolve(Generators.letterStrings(1, 16).next());
+        try {
+            Files.createSymbolicLink(link, directory.resolve("missing-target"));
+        } catch (UnsupportedOperationException | FileSystemException refused) {
+            TemporaryDirectories.delete(directory);
+            abort("The platform refuses to create a symbolic link: " + refused);
+        }
+        assertAll("dangling link",
+                () -> assertTrue(Files.isSymbolicLink(link), "The entry is a symbolic link"),
+                () -> assertFalse(Files.exists(link), "The target of the link does not exist"));
+
+        TemporaryDirectories.delete(directory);
+
+        assertAll("deleted tree",
+                () -> assertFalse(Files.exists(link, LinkOption.NOFOLLOW_LINKS), "The dangling link is deleted"),
+                () -> assertFalse(Files.exists(directory, LinkOption.NOFOLLOW_LINKS),
+                        "The tree holding the dangling link is deleted"));
     }
 
     @Test
