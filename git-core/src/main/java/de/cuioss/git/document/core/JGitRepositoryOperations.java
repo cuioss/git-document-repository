@@ -584,9 +584,6 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             if (type.isInstance(current)) {
                 return Optional.of(type.cast(current));
             }
-            if (current.getCause() == current) {
-                break;
-            }
         }
         return Optional.empty();
     }
@@ -707,9 +704,6 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             for (Throwable current = failure; current != null; current = current.getCause()) {
                 if (isRefusedAuthentication(current.getMessage())) {
                     return GitOutcome.CREDENTIALS_INVALID;
-                }
-                if (current.getCause() == current) {
-                    break;
                 }
             }
             return GitOutcome.UNREACHABLE;
