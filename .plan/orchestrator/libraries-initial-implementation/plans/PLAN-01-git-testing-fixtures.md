@@ -79,12 +79,15 @@ a plain copy from `~/git/pm-mcp-core` (no history); the commit message names the
   unchanged would make `git-testing` depend on `git-core` — confirm/refute at
   `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/test/java/de/planmarshall/provider/git/testing/generators/GitCredentialGenerator.java`
   § `GitCredentialGenerator` (verify-at-outline). Refuted → deliverable 2's plain-value note is moot.
+  - verdict: corroborated | checked_at: 6cc64f0c6512d139846af9edca670da3a1032032 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: pm-provider-git GitCredentialGenerator.java:15 imports GitOperations.GitCredential, declared at GitOperations.java:300 as record GitCredential(String username, char[] secret); the landing reworked it into git-testing's own GitCredential record (GitCredential.java:32) and git-testing/pom.xml declares no reactor dependency. Re-read by the orchestrator at those lines.
 - HYPOTHESIS: `pm-provider-git`'s tests carry no reusable fixture for a local remote; the fixtures of GDR-TEST-1 are
   new code (`ported/PortedFixtures` is worktree-digest specific) — confirm/refute at
   `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/test/java/de/planmarshall/provider/git/ported/PortedFixtures.java`
   § `PortedFixtures` and `JGitOperationsTest` setup (verify-at-outline).
+  - verdict: corroborated | checked_at: 6cc64f0c6512d139846af9edca670da3a1032032 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: PortedFixtures only loads and parses worktree-digest scenario files; the source tests build their local remotes inline (JGitOperationsTest). Read by the three-layer leaf at PortedFixtures.java:149-192; the landed fixtures are new code under git-testing/src/main/java/de/cuioss/git/document/testing/.
 - Verify-first clause: confirm at outline that `cui-java-parent` 1.7.7 does not already manage the JGit / test-stack
   versions (read the effective pom) before adding them to the root dependency management.
+  - verdict: contradicted | checked_at: 6cc64f0c6512d139846af9edca670da3a1032032 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: cui-java-bom 1.7.7 does not manage org.eclipse.jgit but already manages lombok, cui-java-tools, cui-test-juli-logger, cui-test-generator, junit-jupiter-api and easymock; the landing therefore added only JGit to the root dependency management (pom.xml:40-49). The spec wording 'all into root dependency management' was partly redundant. Read by the three-layer leaf in the local .m2 poms; the root pom.xml lines were re-read by the orchestrator.
 
 ## Expected Surface
 

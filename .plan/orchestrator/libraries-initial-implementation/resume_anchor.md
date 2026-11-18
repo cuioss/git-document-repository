@@ -1,1 +1,1 @@
-PLAN-01 (git-testing-fixtures) running (operator-confirmed). Await its PR, then run analyze for the landing; PLAN-02 is next once PLAN-01 lands.
+PLAN-01 shipped (PR #23) and reconciled; inbox drained. PLAN-02 (git-core-import) emitted, awaiting operator-confirmed launch (queue --transition PLAN-02 --status launched, then running when started). PLAN-03/04 follow PLAN-02. PLAN-18 (leftover-fixes) is a collection plan held back until the operator releases it. Ledger lands through the land verb.
