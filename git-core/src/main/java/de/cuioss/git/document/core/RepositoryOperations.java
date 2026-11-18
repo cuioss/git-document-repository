@@ -109,6 +109,95 @@ public interface RepositoryOperations {
     GitResult<RefUpdate> push(PushInput input);
 
     /**
+     * Creates the bare cache repository at the path, or opens the one there (GDR-CORE-8). A cache repository holds the
+     * pinned commits of a source outside every working tree.
+     *
+     * @param cache the git directory of the cache repository
+     * @return {@link GitOutcome#OK} with the canonical git directory, {@link GitOutcome#NOT_A_REPOSITORY} if the path
+     *         holds anything but a bare repository, or {@link GitOutcome#FAILED}
+     */
+    GitResult<Path> initCache(Path cache);
+
+    /**
+     * Fetches exactly one pinned commit, by its full id, from a URL into a cache repository, without credentials and
+     * within a transport timeout (GDR-CORE-8). A commit already in the cache is not fetched again, and no remote is
+     * contacted for it.
+     *
+     * @param input the input
+     * @return {@link GitOutcome#OK} with the commit id, {@link GitOutcome#REFUSED_BY_POLICY} if the policy does not
+     *         admit the URL or the transport would start a process (nothing was sent), {@link GitOutcome#NOT_FOUND} if
+     *         the commit is no full commit id, {@link GitOutcome#UNSERVED} if the remote does not serve the commit,
+     *         {@link GitOutcome#UNREACHABLE} if the remote did not answer, {@link GitOutcome#NOT_A_REPOSITORY} if the
+     *         cache is no repository, or {@link GitOutcome#FAILED}
+     */
+    GitResult<String> fetchCommit(FetchCommitInput input);
+
+    /**
+     * Reads the raw blob of a path at a commit of a cache repository, as it is stored: no filter runs, so a file kept
+     * in Git LFS is read as its pointer (GDR-CORE-8).
+     *
+     * @param input the input
+     * @return {@link GitOutcome#OK} with the bytes, {@link GitOutcome#NOT_FOUND} if the commit is not in the cache or
+     *         the path is no regular file at the commit, {@link GitOutcome#NOT_A_REPOSITORY} if the cache is no
+     *         repository, or {@link GitOutcome#FAILED}
+     */
+    GitResult<byte[]> readFile(ReadFileInput input);
+
+    /**
+     * Input of {@link #fetchCommit(FetchCommitInput)}.
+     *
+     * @param cache  the git directory of the cache repository
+     * @param url    the URL of the repository the commit is fetched from
+     * @param commit the full id of the commit
+     * @param policy the remotes the fetch may contact
+     * @since 0.1
+     */
+    @Builder
+    record FetchCommitInput(Path cache, String url, String commit, RemotePolicy policy) {
+
+        /**
+         * Requires every value.
+         *
+         * @param cache  the git directory of the cache repository
+         * @param url    the URL
+         * @param commit the commit id
+         * @param policy the remote policy
+         * @throws NullPointerException if a value is {@code null}
+         */
+        public FetchCommitInput {
+            Objects.requireNonNull(cache, "cache");
+            Objects.requireNonNull(url, "url");
+            Objects.requireNonNull(commit, "commit");
+            Objects.requireNonNull(policy, "policy");
+        }
+    }
+
+    /**
+     * Input of {@link #readFile(ReadFileInput)}.
+     *
+     * @param cache  the git directory of the cache repository
+     * @param commit the full id of the commit
+     * @param path   the repository-relative path of the file
+     * @since 0.1
+     */
+    record ReadFileInput(Path cache, String commit, String path) {
+
+        /**
+         * Requires every value.
+         *
+         * @param cache  the git directory of the cache repository
+         * @param commit the commit id
+         * @param path   the path
+         * @throws NullPointerException if a value is {@code null}
+         */
+        public ReadFileInput {
+            Objects.requireNonNull(cache, "cache");
+            Objects.requireNonNull(commit, "commit");
+            Objects.requireNonNull(path, "path");
+        }
+    }
+
+    /**
      * Facts of an opened repository.
      *
      * @param worktreeRoot the canonical working-tree root; {@code null} for a bare repository

@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 
@@ -40,6 +41,8 @@ import org.eclipse.jgit.errors.NoRemoteRepositoryException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.errors.TransportException;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
@@ -55,7 +58,10 @@ import org.eclipse.jgit.transport.RefLeaseSpec;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
+import org.eclipse.jgit.transport.TagOpt;
+import org.eclipse.jgit.transport.Transport;
 import org.eclipse.jgit.transport.URIish;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.FileUtils;
 import org.jspecify.annotations.Nullable;
@@ -85,8 +91,21 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     static final List<String> MIRROR_FETCH_REF_SPECS =
             List.of("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/notes/*:refs/notes/*");
 
+    /** The compiled transport timeout of {@link #fetchCommit(FetchCommitInput)}, in seconds: connect and every read. */
+    public static final int FETCH_TIMEOUT_SECONDS = 60;
+
+    /** The references that keep the pinned commits of a cache repository reachable. */
+    static final String PINNED_REFS = "refs/pinned/";
+
     /** The detail prefix of a refused abbreviated revision. */
     private static final String ABBREVIATED_COMMIT_ID = "abbreviated commit id: ";
+
+    /** git's {@code upload-pack} refusing a want it does not serve, lower case. */
+    private static final String NOT_OUR_REF = "not our ref";
+
+    /** A remote refusing a want by its object id: JGit's {@code UploadPack} or a remote reporting it absent. */
+    private static final Pattern WANT_REFUSED =
+            Pattern.compile("(?i)\\bwant [0-9a-f]{40}(?:[0-9a-f]{24})? not (?:valid|found)\\b");
 
     private final FS fs;
     private final RemotePolicy remotePolicy;
@@ -322,6 +341,153 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 | IllegalArgumentException e) {
             return transportFailure(e, input.remote(), target);
         }
+    }
+
+    @Override
+    public GitResult<Path> initCache(Path cache) {
+        Objects.requireNonNull(cache, "cache");
+        try {
+            if (Files.exists(cache) && !isEmptyDirectory(cache)) {
+                try (Repository repository = openGitDir(cache)) {
+                    return repository.isBare() ? GitResult.ok(cache.toRealPath())
+                            : GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + " is no bare repository");
+                }
+            }
+            Files.createDirectories(cache);
+            Git.init().setBare(true).setGitDir(cache.toFile()).setFs(fs).call().close();
+            return GitResult.ok(cache.toRealPath());
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache.toString());
+        } catch (CapabilityRefusedException e) {
+            return refusedCapability(e);
+        } catch (GitAPIException | IOException | JGitInternalException e) {
+            return failure(e);
+        }
+    }
+
+    @Override
+    public GitResult<String> fetchCommit(FetchCommitInput input) {
+        Objects.requireNonNull(input, "input");
+        URIish uri;
+        try {
+            uri = new URIish(input.url());
+        } catch (URISyntaxException e) {
+            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
+        }
+        if (!input.policy().permits(uri)) {
+            return refusedRemote(uri);
+        }
+        if (!ObjectId.isId(input.commit())) {
+            return GitResult.of(GitOutcome.NOT_FOUND, "not a full commit id: " + input.commit());
+        }
+        var commit = ObjectId.fromString(input.commit());
+        try (Repository repository = openCache(input.cache())) {
+            if (isCommit(repository, commit)) {
+                return GitResult.ok(commit.name());
+            }
+            try (Transport transport = Transport.open(repository, uri)) {
+                if (!input.policy().permits(transport.getURI())) {
+                    return refusedRemote(transport.getURI());
+                }
+                transport.setTimeout(FETCH_TIMEOUT_SECONDS);
+                transport.setTagOpt(TagOpt.NO_TAGS);
+                transport.setCheckFetchedObjects(true);
+                transport.fetch(NullProgressMonitor.INSTANCE,
+                        List.of(new RefSpec("+" + commit.name() + ":" + PINNED_REFS + commit.name())));
+            }
+            if (!isCommit(repository, commit)) {
+                return GitResult.of(GitOutcome.UNSERVED, display(uri) + " did not serve " + commit.name());
+            }
+            pin(repository, commit);
+            return GitResult.ok(commit.name());
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
+        } catch (CapabilityRefusedException e) {
+            return refusedCapability(e);
+        } catch (TransportException e) {
+            return isUnservedWant(e.getMessage())
+                    ? GitResult.of(GitOutcome.UNSERVED, display(uri) + " did not serve " + commit.name())
+                    : transportFailure(e, display(uri), display(uri));
+        } catch (IOException | JGitInternalException e) {
+            return transportFailure(e, display(uri), display(uri));
+        }
+    }
+
+    @Override
+    public GitResult<byte[]> readFile(ReadFileInput input) {
+        Objects.requireNonNull(input, "input");
+        if (!ObjectId.isId(input.commit())) {
+            return GitResult.of(GitOutcome.NOT_FOUND, "not a full commit id: " + input.commit());
+        }
+        var commitId = ObjectId.fromString(input.commit());
+        try (Repository repository = openCache(input.cache()); RevWalk walk = new RevWalk(repository)) {
+            if (!isCommit(repository, commitId)) {
+                return GitResult.of(GitOutcome.NOT_FOUND, "commit " + commitId.name() + " is not in the cache");
+            }
+            RevCommit commit = walk.parseCommit(commitId);
+            try (TreeWalk tree = TreeWalk.forPath(repository, input.path(), commit.getTree())) {
+                if (tree == null || (tree.getRawMode(0) & FileMode.TYPE_MASK) != FileMode.TYPE_FILE) {
+                    return GitResult.of(GitOutcome.NOT_FOUND, "path " + input.path() + " at " + commitId.name());
+                }
+                try (var content = repository.open(tree.getObjectId(0), Constants.OBJ_BLOB).openStream()) {
+                    return GitResult.ok(content.readAllBytes());
+                }
+            }
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
+        } catch (IllegalArgumentException e) {
+            return GitResult.of(GitOutcome.NOT_FOUND, "path " + input.path() + " is no valid path");
+        } catch (IOException | JGitInternalException e) {
+            return failure(e);
+        }
+    }
+
+    /**
+     * Points {@code refs/pinned/<id>} at a fetched commit, so it stays reachable. JGit 7.8.0 ignores the destination
+     * of a fetch reference specification whose source is an object id ({@code FetchProcess.expandSingle} only wants
+     * the object), so the reference is written here.
+     */
+    private static void pin(Repository repository, ObjectId commit) throws IOException {
+        var update = repository.updateRef(PINNED_REFS + commit.name());
+        update.setNewObjectId(commit);
+        update.setForceUpdate(true);
+        var result = update.update();
+        if (result != org.eclipse.jgit.lib.RefUpdate.Result.NEW && result != org.eclipse.jgit.lib.RefUpdate.Result.FORCED
+                && result != org.eclipse.jgit.lib.RefUpdate.Result.NO_CHANGE) {
+            throw new IOException("pinned reference not written: " + result);
+        }
+    }
+
+    private Repository openCache(Path cache) throws IOException {
+        return new FileRepositoryBuilder().setFS(fs).setMustExist(true).setGitDir(cache.toFile()).setBare().build();
+    }
+
+    private static boolean isCommit(Repository repository, ObjectId id) throws IOException {
+        if (!repository.getObjectDatabase().has(id)) {
+            return false;
+        }
+        return repository.open(id).getType() == Constants.OBJ_COMMIT;
+    }
+
+    /**
+     * Recognises the closed set of messages by which a remote that answered refuses to serve a wanted object; the test
+     * ignores case. A transport failure with any other message is {@link GitOutcome#UNREACHABLE}.
+     * <ul>
+     * <li>{@code not our ref}: the wording of git's {@code upload-pack}, which GitHub and GitLab run, for a want it
+     * does not advertise or no longer has, e.g. {@code upload-pack: not our ref <sha>} or
+     * {@code remote error: upload-pack: not our ref <sha>}.</li>
+     * <li>{@code want <object id> not valid}: the wording of JGit's {@code UploadPack}.</li>
+     * <li>{@code want <object id> not found}: a want the remote reports as absent.</li>
+     * </ul>
+     *
+     * @param message the message of a transport failure; {@code null} if it has none
+     * @return {@code true} if the message is one of the set
+     */
+    static boolean isUnservedWant(@Nullable String message) {
+        if (message == null) {
+            return false;
+        }
+        return message.toLowerCase(Locale.ROOT).contains(NOT_OUR_REF) || WANT_REFUSED.matcher(message).find();
     }
 
     private static GitResult<RefUpdate> toPushResult(RemoteRefUpdate update) {

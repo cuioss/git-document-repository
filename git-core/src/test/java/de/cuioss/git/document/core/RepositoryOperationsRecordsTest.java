@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -28,9 +29,11 @@ import java.util.List;
 
 import de.cuioss.git.document.core.RepositoryOperations.CloneInput;
 import de.cuioss.git.document.core.RepositoryOperations.CommitInfo;
+import de.cuioss.git.document.core.RepositoryOperations.FetchCommitInput;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.core.RepositoryOperations.PushInput;
+import de.cuioss.git.document.core.RepositoryOperations.ReadFileInput;
 import de.cuioss.git.document.core.RepositoryOperations.RefUpdate;
 import de.cuioss.git.document.core.RepositoryOperations.RepositoryInfo;
 import de.cuioss.git.document.testing.GitGenerators;
@@ -69,6 +72,32 @@ class RepositoryOperationsRecordsTest {
     private static CredentialsProvider credentials() {
         var credential = GitGenerators.credentials().next();
         return new UsernamePasswordCredentialsProvider(credential.username(), credential.token());
+    }
+
+    @Test
+    @DisplayName("the fetch-commit input builder builds the constructor value")
+    void fetchCommitInput() {
+        var cache = path();
+        var url = text();
+        var commit = text();
+        var policy = RemotePolicy.httpsOrigin(URI.create("https://" + text() + ".example.invalid"));
+
+        var built = FetchCommitInput.builder().cache(cache).url(url).commit(commit).policy(policy).build();
+
+        assertEquals(new FetchCommitInput(cache, url, commit, policy), built, "the builder builds the same input");
+    }
+
+    @Test
+    @DisplayName("the fetch-commit input builder refuses a missing cache, and the read input a missing path")
+    void cacheInputsRefuseMissingComponents() {
+        var builder = FetchCommitInput.builder().url(text()).commit(text()).policy(RemotePolicy.localOnly());
+
+        assertAll(
+                () -> assertEquals("cache", assertThrows(NullPointerException.class, builder::build,
+                        "the builder names the missing cache").getMessage(), "the refusal names the missing cache"),
+                () -> assertEquals("path", assertThrows(NullPointerException.class,
+                                () -> new ReadFileInput(path(), text(), null), "a read without path is refused").getMessage(),
+                        "the refusal names the missing path"));
     }
 
     @Test
