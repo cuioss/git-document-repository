@@ -31,6 +31,8 @@ import java.lang.reflect.Parameter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -44,7 +46,6 @@ import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.transport.RefSpec;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -68,20 +69,13 @@ class LocalRemoteExtensionTest {
 
     private final LocalRemoteExtension extension = new LocalRemoteExtension();
 
-    private int receivedBefore;
-
-    @BeforeEach
-    void captureReceivedDirectories() {
-        receivedBefore = RECEIVED_DIRECTORIES.size();
-    }
+    /** Directories recorded by the running test alone; a fresh instance serves every test. */
+    private final Set<Path> recordedByThisTest = ConcurrentHashMap.newKeySet();
 
     @AfterEach
-    void fixtureTestRecordedItsDirectory(TestInfo testInfo) {
-        if (LocalRepositoryExtensionTest.consumesFixture(testInfo, Remote.class, LocalRepository.class)) {
-            assertTrue(RECEIVED_DIRECTORIES.size() > receivedBefore,
-                    "A test consuming @Remote or @LocalRepository records the directory it received: "
-                            + testInfo.getDisplayName());
-        }
+    void fixtureTestRecordedItsDirectories(TestInfo testInfo) {
+        LocalRepositoryExtensionTest.assertEveryFixtureDirectoryRecorded(testInfo, recordedByThisTest, Remote.class,
+                LocalRepository.class);
     }
 
     @AfterAll
@@ -91,11 +85,22 @@ class LocalRemoteExtensionTest {
                         "The directory of the remote is deleted after the test: " + directory)));
     }
 
+    /**
+     * Records a directory the running test received, for the per-test guard and for the deletion check after all
+     * tests.
+     *
+     * @param directory the received directory
+     */
+    private void record(Path directory) {
+        recordedByThisTest.add(directory);
+        RECEIVED_DIRECTORIES.add(directory);
+    }
+
     @Test
     @DisplayName("Should address the bare repository by a file: URL")
     void shouldAddressBareRepositoryByFileUrl(@Remote LocalRemote remote) {
         var directory = remote.repository().getDirectory().toPath();
-        RECEIVED_DIRECTORIES.add(directory);
+        record(directory);
 
         assertAll("local remote",
                 () -> assertEquals("file", remote.uri().getScheme(), "The URL has the scheme file"),
@@ -108,8 +113,8 @@ class LocalRemoteExtensionTest {
     @DisplayName("Should serve a fetch into a local repository")
     void shouldServeFetch(@Remote LocalRemote remote, @LocalRepository Repository local)
             throws Exception {
-        RECEIVED_DIRECTORIES.add(remote.repository().getDirectory().toPath());
-        RECEIVED_DIRECTORIES.add(local.getDirectory().toPath());
+        record(remote.repository().getDirectory().toPath());
+        record(local.getDirectory().toPath());
         var commit = commitOnBranch(remote.repository());
 
         try (var git = Git.wrap(local)) {
@@ -148,7 +153,7 @@ class LocalRemoteExtensionTest {
         private void assertReceivedOwnRemote() {
             var directory = remote.repository().getDirectory().toPath();
             assertFalse(RECEIVED_DIRECTORIES.contains(directory), "No other test received this remote");
-            RECEIVED_DIRECTORIES.add(directory);
+            record(directory);
             assertTrue(Files.isDirectory(directory), "The remote lies in an existing directory");
         }
     }

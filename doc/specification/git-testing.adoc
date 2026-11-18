@@ -110,9 +110,12 @@ in a consumer run.
 == Tests of the Module
 
 Two cleanup cases are covered by tests of their own. `PerClassLifecycleTest` takes all three fixtures under
-`@TestInstance(PER_CLASS)`, as constructor and as method parameters, and asserts that the constructor fixtures are
-shared by the tests of the class and cleaned up when the class ends, while the method-parameter fixtures stay per
-test. The resolvers ask for the extension context of the test method when they resolve a constructor parameter
+`@TestInstance(PER_CLASS)`, as constructor and as method parameters, in one repeated test whose two invocations run
+in method contexts of their own. It asserts that the constructor fixtures are shared by both invocations and cleaned
+up when the class ends: the directories of the local repository and the remote are deleted then, and the in-memory
+repository is closed exactly once then and not before. No directory shows that closing, so the test counts it on the
+closing the resolver stored for the repository. The method-parameter fixtures stay per invocation: the second invocation asserts that the local repository
+and the remote of the first are already deleted. The resolvers ask for the extension context of the test method when they resolve a constructor parameter
 (`ExtensionContextScope.TEST_METHOD`); under the per-class lifecycle Jupiter hands them the context of the test class
 instead, observed with junit-jupiter-api 6.1.3. For a per-class test class, "when the test ends" in
 <<GDR-TEST-1>> therefore reads "when the test class ends" for a constructor fixture; no resolver change is needed,
@@ -158,6 +161,12 @@ double.
 `create(boolean)`. A fresh in-memory repository never fails to initialise, so the failure path of
 `InMemoryRepositoryExtension.initialise` is reachable only through such a double; for every other call it stays a real
 repository, so a subclass is the smaller double, as for `CountingRepository`.
+
+|`InMemoryClosingObserver`, `CountingClosing` (in `PerClassLifecycleTest`)
+|A JUnit extension that, once the per-class instance exists, replaces the closing the in-memory resolver stored in the
+class context with a record that counts its closings and delegates to the stored one. The resolver creates the
+repository itself, so no mock can be handed to it; the observed object is the stored closing that Jupiter closes,
+and a record of one method is shorter than a mock of the store's closing contract.
 
 |`ReflectedParameter` (in `LocalRepositoryExtensionTest`)
 |A record implementing JUnit's `ParameterContext` over a reflected method parameter, for calling an extension

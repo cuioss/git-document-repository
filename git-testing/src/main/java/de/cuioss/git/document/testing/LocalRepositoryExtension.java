@@ -159,9 +159,10 @@ public final class LocalRepositoryExtension implements ParameterResolver {
     }
 
     /**
-     * Closes a repository created before a failure and deletes its directory. A failure to delete the directory is
-     * added to the failure being propagated as a suppressed exception. Package-private so that a test can drive the
-     * rollback with a repository double.
+     * Closes a repository created before a failure and deletes its directory, also when closing fails. A failure to
+     * close the repository or to delete the directory is added to the failure being propagated as a suppressed
+     * exception, so that it neither skips the deletion nor masks that failure. Package-private so that a test can
+     * drive the rollback with a repository double.
      *
      * @param repository the repository created before the failure, or {@code null} when none was constructed
      * @param directory  the directory created for the repository
@@ -170,7 +171,14 @@ public final class LocalRepositoryExtension implements ParameterResolver {
     static void rollBack(@Nullable Repository repository, Path directory,
             ParameterResolutionException failure) {
         if (repository != null) {
-            repository.close();
+            try {
+                repository.close();
+            }
+            // an unchecked failure of the closing must not skip the deletion or replace the propagated failure
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
+            catch (RuntimeException closingFailure) {
+                failure.addSuppressed(closingFailure);
+            }
         }
         try {
             TemporaryDirectories.delete(directory);

@@ -16,6 +16,8 @@
 package de.cuioss.git.document.testing;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -36,6 +38,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
@@ -48,7 +52,6 @@ import org.eclipse.jgit.util.SystemReader;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -71,20 +74,12 @@ class LocalRepositoryExtensionTest {
 
     private final LocalRepositoryExtension extension = new LocalRepositoryExtension();
 
-    private int receivedBefore;
-
-    @BeforeEach
-    void captureReceivedDirectories() {
-        receivedBefore = RECEIVED_DIRECTORIES.size();
-    }
+    /** Directories recorded by the running test alone; a fresh instance serves every test. */
+    private final Set<Path> recordedByThisTest = ConcurrentHashMap.newKeySet();
 
     @AfterEach
-    void fixtureTestRecordedItsDirectory(TestInfo testInfo) {
-        if (consumesFixture(testInfo, LocalRepository.class)) {
-            assertTrue(RECEIVED_DIRECTORIES.size() > receivedBefore,
-                    "A test consuming @LocalRepository records the directory it received: "
-                            + testInfo.getDisplayName());
-        }
+    void fixtureTestRecordedItsDirectories(TestInfo testInfo) {
+        assertEveryFixtureDirectoryRecorded(testInfo, recordedByThisTest, LocalRepository.class);
     }
 
     @AfterAll
@@ -105,14 +100,58 @@ class LocalRepositoryExtensionTest {
      */
     @SafeVarargs
     static boolean consumesFixture(TestInfo testInfo, Class<? extends Annotation>... annotations) {
+        return fixtureParameterCount(testInfo, annotations) > 0;
+    }
+
+    /**
+     * Counts the parameters of the running test's method and of the constructors of its test class that carry one of
+     * the given fixture annotations, searched as in {@link #consumesFixture(TestInfo, Class[])}.
+     *
+     * @param testInfo    the running test
+     * @param annotations the qualifier annotations of the fixtures
+     * @return how many parameters carry one of the annotations
+     */
+    @SafeVarargs
+    static long fixtureParameterCount(TestInfo testInfo, Class<? extends Annotation>... annotations) {
         var executables = new ArrayList<Executable>();
         testInfo.getTestMethod().ifPresent(executables::add);
         testInfo.getTestClass().ifPresent(testClass -> executables.addAll(List.of(testClass.getDeclaredConstructors())));
         var wanted = List.of(annotations);
         return executables.stream()
                 .flatMap(executable -> Arrays.stream(executable.getParameterAnnotations()))
-                .flatMap(Arrays::stream)
-                .anyMatch(annotation -> wanted.contains(annotation.annotationType()));
+                .filter(parameterAnnotations -> Arrays.stream(parameterAnnotations)
+                        .anyMatch(annotation -> wanted.contains(annotation.annotationType())))
+                .count();
+    }
+
+    /**
+     * Asserts that a test consuming directory-backed fixtures recorded one distinct directory per fixture parameter,
+     * counting only what the running test itself recorded, so that the recordings of another test cannot satisfy it.
+     *
+     * @param testInfo    the running test
+     * @param recorded    the directories the running test recorded
+     * @param annotations the qualifier annotations of the directory-backed fixtures
+     */
+    @SafeVarargs
+    static void assertEveryFixtureDirectoryRecorded(TestInfo testInfo, Set<Path> recorded,
+            Class<? extends Annotation>... annotations) {
+        var expected = fixtureParameterCount(testInfo, annotations);
+        if (expected > 0) {
+            assertEquals(expected, recorded.size(),
+                    "A test consuming directory-backed fixtures records one directory per fixture parameter: "
+                            + testInfo.getDisplayName());
+        }
+    }
+
+    /**
+     * Records a directory the running test received, for the per-test guard and for the deletion check after all
+     * tests.
+     *
+     * @param directory the received directory
+     */
+    private void record(Path directory) {
+        recordedByThisTest.add(directory);
+        RECEIVED_DIRECTORIES.add(directory);
     }
 
     @Test
@@ -124,7 +163,7 @@ class LocalRepositoryExtensionTest {
         var resolved = extension.resolveParameter(declared, context);
         var stored = context.getStore(LocalRepositoryExtension.NAMESPACE)
                 .get(LocalRepositoryExtension.storeKey(declared), LocalRepositoryExtension.TemporaryRepository.class);
-        RECEIVED_DIRECTORIES.add(stored.directory());
+        record(stored.directory());
 
         assertAll("stored cleanup",
                 () -> assertSame(resolved, stored.repository(), "The stored cleanup holds the returned repository"),
@@ -139,7 +178,7 @@ class LocalRepositoryExtensionTest {
     @DisplayName("Should provide a bare repository in an existing directory")
     void shouldProvideBareRepository(@LocalRepository Repository repository) {
         var directory = repository.getDirectory().toPath();
-        RECEIVED_DIRECTORIES.add(directory);
+        record(directory);
 
         assertAll("local repository",
                 () -> assertTrue(repository.isBare(), "The repository is bare"),
@@ -151,8 +190,8 @@ class LocalRepositoryExtensionTest {
     void shouldProvideDistinctRepositories(@LocalRepository Repository first, @LocalRepository Repository second) {
         var firstDirectory = first.getDirectory().toPath();
         var secondDirectory = second.getDirectory().toPath();
-        RECEIVED_DIRECTORIES.add(firstDirectory);
-        RECEIVED_DIRECTORIES.add(secondDirectory);
+        record(firstDirectory);
+        record(secondDirectory);
 
         assertAll("two local repositories",
                 () -> assertNotSame(first, second, "Each parameter receives its own repository"),
@@ -189,7 +228,7 @@ class LocalRepositoryExtensionTest {
         private void assertReceivedOwnRepository() {
             var directory = repository.getDirectory().toPath();
             assertFalse(RECEIVED_DIRECTORIES.contains(directory), "No other test received this repository");
-            RECEIVED_DIRECTORIES.add(directory);
+            record(directory);
             assertTrue(Files.isDirectory(directory), "The repository lies in an existing directory");
         }
     }
@@ -328,7 +367,26 @@ class LocalRepositoryExtensionTest {
             assertAll("rolled back creation",
                     () -> assertEquals(1, repository.closings, "The repository is closed once"),
                     () -> assertFalse(Files.exists(directory), "The directory is deleted"),
-                    () -> assertEquals(0, failure.getSuppressed().length, "The deletion adds no suppressed failure"));
+                    () -> assertEquals(0, failure.getSuppressed().length,
+                            "The closing and the deletion add no suppressed failure"));
+        }
+
+        @Test
+        @DisplayName("Should delete the directory and keep the propagated failure when closing fails on the rollback")
+        void shouldDeleteDirectoryWhenClosingFailsOnRollBack() throws Exception {
+            var closingFailure = new IllegalStateException("The repository cannot be closed");
+            var repository = new CountingRepository(closingFailure);
+            var directory = directoryWithContent();
+            var failure = new ParameterResolutionException("The creation failed");
+
+            assertDoesNotThrow(() -> LocalRepositoryExtension.rollBack(repository, directory, failure),
+                    "The failure of the closing does not replace the failure being propagated");
+
+            assertAll("rolled back creation after a failed closing",
+                    () -> assertEquals(1, repository.closings, "The closing of the repository is attempted once"),
+                    () -> assertFalse(Files.exists(directory), "The directory is deleted nevertheless"),
+                    () -> assertArrayEquals(new Throwable[]{closingFailure}, failure.getSuppressed(),
+                            "The failure of the closing is suppressed on the propagated failure"));
         }
 
         private static Path directoryWithContent() throws IOException {
