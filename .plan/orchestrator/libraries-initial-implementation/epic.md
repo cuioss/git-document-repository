@@ -44,6 +44,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `general.adoc`, `AGENTS.md` → the gate puts it to the operator).
 - PLAN-10, PLAN-12, PLAN-13, PLAN-17 — Each opens with an owner decision on a third-party library; expect a question
   early in the plan's refine phase.
+- PLAN-18 — Collection plan for leftovers (starts with the minor findings of PLAN-01). Held back from `next` until the
+  operator releases it; no technical dependency on any other staged plan. Further leftovers are folded in by `analyze`.
 
 ## Decisions
 
@@ -81,10 +83,39 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - 2026-11-17 — Resolved the git-ignored ledger (found at decompose: `.gitignore` `.plan/*` hid `.plan/orchestrator/`).
   `.gitignore` now un-ignores `.plan/orchestrator/` and `.plan/archived-orchestrators/` and keeps their `*/logs/`
   local; the ledger lands on `main` through `chore/orchestrator-ledger-init`, at the operator's instruction.
+- 2026-11-18 — `orchestrator.use_worktree` switched on at the operator's instruction (ledger edits had been written to
+  `main` by mistake and were reverted there); ledger state now reaches `main` only through `land`. The knob lives in
+  `.plan/marshal.json` and landed through PR #22.
+- 2026-11-18 — PLAN-01 shipped (PR #23, `6cc64f0`); landing report `landings/PLAN-01.md`. Its three-layer analysis found
+  no blocker or major issue. Its verify-first clause was contradicted (the parent chain already manages the test stack, so
+  only JGit went into the root `dependencyManagement`); the spec was not rewritten, the verdict is stamped on it.
+  PLAN-01 declared 7 paths and touched 31 (seven documentation files, from two Q-Gate findings); no staged spec needed a
+  declaration correction, because PLAN-02..PLAN-17 already declare those documents.
+- 2026-11-18 — Staged PLAN-18 (`leftover-fixes`, WS-01) as a general collection plan for the minor leftovers of landed
+  plans, starting with the layer-2 and layer-3 findings of PLAN-01 and the EasyMock deviation of `git-testing`.
+  Operator's instruction ("a general fix plan as a collection for this and other leftovers"). Alternatives offered: a
+  Watch only; ignore. It is held back from `next` until the operator releases it, so `analyze` can keep folding
+  leftovers into it.
+- 2026-11-18 — Candidate lessons of PLAN-01 (16 inbox messages). Operator's choice: the eight plan-marshall tooling
+  lessons are filed in the local lessons store with `--allow-foreign-store` (`2026-11-18-07-001` to `-007`; the two
+  outline lessons 001 and 002 merged into one entry); the eight lessons about this repository's own code are discarded
+  as shipped, because their rules are embodied in the merged code, tests and Javadoc and later plans use the
+  `git-testing` fixtures rather than writing their own.
 
 ## Open Defects
 
+- Incomplete landing `git-testing-fixtures-017.md` (PLAN-01): `inbox landing-check` reports `complete: false`, missing
+  `unresolved_review_threads`, `review_body_findings_total`, `review_body_findings_handled`, `sonar_open_new_issues` (all
+  `unknown` — no finalize step records them and the post-merge Sonar read was undecidable). The landing was reconciled as
+  far as it goes; the analysis re-read the first two against the provider (0 and 6) and could not re-verify the handled
+  count or Sonar. A manual paste from that plan may still surface a required fact the inbox did not carry.
+
 ## Watches
+
+- PLAN-18 holds the leftovers of PLAN-01: four test gaps, cleanup that depends on a JUnit setting, `@InMemory` without
+  HEAD, a descriptor never run on the module path, and three leads not settled by reading (`PER_CLASS` lifecycle,
+  dangling symlinks, EasyMock versus hand-written doubles). — release it with the operator once enough leftovers are
+  collected, or at the end of WS-01.
 
 - The `pm-mcp-core` switch-over (`doc/clients/pm-mcp-core.adoc` § Order of the Switch-Over, step 2) follows the
   0.1.0 release and is work in `~/git/pm-mcp-core`. Its open question 3 (JGit in the native image of `pm-mcpd`

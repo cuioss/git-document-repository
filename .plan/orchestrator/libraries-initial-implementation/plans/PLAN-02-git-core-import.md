@@ -124,6 +124,14 @@ history".
 - Verify-first clause: GDR-CORE-1 says `CapabilityRefusedException` is "an exception type of `git-core`, not of JGit";
   the moved type extends `JGitInternalException`. Settle whether it must stay unchecked-under-JGit so JGit propagates
   it through `FS` callers (likely), and phrase the spec accordingly.
+- Verify-first clause: `git-testing` (landed by PLAN-01, merge commit `6cc64f0`) runs its own tests on the class path
+  (`useModulePath=false` in `git-testing/pom.xml`) because `junit-jupiter-api` is a compile dependency there, and the
+  module path made the Surefire launcher fail with `IllegalAccessError` on `org.junit.platform.commons.util`. No test
+  ever ran `git-testing`'s descriptor on the module path, and JGit and `cui-test-generator` are automatic modules. Settle
+  at outline how `git-core`'s tests consume `git-testing` in test scope with `git-core`'s own `module-info.java`
+  (module path or class path), and record the Surefire setting in `git-core/pom.xml`. A failure that needs a change in
+  `git-testing` is put to the operator before it is made (`git-testing/` is not in this plan's surface; PLAN-18
+  deliverable 4 collects the module-path question).
 
 ## Expected Surface
 
