@@ -38,7 +38,8 @@ Planned but not yet created: `git-store`, `git-forms`, `git-timestamp`, `git-dir
 log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`; its tests run on the class path
 against the `git-testing` fixtures. `git-worktrees` exports `de.cuioss.git.document.worktrees` with the worktree part
 taken over from `pm-provider-git`: `WorktreeOperations` with `JGitWorktreeOperations` (add, list and remove linked
-working trees, commit from a working tree, working-tree status `WorktreeStatus`), the package-private
+working trees, commit from a working tree, working-tree status `WorktreeStatus`, release of a branch reservation left
+by an ended process), the package-private
 `LinkedWorktrees` and the `LogRecord` holder `GitWorktreesLogMessages`; its tests run on the class path against the
 `git-testing` fixtures. Add an `exports` directive together with the first public class of a package: javac rejects
 exporting a package that contains only `package-info.java`.

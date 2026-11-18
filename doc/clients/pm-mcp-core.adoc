@@ -201,15 +201,21 @@ the switch-over:
   file completely before it appears under its name, `HEAD` last, removes the directory it claimed when a write fails,
   skips an entry without `gitdir` or `HEAD` when listing, and resolves a relative `gitdir` against the administration
   directory.
-* *Concurrent additions.* `worktreeAdd` claims its target exclusively and reserves an existing branch until the new
-  working tree names it; a refused or failed addition removes only what it created, a branch it created only while the
-  branch still points at the start. An unknown start point is not found, also for an existing branch.
-* *Removal.* `worktreeRemove` refuses a repository at the root that is not the registered working tree
-  (`IDENTITY_MISMATCH`) and removes a prunable working tree by its administration directory only.
+* *Concurrent additions.* `worktreeAdd` claims its target exclusively and reserves every branch, a new one like an
+  existing one, until the new working tree names it; a refused or failed addition removes only what it created, a
+  branch it created only while the branch still points at the start. An unknown start point is not found, also for an
+  existing branch. `releaseBranchReservation` is new: it releases a reservation an ended process left behind
+  (xref:../specification/git-worktrees.adoc#GDR-WT-4[GDR-WT-4]).
+* *Removal.* `worktreeRemove` ends `WORKTREE_NOT_FOUND`, no longer `IDENTITY_MISMATCH`, for a repository at the root
+  that is not the registered working tree, compares the registered paths as real paths and removes a prunable working
+  tree by its administration directory only.
 * *Commit.* `commit` refuses a present `pre-commit`, `commit-msg` or `post-commit` hook before anything is staged, does
   not stage the root of a linked working tree inside the committing one, and writes the `HEAD` reflog entry of a
-  commit in a linked working tree to that working tree's own log.
-* *Log messages.* The INFO messages carry no path and no administrative name; the add message names the start commit.
+  commit in a linked working tree to that working tree's own log; a reflog entry that cannot be written keeps the
+  created commit `OK`.
+* *Log messages.* The INFO messages carry no path and no administrative name; the add message names the start commit,
+  and the release of a branch reservation is logged without an argument. The WARN message `GIT_WORKTREES-101` names
+  the commit id of a commit whose reflog entry was not written.
 * *Status.* The working-tree status `worktreeStatus` is new: the three path sets `changed`, `untracked` and `deleted`
   mapped from JGit's `Status`, whose union is the path union the source's `worktreeSha` reads; the digest itself stays
   in `pm-provider-git`.
