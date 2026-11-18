@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.abort;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -35,9 +34,11 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 @DisplayName("Temporary directories")
 @EnableGeneratorController
@@ -76,20 +77,19 @@ class TemporaryDirectoriesTest {
      * A dangling symbolic link is deleted like any other entry: JGit's {@code FileUtils#delete} with
      * {@code SKIP_MISSING} returns early only for a path its existence check reports missing, and that check does not
      * follow links (JGit 7.8.0, {@code FileUtils#exists} with {@code NOFOLLOW_LINKS}). The test is skipped only where
-     * the platform refuses to create a symbolic link.
+     * a probe link in an empty directory cannot be created, so the platform is known to refuse symbolic links; any
+     * other failure fails the test. The tree lives below an invocation-scoped {@code @TempDir}, which removes what
+     * remains if the explicit deletion under test fails part-way.
      */
     @Test
     @DisplayName("Should delete a tree holding a dangling symbolic link")
-    void shouldDeleteTreeWithDanglingSymbolicLink() throws Exception {
-        var directory = TemporaryDirectories.create();
+    void shouldDeleteTreeWithDanglingSymbolicLink(@TempDir Path root) throws Exception {
+        assumeTrue(canCreateSymbolicLinks(Files.createDirectory(root.resolve("probe"))),
+                "The platform refuses to create a symbolic link");
+        var directory = Files.createDirectory(root.resolve("tree"));
         var nested = Files.createDirectories(directory.resolve("refs").resolve("heads"));
         var link = nested.resolve(Generators.letterStrings(1, 16).next());
-        try {
-            Files.createSymbolicLink(link, directory.resolve("missing-target"));
-        } catch (UnsupportedOperationException | FileSystemException refused) {
-            TemporaryDirectories.delete(directory);
-            abort("The platform refuses to create a symbolic link: " + refused);
-        }
+        Files.createSymbolicLink(link, directory.resolve("missing-target"));
         assertAll("dangling link",
                 () -> assertTrue(Files.isSymbolicLink(link), "The entry is a symbolic link"),
                 () -> assertFalse(Files.exists(link), "The target of the link does not exist"));
@@ -100,6 +100,19 @@ class TemporaryDirectoriesTest {
                 () -> assertFalse(Files.exists(link, LinkOption.NOFOLLOW_LINKS), "The dangling link is deleted"),
                 () -> assertFalse(Files.exists(directory, LinkOption.NOFOLLOW_LINKS),
                         "The tree holding the dangling link is deleted"));
+    }
+
+    /**
+     * Whether a symbolic link can be created in the given empty directory: the one capability the dangling-link test
+     * needs, asked where no other failure can be mistaken for the platform's refusal.
+     */
+    private static boolean canCreateSymbolicLinks(Path emptyDirectory) throws IOException {
+        try {
+            Files.createSymbolicLink(emptyDirectory.resolve("probe-link"), emptyDirectory.resolve("probe-target"));
+            return true;
+        } catch (UnsupportedOperationException | FileSystemException refused) {
+            return false;
+        }
     }
 
     @Test

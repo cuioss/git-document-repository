@@ -50,7 +50,9 @@
                 </configuration>
                 <executions>
                     <!-- The fixtures must clean up also for a consumer that switches off Jupiter's closing of
-                         AutoCloseable store values: the fixture tests run a second time with that setting false. -->
+                         AutoCloseable store values: the tests run a second time with that setting false. The second run
+                         discovers the same tests as the first, so no list of class names has to mirror the fixture
+                         tests, and its reports carry a suffix so they do not replace those of the first run. -->
                     <execution>
                         <id>store-autoclose-off</id>
                         <phase>test</phase>
@@ -58,12 +60,7 @@
                             <goal>test</goal>
                         </goals>
                         <configuration>
-                            <includes>
-                                <include>**/LocalRepositoryExtensionTest.java</include>
-                                <include>**/InMemoryRepositoryExtensionTest.java</include>
-                                <include>**/LocalRemoteExtensionTest.java</include>
-                                <include>**/CombinedFixturesTest.java</include>
-                            </includes>
+                            <reportNameSuffix>store-autoclose-off</reportNameSuffix>
                             <properties>
                                 <configurationParameters>
                                     junit.jupiter.extensions.store.close.autocloseable.enabled=false
