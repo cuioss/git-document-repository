@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -191,18 +192,26 @@ class WorktreeOperationsRecordsTest {
         var expected = List.copyOf(new TreeSet<>(changed));
 
         var status = new WorktreeStatus(changed, new HashSet<>(changed), new HashSet<>(changed));
-        changed.add(text() + text());
+        // longer than every path of the set, so the input set changes for certain
+        var longest = changed.stream().max(Comparator.comparingInt(String::length)).orElseThrow();
+        changed.add(longest + text());
+        var changedPaths = status.changed();
+        var untrackedPaths = status.untracked();
+        var deletedPaths = status.deleted();
+        var addition = text();
+        var first = expected.getFirst();
 
         assertAll(
-                () -> assertEquals(expected, List.copyOf(status.changed()), "the copy is sorted and unchanged"),
-                () -> assertEquals(expected, List.copyOf(status.untracked()), "the untracked copy is sorted"),
-                () -> assertEquals(expected, List.copyOf(status.deleted()), "the deleted copy is sorted"),
-                () -> assertThrows(UnsupportedOperationException.class, () -> status.changed().add(text()),
+                () -> assertEquals(expected.size() + 1, changed.size(), "the input set has changed"),
+                () -> assertEquals(expected, List.copyOf(changedPaths), "the copy is sorted and unchanged"),
+                () -> assertEquals(expected, List.copyOf(untrackedPaths), "the untracked copy is sorted"),
+                () -> assertEquals(expected, List.copyOf(deletedPaths), "the deleted copy is sorted"),
+                () -> assertThrows(UnsupportedOperationException.class, () -> changedPaths.add(addition),
                         "the changed paths cannot be modified"),
-                () -> assertThrows(UnsupportedOperationException.class, () -> status.untracked().clear(),
+                () -> assertThrows(UnsupportedOperationException.class, untrackedPaths::clear,
                         "the untracked paths cannot be modified"),
-                () -> assertThrows(UnsupportedOperationException.class,
-                        () -> status.deleted().remove(expected.getFirst()), "the deleted paths cannot be modified"));
+                () -> assertThrows(UnsupportedOperationException.class, () -> deletedPaths.remove(first),
+                        "the deleted paths cannot be modified"));
     }
 
     @Test

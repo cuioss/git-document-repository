@@ -37,9 +37,13 @@ import org.jspecify.annotations.Nullable;
  * and results carrying the
  * closed {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
  * <p>
- * Every repository an implementation opens is built on {@link RefusingFS}, so no operation starts a process; an
- * operation that would run a hook ends {@link GitOutcome#REFUSED_BY_POLICY} with the refused capability in the detail.
- * No result detail carries an author or committer name, an e-mail address or a commit message (GDR-NFR-3).
+ * Every repository an implementation opens is built on {@link RefusingFS}, so no operation starts a process through
+ * the repository's file system; an operation that would run a hook ends {@link GitOutcome#REFUSED_BY_POLICY} with the
+ * refused capability in the detail. The guarantee is conditional on the startup exception of {@code git-core}
+ * (GDR-CORE-1): JGit reads the user and system configuration through its process-wide {@code SystemReader}, which the
+ * operations do not replace, and the default reader runs {@code git} once per JVM to locate the system
+ * configuration. No process starts only where the application installed {@link RefusingFS#systemReader} before any
+ * JGit use. No result detail carries an author or committer name, an e-mail address or a commit message (GDR-NFR-3).
  *
  * @since 0.1
  */
@@ -48,11 +52,16 @@ public interface WorktreeOperations {
     /**
      * Creates a linked working tree in git's own layout, so {@code git worktree list} reads it. The start point and
      * the branch are classified by {@code GitIdentity}: an ambiguous name is refused with its candidates in the detail,
-     * and an abbreviated commit id is never resolved.
+     * and an abbreviated or unknown start point is never resolved, also not for an existing branch. The target is
+     * claimed exclusively and an existing branch is reserved until the new working tree is registered, so of two
+     * concurrent additions for one target or one branch exactly one succeeds. A refused or failed addition removes only
+     * what it created itself: the target directory or its contents, its administration directory and the branch it
+     * created, the latter only while it still points at the start.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the new working tree, {@link GitOutcome#ALREADY_EXISTS} if the path is not
-     *         empty or the branch to create exists, {@link GitOutcome#BRANCH_CHECKED_OUT},
+     *         empty or claimed by another addition, or the branch to create exists,
+     *         {@link GitOutcome#BRANCH_CHECKED_OUT} also for a branch another addition reserved,
      *         {@link GitOutcome#NOT_FOUND} for an unknown branch or an unknown or abbreviated start point,
      *         {@link GitOutcome#AMBIGUOUS}, {@link GitOutcome#IDENTITY_MISMATCH}, {@link GitOutcome#PATH_REFUSED} for a
      *         path outside the main working tree, {@link GitOutcome#REFUSED_BY_POLICY},
@@ -70,19 +79,30 @@ public interface WorktreeOperations {
     GitResult<List<Worktree>> worktreeList(Path root);
 
     /**
-     * Removes a clean, unlocked linked working tree and its administration files; the removal is never forced.
+     * Removes a clean, unlocked linked working tree and its administration files; the removal is never forced. The
+     * repository at the root must be the registered working tree, and a prunable working tree is removed by its
+     * administration files only, so a directory that reuses its path is kept.
+     * <p>
+     * The caller guarantees exclusive use of the working tree from the call until it returns: the check that the
+     * working tree is clean and its deletion cannot be made one atomic step, so a change written in between is deleted
+     * with it.
      *
      * @param root     the main working-tree root
      * @param worktree the root of the linked working tree to remove
      * @return {@link GitOutcome#OK} with the removed root, {@link GitOutcome#WORKTREE_NOT_FOUND},
-     *         {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED}, {@link GitOutcome#PATH_REFUSED}
+     *         {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED},
+     *         {@link GitOutcome#IDENTITY_MISMATCH} for another repository at the root, {@link GitOutcome#PATH_REFUSED}
      *         for the main working tree, {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#NOT_A_REPOSITORY} or
      *         {@link GitOutcome#FAILED}
      */
     GitResult<Path> worktreeRemove(Path root, Path worktree);
 
     /**
-     * Stages every change of a working tree (additions, modifications, deletions) and commits it without signing.
+     * Stages every change of a working tree (additions, modifications, deletions) and commits it without signing. The
+     * root of a registered linked working tree inside it is not staged. A present {@code pre-commit},
+     * {@code commit-msg} or {@code post-commit} hook ends the operation before anything is staged or committed. A
+     * commit in a linked working tree writes its {@code HEAD} reflog entry to that working tree's own log, as git
+     * does.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the commit, {@link GitOutcome#NOTHING_TO_COMMIT},
@@ -175,7 +195,8 @@ public interface WorktreeOperations {
      * @param branch       the branch to check out; {@code null} for a detached working tree
      * @param createBranch whether to create {@code branch} at {@code startPoint}
      * @param startPoint   the start point: {@code HEAD}, a reference by its short or full name, or a full commit id;
-     *                     for an existing branch only a full commit id is checked against the branch
+     *                     for an existing branch it must be known, and only a full commit id is checked against the
+     *                     branch
      * @since 0.1
      */
     @Builder

@@ -20,8 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -48,19 +51,27 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The native administration of git's linked worktrees (JGit has no {@code git worktree} command): a common directory
  * without a {@code worktrees/} subtree has no linked worktree, a created worktree is listed back in git's layout, the
- * administration directory is claimed atomically under the next free suffix, and a deletion removes a tree of files and
- * directories, while a missing root or lock is no error. The common directory is the git directory of a bare
- * repository of the {@code git-testing} fixture.
+ * administration directory is claimed atomically under the next free suffix and removed again when its initialization
+ * fails, an incomplete entry is skipped and a relative {@code gitdir} resolved, a branch is reserved for one creation at
+ * a time, and a deletion removes a tree of files and directories, while a missing root or lock is no error. The common
+ * directory is the git directory of a bare repository of the {@code git-testing} fixture.
  */
 @EnableGeneratorController
 @DisplayName("Linked worktrees")
 class LinkedWorktreesTest {
 
+    // unique, so two entries of one test never share a name
+    private static final TypedGenerator<String> NAMES = Generators.uniqueValues(Generators.letterStrings(3, 12));
+
     @TempDir
     Path base;
 
     private static String name() {
-        return Generators.letterStrings(3, 12).next();
+        return NAMES.next();
+    }
+
+    private static String content() {
+        return Generators.letterStrings(1, 40).next();
     }
 
     private static Path commonDir(Repository repository) {
@@ -155,7 +166,8 @@ class LinkedWorktreesTest {
         int creations = 8;
         var roots = new ArrayList<Path>();
         for (int i = 0; i < creations; i++) {
-            roots.add(worktreeRoot(name));
+            // a distinct parent per worker and the shared basename, so no two roots are equal
+            roots.add(Files.createDirectories(base.resolve(String.valueOf(i)).resolve(name)));
         }
         var start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(creations);
@@ -176,12 +188,90 @@ class LinkedWorktreesTest {
 
             assertAll(
                     () -> assertEquals(creations, claimed.size(), "every creation claimed its own directory"),
+                    () -> assertEquals(creations, listed.size(), "every creation is listed"),
                     () -> assertEquals(new HashSet<>(roots),
                             new HashSet<>(listed.stream().map(WorktreeOperations.Worktree::path).toList()),
                             "every administration directory points back to its own worktree"));
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    @DisplayName("GDR-WT-1: a failed initialization write leaves no administration directory and keeps the worktree")
+    void failedCreationRemovesAdministration(@LocalRepository Repository repository) throws Exception {
+        var name = name();
+        var worktree = worktreeRoot(name);
+        // a non-empty directory where the .git file goes, so its write fails after the administration files
+        var blocker = Files.createDirectories(worktree.resolve(Constants.DOT_GIT));
+        var kept = Files.writeString(blocker.resolve(name()), content());
+
+        var failure = assertThrows(IOException.class,
+                () -> LinkedWorktrees.create(commonDir(repository), worktree, Constants.R_HEADS + name()),
+                "the write of the .git file fails");
+
+        assertAll(
+                () -> assertEquals(0, failure.getSuppressed().length,
+                        "the original failure is thrown and the cleanup did not fail"),
+                () -> assertFalse(Files.exists(commonDir(repository).resolve(LinkedWorktrees.WORKTREES).resolve(name)),
+                        "the claimed administration directory is removed"),
+                () -> assertEquals(List.of(blocker), listFiles(worktree),
+                        "the worktree directory keeps what it held and gets no partial file"),
+                () -> assertTrue(Files.isRegularFile(kept), "the caller's file is kept"),
+                () -> assertEquals(List.of(), LinkedWorktrees.list(commonDir(repository)), "no worktree is listed"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-1: an entry without gitdir or HEAD is skipped, a complete locked one is listed")
+    void incompleteEntriesSkipped(@LocalRepository Repository repository) throws Exception {
+        var worktree = worktreeRoot(name());
+        var complete = LinkedWorktrees.create(commonDir(repository), worktree, Constants.R_HEADS + name());
+        var worktrees = commonDir(repository).resolve(LinkedWorktrees.WORKTREES);
+        var withoutGitdir = Files.createDirectories(worktrees.resolve(name()));
+        Files.writeString(withoutGitdir.resolve(LinkedWorktrees.LOCKED), content());
+        var withoutHead = Files.createDirectories(worktrees.resolve(name()));
+        Files.writeString(withoutHead.resolve(Constants.GITDIR_FILE),
+                worktreeRoot(name()).resolve(Constants.DOT_GIT).toString());
+
+        var listed = LinkedWorktrees.list(commonDir(repository));
+
+        assertAll(
+                () -> assertEquals(1, listed.size(), "only the complete entry is listed"),
+                () -> assertEquals(complete.getFileName().toString(), listed.getFirst().name(),
+                        "the listed entry is the complete one"),
+                () -> assertTrue(listed.getFirst().locked(), "the complete entry is listed while locked"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-1: a relative gitdir entry resolves against the administration directory")
+    void relativeGitdirResolved(@LocalRepository Repository repository) throws Exception {
+        var worktree = worktreeRoot(name());
+        var admin = LinkedWorktrees.create(commonDir(repository), worktree, Constants.R_HEADS + name());
+        var relative = admin.relativize(worktree.resolve(Constants.DOT_GIT));
+        Files.writeString(admin.resolve(Constants.GITDIR_FILE), relative + "\n");
+
+        var listed = LinkedWorktrees.list(commonDir(repository)).getFirst();
+
+        assertAll(
+                () -> assertFalse(relative.isAbsolute(), "the entry is relative"),
+                () -> assertEquals(worktree, listed.path(), "the relative entry names the worktree root"),
+                () -> assertFalse(listed.prunable(), "the resolved worktree is present"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-1: a branch is reserved for one creation at a time and free again once released")
+    void branchReservation(@LocalRepository Repository repository) throws Exception {
+        var branch = Constants.R_HEADS + name();
+
+        var first = LinkedWorktrees.reserveBranch(commonDir(repository), branch);
+        var second = LinkedWorktrees.reserveBranch(commonDir(repository), branch);
+        LinkedWorktrees.release(first.orElseThrow());
+        var afterRelease = LinkedWorktrees.reserveBranch(commonDir(repository), branch);
+
+        assertAll(
+                () -> assertTrue(first.isPresent(), "the first reservation succeeds"),
+                () -> assertTrue(second.isEmpty(), "a second reservation of the same branch is refused"),
+                () -> assertTrue(afterRelease.isPresent(), "the released branch can be reserved again"));
     }
 
     @Test

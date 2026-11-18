@@ -24,8 +24,9 @@ import lombok.experimental.UtilityClass;
  * follow the CUI ranges: INFO 1-99, WARN 100-199, ERROR 200-299. The catalogue is
  * {@code git-worktrees/doc/LogMessages.adoc}.
  * <p>
- * No message carries anything GDR-NFR-3 forbids: a message names a working-tree path or a refused capability, never an
- * author or committer name, an e-mail address or a commit message.
+ * No message carries anything GDR-NFR-3 forbids: a message names a commit id or a refused capability, never a path, an
+ * administrative name derived from the caller's path, an author or committer name, an e-mail address or a commit
+ * message.
  *
  * @since 0.1
  */
@@ -43,16 +44,16 @@ public final class GitWorktreesLogMessages {
     @UtilityClass
     public static final class INFO {
 
-        /** A linked working tree was added: its root and its administrative name. */
+        /** A linked working tree was added: the commit it starts at. */
         public static final LogRecord WORKTREE_ADDED = LogRecordModel.builder()
-                .template("Added linked working tree %s as %s")
+                .template("Added a linked working tree at commit %s")
                 .prefix(PREFIX)
                 .identifier(1)
                 .build();
 
-        /** A linked working tree was removed: its root. */
+        /** A linked working tree was removed; the message carries no argument. */
         public static final LogRecord WORKTREE_REMOVED = LogRecordModel.builder()
-                .template("Removed linked working tree %s")
+                .template("Removed a linked working tree")
                 .prefix(PREFIX)
                 .identifier(2)
                 .build();

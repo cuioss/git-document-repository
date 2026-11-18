@@ -21,13 +21,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 
@@ -83,12 +84,10 @@ class GitWorktreeListCompatibilityTest {
                 () -> assertTrue(detachedRecord.containsKey("detached"), "the detached tree is listed detached"));
     }
 
-    /** Whether {@code git --version} runs and succeeds. */
-    private static boolean gitInstalled() throws InterruptedException {
+    /** Whether {@code git --version} runs and succeeds in time. */
+    private boolean gitInstalled() throws InterruptedException {
         try {
-            var process = git(List.of("--version")).start();
-            process.getInputStream().readAllBytes();
-            return process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS) && process.exitValue() == 0;
+            return run(List.of("--version")).filter(result -> result.exitCode() == 0).isPresent();
         } catch (IOException e) {
             return false;
         }
@@ -99,11 +98,11 @@ class GitWorktreeListCompatibilityTest {
      *
      * @return the attributes of each record by the path of its working tree; a key without value maps to {@code ""}
      */
-    private static Map<Path, Map<String, String>> porcelain(Path root) throws IOException, InterruptedException {
-        var process = git(List.of("-C", root.toString(), "worktree", "list", "--porcelain")).start();
-        var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS), "git ends in time");
-        assertEquals(0, process.exitValue(), "git lists the working trees");
+    private Map<Path, Map<String, String>> porcelain(Path root) throws IOException, InterruptedException {
+        var result = run(List.of("-C", root.toString(), "worktree", "list", "--porcelain"));
+        assertTrue(result.isPresent(), "git ends in time");
+        assertEquals(0, result.get().exitCode(), "git lists the working trees");
+        var output = result.get().output();
         var records = new HashMap<Path, Map<String, String>>();
         for (String block : output.split("\n\n")) {
             var attributes = new HashMap<String, String>();
@@ -114,6 +113,32 @@ class GitWorktreeListCompatibilityTest {
             records.put(Path.of(attributes.get("worktree")).toRealPath(), attributes);
         }
         return records;
+    }
+
+    /** The exit code and the standard output of a git process that ended in time. */
+    private record GitRun(int exitCode, String output) {
+    }
+
+    /**
+     * Runs git bounded by {@link #TIMEOUT_SECONDS}: its output goes to a file, so the deadline applies to the whole
+     * run and a full pipe cannot block it, and a process that does not end in time or whose wait is interrupted is
+     * terminated.
+     *
+     * @return the run, or empty if git did not end in time
+     */
+    private Optional<GitRun> run(List<String> arguments) throws IOException, InterruptedException {
+        var output = Files.createTempFile(temp, "git", ".out");
+        var process = git(arguments).redirectOutput(output.toFile()).start();
+        try {
+            if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                return Optional.empty();
+            }
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
+        return Optional.of(new GitRun(process.exitValue(), Files.readString(output)));
     }
 
     /** A git process isolated from the {@code GIT_*} environment of the build, with its errors discarded. */
