@@ -54,6 +54,20 @@ entry point of `FS`
 so `RefusingFS` grants the owner the execute permission and the group and others exactly when they may read. A refusal
 names the capability, never the refused command or its arguments.
 
+One process start lies outside the repository's `FS`. JGit reads the user configuration, and with it the system
+configuration, through the process-wide `SystemReader.getInstance()` whenever it constructs a `FileRepository` or runs
+`InitCommand`; the default `SystemReader` locates the system configuration with `FS.DETECTED`, which runs
+`git --version` and `git config --system` once per JVM
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/FileRepository.java[JGit 7.8.0 `FileRepository`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java[`SystemReader`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/FS.java[`FS.discoverGitSystemConfig`]).
+JGit 7.8.0 offers no configuration source per repository, and `SystemReader.setInstance` changes every JGit user of the
+JVM, so the operations leave the process-wide `SystemReader` untouched and this process start is not prevented by
+`git-core` itself. `RefusingFS.systemReader(SystemReader)` returns a reader that opens the configuration files through
+a `RefusingFS`; an application that needs the guarantee for its whole JVM installs it before any JGit use. With it the
+system configuration is skipped by design, because it cannot be located without running `git`, and the user and JGit
+configuration are read as before, in process.
+
 `CapabilityRefusedException` is a public class of `git-core` that extends JGit's unchecked
 `org.eclipse.jgit.api.errors.JGitInternalException`, so JGit propagates it unchanged through its callers of `FS`. Its
 reason names the refused capability (`repository_hook` or `process_execution`); its message carries no secret.

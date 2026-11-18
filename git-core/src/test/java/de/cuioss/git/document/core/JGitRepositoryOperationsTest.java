@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -30,6 +31,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -56,6 +58,7 @@ import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
@@ -64,12 +67,15 @@ import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.util.FS;
+import org.eclipse.jgit.util.SystemReader;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -304,6 +310,66 @@ class JGitRepositoryOperationsTest {
                             Objects.requireNonNull(operations.log(dir(repository), revision, 1).value(),
                                     revision + " yields a history").stream().map(CommitInfo::id).toList(),
                             revision + " starts at the commit")));
+        }
+    }
+
+    @Nested
+    @DisplayName("process-wide configuration (GDR-CORE-1)")
+    class ProcessWideConfiguration {
+
+        @Test
+        @DisplayName("GDR-CORE-1: open, init and clone leave the process-wide SystemReader as they found it")
+        void systemReaderUntouched(@Remote LocalRemote remote) {
+            var before = SystemReader.getInstance();
+
+            var created = operations.init(temp.resolve(TestCommits.name()), TestCommits.name());
+            var cloned = operations.cloneIfMissing(CloneInput.builder().gitDir(temp.resolve(TestCommits.name() + ".git"))
+                    .url(remote.uri().toString()).pushRefSpecs(List.of()).build());
+
+            assertAll(
+                    () -> assertTrue(created.isOk(), "init succeeds"),
+                    () -> assertTrue(cloned.isOk(), "the clone succeeds"),
+                    () -> assertSame(before, SystemReader.getInstance(), "the SystemReader is the same object"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-1: with the hardened reader installed, configuration is located without any process")
+        void hardenedReader(@Remote LocalRemote remote) throws Exception {
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(remote.repository(), ref);
+            var previous = SystemReader.getInstance();
+            List<FS> located = new ArrayList<>();
+            var recording = new SystemReader.Delegate(previous) {
+                @Override
+                public FileBasedConfig openSystemConfig(Config parent, FS fs) {
+                    located.add(fs);
+                    return super.openSystemConfig(parent, fs);
+                }
+            };
+            SystemReader.setInstance(RefusingFS.systemReader(recording));
+            try {
+                var root = temp.resolve(TestCommits.name());
+                var created = operations.init(root, TestCommits.name());
+                var opened = operations.open(root);
+                var gitDir = temp.resolve(TestCommits.name() + ".git");
+                var cloned = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir)
+                        .url(remote.uri().toString()).pushRefSpecs(List.of()).build());
+
+                assertAll(
+                        () -> assertTrue(created.isOk(), "init succeeds"),
+                        () -> assertTrue(opened.isOk(), "open succeeds"),
+                        () -> assertTrue(cloned.isOk(), "the clone succeeds"),
+                        () -> assertFalse(located.isEmpty(), "the system configuration was located"),
+                        () -> assertTrue(located.stream().allMatch(RefusingFS.class::isInstance),
+                                "it was located through a RefusingFS, which starts no process"),
+                        () -> assertTrue(located.stream().allMatch(fs -> fs.getGitSystemConfig() == null),
+                                "no system configuration is found without running git"));
+                try (Repository clone = openBare(gitDir)) {
+                    assertEquals(commit, refId(clone, ref), "the clone fetched the remote");
+                }
+            } finally {
+                SystemReader.setInstance(previous);
+            }
         }
     }
 

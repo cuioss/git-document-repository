@@ -85,6 +85,12 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * Details and log messages render a URL without user information and never carry a credential or a JGit message that
  * may carry one (GDR-NFR-3).
+ * <p>
+ * The operations change no process-wide JGit state. JGit 7.8.0 reads the user and system configuration of every
+ * repository it constructs through the process-wide {@code SystemReader}, whose default locates the system
+ * configuration by running {@code git} once per JVM; JGit offers no per-repository configuration source to avoid it.
+ * That process is outside what {@link RefusingFS} can refuse, and an application that needs the guarantee for its
+ * whole JVM installs {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)} itself.
  *
  * @since 0.1
  */

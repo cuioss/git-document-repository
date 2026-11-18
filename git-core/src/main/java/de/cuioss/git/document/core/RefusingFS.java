@@ -22,13 +22,17 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.Objects;
 import java.util.Set;
 
 
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.FS_POSIX;
 import org.eclipse.jgit.util.ProcessResult;
+import org.eclipse.jgit.util.SystemReader;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -65,6 +69,48 @@ public class RefusingFS extends FS_POSIX {
     @Override
     public FS newInstance() {
         return new RefusingFS(this);
+    }
+
+    /**
+     * Wraps a JGit {@link SystemReader} so that it locates and reads the system, user and JGit configuration through a
+     * {@code RefusingFS}, in process.
+     * <p>
+     * JGit 7.8.0 reads the user configuration, and with it the system configuration, through the process-wide
+     * {@link SystemReader#getInstance()} whenever it constructs a {@code FileRepository} or runs {@code InitCommand};
+     * the default reader locates the system configuration with {@code FS.DETECTED}, which runs
+     * {@code git --version} and {@code git config --system} once per JVM. JGit 7.8.0 offers no way to pass another
+     * configuration source to a single repository, so {@link JGitRepositoryOperations} cannot prevent that process for
+     * the repositories it opens without changing the process-wide reader, and it does not change it. An application
+     * that needs the guarantee for its whole JVM installs the returned reader itself, before any JGit use:
+     * {@snippet :
+     * SystemReader.setInstance(RefusingFS.systemReader(SystemReader.getInstance()));
+     * }
+     * With it, the system configuration is skipped by design, because it cannot be located without running
+     * {@code git}; the user configuration ({@code ~/.gitconfig} or {@code $XDG_CONFIG_HOME/git/config}) and the JGit
+     * configuration are read as before, in process.
+     *
+     * @param delegate the reader every other answer comes from, usually the current {@link SystemReader#getInstance()}
+     * @return a reader that opens the configuration files through a {@code RefusingFS}
+     */
+    public static SystemReader systemReader(SystemReader delegate) {
+        Objects.requireNonNull(delegate, "delegate");
+        return new SystemReader.Delegate(delegate) {
+
+            @Override
+            public FileBasedConfig openSystemConfig(Config parent, FS fs) {
+                return super.openSystemConfig(parent, new RefusingFS());
+            }
+
+            @Override
+            public FileBasedConfig openUserConfig(Config parent, FS fs) {
+                return super.openUserConfig(parent, new RefusingFS());
+            }
+
+            @Override
+            public FileBasedConfig openJGitConfig(Config parent, FS fs) {
+                return super.openJGitConfig(parent, new RefusingFS());
+            }
+        };
     }
 
     /**
