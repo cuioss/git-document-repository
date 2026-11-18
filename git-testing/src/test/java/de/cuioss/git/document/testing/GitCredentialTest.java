@@ -58,10 +58,11 @@ class GitCredentialTest {
     void shouldNotEqualAnotherTypeOrNull() {
         var credential = generator.next();
         Object username = credential.username();
+        Object nothing = null;
 
         assertAll("other objects",
                 () -> assertNotEquals(credential, username, "A credential never equals its user name as a string"),
-                () -> assertNotEquals(credential, null, "A credential never equals null"));
+                () -> assertNotEquals(credential, nothing, "A credential never equals null"));
     }
 
     @Test
