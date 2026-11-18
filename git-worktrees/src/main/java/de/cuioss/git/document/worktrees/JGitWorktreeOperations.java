@@ -26,6 +26,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.CapabilityRefusedException;
@@ -37,11 +38,13 @@ import de.cuioss.git.document.core.RepositoryOperations.CommitInfo;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.Status;
 import org.eclipse.jgit.api.errors.EmptyCommitException;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
 import org.eclipse.jgit.dircache.DirCacheCheckout;
 import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.errors.NoWorkTreeException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -379,6 +382,39 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (GitAPIException | IOException | JGitInternalException e) {
+            return failure(e);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The status is JGit's {@code StatusCommand}, mapped by the definitions of {@link Status} (checked against the
+     * JGit 7.8.0 sources): {@link Status#getAdded() added} (in the index, not in {@code HEAD}),
+     * {@link Status#getChanged() changed} (changed from {@code HEAD} to the index), {@link Status#getModified()
+     * modified} (modified on disk relative to the index) and {@link Status#getConflicting() conflicting} are changed;
+     * {@link Status#getRemoved() removed} (in {@code HEAD}, not in the index) and {@link Status#getMissing() missing}
+     * (in the index, not on disk) are deleted; {@link Status#getUntracked() untracked} (on disk, neither in the index
+     * nor ignored) is untracked. Ignored files are in none of these sets. A file removed from the index but present on
+     * disk is both removed and untracked, so it is in deleted and in untracked.
+     */
+    @Override
+    public GitResult<WorktreeStatus> worktreeStatus(Path root) {
+        Objects.requireNonNull(root, "root");
+        try (Repository repository = openRepository(root); Git git = Git.wrap(repository)) {
+            Status status = git.status().call();
+            var changed = new TreeSet<String>();
+            changed.addAll(status.getAdded());
+            changed.addAll(status.getChanged());
+            changed.addAll(status.getModified());
+            changed.addAll(status.getConflicting());
+            var deleted = new TreeSet<String>();
+            deleted.addAll(status.getRemoved());
+            deleted.addAll(status.getMissing());
+            return GitResult.ok(new WorktreeStatus(changed, status.getUntracked(), deleted));
+        } catch (RepositoryNotFoundException e) {
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
+        } catch (GitAPIException | IOException | JGitInternalException | NoWorkTreeException e) {
             return failure(e);
         }
     }

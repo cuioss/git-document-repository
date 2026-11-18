@@ -16,8 +16,11 @@
 package de.cuioss.git.document.worktrees;
 
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -29,8 +32,9 @@ import lombok.Builder;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The operations on the working trees of a repository: adding, listing and removing linked working trees (GDR-WT-1)
- * and the commit from a working tree (GDR-WT-2). One method per operation, typed inputs, and results carrying the
+ * The operations on the working trees of a repository: adding, listing and removing linked working trees (GDR-WT-1),
+ * the commit from a working tree (GDR-WT-2) and the status of a working tree. One method per operation, typed inputs,
+ * and results carrying the
  * closed {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
  * <p>
  * Every repository an implementation opens is built on {@link RefusingFS}, so no operation starts a process; an
@@ -86,6 +90,49 @@ public interface WorktreeOperations {
      *         {@link GitOutcome#FAILED}
      */
     GitResult<CommitInfo> commit(CommitInput input);
+
+    /**
+     * Reports which paths of a working tree differ from its index or its {@code HEAD}, as three sets of
+     * repository-relative paths with {@code /} separators; ignored files are not reported. A path may be in more
+     * than one set: a file removed from the index but still on disk is both deleted and untracked.
+     *
+     * @param root the working-tree root, of the main or of a linked working tree
+     * @return {@link GitOutcome#OK} with the status, {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED},
+     *         also for a repository without a working tree
+     */
+    GitResult<WorktreeStatus> worktreeStatus(Path root);
+
+    /**
+     * The status of a working tree: the paths that differ from its index or its {@code HEAD}, by kind. Each set is
+     * an unmodifiable copy sorted by path; the sets need not be disjoint.
+     *
+     * @param changed   the paths with content that differs: added to the index, changed in the index, modified on
+     *                  disk or in conflict
+     * @param untracked the paths on disk that are neither in the index nor ignored
+     * @param deleted   the paths removed from the index or missing on disk
+     * @since 0.1
+     */
+    record WorktreeStatus(Set<String> changed, Set<String> untracked, Set<String> deleted) {
+
+        /**
+         * Requires each set and stores an unmodifiable copy sorted by path.
+         *
+         * @param changed   the changed paths
+         * @param untracked the untracked paths
+         * @param deleted   the deleted paths
+         * @throws NullPointerException if a set or one of its paths is {@code null}
+         */
+        public WorktreeStatus {
+            changed = sortedCopy(changed, "changed");
+            untracked = sortedCopy(untracked, "untracked");
+            deleted = sortedCopy(deleted, "deleted");
+        }
+
+        private static Set<String> sortedCopy(Set<String> paths, String component) {
+            Objects.requireNonNull(paths, component);
+            return Collections.unmodifiableSortedSet(new TreeSet<>(paths));
+        }
+    }
 
     /**
      * A working tree of a repository.

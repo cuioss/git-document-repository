@@ -21,12 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.worktrees.WorktreeOperations.CommitInput;
 import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
 import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
+import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeStatus;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.junit.jupiter.api.DisplayName;
@@ -152,6 +157,52 @@ class WorktreeOperationsRecordsTest {
                 () -> assertEquals("path", missingPath.getMessage(), "the refusal names the missing path"),
                 () -> assertEquals("startPoint", missingStartPoint.getMessage(),
                         "the refusal names the missing start point"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-3: the working-tree status refuses every missing set and every missing path")
+    void worktreeStatusRefusesMissingSets() {
+        var paths = Set.of(text());
+        var withNull = new HashSet<String>();
+        withNull.add(null);
+
+        var missingChanged = assertThrows(NullPointerException.class,
+                () -> new WorktreeStatus(null, paths, paths), "missing changed paths are refused");
+        var missingUntracked = assertThrows(NullPointerException.class,
+                () -> new WorktreeStatus(paths, null, paths), "missing untracked paths are refused");
+        var missingDeleted = assertThrows(NullPointerException.class,
+                () -> new WorktreeStatus(paths, paths, null), "missing deleted paths are refused");
+
+        assertAll(
+                () -> assertEquals("changed", missingChanged.getMessage(), "the refusal names the changed set"),
+                () -> assertEquals("untracked", missingUntracked.getMessage(), "the refusal names the untracked set"),
+                () -> assertEquals("deleted", missingDeleted.getMessage(), "the refusal names the deleted set"),
+                () -> assertThrows(NullPointerException.class, () -> new WorktreeStatus(withNull, paths, paths),
+                        "a missing path is refused"));
+    }
+
+    @Test
+    @DisplayName("GDR-WT-3: the working-tree status keeps a sorted copy that neither the caller nor a reader changes")
+    void worktreeStatusCopiesSortedAndUnmodifiable() {
+        var changed = new HashSet<String>();
+        while (changed.size() < 3) {
+            changed.add(text());
+        }
+        var expected = List.copyOf(new TreeSet<>(changed));
+
+        var status = new WorktreeStatus(changed, new HashSet<>(changed), new HashSet<>(changed));
+        changed.add(text() + text());
+
+        assertAll(
+                () -> assertEquals(expected, List.copyOf(status.changed()), "the copy is sorted and unchanged"),
+                () -> assertEquals(expected, List.copyOf(status.untracked()), "the untracked copy is sorted"),
+                () -> assertEquals(expected, List.copyOf(status.deleted()), "the deleted copy is sorted"),
+                () -> assertThrows(UnsupportedOperationException.class, () -> status.changed().add(text()),
+                        "the changed paths cannot be modified"),
+                () -> assertThrows(UnsupportedOperationException.class, () -> status.untracked().clear(),
+                        "the untracked paths cannot be modified"),
+                () -> assertThrows(UnsupportedOperationException.class,
+                        () -> status.deleted().remove(expected.getFirst()), "the deleted paths cannot be modified"));
     }
 
     @Test
