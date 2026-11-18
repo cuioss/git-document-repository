@@ -1644,6 +1644,58 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
+        @DisplayName("GDR-WT-1: the branch stays reserved until the rollback of a failed addition has deleted it")
+        void reservationOutlivesRollback(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            var second = main.root().resolve(name());
+            var during = new ArrayList<GitResult<Worktree>>();
+            // the failing addition's administration directory loses its HEAD, as the rollback's first step removes
+            // it, so no listed working tree has the branch checked out while the created branch still exists
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> {
+                Files.delete(main.admin(path.getFileName().toString()).resolve(Constants.HEAD));
+                during.add(operations.worktreeAdd(onExistingBranch(main, second, branch, Constants.HEAD)));
+            }));
+
+            var failed = failing.worktreeAdd(onNewBranch(main, path, branch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, failed.outcome(), "the failed addition is a result"),
+                    () -> assertEquals(1, during.size(), "the second addition ran during the first one"),
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, during.getFirst().outcome(),
+                            "the branch of the failing addition is still reserved"),
+                    () -> assertFalse(Files.exists(second), "the second addition claims no target"),
+                    () -> assertNull(refId(main.root(), Constants.R_HEADS + branch), "the created branch is deleted"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"),
+                    () -> assertEquals(1, listed(main).size(), "no working tree is registered"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a created branch a held reference lock keeps at its start commit is reported")
+        void heldRefLockReported(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var path = main.root().resolve(name());
+            // git's lock file of the branch, as a concurrent writer holds it without moving the branch
+            var lock = main.root().resolve(Constants.DOT_GIT).resolve(Constants.R_HEADS + branch + ".lock");
+            var failing = new JGitWorktreeOperations(new FailingCheckoutFS(path, () -> Files.writeString(lock, "")));
+
+            var result = failing.worktreeAdd(onNewBranch(main, path, branch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the failed addition is a result"),
+                    () -> assertEquals("IllegalStateException", result.detail(),
+                            "the detail is the class of the failure that was rolled back"),
+                    () -> assertEquals(main.head(), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch the lock kept is still at its start commit"),
+                    () -> assertFalse(Files.exists(path), "the target is removed again"),
+                    () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.ROLLBACK_INCOMPLETE.resolveIdentifierString());
+        }
+
+        @Test
         @DisplayName("GDR-WT-2: a reflog entry that cannot be written does not fail the created commit")
         void reflogFailureKeepsCommit(@LocalRepository Repository source) throws Exception {
             var upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
@@ -1674,6 +1726,35 @@ class JGitWorktreeOperationsTest {
                     () -> assertTrue(logs.contains(info.id()), "the warning names the commit id"),
                     () -> assertAll(forbidden.stream().<Executable>map(value -> () -> assertFalse(
                             logs.contains(value), "no log message carries " + value))));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: an invalid core.logAllRefUpdates value does not fail the created commit")
+        void invalidLogAllRefUpdatesKeepsCommit(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var branch = name();
+            var worktree = added(main, branch);
+            // the generated letters spell none of the values JGit 7.8.0 Config.getEnum accepts for LogRefUpdates
+            var invalid = name();
+            try (Repository repository = open(main.root())) {
+                var config = repository.getConfig();
+                config.setString(ConfigConstants.CONFIG_CORE_SECTION, null,
+                        ConfigConstants.CONFIG_KEY_LOGALLREFUPDATES, invalid);
+                config.save();
+            }
+            Files.writeString(worktree.path().resolve(name()), content());
+
+            var result = operations.commit(commitInput(worktree.path()));
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the created commit is reported"),
+                    () -> assertEquals(ObjectId.fromString(info.id()), refId(main.root(), Constants.R_HEADS + branch),
+                            "the branch is at the stored commit"),
+                    () -> assertTrue(TestLoggerFactory.getTestHandler().getRecordsAsString().contains(info.id()),
+                            "the warning names the commit id"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
                     GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
         }

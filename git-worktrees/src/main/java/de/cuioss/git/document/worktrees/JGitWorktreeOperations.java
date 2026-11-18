@@ -280,7 +280,6 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             }
             Path created = LinkedWorktrees.create(commonDir, target, branchRef != null ? branchRef : start.name());
             admin = created;
-            releaseReservation();
             try (Repository linked = openRepository(target); RevWalk walk = new RevWalk(linked)) {
                 RevCommit commit = walk.parseCommit(start);
                 var checkout = new DirCacheCheckout(linked, linked.lockDirCache(), commit.getTree());
@@ -288,6 +287,9 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 checkout.checkout();
             }
             LinkedWorktrees.unlock(created);
+            // the reservation is held until the working tree is complete, so no other addition registers the branch
+            // while a failed checkout is still being rolled back
+            releaseReservation();
             LOGGER.info(INFO.WORKTREE_ADDED, start.name());
             return GitResult.ok(Worktree.builder()
                     .path(target)
@@ -386,8 +388,10 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         /**
          * Deletes the branch this attempt created, only while it still points at the commit it was created at, so a
          * branch another writer advanced in the meantime is kept. The result of the deletion is read: a forced
-         * update or no change is the deleted branch, a lock failure or a rejection keeps a branch another writer
-         * advanced, and every other result, an I/O failure among them, is raised so the rollback reports it.
+         * update or no change is the deleted branch; after a lock failure or a rejection the branch is read again
+         * (JGit 7.8.0 {@code RefUpdate.delete} returns {@code LOCK_FAILURE} both for a held reference lock and for an
+         * expected id the branch is no longer at), and every other result, an I/O failure among them, is raised so the
+         * rollback reports it.
          */
         private void deleteCreatedBranch() throws IOException {
             String branchRef = createdBranchRef;
@@ -401,14 +405,31 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             delete.setForceUpdate(true);
             Result result = delete.delete();
             switch (result) {
-                case FORCED, NO_CHANGE, LOCK_FAILURE, REJECTED -> {
-                    // deleted, or kept because another writer advanced it
+                case FORCED, NO_CHANGE -> {
+                    // deleted
                 }
+                case LOCK_FAILURE, REJECTED -> confirmNotLeft(branchRef, id, result);
                 default -> throw new IOException("branch deletion: " + result);
             }
         }
 
-        /** Undoes the attempt in reverse order; every step runs, the first failure is thrown with the others. */
+        /**
+         * Reads the branch again after a deletion that did not delete it: an absent branch was deleted, a branch at
+         * another commit was advanced by another writer and is kept, and a branch still at the commit this attempt
+         * created it at is left behind, which is raised so the rollback reports it rather than leaving it silently.
+         */
+        private void confirmNotLeft(String branchRef, ObjectId id, Result result) throws IOException {
+            Ref current = main.exactRef(branchRef);
+            if (current != null && id.equals(current.getObjectId())) {
+                throw new IOException("branch deletion incomplete: " + result);
+            }
+        }
+
+        /**
+         * Undoes the attempt in reverse order; every step runs, the first failure is thrown with the others. The
+         * created branch is deleted before the reservation is released, so no other addition registers the branch
+         * while this attempt may still delete it. An incomplete rollback is logged without an argument.
+         */
         void rollBack() throws IOException {
             IOException failure = null;
             Path written = admin;
@@ -417,9 +438,10 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 failure = attempt(failure, () -> LinkedWorktrees.deleteTree(written));
             }
             failure = attempt(failure, this::releaseTarget);
-            failure = attempt(failure, this::releaseReservation);
             failure = attempt(failure, this::deleteCreatedBranch);
+            failure = attempt(failure, this::releaseReservation);
             if (failure != null) {
+                LOGGER.warn(WARN.ROLLBACK_INCOMPLETE);
                 throw failure;
             }
         }
@@ -725,13 +747,15 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     /**
      * Writes the reflog entries of a created commit in a linked working tree. The commit and its branch are already
      * stored, so a reflog entry that cannot be written does not fail the commit: it is logged with the commit id only,
-     * never the path or the message of the failure (GDR-NFR-3).
+     * never the path or the message of the failure (GDR-NFR-3). An invalid {@code core.logAllRefUpdates} value is such
+     * a case: JGit 7.8.0 {@code Config.getEnum} throws {@link IllegalArgumentException} for a value that names no
+     * constant.
      */
     private static void writeLinkedReflogs(Repository linked, Path commonDir, @Nullable ObjectId previous,
             RevCommit commit) {
         try {
             appendLinkedReflogs(linked, commonDir, previous, commit);
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             LOGGER.warn(WARN.REFLOG_NOT_WRITTEN, commit.name());
         }
     }

@@ -89,5 +89,15 @@ public final class GitWorktreesLogMessages {
                 .prefix(PREFIX)
                 .identifier(101)
                 .build();
+
+        /**
+         * The rollback of a refused or failed addition did not undo everything it created, for example a created
+         * branch it could not delete; the message carries no argument, neither the branch name nor a path.
+         */
+        public static final LogRecord ROLLBACK_INCOMPLETE = LogRecordModel.builder()
+                .template("The rollback of a failed working-tree addition is incomplete")
+                .prefix(PREFIX)
+                .identifier(102)
+                .build();
     }
 }

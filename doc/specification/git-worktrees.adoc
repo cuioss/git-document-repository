@@ -73,7 +73,8 @@ Concurrent additions on one repository do not interfere:
   `ALREADY_EXISTS`.
 * Every branch, a new one like an existing one, is reserved before it is checked, by the reservation file
   `worktree-branch-<SHA-1 of the full branch name>.lock` in the common directory, created with `Files.createFile`, until
-  the new working tree's `HEAD` names it; a branch another addition reserved ends `BRANCH_CHECKED_OUT`. A new branch is
+  the new working tree is checked out and unlocked, or, for a refused or failed addition, until its rollback has
+  deleted the branch it created; a branch another addition reserved ends `BRANCH_CHECKED_OUT`. A new branch is
   created by a compare-and-swap from the zero id. A reservation left by a process that ended during an addition stays
   until <<GDR-WT-4>> releases it.
 * The administration directory is claimed atomically under the next free numeric suffix; its files are written
@@ -81,8 +82,12 @@ Concurrent additions on one repository do not interfere:
   out.
 * A refused or failed addition removes what it created and nothing else: the target directory it created or what it
   wrote into a caller-supplied one, its administration directory, its reservation, and the branch it created, the
-  latter only while it still points at the start commit, so a retry succeeds. An unchecked exception during an
-  addition is rolled back in the same way and ends as a result, `FAILED` with the failure class.
+  latter only while it still points at the start commit, so a retry succeeds. JGit 7.8.0 `RefUpdate.delete` returns
+  `LOCK_FAILURE` both for a held reference lock and for a branch no longer at the expected commit, so after a lock
+  failure or a rejection the branch is read again: an absent branch was deleted, a branch at another commit was
+  advanced by another writer and is kept, and a branch still at the start commit is left behind and reported as an
+  incomplete rollback, logged as `GIT_WORKTREES-102`, never silently. An unchecked exception during an addition is
+  rolled back in the same way and ends as a result, `FAILED` with the failure class.
 
 `worktreeList` skips an administration directory whose `gitdir` or `HEAD` is not present, one being initialized or
 removed, so it does not fail the list or the removal of another working tree; a locked working tree with complete files
@@ -120,7 +125,7 @@ it.
 `linkedRootRefused`, `targetInsideAdministrationRefused`), the reservation of new and existing branches
 (`reservedBranchCheckedOut`, `concurrentAdditions`), the comparison by real paths (`removeThroughSymlink`,
 `replacedRepositoryAndReusedPath`) and the result contract (`bareRepositoryFails`, `uncheckedFailureRolledBack`,
-`branchDeletionResultRead`). `GitWorktreeListCompatibilityTest` asserts that `git worktree list --porcelain` of an
+`branchDeletionResultRead`, `reservationOutlivesRollback`, `heldRefLockReported`). `GitWorktreeListCompatibilityTest` asserts that `git worktree list --porcelain` of an
 installed Git lists the added working trees with path, branch and `HEAD`, a locked one `locked` and one whose directory
 is gone `prunable`, and that `git worktree remove` removes a working tree the library added. It is skipped through a
 JUnit assumption when no `git` binary is found; only this test starts a process, never the library.
@@ -154,9 +159,12 @@ working tree's branch, never signed, whatever the repository configuration asks.
   in the common directory: `HEAD` is a ref of each working tree, the branches are shared
   (link:https://git-scm.com/docs/git-worktree[git-worktree(1)], REFS). The commit and its branch are stored before
   these entries are appended, so an entry that cannot be written does not fail the created commit: the result stays
-  `OK` with the commit, and the omission is logged as `GIT_WORKTREES-101` with the commit id only.
+  `OK` with the commit, and the omission is logged as `GIT_WORKTREES-101` with the commit id only. An invalid
+  `core.logAllRefUpdates` value is such a case: JGit 7.8.0 `Config.getEnum` throws `IllegalArgumentException` for a
+  value that names no constant of `CoreConfig.LogRefUpdates`.
 
-The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit` the reflog choice, and
+The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit` and
+`invalidLogAllRefUpdatesKeepsCommit` the reflog choice, and
 its secrets test asserts with a JUL log
 capture and on the result details that no author or committer name, e-mail address or message reaches a log message or
 a detail, and no raw working-tree path an INFO message.

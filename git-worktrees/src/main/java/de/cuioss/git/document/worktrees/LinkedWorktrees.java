@@ -171,7 +171,8 @@ final class LinkedWorktrees {
      * Reserves a branch for one worktree creation: the reservation file of the branch in the common directory,
      * {@code worktree-branch-<SHA-1 of the full branch name>.lock}, is created with {@link Files#createFile}, which
      * fails when it exists, so of two concurrent reservations exactly one succeeds. The holder releases it with
-     * {@link #release(Path)} once the branch is registered in the worktree's {@code HEAD}, or once the creation failed.
+     * {@link #release(Path)} once the worktree is checked out and unlocked, or once the rollback of a failed creation
+     * has deleted the branch it created.
      * A reservation left by an ended process stays until {@link #releaseBranch(Path, String)} deletes it, which
      * {@link WorktreeOperations#releaseBranchReservation(Path, String)} offers to the caller.
      *

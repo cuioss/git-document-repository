@@ -39,6 +39,10 @@ a present hook (`repository_hook`) or a process start (`process_execution`); the
 |GIT_WORKTREES-101 |GIT_WORKTREES |Created commit %s, its reflog entry was not written |Logged when `commit` created
 a commit in a linked working tree but could not append its reflog entries: the commit id only. The commit and its
 branch are stored, so the result stays `OK` with the commit.
+|GIT_WORKTREES-102 |GIT_WORKTREES |The rollback of a failed working-tree addition is incomplete |Logged when the
+rollback of a refused or failed `worktreeAdd` could not undo everything the addition created, for example a created
+branch still at its start commit that could not be deleted; the message carries no argument, neither the branch name
+nor a path. The addition ends `FAILED` or with the outcome of the failure it rolled back.
 |===
 
 == ERROR Level (200-299)
