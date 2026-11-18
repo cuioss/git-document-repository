@@ -648,6 +648,32 @@ class JGitRepositoryOperationsTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-2: a transport whose destination is not the checked URL is refused before it connects")
+        void destinationChangedAfterCheck(@LocalRepository Repository client) throws Exception {
+            var marker = TestCommits.name();
+            // the checked URL is local and admitted; the transport JGit opens for it connects elsewhere, as a
+            // configuration saved between the check and the use would make it
+            TestCommits.addRemote(client, ORIGIN, temp.resolve(marker).toUri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(client, ref);
+            var elsewhere = new URIish("https://" + FOREIGN_HOST + "/" + marker + ".git");
+
+            try (var recording = new RecordingTransportProtocol(marker, elsewhere)) {
+                var fetched = operations.fetch(fetch(client));
+                var pushed = operations.push(push(client, ref, null));
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, fetched.outcome(),
+                                "the fetch to the other destination is refused"),
+                        () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, pushed.outcome(),
+                                "the push to the other destination is refused"),
+                        () -> assertTrue(Objects.requireNonNull(fetched.detail()).contains(FOREIGN_HOST),
+                                "the refusal names the destination actually used"),
+                        () -> assertFalse(recording.connected(), "nothing is contacted"));
+            }
+        }
+
+        @Test
         @DisplayName("a push to a remote with two push destinations is refused before either is contacted")
         void twoDestinations(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
             var config = client.getConfig();

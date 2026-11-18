@@ -39,6 +39,7 @@ import org.jspecify.annotations.Nullable;
 final class RecordingTransportProtocol extends TransportProtocol implements AutoCloseable {
 
     private final String marker;
+    private final @Nullable URIish destination;
     private boolean connected;
     private @Nullable URIish uri;
     private @Nullable CredentialsProvider credentials;
@@ -49,7 +50,19 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
      * @param marker the text whose presence in a URL's path selects this protocol
      */
     RecordingTransportProtocol(String marker) {
+        this(marker, null);
+    }
+
+    /**
+     * Creates and registers a protocol whose transports connect to another destination than the URL they were opened
+     * for, as a configuration changed between a check and the use would make them.
+     *
+     * @param marker      the text whose presence in a URL's path selects this protocol
+     * @param destination the URL every opened transport reports as its destination; {@code null} for the opened URL
+     */
+    RecordingTransportProtocol(String marker, @Nullable URIish destination) {
         this.marker = marker;
+        this.destination = destination;
         Transport.register(this);
     }
 
@@ -65,7 +78,7 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
 
     @Override
     public Transport open(URIish target, Repository local, String remoteName) {
-        return new Transport(local, target) {
+        return new Transport(local, destination == null ? target : destination) {
 
             @Override
             public FetchConnection openFetch() throws NotSupportedException {

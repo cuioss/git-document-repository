@@ -19,6 +19,7 @@ import static de.cuioss.git.document.core.GitCoreLogMessages.INFO;
 import static de.cuioss.git.document.core.GitCoreLogMessages.WARN;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.net.URISyntaxException;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileAlreadyExistsException;
@@ -228,7 +229,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return GitResult.ok(info(repository));
             }
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
-                | IllegalArgumentException e) {
+                | IllegalArgumentException | RemoteRefusedException e) {
             return transportFailure(e, ORIGIN, display(uri));
         } finally {
             removeStaging(staging);
@@ -334,7 +335,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             }
             FetchResult fetched = git.fetch().setRemote(ORIGIN)
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
-                    .setTransportConfigCallback(onlyCredentials(input.credentials())).call();
+                    .setTransportConfigCallback(guardedTransport(input.credentials())).call();
             linkHead(repository, fetched);
             return GitResult.ok(info(repository));
         }
@@ -406,7 +407,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                     // JGit 7.8.0 FetchCommand fetches submodules of a working tree on demand, each from its own
                     // remote that the policy check above never saw
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
-                    .setTransportConfigCallback(onlyCredentials(input.credentials()))
+                    .setTransportConfigCallback(guardedTransport(input.credentials()))
                     .call();
             var updates = result.getTrackingRefUpdates().stream()
                     .map(update -> RefUpdate.builder()
@@ -420,7 +421,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
-                | IllegalArgumentException e) {
+                | IllegalArgumentException | RemoteRefusedException e) {
             return transportFailure(e, input.remote(), target);
         }
     }
@@ -452,7 +453,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             var command = git.push()
                     .setRemote(input.remote())
                     .setRefSpecs(new RefSpec(local.name() + ":" + input.remoteRef()))
-                    .setTransportConfigCallback(onlyCredentials(input.credentials()));
+                    .setTransportConfigCallback(guardedTransport(input.credentials()));
             String expectedRemoteHead = input.expectedRemoteHead();
             if (expectedRemoteHead != null) {
                 command.setRefLeaseSpecs(new RefLeaseSpec(input.remoteRef(), expectedRemoteHead));
@@ -467,7 +468,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
-                | IllegalArgumentException e) {
+                | IllegalArgumentException | RemoteRefusedException e) {
             return transportFailure(e, input.remote(), target);
         }
     }
@@ -769,6 +770,10 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * only, never the failure's message, which may carry user information or a credential.
      */
     private static <V> GitResult<V> transportFailure(Exception failure, String remote, String target) {
+        Optional<RemoteRefusedException> refusedDestination = cause(failure, RemoteRefusedException.class);
+        if (refusedDestination.isPresent()) {
+            return refusedRemote(refusedDestination.get().uri());
+        }
         Optional<CapabilityRefusedException> refusal = cause(failure, CapabilityRefusedException.class);
         if (refusal.isPresent()) {
             return refusedCapability(refusal.get());
@@ -885,10 +890,43 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         return fragment < 0 ? query : Math.min(query, fragment);
     }
 
-    /** A transport configuration that uses exactly the caller's credentials, none when the caller supplies none. */
-    private static TransportConfigCallback onlyCredentials(@Nullable CredentialsProvider credentials) {
-        // JGit 7.8.0 TransportCommand starts with CredentialsProvider.getDefault() and keeps it when given null
-        return transport -> transport.setCredentialsProvider(credentials);
+    /**
+     * The configuration of every transport a named-remote command opens, applied before it connects.
+     * <p>
+     * It checks the transport's actual destination against the policy and refuses it with a
+     * {@link RemoteRefusedException}: JGit 7.8.0 {@code FetchCommand} and {@code PushCommand} resolve the remote name
+     * again, and {@code FileRepository.getConfig()} reloads a configuration saved after
+     * {@link #checkRemote(Repository, String, boolean)} read it, so only the transport's own URL is the destination the
+     * command uses. It then sets exactly the caller's credentials, none when the caller supplies none: JGit 7.8.0
+     * {@code TransportCommand} starts with {@code CredentialsProvider.getDefault()} and keeps it when given
+     * {@code null}.
+     */
+    private TransportConfigCallback guardedTransport(@Nullable CredentialsProvider credentials) {
+        return transport -> {
+            if (!remotePolicy.permits(transport.getURI())) {
+                throw new RemoteRefusedException(transport.getURI());
+            }
+            transport.setCredentialsProvider(credentials);
+        };
+    }
+
+    /** Aborts a command whose transport would contact a destination outside the policy, before it connects. */
+    static final class RemoteRefusedException extends RuntimeException {
+
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        /** The refused destination. */
+        private final URIish uri;
+
+        RemoteRefusedException(URIish uri) {
+            super("remote outside the remote policy", null, false, false);
+            this.uri = uri;
+        }
+
+        URIish uri() {
+            return uri;
+        }
     }
 
     private static boolean isEmptyDirectory(Path path) throws IOException {
