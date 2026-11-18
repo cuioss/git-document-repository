@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -285,6 +286,27 @@ class GitIdentityTest {
                 () -> assertEquals(Resolution.UNKNOWN, expression.resolution(), "an expression is unknown"),
                 () -> assertFalse(expression.isSupported(), "an expression on an abbreviation is never resolved"),
                 () -> assertTrue(expression.target().isEmpty(), "an expression has nothing to resolve"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-11: a supported lookup names exactly one candidate, so its target always exists")
+    void supportedLookupNamesOneCandidate() {
+        var candidate = names.next();
+
+        assertAll(
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new GitIdentity.Lookup(Resolution.REF, List.of()), "a reference needs its candidate"),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new GitIdentity.Lookup(Resolution.FULL_COMMIT_ID, List.of()),
+                        "a full commit id needs its candidate"),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> new GitIdentity.Lookup(Resolution.REF, List.of(candidate, names.next())),
+                        "a reference has one candidate, not two"),
+                () -> assertEquals(Optional.of(candidate),
+                        new GitIdentity.Lookup(Resolution.REF, List.of(candidate)).target(),
+                        "one candidate is the target"),
+                () -> assertTrue(new GitIdentity.Lookup(Resolution.UNKNOWN, List.of()).target().isEmpty(),
+                        "an unsupported lookup keeps no candidate and no target"));
     }
 
     /**

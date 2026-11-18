@@ -128,14 +128,23 @@ The push refspecs are configuration supplied by the caller (for `git-store`: `re
 as `<source>:<source>`; JGit's `new RefSpec("refs/heads/*")` rejects a source-only wildcard
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/RefSpec.java[JGit 7.8.0 `RefSpec`]).
 A clone restores exactly what it mirrors, so a push destination must lie below `refs/heads/`, `refs/tags/` or
-`refs/notes/`; a refspec with another destination (for example `refs/releases/*`), a deleting or a matching refspec
-and one that is no refspec are `REFUSED_BY_POLICY` before anything is created.
+`refs/notes/`, and it must be a valid reference name (a wildcard standing for a valid name part, so `refs/heads/x.lock`
+is refused); a refspec with another destination (for example `refs/releases/*`), a deleting or a matching refspec
+and one that is no refspec are `REFUSED_BY_POLICY` before anything is created. The mirrored namespaces are derived from
+the fetch refspecs above, so the two cannot differ.
+
+That rule covers the push refspecs the clone is configured with. An explicit `push` writes the reference its caller
+names in `remoteRef`, on any repository, and is not checked against the mirrored namespaces: a push to another
+namespace (for example `refs/releases/v1`) succeeds on a remote that accepts it, and a new clone does not restore that
+reference. A caller that needs the guarantee for a reference pushes below the mirrored namespaces.
 
 The clone is built in a private staging directory beside the git directory and published by one atomic move after
-the fetch succeeded, so the git directory holds nothing, the empty directory the caller prepared, or a complete clone,
-never a partial one. Each attempt removes only its own staging directory; an attempt that finds a clone published
-concurrently opens it. A clone that could not be completed leaves the git directory as it was; a transport failure is
-reported as in <<GDR-CORE-7>>.
+the fetch succeeded and every mirrored reference was written, so the git directory holds nothing, the empty directory
+the caller prepared, or a complete clone, never a partial one. The move itself replaces the prepared empty directory
+(POSIX `rename`) and never a non-empty one, so a failed move leaves the prepared directory as it was. Each attempt
+removes only its own staging directory; an attempt that finds a clone published concurrently opens it, also when its
+own move failed because of it. A clone that could not be completed leaves the git directory as it was; a transport
+failure is reported as in <<GDR-CORE-7>>.
 
 [#GDR-CORE-4]
 == GDR-CORE-4: In-Core Writing
@@ -229,7 +238,11 @@ holds only when the remote reference is at the expected head, also when it is al
 `PushProcess` reports `UP_TO_DATE` before it compares the lease and before it sets the expected old id
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/PushProcess.java[JGit 7.8.0 `PushProcess.prepareRemoteUpdates`]),
 so an up-to-date update is checked against the advertised reference of the same push, and its old id is the advertised
-id; an old id of `null` means only that the push created the reference.
+id; an old id of `null` means only that the push created the reference. A lease that is no full object id is
+`NOT_FOUND`, named by its field `expectedRemoteHead`: JGit's `Transport.findRemoteRefUpdatesFor` resolves a lease that
+names nothing to no lease
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/Transport.java[JGit 7.8.0 `Transport`]),
+which would push without one.
 
 A detail and a log message never carry anything xref:general.adoc#GDR-NFR-3[GDR-NFR-3] forbids. A URL is rendered from
 its scheme, host, port and path only, without user information, query data or fragment, which JGit's `URIish` keeps

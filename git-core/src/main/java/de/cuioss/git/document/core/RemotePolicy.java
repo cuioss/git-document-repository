@@ -55,7 +55,10 @@ public record RemotePolicy(@Nullable URI origin) {
     public RemotePolicy {
         if (origin != null && (!"https".equalsIgnoreCase(origin.getScheme()) || origin.getHost() == null
                 || !validPort(origin.getPort()))) {
-            throw new IllegalArgumentException("not an https origin: " + origin);
+            // the message renders no part of the origin: it may carry user information (GDR-NFR-3)
+            throw new IllegalArgumentException(
+                    "not an https origin: an absolute https URI with a host and, if explicit, "
+                            + "a port within 1 to 65535 is required");
         }
     }
 

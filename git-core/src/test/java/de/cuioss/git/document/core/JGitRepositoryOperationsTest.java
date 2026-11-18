@@ -610,7 +610,8 @@ class JGitRepositoryOperationsTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"refs/releases/*", "refs/heads/*:refs/releases/*", ":refs/heads/main", ":"})
+        @ValueSource(strings = {"refs/releases/*", "refs/heads/*:refs/releases/*", ":refs/heads/main", ":",
+                "refs/heads/topic:refs/heads/topic.lock", "refs/heads/*:refs/heads/*.lock"})
         @DisplayName("GDR-CORE-3: a push refspec the clone cannot restore is refused before anything is created")
         void refusedPushRefSpec(String spec) {
             var gitDir = temp.resolve(TestCommits.name() + ".git");
@@ -620,6 +621,19 @@ class JGitRepositoryOperationsTest {
 
             assertAll(
                     () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the refspec is refused"),
+                    () -> assertFalse(Files.exists(gitDir), "no clone is created"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-2: a port beyond the int range is refused like any other URL that cannot be parsed")
+        void refusesPortBeyondIntRange() {
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+
+            var result = operations.cloneIfMissing(
+                    input(gitDir, "https://" + FOREIGN_HOST + ":2147483648/" + TestCommits.name() + ".git"));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the URL is refused"),
                     () -> assertFalse(Files.exists(gitDir), "no clone is created"));
         }
     }
@@ -880,6 +894,59 @@ class JGitRepositoryOperationsTest {
             assertAll(
                     () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the abbreviation is never resolved"),
                     () -> assertNull(remote.repository().exactRef(ref), "the remote is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a lease that is no full object id is refused, not pushed without a lease")
+        void invalidLease(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(client, ref);
+
+            var result = operations.push(push(client, ref, TestCommits.name()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the lease is refused"),
+                    () -> assertEquals("expectedRemoteHead: not a full commit id", result.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertNull(remote.repository().exactRef(ref), "nothing is pushed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: a push of the full id of a blob is not found, only a commit id is accepted")
+        void blobIdIsNoCommit(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            ObjectId blob;
+            try (ObjectInserter inserter = client.newObjectInserter()) {
+                blob = inserter.insert(Constants.OBJ_BLOB,
+                        Generators.letterStrings(1, 40).next().getBytes(StandardCharsets.UTF_8));
+                inserter.flush();
+            }
+            var tag = GitIdentity.tagRef(TestCommits.name());
+
+            var result = operations.push(PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(blob.name())
+                    .remoteRef(tag).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "a blob is no commit"),
+                    () -> assertNull(remote.repository().exactRef(tag), "nothing is pushed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: a reference is pushed by its name, not rebound to a reference named like its id")
+        void referenceNamedLikeAnId(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var selected = TestCommits.commitOn(client, ref);
+            var other = TestCommits.commit(client, null);
+            TestCommits.setRef(client, Constants.R_HEADS + selected.name(), other);
+
+            var result = operations.push(push(client, ref, null));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the push is accepted"),
+                    () -> assertEquals(selected, refId(remote.repository(), ref),
+                            "the remote holds the commit the reference selected"));
         }
 
         @Test

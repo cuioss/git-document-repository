@@ -363,7 +363,8 @@ public interface RepositoryOperations {
      *
      * @param root               a working-tree root or the git directory of a bare repository
      * @param remote             the configured remote name, e.g. {@code origin}
-     * @param localRef           the local reference or commit-ish to push
+     * @param localRef           the local reference to push: a short or full reference name, {@code HEAD}, or a full
+     *                           commit id; a revision expression such as {@code HEAD~1} is not resolved
      * @param remoteRef          the full remote reference, e.g. {@code refs/heads/feature}
      * @param expectedRemoteHead the full id the remote reference is expected at (lease); {@code null} for a plain push
      * @param credentials        the credentials of this call; {@code null} when none

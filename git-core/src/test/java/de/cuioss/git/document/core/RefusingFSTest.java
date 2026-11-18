@@ -106,11 +106,12 @@ class RefusingFSTest {
         var out = new ByteArrayOutputStream();
         var emptyStream = new ByteArrayInputStream(new byte[0]);
         var shellArgs = new String[]{secret};
+        var textInput = word();
 
         var refusals = List.of(
                 assertThrows(CapabilityRefusedException.class, () -> fs.runInShell(command, shellArgs),
                         "a shell command is refused"),
-                assertThrows(CapabilityRefusedException.class, () -> fs.runProcess(builder, out, out, word()),
+                assertThrows(CapabilityRefusedException.class, () -> fs.runProcess(builder, out, out, textInput),
                         "a process with text input is refused"),
                 assertThrows(CapabilityRefusedException.class, () -> fs.runProcess(builder, out, out, emptyStream),
                         "a process with stream input is refused"),
@@ -127,10 +128,8 @@ class RefusingFSTest {
     @DisplayName("GDR-CORE-1: grants the execute permission in process, without reading the umask through a shell")
     void setExecuteStartsNoProcess(@TempDir Path directory) throws Exception {
         assumePosix();
-        var ownerOnly = Files.createFile(directory.resolve("owner-" + word()),
-                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        var readable = Files.createFile(directory.resolve("readable-" + word()),
-                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-r--r--")));
+        var ownerOnly = fileWithMode(directory.resolve("owner-" + word()), "rw-------");
+        var readable = fileWithMode(directory.resolve("readable-" + word()), "rw-r--r--");
 
         assertAll(
                 () -> assertTrue(fs.setExecute(ownerOnly.toFile(), true), "the owner-only file is made executable"),
@@ -149,8 +148,7 @@ class RefusingFSTest {
     @DisplayName("GDR-CORE-1: clears the execute permission and leaves a missing file alone")
     void clearExecute(@TempDir Path directory) throws Exception {
         assumePosix();
-        var executable = Files.createFile(directory.resolve("executable-" + word()),
-                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxr-xr-x")));
+        var executable = fileWithMode(directory.resolve("executable-" + word()), "rwxr-xr-x");
         var missing = directory.resolve("missing-" + word()).toFile();
 
         assertAll(
@@ -240,6 +238,20 @@ class RefusingFSTest {
         Path hook = hooks.resolve(hookName);
         Files.writeString(hook, "#!/bin/sh\necho " + word() + "\n");
         Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
+    /**
+     * Creates a file with exactly the given mode. The mode is set after the creation: a mode passed to the creation
+     * loses the bits the process umask masks, so under {@code 077} the group and others bits would be missing.
+     *
+     * @param file the file to create
+     * @param mode the mode, e.g. {@code rw-r--r--}
+     * @return the created file
+     * @throws IOException if the file cannot be created or its mode set
+     */
+    private static Path fileWithMode(Path file, String mode) throws IOException {
+        Files.createFile(file);
+        return Files.setPosixFilePermissions(file, PosixFilePermissions.fromString(mode));
     }
 
     private static void assumePosix() {

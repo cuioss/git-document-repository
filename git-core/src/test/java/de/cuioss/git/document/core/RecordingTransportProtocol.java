@@ -82,12 +82,12 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
 
             @Override
             public FetchConnection openFetch() throws NotSupportedException {
-                throw record(getURI(), getCredentialsProvider());
+                throw attempt(getURI(), getCredentialsProvider());
             }
 
             @Override
             public PushConnection openPush() throws NotSupportedException {
-                throw record(getURI(), getCredentialsProvider());
+                throw attempt(getURI(), getCredentialsProvider());
             }
 
             @Override
@@ -97,7 +97,7 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
         };
     }
 
-    private NotSupportedException record(URIish used, @Nullable CredentialsProvider provider) {
+    private NotSupportedException attempt(URIish used, @Nullable CredentialsProvider provider) {
         connected = true;
         uri = used;
         credentials = provider;

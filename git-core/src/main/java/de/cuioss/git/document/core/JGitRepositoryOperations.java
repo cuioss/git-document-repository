@@ -23,8 +23,7 @@ import java.io.Serial;
 import java.net.Proxy;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.DirectoryNotEmptyException;
-import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -69,6 +68,7 @@ import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.TagOpt;
+import org.eclipse.jgit.transport.TrackingRefUpdate;
 import org.eclipse.jgit.transport.Transport;
 import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.URIish;
@@ -111,9 +111,14 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     static final List<String> MIRROR_FETCH_REF_SPECS =
             List.of("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/notes/*:refs/notes/*");
 
-    /** The namespaces a clone mirrors, the destinations a push of a clone may write to. */
-    private static final List<String> MIRRORED_NAMESPACES =
-            List.of(Constants.R_HEADS, Constants.R_TAGS, Constants.R_NOTES);
+    /**
+     * The namespaces a clone mirrors, the destinations a push of a clone may write to: the destination of every
+     * {@link #MIRROR_FETCH_REF_SPECS} up to its wildcard, so the two cannot drift apart.
+     */
+    private static final List<String> MIRRORED_NAMESPACES = MIRROR_FETCH_REF_SPECS.stream()
+            .map(spec -> new RefSpec(spec).getDestination())
+            .map(destination -> destination.substring(0, destination.indexOf('*')))
+            .toList();
 
     /** The infix of the name of a clone's private staging directory, after the clone's own name. */
     private static final String STAGING_INFIX = ".staging-";
@@ -135,6 +140,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
 
     /** The input field of the local reference of {@code push}. */
     private static final String LOCAL_REF = "localRef";
+
+    /** The input field of the lease of {@code push}. */
+    private static final String EXPECTED_REMOTE_HEAD = "expectedRemoteHead";
+
+    /** The detail suffix of a repository that is not bare, after its path. */
+    private static final String NO_BARE_REPOSITORY = " is no bare repository";
 
     /** The input field of a pinned commit. */
     private static final String COMMIT = "commit";
@@ -209,7 +220,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         URIish uri;
         try {
             uri = new URIish(input.url()).setPass(null);
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException | IllegalArgumentException e) {
+            // JGit 7.8.0 URIish parses a port with Integer.parseInt, so a port beyond int range is a
+            // NumberFormatException, not a URISyntaxException
             return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
         }
         if (!remotePolicy.permits(uri)) {
@@ -253,11 +266,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * (GDR-CORE-3). A source-only specification, wildcard or not, pushes to the reference of the same name: JGit 7.8.0
      * {@code new RefSpec("refs/heads/*")} rejects a source-only wildcard, so {@code refs/heads/*} is configured as
      * {@code refs/heads/*:refs/heads/*}. The destination must lie in a namespace the clone mirrors
-     * ({@link #MIRROR_FETCH_REF_SPECS}), otherwise a fresh clone would not fetch what was pushed.
+     * ({@link #MIRROR_FETCH_REF_SPECS}), otherwise a fresh clone would not fetch what was pushed, and it must be a
+     * valid reference name once a wildcard is replaced, otherwise the first push would fail to create it.
      *
      * @param spec the caller's push reference specification
-     * @return the specification to configure, empty when it is invalid, deletes, matches or leaves the mirrored
-     *         namespaces
+     * @return the specification to configure, empty when it is invalid, deletes, matches, leaves the mirrored
+     *         namespaces or names no valid destination
      */
     static Optional<RefSpec> pushRefSpec(String spec) {
         try {
@@ -267,7 +281,10 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return Optional.empty();
             }
             String destination = parsed.getDestination() == null ? source : parsed.getDestination();
-            if (MIRRORED_NAMESPACES.stream().noneMatch(destination::startsWith)) {
+            // a wildcard stands for a valid name part; a destination JGit would refuse to create, such as one ending
+            // in ".lock", is refused here instead of when the first push writes it
+            if (MIRRORED_NAMESPACES.stream().noneMatch(destination::startsWith)
+                    || !Repository.isValidRefName(destination.replace('*', 'x'))) {
                 return Optional.empty();
             }
             return Optional.of(new RefSpec((parsed.isForceUpdate() ? "+" : "") + source + ":" + destination));
@@ -289,20 +306,24 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /**
      * Publishes a complete clone by moving its staging directory to the clone's place in one atomic step, so the
      * clone's place holds either nothing, the empty directory the caller prepared, or a complete clone, never a
-     * partial one.
+     * partial one. The move itself replaces the empty directory the caller prepared (POSIX {@code rename}, the only
+     * platform of {@link RefusingFS}) and never a non-empty one, so a move that fails leaves that directory as it
+     * was, and a clone published concurrently is never overwritten.
      *
      * @return {@code true} if this attempt published the clone, {@code false} if another one published first
+     * @throws IOException if the move failed and the clone's place holds no complete clone
      */
-    private static boolean publish(Path staging, Path gitDir) throws IOException {
+    private boolean publish(Path staging, Path gitDir) throws IOException {
         try {
-            if (Files.isDirectory(gitDir)) {
-                // the empty directory the caller prepared; a non-empty one is a clone published concurrently
-                Files.delete(gitDir);
-            }
             Files.move(staging, gitDir, StandardCopyOption.ATOMIC_MOVE);
             return true;
-        } catch (FileAlreadyExistsException | DirectoryNotEmptyException e) {
-            return false;
+        } catch (FileSystemException e) {
+            // the move onto a clone another attempt published meanwhile fails with ENOTEMPTY, which the JDK reports
+            // as a plain FileSystemException (FileAlreadyExistsException is a subclass); any other failure is kept
+            if (RepositoryCache.FileKey.isGitRepository(gitDir.toFile(), fs)) {
+                return false;
+            }
+            throw e;
         }
     }
 
@@ -325,7 +346,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
         try (Repository repository = openGitDir(gitDir)) {
             return repository.isBare() ? GitResult.ok(info(repository))
-                    : GitResult.of(GitOutcome.NOT_A_REPOSITORY, gitDir + " is no bare repository");
+                    : GitResult.of(GitOutcome.NOT_A_REPOSITORY, gitDir + NO_BARE_REPOSITORY);
         }
     }
 
@@ -348,8 +369,28 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             FetchResult fetched = git.fetch().setRemote(ORIGIN)
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
                     .setTransportConfigCallback(guardedTransport(input.credentials())).call();
+            requireMirroredRefs(fetched);
             linkHead(repository, fetched);
             return GitResult.ok(info(repository));
+        }
+    }
+
+    /**
+     * Requires every mirrored reference of a fetch to be written. JGit 7.8.0 {@code FetchProcess} downloads the objects
+     * and returns the {@link FetchResult} even when a reference update failed, for example with {@code LOCK_FAILURE}
+     * on the packed references lock, so a clone published without that check could lack its references and a retry
+     * would open it without fetching again. A remote without references has no updates and is a complete clone.
+     *
+     * @throws IOException if a reference of the fetch was not written
+     */
+    private static void requireMirroredRefs(FetchResult fetched) throws IOException {
+        for (TrackingRefUpdate update : fetched.getTrackingRefUpdates()) {
+            switch (update.getResult()) {
+                case NEW, FORCED, FAST_FORWARD, NO_CHANGE -> {
+                    // written, or already as the remote has it
+                }
+                default -> throw new IOException("mirrored reference not written: " + update.getResult());
+            }
         }
     }
 
@@ -369,7 +410,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     @Override
     public GitResult<List<CommitInfo>> log(Path root, String revision, int maxCount) {
         Objects.requireNonNull(root, "root");
-        Objects.requireNonNull(revision, "revision");
+        Objects.requireNonNull(revision, REVISION);
         try (Repository repository = openRepository(root); RevWalk walk = new RevWalk(repository)) {
             var lookup = GitIdentity.lookup(repository, revision);
             Optional<GitResult<List<CommitInfo>>> refused = refuseUnsupported(lookup, REVISION);
@@ -458,15 +499,24 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             if (unsupported.isPresent()) {
                 return unsupported.get();
             }
-            ObjectId local = repository.resolve(lookup.target().orElseThrow());
-            if (local == null || !repository.getObjectDatabase().has(local)) {
+            Optional<ObjectId> local = pushedObject(repository, lookup);
+            if (local.isEmpty()) {
                 return GitResult.of(GitOutcome.NOT_FOUND, LOCAL_REF + NOT_FOUND_SUFFIX);
             }
+            String expectedRemoteHead = input.expectedRemoteHead();
+            if (expectedRemoteHead != null && !ObjectId.isId(expectedRemoteHead)) {
+                // JGit 7.8.0 resolves a lease that names nothing to no lease, which would push without one
+                return GitResult.of(GitOutcome.NOT_FOUND, EXPECTED_REMOTE_HEAD + NOT_A_FULL_COMMIT_ID);
+            }
+            // JGit 7.8.0 Transport.findRemoteRefUpdatesFor looks a source up as a reference name first, so the id of
+            // a reference is not passed: a reference named like that id would take its place. The full name of the
+            // reference is looked up exactly; a full commit id that names no reference is passed as itself.
+            String source = lookup.resolution() == GitIdentity.Resolution.REF ? lookup.target().orElseThrow()
+                    : local.get().name();
             var command = git.push()
                     .setRemote(input.remote())
-                    .setRefSpecs(new RefSpec(local.name() + ":" + input.remoteRef()))
+                    .setRefSpecs(new RefSpec(source + ":" + input.remoteRef()))
                     .setTransportConfigCallback(guardedTransport(input.credentials()));
-            String expectedRemoteHead = input.expectedRemoteHead();
             if (expectedRemoteHead != null) {
                 command.setRefLeaseSpecs(new RefLeaseSpec(input.remoteRef(), expectedRemoteHead));
             }
@@ -492,7 +542,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             if (Files.exists(cache) && !isEmptyDirectory(cache)) {
                 try (Repository repository = openGitDir(cache)) {
                     return repository.isBare() ? GitResult.ok(cache.toRealPath())
-                            : GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + " is no bare repository");
+                            : GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + NO_BARE_REPOSITORY);
                 }
             }
             Files.createDirectories(cache);
@@ -514,7 +564,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         try {
             // the fetch is anonymous: user information in the URL is removed before the transport sees it
             uri = new URIish(input.url()).setUser(null).setPass(null);
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException | IllegalArgumentException e) {
+            // a port beyond int range is a NumberFormatException of JGit 7.8.0 URIish, see cloneIfMissing
             return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
         }
         if (!input.policy().permits(uri)) {
@@ -559,15 +610,22 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         } catch (RemoteRefusedException e) {
             return refused(e);
         } catch (TransportException e) {
-            if (cause(e, RemoteRefusedException.class).isPresent()) {
-                return transportFailure(e, display(uri), display(uri));
-            }
-            return isUnservedWant(e.getMessage())
-                    ? GitResult.of(GitOutcome.UNSERVED, display(uri) + " did not serve " + commit.name())
-                    : transportFailure(e, display(uri), display(uri));
+            return unservedOrFailed(e, uri, commit);
         } catch (IOException | JGitInternalException e) {
             return transportFailure(e, display(uri), display(uri));
         }
+    }
+
+    /**
+     * Maps a transport failure of {@code fetchCommit}: a remote that answered by refusing the wanted commit is
+     * {@link GitOutcome#UNSERVED}, unless the failure is the refusal of a destination by the policy, and every other
+     * failure is mapped by {@link #transportFailure(Exception, String, String)}.
+     */
+    private static GitResult<String> unservedOrFailed(TransportException failure, URIish uri, ObjectId commit) {
+        boolean unserved = cause(failure, RemoteRefusedException.class).isEmpty()
+                && isUnservedWant(failure.getMessage());
+        return unserved ? GitResult.of(GitOutcome.UNSERVED, display(uri) + " did not serve " + commit.name())
+                : transportFailure(failure, display(uri), display(uri));
     }
 
     @Override
@@ -605,10 +663,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /**
      * Points {@code refs/pinned/<id>} at a fetched commit, so it stays reachable. JGit 7.8.0 ignores the destination
      * of a fetch reference specification whose source is an object id ({@code FetchProcess.expandSingle} only wants
-     * the object), so the reference is written here.
+     * the object), so the reference is written here. The reference is written without being dereferenced
+     * ({@code updateRef(name, true)}), so a symbolic {@code refs/pinned/<id>} in a cache something else modified is
+     * replaced by the pin and never moves the branch it points to.
      */
     private static void pin(Repository repository, ObjectId commit) throws IOException {
-        var update = repository.updateRef(PINNED_REFS + commit.name());
+        var update = repository.updateRef(PINNED_REFS + commit.name(), true);
         update.setNewObjectId(commit);
         update.setForceUpdate(true);
         var result = update.update();
@@ -628,7 +688,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     }
 
     private static <V> GitResult<V> noBareCache(Path cache) {
-        return GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + " is no bare repository");
+        return GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + NO_BARE_REPOSITORY);
     }
 
     private static boolean isCommit(Repository repository, ObjectId id) throws IOException {
@@ -690,11 +750,50 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      */
     private static Optional<ObjectId> resolveCommit(Repository repository, GitIdentity.Lookup lookup)
             throws IOException {
+        Optional<ObjectId> selected = selectedObject(repository, lookup);
+        if (selected.isEmpty()) {
+            return Optional.empty();
+        }
         try {
-            return Optional.ofNullable(repository.resolve(lookup.target().orElseThrow() + "^{commit}"));
+            return Optional.ofNullable(repository.resolve(selected.get().name() + "^{commit}"));
         } catch (MissingObjectException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Reads the object a supported identity selects. A reference is read by its exact full name, never searched: a
+     * reference that no longer exists is not replaced by a prefixed one, such as {@code refs/tags/refs/heads/main} for
+     * {@code refs/heads/main} (JGit 7.8.0 {@code Repository.resolve} of a name goes through {@code findRef}, which
+     * searches prefixes). A full commit id selects itself.
+     *
+     * @return the object id, empty when the reference no longer exists
+     */
+    private static Optional<ObjectId> selectedObject(Repository repository, GitIdentity.Lookup lookup)
+            throws IOException {
+        String target = lookup.target().orElseThrow();
+        if (lookup.resolution() != GitIdentity.Resolution.REF) {
+            return Optional.of(ObjectId.fromString(target));
+        }
+        Ref ref = repository.exactRef(target);
+        return ref == null ? Optional.empty() : Optional.ofNullable(ref.getObjectId());
+    }
+
+    /**
+     * The object {@code push} sends: the one the identity selects, present in the repository, and a commit when the
+     * caller gave a bare id, since the API accepts a reference or a full commit id only. A reference keeps the object
+     * it names, an annotated tag included.
+     *
+     * @return the object id, empty when it is absent or a raw id names no commit
+     */
+    private static Optional<ObjectId> pushedObject(Repository repository, GitIdentity.Lookup lookup)
+            throws IOException {
+        Optional<ObjectId> selected = selectedObject(repository, lookup);
+        if (selected.isEmpty() || !repository.getObjectDatabase().has(selected.get())) {
+            return Optional.empty();
+        }
+        boolean rawId = lookup.resolution() == GitIdentity.Resolution.FULL_COMMIT_ID;
+        return rawId && !isCommit(repository, selected.get()) ? Optional.empty() : selected;
     }
 
     /**

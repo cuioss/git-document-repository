@@ -171,11 +171,16 @@ public final class GitIdentity {
          *
          * @param resolution how the string is addressed
          * @param candidates what the string may name
-         * @throws NullPointerException if a component is {@code null}
+         * @throws NullPointerException     if a component is {@code null}
+         * @throws IllegalArgumentException if the resolution is a supported identity, a reference or a full commit
+         *                                  id, and the candidates are not exactly one
          */
         public Lookup {
             Objects.requireNonNull(resolution, "resolution");
             candidates = List.copyOf(candidates);
+            if ((resolution == Resolution.REF || resolution == Resolution.FULL_COMMIT_ID) && candidates.size() != 1) {
+                throw new IllegalArgumentException("a supported identity names exactly one candidate");
+            }
         }
 
         /**

@@ -148,9 +148,12 @@ public class RefusingFS extends FS_POSIX {
      * JGit 7.8.0 {@code FS_POSIX.setExecute(file, true)} derives the group and others execute bits from the umask,
      * which it reads on first use by running {@code sh -c umask} through {@code Runtime.exec}, bypassing every process
      * entry point of {@link FS}. This file system derives them in process instead: the owner may always execute, and
-     * the group and others may execute exactly when they may read, which is the umask's effect on the file as it was
-     * created. Clearing the permission is JGit's own path, {@link File#setExecutable(boolean, boolean)}, which starts
-     * no process either.
+     * the group and others may execute exactly when they may read. That is a rule of this file system, not the
+     * umask's: a umask that withholds execute bits from the group or others, such as {@code 0033}, does not limit
+     * what is granted here, so an operator must not rely on the umask to limit the execute permission of what the
+     * library writes. Clearing the permission is JGit's own path, {@link File#setExecutable(boolean, boolean)}, which
+     * starts no process either; a grant never reaches the superclass, whose {@code setExecute} would read the umask
+     * by running {@code sh -c umask} for a file that appeared after the check.
      *
      * @param f          the file whose permission is changed
      * @param canExecute {@code true} to grant the execute permission, {@code false} to remove it
@@ -159,8 +162,11 @@ public class RefusingFS extends FS_POSIX {
      */
     @Override
     public boolean setExecute(File f, boolean canExecute) {
-        if (!canExecute || !isFile(f)) {
-            return super.setExecute(f, canExecute);
+        if (!canExecute) {
+            return super.setExecute(f, false);
+        }
+        if (!isFile(f)) {
+            return false;
         }
         try {
             Path path = f.toPath();

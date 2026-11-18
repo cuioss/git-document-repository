@@ -17,12 +17,14 @@ package de.cuioss.git.document.core;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 
 
+import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.transport.URIish;
 import org.junit.jupiter.api.DisplayName;
@@ -89,6 +91,18 @@ class RemotePolicyTest {
 
         assertThrows(IllegalArgumentException.class, () -> RemotePolicy.httpsOrigin(origin),
                 "an origin without a host is refused");
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: the refusal of an origin renders no part of it, user information included")
+    void refusalRendersNoOrigin() {
+        var password = Generators.letterStrings(24, 32).next();
+        var origin = URI.create("http://user:" + password + "@example.invalid");
+
+        var refusal = assertThrows(IllegalArgumentException.class, () -> RemotePolicy.httpsOrigin(origin),
+                "an origin without https is refused");
+
+        assertFalse(refusal.getMessage().contains(password), "the message carries no password");
     }
 
     @ParameterizedTest(name = "{0}")
