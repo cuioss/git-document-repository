@@ -101,7 +101,7 @@ public interface WorktreeOperations {
      */
     @Builder
     record Worktree(Path path, @Nullable String name, @Nullable String branch, @Nullable String head, boolean main,
-                    boolean locked, boolean prunable) {
+    boolean locked, boolean prunable) {
 
         /**
          * Requires the path.
