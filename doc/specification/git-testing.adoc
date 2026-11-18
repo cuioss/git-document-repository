@@ -56,3 +56,53 @@ name and the content of the token, and `toString()` masks the token and never re
 the generators of the module in one place: the factory method `GitGenerators.credentials()` returns a fresh
 `GitCredentialGenerator` and is the method that
 `@TypeGeneratorFactorySource(factoryClass = GitGenerators.class, factoryMethod = "credentials")` names.
+
+== Module Descriptor and Module Path
+
+The module descriptor `git-testing/src/main/java/module-info.java` requires the third-party modules transitively, so
+that a consumer module that reads `de.cuioss.git.document.testing` also reads the types of its signatures:
+
+[source,java]
+----
+requires transitive org.eclipse.jgit;
+requires transitive de.cuioss.test.generator;
+requires transitive org.junit.jupiter.api;
+requires static org.jspecify;
+----
+
+JGit and `cui-test-generator` ship no module descriptor; both are automatic modules, named by the
+`Automatic-Module-Name` entry of their manifests. Checked with `jar --describe-module` of JDK 25.0.3:
+`org.eclipse.jgit-7.8.0.202609011348-r.jar` describes as `org.eclipse.jgit@7.8.0.202609011348-r automatic`, and
+`cui-test-generator-3.0.2.jar` as `de.cuioss.test.generator@3.0.2 automatic`. A JAR becomes an automatic module only
+on the module path; on the class path its types belong to the unnamed module, and a named module cannot declare a
+dependence on the unnamed module
+(link:https://openjdk.org/jeps/261[JEP 261: Module System], sections _Automatic modules_ and _The unnamed module_).
+`requires transitive org.eclipse.jgit` therefore resolves only where the JGit JAR is on the module path.
+
+The module's own tests run on the class path: `git-testing/pom.xml` sets the Surefire parameter `useModulePath` to
+`false`. Surefire's default is `true`, which runs the tests on the module path when the project has a module
+descriptor and the JVM is module-aware
+(link:https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html#useModulePath[Surefire, `test` goal,
+parameter `useModulePath`]). The reason is recorded in the pom: `junit-jupiter-api` is a compile dependency of this
+module, so on the module path Surefire places `org.junit.platform.commons` in a named module while its launcher stays
+in the unnamed module, and the launcher fails with `IllegalAccessError` on `org.junit.platform.commons.util`. On the
+class path every class of the module belongs to the unnamed module (JEP 261, section _The unnamed module_), so *no test
+of this module exercises the descriptor*: neither the `requires` directives above nor the `exports` directive are
+resolved by any test run of `git-testing`.
+
+A consumer module such as `git-core` that tests on the module path has to do two things, because `git-testing` is a
+test-scope dependency and so appears in no `requires` directive of the consumer's descriptor:
+
+* Make its tests read `de.cuioss.git.document.testing` in its test configuration, with the option
+  `--add-reads <consumer-module>=de.cuioss.git.document.testing`, together with
+  `--add-modules de.cuioss.git.document.testing` where nothing else resolves the module (the options: JEP 261,
+  sections _Breaking encapsulation_ and _Root modules_), for example in Surefire's `argLine`.
+* Keep the automatic modules JGit (`org.eclipse.jgit`) and `cui-test-generator` (`de.cuioss.test.generator`) on the
+  module path. On the class path they are no modules at all, and the `requires transitive` directives of
+  `de.cuioss.git.document.testing` fail to resolve (JEP 261, section _Automatic modules_).
+
+The class-path workaround of `git-testing/pom.xml` applies to the consumer as well: the consumer receives
+`junit-jupiter-api` through `git-testing` in the same way, so its tests on the module path are expected to fail with
+the same `IllegalAccessError` and to need `useModulePath` set to `false`, unless the consumer's own run on the module
+path shows otherwise. No consumer of the reactor tests against `git-testing` yet, so this expectation is not observed
+in a consumer run.
