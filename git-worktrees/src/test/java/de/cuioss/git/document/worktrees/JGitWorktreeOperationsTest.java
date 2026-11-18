@@ -1013,7 +1013,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a replaced repository at the root is refused, a reused prunable path is kept")
+        @DisplayName("GDR-WT-1: a replaced repository at the root is not found, a reused prunable path is kept")
         void replacedRepositoryAndReusedPath(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var replaced = added(main, name());
@@ -1028,8 +1028,10 @@ class JGitWorktreeOperationsTest {
             var reusedResult = operations.worktreeRemove(main.root(), reused.path());
 
             assertAll(
-                    () -> assertEquals(GitOutcome.IDENTITY_MISMATCH, replacedResult.outcome(),
+                    () -> assertEquals(GitOutcome.WORKTREE_NOT_FOUND, replacedResult.outcome(),
                             "another repository at the root is not the registered working tree"),
+                    () -> assertEquals(replaced.path() + " is not the registered working tree",
+                            replacedResult.detail(), "the detail names the path and the reason"),
                     () -> assertTrue(Files.isRegularFile(replaced.path().resolve(main.files().getFirst())),
                             "the replaced repository's files are kept"),
                     () -> assertTrue(Files.isDirectory(replaced.path().resolve(Constants.DOT_GIT)),
@@ -1247,6 +1249,109 @@ class JGitWorktreeOperationsTest {
             try (TreeWalk walk = TreeWalk.forPath(repository, path, commit.getTree())) {
                 assertNotNull(walk, "the path " + path + " is in the commit");
                 return new String(repository.open(walk.getObjectId(0)).getBytes(), StandardCharsets.UTF_8);
+            }
+        }
+    }
+
+    /**
+     * Registers a linked working tree through a symbolic link: the link is created outside the main working tree and
+     * the administration directory's {@code gitdir} is rewritten to point through it, as {@code git worktree add}
+     * records a path given through a link. Skips the test where the file system creates no symbolic links.
+     */
+    private Path registerThroughSymlink(MainTree main, Worktree worktree) throws IOException {
+        var link = temp.resolve(name());
+        try {
+            Files.createSymbolicLink(link, worktree.path());
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "The file system creates symbolic links");
+        }
+        Files.writeString(main.admin(Objects.requireNonNull(worktree.name())).resolve(Constants.GITDIR_FILE),
+                link.resolve(Constants.DOT_GIT) + "\n");
+        return link;
+    }
+
+    @Nested
+    @DisplayName("reservation and registered paths")
+    class RegisteredIdentity {
+
+        @Test
+        @DisplayName("GDR-WT-1: a new or an existing branch whose reservation another addition holds is checked out")
+        void reservedBranchCheckedOut(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var commonDir = main.root().resolve(Constants.DOT_GIT);
+            // a concurrent new-branch addition between its reservation and its HEAD holds these reservations
+            var newBranch = name();
+            var heldNew = LinkedWorktrees.reserveBranch(commonDir, Constants.R_HEADS + newBranch).orElseThrow();
+            var existing = name();
+            branchOn(main, existing);
+            var heldExisting = LinkedWorktrees.reserveBranch(commonDir, Constants.R_HEADS + existing)
+                    .orElseThrow();
+            var newPath = main.root().resolve(name());
+            var existingPath = main.root().resolve(name());
+
+            var onNew = operations.worktreeAdd(onNewBranch(main, newPath, newBranch));
+            var onExisting = operations.worktreeAdd(onExistingBranch(main, existingPath, existing, Constants.HEAD));
+            var createdBeforeRelease = refId(main.root(), Constants.R_HEADS + newBranch);
+            var heldKept = Files.exists(heldNew) && Files.exists(heldExisting);
+            LinkedWorktrees.release(heldNew);
+            LinkedWorktrees.release(heldExisting);
+            var retried = operations.worktreeAdd(onNewBranch(main, newPath, newBranch));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, onNew.outcome(),
+                            "a new branch another addition reserved is checked out"),
+                    () -> assertEquals("branch: checked out in another working tree", onNew.detail(),
+                            "the detail names the field and the reason"),
+                    () -> assertEquals(GitOutcome.BRANCH_CHECKED_OUT, onExisting.outcome(),
+                            "an existing branch a new-branch addition reserved is checked out"),
+                    () -> assertNull(createdBeforeRelease, "the refused addition creates no branch"),
+                    () -> assertTrue(heldKept, "the other addition's reservations are kept"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "once released, the addition succeeds"),
+                    () -> assertFalse(Files.exists(existingPath), "the refused addition claims no target"),
+                    () -> assertEquals(List.of(), reservations(main), "no reservation is left"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-1: a working tree registered through a symbolic link is found and removed by its real path")
+        void removeThroughSymlink(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var worktree = added(main, name());
+            var link = registerThroughSymlink(main, worktree);
+
+            var result = operations.worktreeRemove(main.root(), worktree.path());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the working tree is found by its real path"),
+                    () -> assertFalse(Files.exists(worktree.path()), "the real working tree is deleted"),
+                    () -> assertFalse(Files.exists(main.admin(Objects.requireNonNull(worktree.name()))),
+                            "the administration directory is deleted"),
+                    () -> assertTrue(Files.isSymbolicLink(link), "the link itself is not followed into a deletion"),
+                    () -> assertEquals(List.of(main.root()), listed(main).stream().map(Worktree::path).toList(),
+                            "only the main working tree is listed"));
+        }
+
+        @Test
+        @DisplayName("GDR-WT-2: a commit in the main working tree stages no root registered through a symbolic link")
+        void linkedRootThroughSymlinkNotStaged(@LocalRepository Repository source) throws Exception {
+            var main = mainTree(source, temp);
+            var linked = added(main, name());
+            registerThroughSymlink(main, linked);
+            var file = name();
+            Files.writeString(main.root().resolve(file), content());
+
+            var result = operations.commit(commitInput(main.root()));
+
+            var info = Objects.requireNonNull(result.value(), "the commit is created: " + result.detail());
+            var linkedRoot = main.root().relativize(linked.path()).toString();
+            try (Repository repository = open(main.root()); RevWalk walk = new RevWalk(repository)) {
+                RevCommit commit = walk.parseCommit(ObjectId.fromString(info.id()));
+                assertAll(
+                        () -> assertNotNull(TreeWalk.forPath(repository, file, commit.getTree()),
+                                "the new file is committed"),
+                        () -> assertNull(TreeWalk.forPath(repository, linkedRoot, commit.getTree()),
+                                "the linked root is not committed"),
+                        () -> assertNull(repository.readDirCache().getEntry(linkedRoot),
+                                "the linked root is not in the index"));
             }
         }
     }

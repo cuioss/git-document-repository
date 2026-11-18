@@ -53,8 +53,8 @@ public interface WorktreeOperations {
      * Creates a linked working tree in git's own layout, so {@code git worktree list} reads it. The start point and
      * the branch are classified by {@code GitIdentity}: an ambiguous name is refused with its candidates in the detail,
      * and an abbreviated or unknown start point is never resolved, also not for an existing branch. The target is
-     * claimed exclusively and an existing branch is reserved until the new working tree is registered, so of two
-     * concurrent additions for one target or one branch exactly one succeeds. A refused or failed addition removes only
+     * claimed exclusively and the branch, a new one like an existing one, is reserved until the new working tree is
+     * registered, so of two concurrent additions for one target or one branch exactly one succeeds. A refused or failed addition removes only
      * what it created itself: the target directory or its contents, its administration directory and the branch it
      * created, the latter only while it still points at the start.
      *
@@ -82,8 +82,9 @@ public interface WorktreeOperations {
 
     /**
      * Removes a clean, unlocked linked working tree and its administration files; the removal is never forced. The
-     * repository at the root must be the registered working tree, and a prunable working tree is removed by its
-     * administration files only, so a directory that reuses its path is kept.
+     * registered paths are compared as real paths, the repository at the registered path must be the registered
+     * working tree, and a prunable working tree is removed by its administration files only, so a directory that
+     * reuses its path is kept.
      * <p>
      * The caller guarantees exclusive use of the working tree from the call until it returns: the check that the
      * working tree is clean and its deletion cannot be made one atomic step, so a change written in between is deleted
@@ -91,11 +92,11 @@ public interface WorktreeOperations {
      *
      * @param root     the main working-tree root
      * @param worktree the root of the linked working tree to remove
-     * @return {@link GitOutcome#OK} with the removed root, {@link GitOutcome#WORKTREE_NOT_FOUND},
-     *         {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED},
-     *         {@link GitOutcome#IDENTITY_MISMATCH} for another repository at the root, {@link GitOutcome#PATH_REFUSED}
-     *         for the main working tree, {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#NOT_A_REPOSITORY} or
-     *         {@link GitOutcome#FAILED}, also for a repository without a working tree
+     * @return {@link GitOutcome#OK} with the removed root, {@link GitOutcome#WORKTREE_NOT_FOUND}, also for another
+     *         repository at the registered path, {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED},
+     *         {@link GitOutcome#PATH_REFUSED} for the main working tree, {@link GitOutcome#REFUSED_BY_POLICY},
+     *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}, also for a repository without a
+     *         working tree
      */
     GitResult<Path> worktreeRemove(Path root, Path worktree);
 

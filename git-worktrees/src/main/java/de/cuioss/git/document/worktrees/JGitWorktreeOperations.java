@@ -251,16 +251,17 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             String branch = input.branch();
             String branchRef = branch == null ? null : Constants.R_HEADS + branch;
             boolean existingBranch = branchRef != null && !input.createBranch();
-            StartPoint resolved;
-            if (existingBranch) {
+            // every branch, new or existing, is reserved before it is checked, so of two additions for one branch
+            // exactly one gets past the check (the atomic Files.createFile reservation in the common directory)
+            if (branchRef != null) {
                 reservation = LinkedWorktrees.reserveBranch(commonDir, branchRef).orElse(null);
                 if (reservation == null) {
                     return GitResult.of(GitOutcome.BRANCH_CHECKED_OUT, CHECKED_OUT);
                 }
-                resolved = existingBranchStart(main, commonDir, Objects.requireNonNull(branch), branchRef);
-            } else {
-                resolved = newStart(main, input, startLookup, branchRef);
             }
+            StartPoint resolved = existingBranch
+                    ? existingBranchStart(main, commonDir, Objects.requireNonNull(branch), branchRef)
+                    : newStart(main, input, startLookup, branchRef);
             GitResult<Worktree> refusal = resolved.refusal();
             if (refusal != null) {
                 return refusal;
@@ -637,13 +638,17 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         }
         try {
             Path target = worktree.toAbsolutePath().normalize();
-            Path real = Files.exists(target) ? target.toRealPath() : target;
-            Optional<Worktree> match = Objects.requireNonNull(listed.value(), "value").stream()
-                    .filter(w -> w.path().equals(real) || w.path().equals(target)).findFirst();
-            if (match.isEmpty()) {
+            Path real = realPath(target);
+            Worktree found = null;
+            for (Worktree candidate : Objects.requireNonNull(listed.value(), "value")) {
+                if (realPath(candidate.path()).equals(real) || candidate.path().equals(target)) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (found == null) {
                 return GitResult.of(GitOutcome.WORKTREE_NOT_FOUND, target.toString());
             }
-            Worktree found = match.get();
             if (found.main()) {
                 return GitResult.of(GitOutcome.PATH_REFUSED, "the main working tree cannot be removed");
             }
@@ -659,16 +664,18 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
                 LinkedWorktrees.deleteAdmin(commonDir, name);
             } else {
                 Path admin = commonDir.resolve(LinkedWorktrees.WORKTREES).resolve(name);
-                try (Repository linked = openRepository(found.path())) {
+                // the real root, so a working tree registered through a symbolic link is deleted, not the link
+                Path registered = realPath(found.path());
+                try (Repository linked = openRepository(registered)) {
                     if (!Files.isSameFile(linked.getDirectory().toPath(), admin)) {
-                        return GitResult.of(GitOutcome.IDENTITY_MISMATCH,
+                        return GitResult.of(GitOutcome.WORKTREE_NOT_FOUND,
                                 found.path() + " is not the registered working tree");
                     }
                     if (!Git.wrap(linked).status().call().isClean()) {
                         return GitResult.of(GitOutcome.WORKTREE_DIRTY, found.path().toString());
                     }
                 }
-                LinkedWorktrees.delete(commonDir, name, found.path());
+                LinkedWorktrees.delete(commonDir, name, registered);
             }
             LOGGER.info(INFO.WORKTREE_REMOVED);
             return GitResult.ok(found.path());
@@ -732,14 +739,18 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     /**
      * Removes from the index of a working tree the root of every registered linked working tree inside it: JGit 7.8.0
      * {@code FileTreeIterator} reports a directory holding a {@code .git} entry as a gitlink, which {@code AddCommand}
-     * stages, so without this the main working tree would commit its linked working trees.
+     * stages, so without this the main working tree would commit its linked working trees. The registered roots are
+     * compared as real paths, so a root registered through a symbolic link is found as well.
      */
     private static void unstageLinkedRoots(Repository repository, Path commonDir) throws IOException {
         Path workTree = repository.getWorkTree().toPath().toRealPath();
-        List<String> roots = LinkedWorktrees.list(commonDir).stream().map(Worktree::path)
-                .filter(path -> path.startsWith(workTree) && !path.equals(workTree))
-                .map(path -> workTree.relativize(path).toString().replace(File.separatorChar, '/'))
-                .toList();
+        var roots = new ArrayList<String>();
+        for (Worktree linked : LinkedWorktrees.list(commonDir)) {
+            Path path = realPath(linked.path());
+            if (path.startsWith(workTree) && !path.equals(workTree)) {
+                roots.add(workTree.relativize(path).toString().replace(File.separatorChar, '/'));
+            }
+        }
         if (roots.isEmpty()) {
             return;
         }
@@ -868,6 +879,11 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             existing = existing.getParent();
         }
         return existing.toRealPath().resolve(existing.relativize(absolute));
+    }
+
+    /** The real path of a path that exists, the normalized absolute path of one that does not. */
+    private static Path realPath(Path path) throws IOException {
+        return Files.exists(path) ? path.toRealPath() : path.toAbsolutePath().normalize();
     }
 
     private static boolean isEmptyDirectory(Path path) throws IOException {
