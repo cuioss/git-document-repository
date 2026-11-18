@@ -403,6 +403,53 @@ class JGitCacheRepositoryTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-8: a cached commit whose pin is missing is pinned again without contacting the remote")
+        void repairsPin() throws Exception {
+            assertTrue(fetch(url(), commit, RemotePolicy.localOnly()).isOk(), "the first fetch fills the cache");
+            var pinned = JGitRepositoryOperations.PINNED_REFS + commit;
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setBare().build()) {
+                var delete = repository.updateRef(pinned);
+                delete.setForceUpdate(true);
+                delete.delete();
+                assertNull(repository.exactRef(pinned), "the pin is gone, the object stays");
+            }
+
+            // a gone remote: contacting it would be unreachable, so OK proves no contact
+            var again = fetch(goneUrl(), commit, RemotePolicy.localOnly());
+
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setBare().build()) {
+                var ref = repository.exactRef(pinned);
+                assertAll(
+                        () -> assertEquals(GitOutcome.OK, again.outcome(), "the cached commit is served"),
+                        () -> assertEquals(commit, Objects.requireNonNull(ref, "the pin is written again")
+                                .getObjectId().name(), "the pin points at the commit"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-8: the git directory of a working tree is refused as a cache, nothing is written to it")
+        void workingTreeIsNoCache() throws Exception {
+            var root = temp.resolve(TestCommits.name());
+            assertTrue(operations.init(root, TestCommits.name()).isOk(), "the working-tree repository is created");
+            var gitDir = root.resolve(Constants.DOT_GIT);
+
+            var fetched = operations.fetchCommit(new FetchCommitInput(gitDir, url(), commit, RemotePolicy.localOnly()));
+            var read = operations.readFile(new ReadFileInput(gitDir, commit, DATA + "/" + CSV));
+
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).build()) {
+                assertAll(
+                        () -> assertEquals(GitOutcome.NOT_A_REPOSITORY, fetched.outcome(),
+                                "fetchCommit refuses a working tree's git directory"),
+                        () -> assertEquals(GitOutcome.NOT_A_REPOSITORY, read.outcome(),
+                                "readFile refuses a working tree's git directory"),
+                        () -> assertTrue(repository.getRefDatabase().getRefsByPrefix(
+                                JGitRepositoryOperations.PINNED_REFS).isEmpty(), "no pin is written"),
+                        () -> assertFalse(repository.getObjectDatabase().has(ObjectId.fromString(commit)),
+                                "no object is fetched"));
+            }
+        }
+
+        @Test
         @DisplayName("a cache that is no repository is refused")
         void cacheIsNoRepository() throws Exception {
             var plain = Files.createDirectories(temp.resolve(TestCommits.name()));

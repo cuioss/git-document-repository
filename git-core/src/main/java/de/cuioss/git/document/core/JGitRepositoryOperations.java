@@ -20,8 +20,11 @@ import static de.cuioss.git.document.core.GitCoreLogMessages.WARN;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -51,6 +54,7 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryCache;
 import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.lib.SubmoduleConfig.FetchRecurseSubmodulesMode;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -93,6 +97,13 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The fetch reference specifications of a clone: branches, tags and notes are mirrored. */
     static final List<String> MIRROR_FETCH_REF_SPECS =
             List.of("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/notes/*:refs/notes/*");
+
+    /** The namespaces a clone mirrors, the destinations a push of a clone may write to. */
+    private static final List<String> MIRRORED_NAMESPACES =
+            List.of(Constants.R_HEADS, Constants.R_TAGS, Constants.R_NOTES);
+
+    /** The infix of the name of a clone's private staging directory, after the clone's own name. */
+    private static final String STAGING_INFIX = ".staging-";
 
     /** The compiled transport timeout of {@link #fetchCommit(FetchCommitInput)}, in seconds: connect and every read. */
     public static final int FETCH_TIMEOUT_SECONDS = 60;
@@ -191,15 +202,107 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         if (!remotePolicy.permits(uri)) {
             return refusedRemote(uri);
         }
-        try {
-            GitResult<RepositoryInfo> result = createClone(gitDir, uri, input);
-            if (!result.isOk()) {
-                removeClone(gitDir, existed);
+        List<RefSpec> pushRefSpecs = new ArrayList<>();
+        for (String spec : input.pushRefSpecs()) {
+            Optional<RefSpec> mapped = pushRefSpec(spec);
+            if (mapped.isEmpty()) {
+                return GitResult.of(GitOutcome.REFUSED_BY_POLICY,
+                        "pushRefSpecs: not a push to refs/heads/, refs/tags/ or refs/notes/");
             }
-            return result;
-        } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException e) {
-            removeClone(gitDir, existed);
+            pushRefSpecs.add(mapped.get());
+        }
+        Path staging = null;
+        try {
+            staging = createStaging(gitDir);
+            GitResult<RepositoryInfo> result = createClone(staging, uri, pushRefSpecs, input);
+            if (!result.isOk()) {
+                return result;
+            }
+            if (!publish(staging, gitDir)) {
+                // a concurrent attempt published its clone first
+                return openExistingClone(gitDir);
+            }
+            staging = null;
+            LOGGER.info(INFO.CLONE_CREATED, gitDir, display(uri));
+            try (Repository repository = openGitDir(gitDir)) {
+                return GitResult.ok(info(repository));
+            }
+        } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
+                | IllegalArgumentException e) {
             return transportFailure(e, ORIGIN, display(uri));
+        } finally {
+            removeStaging(staging);
+        }
+    }
+
+    /**
+     * Maps a push reference specification of a clone to the one configured, and refuses one the clone cannot restore
+     * (GDR-CORE-3). A source-only specification, wildcard or not, pushes to the reference of the same name: JGit 7.8.0
+     * {@code new RefSpec("refs/heads/*")} rejects a source-only wildcard, so {@code refs/heads/*} is configured as
+     * {@code refs/heads/*:refs/heads/*}. The destination must lie in a namespace the clone mirrors
+     * ({@link #MIRROR_FETCH_REF_SPECS}), otherwise a fresh clone would not fetch what was pushed.
+     *
+     * @param spec the caller's push reference specification
+     * @return the specification to configure, empty when it is invalid, deletes, matches or leaves the mirrored
+     *         namespaces
+     */
+    static Optional<RefSpec> pushRefSpec(String spec) {
+        try {
+            var parsed = new RefSpec(spec, RefSpec.WildcardMode.ALLOW_MISMATCH);
+            String source = parsed.getSource();
+            if (parsed.isNegative() || parsed.isMatching() || source == null) {
+                return Optional.empty();
+            }
+            String destination = parsed.getDestination() == null ? source : parsed.getDestination();
+            if (MIRRORED_NAMESPACES.stream().noneMatch(destination::startsWith)) {
+                return Optional.empty();
+            }
+            return Optional.of(new RefSpec((parsed.isForceUpdate() ? "+" : "") + source + ":" + destination));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Creates the private staging directory of one clone attempt, beside the clone so the publishing move stays on
+     * one file system.
+     */
+    private static Path createStaging(Path gitDir) throws IOException {
+        Path parent = gitDir.toAbsolutePath().getParent();
+        Files.createDirectories(parent);
+        return Files.createTempDirectory(parent, "." + gitDir.getFileName() + STAGING_INFIX);
+    }
+
+    /**
+     * Publishes a complete clone by moving its staging directory to the clone's place in one atomic step, so the
+     * clone's place holds either nothing, the empty directory the caller prepared, or a complete clone, never a
+     * partial one.
+     *
+     * @return {@code true} if this attempt published the clone, {@code false} if another one published first
+     */
+    private static boolean publish(Path staging, Path gitDir) throws IOException {
+        try {
+            if (Files.isDirectory(gitDir)) {
+                // the empty directory the caller prepared; a non-empty one is a clone published concurrently
+                Files.delete(gitDir);
+            }
+            Files.move(staging, gitDir, StandardCopyOption.ATOMIC_MOVE);
+            return true;
+        } catch (FileAlreadyExistsException | DirectoryNotEmptyException e) {
+            return false;
+        }
+    }
+
+    /** Removes the staging directory of this attempt, and only that one. */
+    private static void removeStaging(@Nullable Path staging) {
+        if (staging == null) {
+            return;
+        }
+        try {
+            FileUtils.delete(staging.toFile(), FileUtils.RECURSIVE | FileUtils.SKIP_MISSING | FileUtils.RETRY);
+        } catch (IOException e) {
+            LOGGER.debug("Could not remove the clone staging directory %s: %s", staging,
+                    e.getClass().getSimpleName());
         }
     }
 
@@ -213,16 +316,16 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
     }
 
-    private GitResult<RepositoryInfo> createClone(Path gitDir, URIish uri, CloneInput input)
-            throws GitAPIException, IOException, URISyntaxException {
-        Files.createDirectories(gitDir);
-        try (Git git = Git.init().setBare(true).setGitDir(gitDir.toFile()).setFs(fs).call()) {
+    /** Builds the complete clone in its staging directory: the bare repository, origin, and the fetch. */
+    private GitResult<RepositoryInfo> createClone(Path staging, URIish uri, List<RefSpec> pushRefSpecs,
+            CloneInput input) throws GitAPIException, IOException, URISyntaxException {
+        try (Git git = Git.init().setBare(true).setGitDir(staging.toFile()).setFs(fs).call()) {
             Repository repository = git.getRepository();
             StoredConfig config = repository.getConfig();
             var remote = new RemoteConfig(config, ORIGIN);
             remote.addURI(uri);
             MIRROR_FETCH_REF_SPECS.forEach(spec -> remote.addFetchRefSpec(new RefSpec(spec)));
-            input.pushRefSpecs().forEach(spec -> remote.addPushRefSpec(new RefSpec(spec)));
+            pushRefSpecs.forEach(remote::addPushRefSpec);
             remote.update(config);
             config.save();
             Optional<GitResult<RepositoryInfo>> refused = checkRemote(repository, ORIGIN, false);
@@ -230,9 +333,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return refused.get();
             }
             FetchResult fetched = git.fetch().setRemote(ORIGIN)
+                    .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
                     .setTransportConfigCallback(onlyCredentials(input.credentials())).call();
             linkHead(repository, fetched);
-            LOGGER.info(INFO.CLONE_CREATED, gitDir, display(uri));
             return GitResult.ok(info(repository));
         }
     }
@@ -249,17 +352,6 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
     }
 
-    /** Removes a clone that could not be completed; a directory that existed empty before is left empty. */
-    private static void removeClone(Path gitDir, boolean existed) {
-        try {
-            FileUtils.delete(gitDir.toFile(), FileUtils.RECURSIVE | FileUtils.SKIP_MISSING | FileUtils.RETRY);
-            if (existed) {
-                Files.createDirectories(gitDir);
-            }
-        } catch (IOException e) {
-            LOGGER.debug("Could not remove the incomplete clone at %s: %s", gitDir, e.getClass().getSimpleName());
-        }
-    }
 
     @Override
     public GitResult<List<CommitInfo>> log(Path root, String revision, int maxCount) {
@@ -311,6 +403,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             FetchResult result = git.fetch()
                     .setRemote(input.remote())
                     .setRefSpecs(input.refSpecs().stream().map(RefSpec::new).toList())
+                    // JGit 7.8.0 FetchCommand fetches submodules of a working tree on demand, each from its own
+                    // remote that the policy check above never saw
+                    .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
                     .setTransportConfigCallback(onlyCredentials(input.credentials()))
                     .call();
             var updates = result.getTrackingRefUpdates().stream()
@@ -417,7 +512,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
         var commit = ObjectId.fromString(input.commit());
         try (Repository repository = openCache(input.cache())) {
+            if (!repository.isBare()) {
+                return noBareCache(input.cache());
+            }
             if (isCommit(repository, commit)) {
+                // a fetch whose pin failed left the object without its reference; finish the pin without contact
+                pin(repository, commit);
                 return GitResult.ok(commit.name());
             }
             try (Transport transport = Transport.open(repository, uri)) {
@@ -462,6 +562,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
         var commitId = ObjectId.fromString(input.commit());
         try (Repository repository = openCache(input.cache()); RevWalk walk = new RevWalk(repository)) {
+            if (!repository.isBare()) {
+                return noBareCache(input.cache());
+            }
             if (!isCommit(repository, commitId)) {
                 return GitResult.of(GitOutcome.NOT_FOUND, "commit " + commitId.name() + " is not in the cache");
             }
@@ -499,8 +602,17 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
     }
 
+    /**
+     * Opens a cache repository as its configuration describes it. JGit 7.8.0 {@code BaseRepositoryBuilder.setBare()}
+     * would override {@code core.bare} and open the git directory of a working tree as bare, so the caller checks
+     * {@link Repository#isBare()} instead.
+     */
     private Repository openCache(Path cache) throws IOException {
-        return new FileRepositoryBuilder().setFS(fs).setMustExist(true).setGitDir(cache.toFile()).setBare().build();
+        return new FileRepositoryBuilder().setFS(fs).setMustExist(true).setGitDir(cache.toFile()).build();
+    }
+
+    private static <V> GitResult<V> noBareCache(Path cache) {
+        return GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache + " is no bare repository");
     }
 
     private static boolean isCommit(Repository repository, ObjectId id) throws IOException {
@@ -718,7 +830,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         Optional<String> branch = head != null && head.isSymbolic()
                 ? Optional.of(Repository.shortenRefName(head.getTarget().getName()))
                 : Optional.empty();
-        Optional<String> id = Optional.ofNullable(repository.resolve(Constants.HEAD)).map(ObjectId::name);
+        // the commit of the same HEAD observation as the branch; null on an unborn branch
+        Optional<String> id = head == null ? Optional.empty() : id(head.getObjectId());
         return RepositoryInfo.builder()
                 .worktreeRoot(repository.isBare() ? null : repository.getWorkTree().toPath().toRealPath())
                 .gitDir(gitDir)

@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -51,9 +52,16 @@ import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.RefSpec;
@@ -67,6 +75,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The repository operations on JGit: open, init, clone-when-missing, log, fetch and push against the
@@ -117,6 +127,13 @@ class JGitRepositoryOperationsTest {
 
     private static Repository openBare(Path gitDir) throws IOException {
         return new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();
+    }
+
+    /** The sorted names of the entries of a directory. */
+    private static List<String> entries(Path directory) throws IOException {
+        try (var list = Files.list(directory)) {
+            return list.map(path -> path.getFileName().toString()).sorted().toList();
+        }
     }
 
     @Nested
@@ -224,6 +241,19 @@ class JGitRepositoryOperationsTest {
                     () -> assertTrue(ambiguousDetail.contains(ref), "the branch is a candidate in the detail"),
                     () -> assertTrue(ambiguousDetail.contains(GitIdentity.tagRef(duplicate)),
                             "the tag is a candidate in the detail"));
+        }
+
+        @Test
+        @DisplayName("open reports the branch and the commit of one HEAD observation")
+        void headOfBranch(@LocalRepository Repository repository) throws Exception {
+            var target = headTarget(repository);
+            var commit = TestCommits.commitOn(repository, target);
+
+            var info = Objects.requireNonNull(operations.open(dir(repository)).value(), "the repository opens");
+
+            assertAll(
+                    () -> assertEquals(Repository.shortenRefName(target), info.branch(), "the branch HEAD points to"),
+                    () -> assertEquals(commit.name(), info.head(), "the commit of that branch"));
         }
 
         @Test
@@ -403,7 +433,68 @@ class JGitRepositoryOperationsTest {
 
             assertAll(
                     () -> assertEquals(GitOutcome.UNREACHABLE, result.outcome(), "the gone remote is unreachable"),
-                    () -> assertFalse(Files.exists(gitDir), "the incomplete clone is removed"));
+                    () -> assertFalse(Files.exists(gitDir), "the incomplete clone is removed"),
+                    () -> assertEquals(List.of(), entries(temp), "no staging directory is left behind"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-3: a failed clone into a prepared empty directory leaves it empty, a clone fills it")
+        void preparedDirectory(@Remote LocalRemote remote) throws Exception {
+            var parent = Files.createDirectories(temp.resolve(TestCommits.name()));
+            var failing = Files.createDirectories(parent.resolve(TestCommits.name() + ".git"));
+            var cloning = Files.createDirectories(parent.resolve(TestCommits.name() + ".git"));
+            var commit = TestCommits.commitOn(remote.repository(), branchRef());
+
+            var failed = operations.cloneIfMissing(input(failing, temp.resolve(TestCommits.name()).toUri().toString()));
+            var cloned = operations.cloneIfMissing(input(cloning, remote.uri().toString()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.UNREACHABLE, failed.outcome(), "the gone remote is unreachable"),
+                    () -> assertEquals(List.of(), entries(failing), "the prepared directory stays empty"),
+                    () -> assertEquals(GitOutcome.OK, cloned.outcome(), "the prepared directory receives the clone"),
+                    () -> assertEquals(List.of(failing.getFileName().toString(), cloning.getFileName().toString())
+                            .stream().sorted().toList(), entries(parent), "no staging directory is left behind"));
+            try (Repository clone = openBare(cloning)) {
+                assertTrue(clone.getObjectDatabase().has(commit), "the published clone holds the fetched commit");
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-3: source-only wildcard push refspecs are configured as pushes to the same names")
+        void sourceOnlyPushRefSpecs(@Remote LocalRemote remote) throws Exception {
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(remote.repository(), ref);
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+            // the push refspecs git-store configures, by GDR-CORE-3
+            var specs = List.of("refs/heads/*", "refs/tags/*", "refs/notes/*");
+
+            var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir).url(remote.uri().toString())
+                    .pushRefSpecs(specs).build());
+
+            assertEquals(GitOutcome.OK, result.outcome(), "the clone is created");
+            try (Repository clone = openBare(gitDir)) {
+                var config = new RemoteConfig(clone.getConfig(), ORIGIN);
+                assertAll(
+                        () -> assertEquals(List.of("refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*",
+                                        "refs/notes/*:refs/notes/*"),
+                                config.getPushRefSpecs().stream().map(RefSpec::toString).toList(),
+                                "each source-only spec pushes to the same names"),
+                        () -> assertEquals(commit, refId(clone, ref), "the remote is fetched"));
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"refs/releases/*", "refs/heads/*:refs/releases/*", ":refs/heads/main", ":"})
+        @DisplayName("GDR-CORE-3: a push refspec the clone cannot restore is refused before anything is created")
+        void refusedPushRefSpec(String spec) {
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+
+            var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir)
+                    .url(temp.resolve(TestCommits.name()).toUri().toString()).pushRefSpecs(List.of(spec)).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the refspec is refused"),
+                    () -> assertFalse(Files.exists(gitDir), "no clone is created"));
         }
     }
 
@@ -505,6 +596,55 @@ class JGitRepositoryOperationsTest {
                             "a lease on another head is refused although the reference is up to date"),
                     () -> assertEquals(GitOutcome.OK, holdingLease.outcome(), "a holding lease is accepted"),
                     () -> assertEquals(head, refId(remote.repository(), ref), "the remote stays at the commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-2: a fetch into a working tree never fetches a submodule from a remote outside the check")
+        void submodulesNotFetched(@Remote LocalRemote remote) throws Exception {
+            var marker = TestCommits.name();
+            var submoduleUrl = "https://" + FOREIGN_HOST + "/" + marker + ".git";
+            var submodulePath = TestCommits.name();
+            // the .gitmodules format of git: section, path and url keys
+            var modules = "[submodule \"" + submodulePath + "\"]\n\tpath = " + submodulePath + "\n\turl = "
+                    + submoduleUrl + "\n";
+            var source = remote.repository();
+            ObjectId commit;
+            try (ObjectInserter inserter = source.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                tree.append(Constants.DOT_GIT_MODULES, FileMode.REGULAR_FILE,
+                        inserter.insert(Constants.OBJ_BLOB, modules.getBytes(StandardCharsets.UTF_8)));
+                tree.append(submodulePath, FileMode.GITLINK, TestCommits.commit(source, null));
+                var ident = new PersonIdent(TestCommits.name(), TestCommits.name() + "@example.invalid");
+                var builder = new CommitBuilder();
+                builder.setTreeId(inserter.insert(tree));
+                builder.setAuthor(ident);
+                builder.setCommitter(ident);
+                builder.setMessage(Generators.letterStrings(3, 30).next());
+                commit = inserter.insert(builder);
+                inserter.flush();
+            }
+            TestCommits.setRef(source, branchRef(), commit);
+            var root = temp.resolve(TestCommits.name());
+            assertTrue(operations.init(root, TestCommits.name()).isOk(), "the working tree is created");
+            Files.writeString(root.resolve(Constants.DOT_GIT_MODULES), modules);
+            try (Repository parent = new FileRepositoryBuilder().setWorkTree(root.toFile()).build();
+                 Git submodule = Git.init().setDirectory(root.resolve(submodulePath).toFile()).call()) {
+                TestCommits.addRemote(parent, ORIGIN, remote.uri().toString());
+                var config = parent.getConfig();
+                config.setString(ConfigConstants.CONFIG_SUBMODULE_SECTION, submodulePath, ConfigConstants.CONFIG_KEY_URL,
+                        submoduleUrl);
+                config.save();
+                TestCommits.addRemote(submodule.getRepository(), ORIGIN, submoduleUrl);
+            }
+
+            try (var recording = new RecordingTransportProtocol(marker)) {
+                var fetched = operations.fetch(FetchInput.builder().root(root).remote(ORIGIN).refSpecs(List.of())
+                        .build());
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.OK, fetched.outcome(), "the parent is fetched"),
+                        () -> assertFalse(recording.connected(), "the submodule's remote is never contacted"));
+            }
         }
 
         @Test
