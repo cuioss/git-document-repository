@@ -130,7 +130,7 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
         Path commonDir = main.getCommonDirectory().toPath().toRealPath();
         Optional<String> branchRef = Optional.ofNullable(input.branch()).map(b -> Constants.R_HEADS + b);
         var startLookup = GitIdentity.lookup(main, input.startPoint());
-        Optional<GitResult<Worktree>> refused = refuseAmbiguousOrAbbreviated(startLookup, START_POINT);
+        Optional<GitResult<Worktree>> refused = refuseAmbiguousOrAbbreviated(startLookup);
         if (refused.isPresent()) {
             return refused.get();
         }
@@ -244,12 +244,12 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
      * Refuses a start point that is ambiguous, with its candidates, or an abbreviated commit id. The detail names the
      * field and the reason; the candidates of an ambiguity are references of the repository.
      */
-    private static <V> Optional<GitResult<V>> refuseAmbiguousOrAbbreviated(GitIdentity.Lookup lookup, String field) {
+    private static <V> Optional<GitResult<V>> refuseAmbiguousOrAbbreviated(GitIdentity.Lookup lookup) {
         if (GitIdentity.isAmbiguous(lookup.resolution())) {
-            return Optional.of(GitResult.of(GitOutcome.AMBIGUOUS, candidates(field, lookup)));
+            return Optional.of(GitResult.of(GitOutcome.AMBIGUOUS, candidates(START_POINT, lookup)));
         }
         if (lookup.resolution() == GitIdentity.Resolution.ABBREVIATED_COMMIT_ID) {
-            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, field + ABBREVIATED_COMMIT_ID));
+            return Optional.of(GitResult.of(GitOutcome.NOT_FOUND, START_POINT + ABBREVIATED_COMMIT_ID));
         }
         return Optional.empty();
     }
