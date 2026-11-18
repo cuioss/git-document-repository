@@ -130,8 +130,12 @@ Linux. It is skipped only where the platform refuses to create a symbolic link.
 
 === Accepted Exceptions to EasyMock
 
-The test approach names EasyMock for test doubles (xref:general.adoc#test-approach[Test Approach]). The tests of
-`git-testing` use hand-written doubles instead; each is an accepted exception, for the reason given:
+The test approach names EasyMock for test doubles (xref:general.adoc#test-approach[Test Approach]), and the tests of
+`git-testing` use it, in test scope, for the doubles of a repository: a class mock of JGit's `InMemoryRepository` that
+expects exactly one `close()` (and throws a given failure from it), and, where the real repository must stay in use, a
+partial mock whose `close()` is mocked and expected never to be called. The failure of
+`InMemoryRepositoryExtension.initialise` is a mock whose `create(true)` throws. The following doubles remain
+hand-written; each is an accepted exception, for the reason given:
 
 [cols="1,3"]
 |===
@@ -151,30 +155,20 @@ express that only by pinning the number of platform queries JGit makes internall
 7.8.0, `SystemReader#setInstance`, which initialises the new reader, and `#setPlatformChecker`, which asks
 `isWindows()` and `isMacOS()`]), which would tie the test to JGit 7.8.0.
 
-|`CountingRepository` (in `LocalRepositoryExtensionTest`)
-|A subclass of JGit's `InMemoryRepository` that counts its closings and can throw a given failure from `close()`. It
-stays a real repository for every other call, which the cleanup under test also uses, so a subclass is the smaller
-double.
-
-|`UninitialisedRepository` (in `InMemoryRepositoryExtensionTest`)
-|A subclass of JGit's `InMemoryRepository` that counts its closings and can throw a given `IOException` from
-`create(boolean)`. A fresh in-memory repository never fails to initialise, so the failure path of
-`InMemoryRepositoryExtension.initialise` is reachable only through such a double; for every other call it stays a real
-repository, so a subclass is the smaller double, as for `CountingRepository`.
-
 |`InMemoryClosingObserver`, `CountingClosing` (in `PerClassLifecycleTest`)
 |A JUnit extension that, once the per-class instance exists, replaces the closing the in-memory resolver stored in the
 class context with a record that counts its closings and delegates to the stored one. The resolver creates the
-repository itself, so no mock can be handed to it; the observed object is the stored closing that Jupiter closes,
-and a record of one method is shorter than a mock of the store's closing contract.
+repository itself, so no mock can be handed to it, and the stored closing, `ClosingRepository`, is a record and so
+cannot be subclassed. The observed object is the stored closing that Jupiter closes.
 
 |`ReflectedParameter` (in `LocalRepositoryExtensionTest`)
 |A record implementing JUnit's `ParameterContext` over a reflected method parameter, for calling an extension
-directly. A record of three methods is shorter than the equivalent mock and its expectations.
+directly. `ParameterContext` is an interface, so EasyMock could mock it; the record is kept because about ten call
+sites build one from a reflected parameter and an index, and a record of three methods is shorter than the same
+expectations repeated or hidden in a helper.
 |===
 
 `GitCredentialGeneratorTest` holds no test double.
 
-EasyMock could replace none of these doubles without a new dependency: it is declared in no POM of the reactor and is
-not on the test class path of `git-testing` (checked with `maven-dependency-plugin` 3.11.0, `dependency:list
--DincludeScope=test`). Adding it needs the owner's approval (xref:general.adoc#GDR-GEN-1[GDR-GEN-1]).
+EasyMock is declared in `git-testing` in test scope; the owner approved it on 2026-11-17 (xref:general.adoc#GDR-GEN-1[GDR-GEN-1]),
+and its version is managed by `cui-java-parent`.
