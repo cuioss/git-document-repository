@@ -22,23 +22,32 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 
 
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.util.FS_POSIX;
 import org.eclipse.jgit.util.ProcessResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.api.io.TempDir;
 
 @EnableGeneratorController
 @DisplayName("RefusingFS (GDR-CORE-1)")
@@ -47,10 +56,18 @@ class RefusingFSTest {
     /** The name of the hook git runs before a commit: part of git's hook contract. */
     private static final String PRE_COMMIT = "pre-commit";
 
+    /** The value JGit 7.8.0 {@link FS_POSIX} keeps in its umask field until it has read the umask. */
+    private static final int UMASK_NOT_READ = -1;
+
     private final RefusingFS fs = new RefusingFS();
 
     private static String word() {
         return Generators.letterStrings(1, 12).next();
+    }
+
+    /** A word too long to occur by chance in a refusal message. */
+    private static String longWord() {
+        return Generators.letterStrings(24, 32).next();
     }
 
     @Test
@@ -81,6 +98,72 @@ class RefusingFSTest {
     }
 
     @Test
+    @DisplayName("GDR-CORE-1: a refusal names no command and no argument, which can carry a secret")
+    void refusalCarriesNoCommandArgument() {
+        var command = longWord();
+        var secret = longWord();
+        var builder = new ProcessBuilder(command, secret);
+        var out = new ByteArrayOutputStream();
+        var emptyStream = new ByteArrayInputStream(new byte[0]);
+        var shellArgs = new String[]{secret};
+
+        var refusals = List.of(
+                assertThrows(CapabilityRefusedException.class, () -> fs.runInShell(command, shellArgs),
+                        "a shell command is refused"),
+                assertThrows(CapabilityRefusedException.class, () -> fs.runProcess(builder, out, out, word()),
+                        "a process with text input is refused"),
+                assertThrows(CapabilityRefusedException.class, () -> fs.runProcess(builder, out, out, emptyStream),
+                        "a process with stream input is refused"),
+                assertThrows(CapabilityRefusedException.class, () -> fs.execute(builder, emptyStream),
+                        "an executed process is refused"));
+
+        assertAll(refusals.stream().<Executable>map(refusal -> () -> assertAll(
+                () -> assertEquals("process_execution", refusal.getReason(), "the refusal names process execution"),
+                () -> assertFalse(refusal.getMessage().contains(command), "the message names no command"),
+                () -> assertFalse(refusal.getMessage().contains(secret), "the message names no argument"))));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-1: grants the execute permission in process, without reading the umask through a shell")
+    void setExecuteStartsNoProcess(@TempDir Path directory) throws Exception {
+        assumePosix();
+        var ownerOnly = Files.createFile(directory.resolve("owner-" + word()),
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        var readable = Files.createFile(directory.resolve("readable-" + word()),
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-r--r--")));
+
+        assertAll(
+                () -> assertTrue(fs.setExecute(ownerOnly.toFile(), true), "the owner-only file is made executable"),
+                () -> assertTrue(fs.setExecute(readable.toFile(), true), "the readable file is made executable"));
+
+        assertAll(
+                () -> assertEquals(PosixFilePermissions.fromString("rwx------"),
+                        Files.getPosixFilePermissions(ownerOnly), "only who may read may execute: the owner"),
+                () -> assertEquals(PosixFilePermissions.fromString("rwxr-xr-x"),
+                        Files.getPosixFilePermissions(readable), "only who may read may execute: everyone"),
+                () -> assertEquals(UMASK_NOT_READ, readUmaskField(),
+                        "the umask JGit reads through sh -c umask is never read"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-1: clears the execute permission and leaves a missing file alone")
+    void clearExecute(@TempDir Path directory) throws Exception {
+        assumePosix();
+        var executable = Files.createFile(directory.resolve("executable-" + word()),
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxr-xr-x")));
+        var missing = directory.resolve("missing-" + word()).toFile();
+
+        assertAll(
+                () -> assertTrue(fs.setExecute(executable.toFile(), false), "the execute permission is cleared"),
+                () -> assertFalse(fs.setExecute(missing, true), "a missing file is not made executable"));
+
+        assertAll(
+                () -> assertEquals(PosixFilePermissions.fromString("rw-r--r--"),
+                        Files.getPosixFilePermissions(executable), "nobody may execute the file any more"),
+                () -> assertEquals(UMASK_NOT_READ, readUmaskField(), "the umask is never read"));
+    }
+
+    @Test
     @DisplayName("GDR-CORE-1: finds no git executable and stays refusing when copied")
     void noGitExecutable() {
         assertAll(
@@ -90,7 +173,8 @@ class RefusingFSTest {
 
     @Test
     @DisplayName("GDR-CORE-1: reports an absent hook as not present on both entry points")
-    void absentHook(@LocalRepository Repository repository) {
+    void absentHook(@LocalRepository Repository repository) throws Exception {
+        useLocalHooksDirectory(repository);
         var out = new ByteArrayOutputStream();
 
         ProcessResult viaPublic = fs.runHookIfPresent(repository, PRE_COMMIT, new String[0], out, out, null);
@@ -108,7 +192,8 @@ class RefusingFSTest {
     @Test
     @DisplayName("GDR-CORE-1: refuses a present hook on both entry points instead of running it")
     void presentHook(@LocalRepository Repository repository) throws Exception {
-        installHook(repository, PRE_COMMIT);
+        assumePosix();
+        installHook(useLocalHooksDirectory(repository), PRE_COMMIT);
         var out = new ByteArrayOutputStream();
         var noArgs = new String[0];
 
@@ -128,17 +213,49 @@ class RefusingFSTest {
     }
 
     /**
-     * Places an executable hook script in the repository's hooks directory.
+     * Points the repository's {@code core.hooksPath} at an empty directory of its own, so neither the developer's nor
+     * the system's {@code core.hooksPath} decides which hooks the test finds.
      *
-     * @param repository the repository receiving the hook
-     * @param hookName   the hook's name
+     * @param repository the repository whose hooks directory is set
+     * @return the repository-local hooks directory, empty
+     * @throws IOException if the directory cannot be created or the configuration cannot be saved
+     */
+    private static Path useLocalHooksDirectory(Repository repository) throws IOException {
+        Path hooks = Files.createDirectories(repository.getDirectory().toPath().resolve(Constants.HOOKS));
+        StoredConfig config = repository.getConfig();
+        config.setString(ConfigConstants.CONFIG_CORE_SECTION, null, ConfigConstants.CONFIG_KEY_HOOKS_PATH,
+                hooks.toAbsolutePath().toString());
+        config.save();
+        return hooks;
+    }
+
+    /**
+     * Places an executable hook script in a hooks directory.
+     *
+     * @param hooks    the hooks directory receiving the hook
+     * @param hookName the hook's name
      * @throws IOException if the hook cannot be written
      */
-    private static void installHook(Repository repository, String hookName) throws IOException {
-        Path hooks = repository.getDirectory().toPath().resolve(Constants.HOOKS);
-        Files.createDirectories(hooks);
+    private static void installHook(Path hooks, String hookName) throws IOException {
         Path hook = hooks.resolve(hookName);
         Files.writeString(hook, "#!/bin/sh\necho " + word() + "\n");
         Files.setPosixFilePermissions(hook, PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
+    private static void assumePosix() {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                "The default file system supports the posix file attribute view");
+    }
+
+    /**
+     * Reads the umask JGit 7.8.0 {@link FS_POSIX} caches after reading it through {@code sh -c umask}.
+     *
+     * @return the cached umask, {@link #UMASK_NOT_READ} as long as it was never read
+     * @throws ReflectiveOperationException if JGit no longer declares the field
+     */
+    private int readUmaskField() throws ReflectiveOperationException {
+        Field umask = FS_POSIX.class.getDeclaredField("umask");
+        umask.setAccessible(true);
+        return umask.getInt(fs);
     }
 }

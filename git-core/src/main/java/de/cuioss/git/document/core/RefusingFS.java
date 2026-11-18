@@ -16,8 +16,13 @@
 package de.cuioss.git.document.core;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 
 
 import org.eclipse.jgit.lib.Repository;
@@ -35,11 +40,19 @@ import org.jspecify.annotations.Nullable;
  * diff), and process execution in general. The discovery of the {@code git} executable, which JGit uses to locate the
  * system configuration by running {@code git}, reports none, so the system configuration is never read through a
  * process. An absent hook is reported as not present, as JGit does, so operations of a repository without hooks run
- * unchanged.
+ * unchanged. Setting the execute permission of a file, which JGit's {@link FS_POSIX} does by reading the umask
+ * through a shell, is done in process. A refusal names the refused capability, never the refused command or its
+ * arguments, which can carry a secret.
  *
  * @since 0.1
  */
 public class RefusingFS extends FS_POSIX {
+
+    /** The refused capability of every process entry point. */
+    private static final String PROCESS_EXECUTION = "process_execution";
+
+    /** The fixed refusal detail of a process, in place of its command and arguments. */
+    private static final String PROCESS = "process";
 
     /** Creates the refusing file system. */
     public RefusingFS() {
@@ -83,25 +96,67 @@ public class RefusingFS extends FS_POSIX {
         throw new CapabilityRefusedException("repository_hook", hookName);
     }
 
+    /**
+     * Sets or clears the execute permission of a file without starting a process.
+     * <p>
+     * JGit 7.8.0 {@code FS_POSIX.setExecute(file, true)} derives the group and others execute bits from the umask,
+     * which it reads on first use by running {@code sh -c umask} through {@code Runtime.exec}, bypassing every process
+     * entry point of {@link FS}. This file system derives them in process instead: the owner may always execute, and
+     * the group and others may execute exactly when they may read, which is the umask's effect on the file as it was
+     * created. Clearing the permission is JGit's own path, {@link File#setExecutable(boolean, boolean)}, which starts
+     * no process either.
+     *
+     * @param f          the file whose permission is changed
+     * @param canExecute {@code true} to grant the execute permission, {@code false} to remove it
+     * @return {@code true} if the permission was changed, {@code false} if the file is no regular file or its
+     *         permissions cannot be read or written
+     */
+    @Override
+    public boolean setExecute(File f, boolean canExecute) {
+        if (!canExecute || !isFile(f)) {
+            return super.setExecute(f, canExecute);
+        }
+        try {
+            Path path = f.toPath();
+            Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(path);
+            permissions.add(PosixFilePermission.OWNER_EXECUTE);
+            mirror(permissions, PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_EXECUTE);
+            mirror(permissions, PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_EXECUTE);
+            Files.setPosixFilePermissions(path, permissions);
+            return true;
+        } catch (IOException | UnsupportedOperationException e) {
+            return false;
+        }
+    }
+
+    private static void mirror(Set<PosixFilePermission> permissions, PosixFilePermission read,
+            PosixFilePermission execute) {
+        if (permissions.contains(read)) {
+            permissions.add(execute);
+        } else {
+            permissions.remove(execute);
+        }
+    }
+
     @Override
     public ProcessBuilder runInShell(String cmd, String[] args) {
-        throw new CapabilityRefusedException("process_execution", "shell command");
+        throw new CapabilityRefusedException(PROCESS_EXECUTION, "shell command");
     }
 
     @Override
     public int runProcess(ProcessBuilder processBuilder, OutputStream outRedirect, OutputStream errRedirect,
             String stdinArgs) {
-        throw new CapabilityRefusedException("process_execution", String.valueOf(processBuilder.command()));
+        throw new CapabilityRefusedException(PROCESS_EXECUTION, PROCESS);
     }
 
     @Override
     public int runProcess(ProcessBuilder processBuilder, OutputStream outRedirect, OutputStream errRedirect,
             InputStream inRedirect) {
-        throw new CapabilityRefusedException("process_execution", String.valueOf(processBuilder.command()));
+        throw new CapabilityRefusedException(PROCESS_EXECUTION, PROCESS);
     }
 
     @Override
     public ExecutionResult execute(ProcessBuilder pb, InputStream in) {
-        throw new CapabilityRefusedException("process_execution", String.valueOf(pb.command()));
+        throw new CapabilityRefusedException(PROCESS_EXECUTION, PROCESS);
     }
 }
