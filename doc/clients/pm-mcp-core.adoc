@@ -112,15 +112,19 @@ policy, a file read at that commit.
 Every class is taken over as a plain copy without history (owner's decision, 2026-11-17): the commit that brings it
 names `pm-mcp-core`, the source path and the commit it was copied from. `git-core` holds the copy of
 `pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/` at commit `287e1a86`, package-renamed to
-`de.cuioss.git.document.core`; `git-testing` holds the copy of the generator. The taken-over code is released under
-the Apache License 2.0 of `git-document-repository`.
+`de.cuioss.git.document.core`; `git-worktrees` holds `LinkedWorktrees` from the same path and commit,
+package-renamed to `de.cuioss.git.document.worktrees` and since changed (see
+<<_what_git_worktrees_took_and_changed>>); `git-testing` holds the copy of the generator. The taken-over
+code is released under the Apache License 2.0 of `git-document-repository`.
 
 The tests move with the classes they test. Test classes that cover both sides (`JGitOperationsTest`,
 `GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces. The
 repository part of each moves to `git-core`, rewritten onto the fixtures of `git-testing`; its commits are written
 through an `ObjectInserter` (the helper `TestCommits`) instead of from a working tree. `GitOperationsContractTest`
-tests only the source's `GitCredential` record, which `git-core` does not take, so no part of it moves to `git-core`.
-The worktree part of the split classes is settled when `git-worktrees` takes over its code.
+tests only the source's `GitCredential` record, which neither `git-core` nor `git-worktrees` takes, so no part of it
+moves. The worktree part of `JGitOperationsTest`, `GitOperationsRecordsTest` and `AbsenceContractsTest` moves to
+`git-worktrees`, likewise rewritten onto the fixtures; the main working tree of its tests is a clone of a fixture
+repository.
 
 [cols="1,2"]
 |===
@@ -134,7 +138,10 @@ secrets check), `RepositoryOperationsRecordsTest` (the repository part of `GitOp
 repository); `TransportFailuresTest` (new: the classification of a refused authentication)
 
 |`git-worktrees`
-|`LinkedWorktreesTest`, the worktree part of the split classes
+|`LinkedWorktreesTest`; `JGitWorktreeOperationsTest` (the worktree part of `JGitOperationsTest`: add, list, remove and
+commit with every outcome, and the secrets check), `WorktreeOperationsRecordsTest` (the worktree part of
+`GitOperationsRecordsTest`), `AbsenceContractsTest` (its worktree part); `WorktreeStatusTest` (new: the working-tree
+status) and `GitWorktreeListCompatibilityTest` (new: `git worktree list` of an installed Git, skipped without one)
 
 |`git-testing`
 |`GitCredentialGeneratorTest`
@@ -179,6 +186,34 @@ switch-over:
 |none |new: `CONFLICT`, `UNREACHABLE`, `CREDENTIALS_INVALID`, `UNSERVED`, `FAILED`
 |===
 
+[[_what_git_worktrees_took_and_changed]]
+=== What `git-worktrees` Took and Changed
+
+`git-worktrees` changed the copied code where the requirements of the libraries demand it
+(xref:../specification/git-worktrees.adoc[`git-worktrees`]); the facade of `pm-provider-git` maps the differences at
+the switch-over:
+
+* *Outcomes.* The worktree operations report the constants of `GitOutcome` of `git-core`, so the mapping of the table
+  above applies to them as well; an unexpected failure is `FAILED` with the failure class as detail.
+* *Administration directory.* `LinkedWorktrees` claims the administration directory `worktrees/<id>/` atomically with
+  `Files.createDirectory` and moves to the next numeric suffix when the name is taken, instead of probing it with
+  `Files.exists` and then creating it, so two concurrent additions on one repository never share it. It writes each
+  file completely before it appears under its name, `HEAD` last, removes the directory it claimed when a write fails,
+  skips an entry without `gitdir` or `HEAD` when listing, and resolves a relative `gitdir` against the administration
+  directory.
+* *Concurrent additions.* `worktreeAdd` claims its target exclusively and reserves an existing branch until the new
+  working tree names it; a refused or failed addition removes only what it created, a branch it created only while the
+  branch still points at the start. An unknown start point is not found, also for an existing branch.
+* *Removal.* `worktreeRemove` refuses a repository at the root that is not the registered working tree
+  (`IDENTITY_MISMATCH`) and removes a prunable working tree by its administration directory only.
+* *Commit.* `commit` refuses a present `pre-commit`, `commit-msg` or `post-commit` hook before anything is staged, does
+  not stage the root of a linked working tree inside the committing one, and writes the `HEAD` reflog entry of a
+  commit in a linked working tree to that working tree's own log.
+* *Log messages.* The INFO messages carry no path and no administrative name; the add message names the start commit.
+* *Status.* The working-tree status `worktreeStatus` is new: the three path sets `changed`, `untracked` and `deleted`
+  mapped from JGit's `Status`, whose union is the path union the source's `worktreeSha` reads; the digest itself stays
+  in `pm-provider-git`.
+
 == What Changes in `pm-mcp-core`
 
 Each item is part of the work package that switches `pm-provider-git` over:
@@ -202,8 +237,8 @@ the size.
 
 . Fill `git-core`, `git-worktrees` and `git-testing`: copy the classes and their tests into `git-core` and
   `git-worktrees`, and the generator into `git-testing`, each as a plain copy without history whose commit names the
-  source (owner's decision, 2026-11-17); build and release a first version. `git-core` and `git-testing` are filled;
-  `git-worktrees` follows.
+  source (owner's decision, 2026-11-17); build and release a first version. `git-core`, `git-worktrees` and
+  `git-testing` are filled; the first release follows.
 . Work package in `pm-mcp-core`: switch `pm-provider-git` onto the two modules and reduce it to facade, adapter and
   digest, with the changes listed above.
 
@@ -217,8 +252,8 @@ Coupling two life cycles is the price of the shared foundation. A contract chang
 
 == Open Questions
 
-. The exact split of the test classes that cover both repository and worktree operations. Closed for `git-core`: its
-  part is listed in <<_what_moves_where>>. The worktree part stays open until `git-worktrees` takes over its code.
+. The exact split of the test classes that cover both repository and worktree operations. Closed: both parts are
+  listed in <<_what_moves_where>>.
 . The release of the code taken over from `pm-provider-git` under the Apache License 2.0. Closed: the taken-over code
   is released under the Apache License 2.0 and carries the license header of `git-document-repository`.
 . Whether JGit still works in the native image of `pm-mcpd` against the first `SNAPSHOT`.

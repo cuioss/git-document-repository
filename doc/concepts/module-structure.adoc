@@ -44,7 +44,7 @@ rest planned
 
 |`git-worktrees`
 |Linked working trees, commit from a working tree, working-tree status
-|scaffold
+|implemented
 
 |`git-testing`
 |Generators and fixtures: local and in-memory repositories, a local remote
@@ -112,10 +112,10 @@ term of a domain, so it serves the document store and every other client that wo
 * *`git-worktrees`* holds the linked working trees (administration files in git's own layout, readable by
   `git worktree list` and written natively, because JGit has no command that adds or removes a linked working tree;
   see xref:storage-engine.adoc#_no_working_trees[Storage Engine, No Working Trees]): adding, listing and removing
-  working trees, the commit
-  from a working tree, and a working-tree status as a generic primitive (the path set of changed, untracked and deleted
-  files), on which a client builds its own digest. The document store does not need this module; clients that work on
-  files on disk do.
+  working trees, the commit from a working tree, and a working-tree status as a generic primitive (the path sets of
+  changed, untracked and deleted files), on which a client builds its own digest
+  (xref:../specification/git-worktrees.adoc[`git-worktrees`]). The document store does not need this module; clients
+  that work on files on disk do.
 * *`git-testing`* holds a generator of transport credentials and fixtures for local and in-memory repositories and a
   local remote (xref:../specification/git-testing.adoc[`git-testing`]).
 
@@ -134,8 +134,8 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
 . Fill `git-core`, `git-worktrees` and `git-testing` with the foundation code and its tests; build and release a
   first version. The code is taken over as a plain copy without history, whose commit names the source repository,
   the source path and the commit it was copied from (owner's decision, 2026-11-17); the taken-over code is released
-  under the Apache License 2.0. `git-core` holds the repository part of `pm-provider-git` copied this way, `git-testing`
-  the generator copied this way and fixtures written new.
+  under the Apache License 2.0. `git-core` holds the repository part of `pm-provider-git` copied this way,
+  `git-worktrees` its worktree part, and `git-testing` the generator copied this way and fixtures written new.
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
 . Add the aspect modules as the document store needs them: `git-store` first, then `git-forms`, `git-directory`

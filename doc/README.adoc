@@ -114,7 +114,9 @@ xref:specification/git-testing.adoc#GDR-TEST-2[GDR-TEST-2] of `git-testing`, and
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1], xref:specification/git-core.adoc#GDR-CORE-2[GDR-CORE-2],
 xref:specification/git-core.adoc#GDR-CORE-3[GDR-CORE-3], xref:specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7],
 xref:specification/git-core.adoc#GDR-CORE-8[GDR-CORE-8] and xref:specification/git-core.adoc#GDR-CORE-11[GDR-CORE-11]
-of `git-core`. `git-worktrees` is a scaffold, and every other requirement is planned.
+of `git-core`, and xref:specification/git-worktrees.adoc#GDR-WT-1[GDR-WT-1],
+xref:specification/git-worktrees.adoc#GDR-WT-2[GDR-WT-2] and xref:specification/git-worktrees.adoc#GDR-WT-3[GDR-WT-3]
+of `git-worktrees`; every other requirement is planned.
 
 [cols="1,3"]
 |===
