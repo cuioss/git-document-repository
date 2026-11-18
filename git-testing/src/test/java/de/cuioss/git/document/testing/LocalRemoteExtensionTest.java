@@ -91,7 +91,7 @@ class LocalRemoteExtensionTest {
      *
      * @param directory the received directory
      */
-    private void record(Path directory) {
+    private void recordDirectory(Path directory) {
         recordedByThisTest.add(directory);
         RECEIVED_DIRECTORIES.add(directory);
     }
@@ -100,7 +100,7 @@ class LocalRemoteExtensionTest {
     @DisplayName("Should address the bare repository by a file: URL")
     void shouldAddressBareRepositoryByFileUrl(@Remote LocalRemote remote) {
         var directory = remote.repository().getDirectory().toPath();
-        record(directory);
+        recordDirectory(directory);
 
         assertAll("local remote",
                 () -> assertEquals("file", remote.uri().getScheme(), "The URL has the scheme file"),
@@ -113,8 +113,8 @@ class LocalRemoteExtensionTest {
     @DisplayName("Should serve a fetch into a local repository")
     void shouldServeFetch(@Remote LocalRemote remote, @LocalRepository Repository local)
             throws Exception {
-        record(remote.repository().getDirectory().toPath());
-        record(local.getDirectory().toPath());
+        recordDirectory(remote.repository().getDirectory().toPath());
+        recordDirectory(local.getDirectory().toPath());
         var commit = commitOnBranch(remote.repository());
 
         try (var git = Git.wrap(local)) {
@@ -153,7 +153,7 @@ class LocalRemoteExtensionTest {
         private void assertReceivedOwnRemote() {
             var directory = remote.repository().getDirectory().toPath();
             assertFalse(RECEIVED_DIRECTORIES.contains(directory), "No other test received this remote");
-            record(directory);
+            recordDirectory(directory);
             assertTrue(Files.isDirectory(directory), "The remote lies in an existing directory");
         }
     }

@@ -149,7 +149,7 @@ class LocalRepositoryExtensionTest {
      *
      * @param directory the received directory
      */
-    private void record(Path directory) {
+    private void recordDirectory(Path directory) {
         recordedByThisTest.add(directory);
         RECEIVED_DIRECTORIES.add(directory);
     }
@@ -163,7 +163,7 @@ class LocalRepositoryExtensionTest {
         var resolved = extension.resolveParameter(declared, context);
         var stored = context.getStore(LocalRepositoryExtension.NAMESPACE)
                 .get(LocalRepositoryExtension.storeKey(declared), LocalRepositoryExtension.TemporaryRepository.class);
-        record(stored.directory());
+        recordDirectory(stored.directory());
 
         assertAll("stored cleanup",
                 () -> assertSame(resolved, stored.repository(), "The stored cleanup holds the returned repository"),
@@ -178,7 +178,7 @@ class LocalRepositoryExtensionTest {
     @DisplayName("Should provide a bare repository in an existing directory")
     void shouldProvideBareRepository(@LocalRepository Repository repository) {
         var directory = repository.getDirectory().toPath();
-        record(directory);
+        recordDirectory(directory);
 
         assertAll("local repository",
                 () -> assertTrue(repository.isBare(), "The repository is bare"),
@@ -190,8 +190,8 @@ class LocalRepositoryExtensionTest {
     void shouldProvideDistinctRepositories(@LocalRepository Repository first, @LocalRepository Repository second) {
         var firstDirectory = first.getDirectory().toPath();
         var secondDirectory = second.getDirectory().toPath();
-        record(firstDirectory);
-        record(secondDirectory);
+        recordDirectory(firstDirectory);
+        recordDirectory(secondDirectory);
 
         assertAll("two local repositories",
                 () -> assertNotSame(first, second, "Each parameter receives its own repository"),
@@ -228,7 +228,7 @@ class LocalRepositoryExtensionTest {
         private void assertReceivedOwnRepository() {
             var directory = repository.getDirectory().toPath();
             assertFalse(RECEIVED_DIRECTORIES.contains(directory), "No other test received this repository");
-            record(directory);
+            recordDirectory(directory);
             assertTrue(Files.isDirectory(directory), "The repository lies in an existing directory");
         }
     }
