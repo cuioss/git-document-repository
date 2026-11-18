@@ -58,6 +58,7 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
@@ -480,6 +481,51 @@ class JGitRepositoryOperationsTest {
                     () -> assertEquals(remoteHead, unchanged, "the refused push leaves the remote unchanged"),
                     () -> assertEquals(GitOutcome.OK, accepted.outcome(), "a holding lease is accepted"),
                     () -> assertEquals(next, refId(remote.repository(), ref), "the remote moves to the new commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a push of the commit the remote already holds honours the lease and reports the old id")
+        void upToDate(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var head = TestCommits.commitOn(client, ref);
+            assertTrue(operations.push(push(client, ref, null)).isOk(), "the remote receives the commit");
+            var other = TestCommits.commit(client, null);
+
+            var plain = operations.push(push(client, ref, null));
+            var staleLease = operations.push(push(client, ref, other.name()));
+            var holdingLease = operations.push(push(client, ref, head.name()));
+
+            var plainUpdate = Objects.requireNonNull(plain.value(), "the plain push succeeds");
+            assertAll(
+                    () -> assertEquals("up_to_date", plainUpdate.status(), "the reference is up to date"),
+                    () -> assertEquals(head.name(), plainUpdate.oldId(),
+                            "the old id is the id the reference already had, not a creation"),
+                    () -> assertEquals(GitOutcome.LEASE_REFUSED, staleLease.outcome(),
+                            "a lease on another head is refused although the reference is up to date"),
+                    () -> assertEquals(GitOutcome.OK, holdingLease.outcome(), "a holding lease is accepted"),
+                    () -> assertEquals(head, refId(remote.repository(), ref), "the remote stays at the commit"));
+        }
+
+        @Test
+        @DisplayName("a push to a remote with two push destinations is refused before either is contacted")
+        void twoDestinations(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            var config = client.getConfig();
+            var remoteConfig = new RemoteConfig(config, ORIGIN);
+            remoteConfig.addURI(new URIish(remote.uri().toString()));
+            remoteConfig.addPushURI(new URIish(remote.uri().toString()));
+            remoteConfig.addPushURI(new URIish(temp.resolve(TestCommits.name()).toUri().toString()));
+            remoteConfig.update(config);
+            config.save();
+            var ref = branchRef();
+            TestCommits.commitOn(client, ref);
+
+            var result = operations.push(push(client, ref, null));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(),
+                            "two destinations are refused"),
+                    () -> assertNull(remote.repository().exactRef(ref), "the first destination is not contacted"));
         }
 
         @Test

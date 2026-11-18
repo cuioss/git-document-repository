@@ -340,6 +340,11 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 return refused.get();
             }
             target = describeRemote(repository, input.remote(), true);
+            if (remoteUris(repository, input.remote(), true).size() > 1) {
+                // JGit 7.8.0 PushCommand pushes to every push URL and reports one PushResult each, so destinations
+                // could disagree; a push is refused before contact instead
+                return GitResult.of(GitOutcome.REFUSED_BY_POLICY, target + ": more than one push destination");
+            }
             var lookup = GitIdentity.lookup(repository, input.localRef());
             Optional<GitResult<RefUpdate>> unsupported = refuseUnsupported(lookup, LOCAL_REF);
             if (unsupported.isPresent()) {
@@ -360,7 +365,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             for (PushResult result : command.call()) {
                 RemoteRefUpdate update = result.getRemoteUpdate(input.remoteRef());
                 if (update != null) {
-                    return toPushResult(update);
+                    return toPushResult(update, result.getAdvertisedRef(input.remoteRef()), expectedRemoteHead);
                 }
             }
             return GitResult.of(GitOutcome.FAILED, "remoteRef: no update reported");
@@ -564,11 +569,32 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
     }
 
-    private static GitResult<RefUpdate> toPushResult(RemoteRefUpdate update) {
+    /**
+     * Maps the update of the pushed reference to the result.
+     * <p>
+     * JGit 7.8.0 {@code PushProcess} reports {@code UP_TO_DATE} as soon as the advertised id equals the new id, before
+     * it compares the lease and before it sets the expected old id. An up-to-date update is therefore checked here
+     * against the lease, from the advertised reference of the same push, and its old id is the advertised id: the
+     * reference existed and was not created.
+     *
+     * @param update             the update of the pushed reference
+     * @param advertised         the remote reference the push saw; {@code null} if the remote had none
+     * @param expectedRemoteHead the lease; {@code null} for a plain push
+     */
+    private static GitResult<RefUpdate> toPushResult(RemoteRefUpdate update, @Nullable Ref advertised,
+            @Nullable String expectedRemoteHead) {
         String status = update.getStatus().name().toLowerCase(Locale.ROOT);
+        boolean upToDate = update.getStatus() == RemoteRefUpdate.Status.UP_TO_DATE;
+        Optional<String> advertisedId = advertised == null ? Optional.empty() : id(advertised.getObjectId());
+        if (upToDate && expectedRemoteHead != null
+                && !advertisedId.map(expectedRemoteHead::equalsIgnoreCase).orElse(false)) {
+            return GitResult.of(GitOutcome.LEASE_REFUSED, update.getRemoteName());
+        }
+        Optional<String> oldId = upToDate ? advertisedId.or(() -> id(update.getNewObjectId()))
+                : id(update.getExpectedOldObjectId());
         var ref = RefUpdate.builder()
                 .ref(update.getRemoteName())
-                .oldId(id(update.getExpectedOldObjectId()).orElse(null))
+                .oldId(oldId.orElse(null))
                 .newId(id(update.getNewObjectId()).orElse(null))
                 .status(status)
                 .build();

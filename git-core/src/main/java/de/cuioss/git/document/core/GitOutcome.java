@@ -58,7 +58,8 @@ public enum GitOutcome {
     CREDENTIALS_INVALID,
 
     /**
-     * Refused by policy: a remote outside the {@link RemotePolicy} (refused before any contact), or a capability the
+     * Refused by policy: a remote outside the {@link RemotePolicy} or a push to more than one destination (refused
+     * before any contact), or a capability the
      * {@link RefusingFS} refuses (a present hook or a process start). The detail names the refused remote or
      * capability. Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
      * {@code cloneIfMissing} and {@code fetchCommit}), and for a capability by an operation that would run the hook or

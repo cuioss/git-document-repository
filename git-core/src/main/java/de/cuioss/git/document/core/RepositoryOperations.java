@@ -102,11 +102,18 @@ public interface RepositoryOperations {
      * Pushes one reference to a configured remote, optionally bound to the expected remote head (lease). The local
      * reference is classified by {@link GitIdentity} as in {@link #log(Path, String, int)}: only exactly one reference
      * or a full commit id of the repository is pushed (GDR-CORE-11).
+     * <p>
+     * The push has exactly one destination: a remote with more than one push URL is refused before any contact, so
+     * the outcome always describes the one remote reference there is. A lease holds only when the remote reference is
+     * at the expected head, also when the remote reference is already at the pushed commit. The reference update's
+     * old id is {@code null} only for a reference the push created; for one that was already up to date it is the id
+     * the remote reference already had.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the reference update, {@link GitOutcome#REJECTED},
-     *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (nothing was sent, or a hook was
-     *         refused), {@link GitOutcome#AMBIGUOUS} for an ambiguous local reference, {@link GitOutcome#NOT_FOUND}
+     *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (nothing was sent: a URL outside
+     *         the policy or more than one push destination; or a hook was refused), {@link GitOutcome#AMBIGUOUS} for
+     *         an ambiguous local reference, {@link GitOutcome#NOT_FOUND}
      *         for an unknown remote or an unknown, abbreviated or unsupported local reference,
      *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
      *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}
