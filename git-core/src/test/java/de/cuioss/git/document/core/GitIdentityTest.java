@@ -292,6 +292,7 @@ class GitIdentityTest {
     @DisplayName("GDR-CORE-11: a supported lookup names exactly one candidate, so its target always exists")
     void supportedLookupNamesOneCandidate() {
         var candidate = names.next();
+        var otherCandidate = names.next();
 
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class,
@@ -300,7 +301,7 @@ class GitIdentityTest {
                         () -> new GitIdentity.Lookup(Resolution.FULL_COMMIT_ID, List.of()),
                         "a full commit id needs its candidate"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new GitIdentity.Lookup(Resolution.REF, List.of(candidate, names.next())),
+                        () -> new GitIdentity.Lookup(Resolution.REF, List.of(candidate, otherCandidate)),
                         "a reference has one candidate, not two"),
                 () -> assertEquals(Optional.of(candidate),
                         new GitIdentity.Lookup(Resolution.REF, List.of(candidate)).target(),
