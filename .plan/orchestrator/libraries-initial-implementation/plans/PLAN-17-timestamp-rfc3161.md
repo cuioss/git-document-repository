@@ -91,6 +91,8 @@ library is an open dependency the owner decides inside this plan.
 - OBSERVED: `doc/specification/general.adoc`
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `README.adoc` (module paragraph: `git-timestamp` is created)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

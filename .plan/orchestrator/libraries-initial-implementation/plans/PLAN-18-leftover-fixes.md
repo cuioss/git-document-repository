@@ -87,32 +87,41 @@ Sequencing) until the operator releases it; none of them gives a wrong result on
 - OBSERVED: no test asserts that an `InMemoryRepository`-typed parameter is rejected; the only wrong-type test uses an
   `@InMemory String` — read at `git-testing/src/test/java/de/cuioss/git/document/testing/InMemoryRepositoryExtensionTest.java`
   § `shouldRejectAnnotatedParameterOfAnotherType` at merge commit `6cc64f0`.
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: OBSERVED claim re-read at base 55b0f89 by the three-layer read and true at PLAN-01's head (PR #28 analysis)
 - OBSERVED: the rollback test is titled "Should close the repository and delete its directory" but asserts only the
   cause type and the absence of the directory — read at
   `git-testing/src/test/java/de/cuioss/git/document/testing/LocalRepositoryExtensionTest.java` § `shouldRollBackOnUncheckedFailureOfCreation`.
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: OBSERVED claim re-read at base 55b0f89 by the three-layer read and true at PLAN-01's head (PR #28 analysis)
 - OBSERVED: `GitCredentialGeneratorTest` contains no assertion that two successive credentials differ — read at
   `git-testing/src/test/java/de/cuioss/git/document/testing/GitCredentialGeneratorTest.java` (no `assertNotEquals`
   and no reference to randomness).
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: OBSERVED claim re-read at base 55b0f89 by the three-layer read and true at PLAN-01's head (PR #28 analysis)
 - OBSERVED: `LocalRepositoryExtensionTest` asserts over `RECEIVED_DIRECTORIES` in an `@AfterAll` without a non-vacuity
   guard, while `LocalRemoteExtensionTest` and `CombinedFixturesTest` guard — read at
   `git-testing/src/test/java/de/cuioss/git/document/testing/LocalRepositoryExtensionTest.java` § `everyDirectoryIsDeleted`.
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: OBSERVED claim re-read at base 55b0f89 by the three-layer read and true at PLAN-01's head (PR #28 analysis)
 - OBSERVED: `TemporaryRepository` and the in-memory `Repository` are stored in the extension context store as
   `AutoCloseable`, not as `Store.CloseableResource` — read at
   `git-testing/src/main/java/de/cuioss/git/document/testing/LocalRepositoryExtension.java` § `TemporaryRepository`
   and `git-testing/src/main/java/de/cuioss/git/document/testing/InMemoryRepositoryExtension.java` § `resolveParameter`.
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: OBSERVED claim re-read at base 55b0f89 by the three-layer read and true at PLAN-01's head (PR #28 analysis)
 - HYPOTHESIS: Jupiter closes a stored `AutoCloseable` only while `junit.jupiter.extensions.store.close.autocloseable.enabled`
   is true, and always closes a `Store.CloseableResource` — confirm/refute at the `junit-jupiter-engine` 6.1.3 class
   `DefaultJupiterConfiguration` § `isClosingStoredAutoCloseablesEnabled` (verify-at-outline; JUnit version named).
+  - verdict: unverifiable | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: Jupiter's auto-close semantics (junit-jupiter-engine 6.1.3) not settled by reading; the design relies on it and the second Surefire run exercises it
 - HYPOTHESIS: `InMemoryRepositoryExtension` never calls a `create` that links HEAD, so `@InMemory` has no HEAD while the
   bare fixtures do — confirm/refute at `git-testing/src/main/java/de/cuioss/git/document/testing/InMemoryRepositoryExtension.java`
   § `resolveParameter` and JGit 7.8.0 `org.eclipse.jgit.internal.storage.dfs.DfsRepository` § `create`
   (verify-at-outline).
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 DfsRepository#create links HEAD to refs/heads/master; the pre-change fixture never called create
 - HYPOTHESIS: JGit and `cui-test-generator` 3.0.2 are automatic modules, so `requires transitive` on them gives a
   javac lint and the descriptor behaves differently on the module path — confirm/refute at the jar manifests of both
   artifacts and `git-testing/src/main/java/module-info.java` (verify-at-outline).
+  - verdict: corroborated | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: both jar manifests carry Automatic-Module-Name and neither jar holds module-info.class; the javac-lint half is not shown by reading
 - HYPOTHESIS: `FileUtils.delete(file, SKIP_MISSING)` returns early for a dangling symbolic link, so a directory
   holding one is not deleted — confirm/refute at JGit 7.8.0 `org.eclipse.jgit.util.FileUtils` § `delete(File, int)`
   and `org.eclipse.jgit.util.FS` § `exists` (verify-at-outline).
+  - verdict: contradicted | checked_at: 7418f764f5aee43f4aed3a0d79bfa779b5b790f9 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: FileUtils.delete skips only when !fs.exists(f); FS.exists delegates to FileUtils.exists (Files.exists NOFOLLOW_LINKS, JGit 7.8.0), so a dangling link is deleted; no code change was needed
 - Verify-first clause: the three-layer analysis of PLAN-01 read the code only (no build, no test run); every
   OBSERVED claim above is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the deliverable
   that names it.

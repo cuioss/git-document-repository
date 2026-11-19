@@ -88,6 +88,7 @@ from the collection's counter file for numbered kinds, never duplicated under co
 - OBSERVED: `doc/specification/git-forms.adoc`
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

@@ -1,0 +1,11 @@
+{
+  "id": "PLAN-19",
+  "slug": "git-worktrees-hardening",
+  "workstream": "WS-01",
+  "status": "shipped",
+  "lane": "plan-marshall",
+  "plan_marshall_plan_id": "plan-19-git-worktrees-hardening",
+  "pr": "31",
+  "landing": "landings/PLAN-19.md",
+  "seq": 19
+}

@@ -85,13 +85,17 @@ working tree in one operation (GDR-WT-2) — and add the new working-tree status
 - OBSERVED: `LinkedWorktrees` (172 lines, package-private) and `LinkedWorktreesTest` (85 lines) exist in
   `pm-provider-git` — read at `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/LinkedWorktrees.java`
   at pm-mcp-core `287e1a86`.
+  - verdict: corroborated | checked_at: e89cf862f5d518a5b9bec6e064ed317e06e8d458 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at pm-mcp-core 287e1a86: LinkedWorktrees.java 172 lines, LinkedWorktreesTest.java 85 lines (PR #30 analysis)
 - OBSERVED: the worktree operations `worktreeAdd`, `worktreeList`, `worktreeRemove`, `commit(CommitInput)` and
   `worktreeSha` are declared on `GitOperations` — read at `GitOperations.java` § `GitOperations`.
+  - verdict: corroborated | checked_at: e89cf862f5d518a5b9bec6e064ed317e06e8d458 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at pm-mcp-core 287e1a86: GitOperations.java declares worktreeAdd (54), worktreeList (62), worktreeRemove (72), commit (82) and worktreeSha (44)
 - HYPOTHESIS: no three-set status exists in the source; `worktreeSha` computes the digest directly from the working
   tree — confirm/refute at `JGitOperations.java` § `worktreeSha` and `WorktreeShaDigest.java` § `WorktreeShaDigest`
   (verify-at-outline). If a reusable status computation exists, move it rather than rewrite it.
+  - verdict: corroborated | checked_at: e89cf862f5d518a5b9bec6e064ed317e06e8d458 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at pm-mcp-core 287e1a86: JGitOperations.worktreeSha builds the digest inline from the JGit Status (lines 134-141); no reusable three-set status exists, so GDR-WT-3 was written new (PR #30)
 - OBSERVED: JGit 7.8.0 has no command that adds a linked working tree — stated with its source in
   `doc/specification/git-worktrees.adoc` § intro (JGit `api` package link).
+  - verdict: corroborated | checked_at: e89cf862f5d518a5b9bec6e064ed317e06e8d458 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: no class with 'worktree' in its name under org/eclipse/jgit/api in the JGit 7.8.0 sources jar (read by the orchestrator and the leaf)
 
 ## Expected Surface
 
@@ -102,6 +106,9 @@ working tree in one operation (GDR-WT-2) — and add the new working-tree status
 - OBSERVED: `doc/specification/git-worktrees.adoc`
 - OBSERVED: `doc/clients/pm-mcp-core.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `doc/concepts/module-structure.adoc` (State column of `git-worktrees`)
+- HYPOTHESIS: `README.adoc` (module paragraph: `git-worktrees` leaves the scaffold state)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

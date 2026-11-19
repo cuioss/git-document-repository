@@ -96,6 +96,8 @@ application-declared catalogs, retired never deleted (GDR-DIR-1), the default pe
 - OBSERVED: `doc/specification/git-directory.adoc`
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `README.adoc` (module paragraph: `git-directory` is created)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

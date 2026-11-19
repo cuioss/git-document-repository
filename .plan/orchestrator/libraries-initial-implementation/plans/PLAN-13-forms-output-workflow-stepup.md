@@ -91,6 +91,8 @@ owner decides inside this plan.
   unresolved; the overlap with the other WS-03 plans is enforced by queue order, not by the gate)
 - OBSERVED: `doc/specification/git-forms.adoc`
 - OBSERVED: `doc/specification/general.adoc`
+- HYPOTHESIS: `AGENTS.md` ("Current state" paragraph: new public classes of `git-forms`)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

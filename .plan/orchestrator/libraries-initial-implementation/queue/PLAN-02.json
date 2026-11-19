@@ -2,10 +2,10 @@
   "id": "PLAN-02",
   "slug": "git-core-import",
   "workstream": "WS-01",
-  "status": "staged",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "git-core-import",
+  "pr": "25",
+  "landing": "landings/PLAN-02.md",
   "seq": 2
 }
