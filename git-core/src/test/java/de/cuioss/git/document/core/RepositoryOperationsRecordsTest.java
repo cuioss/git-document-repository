@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.CloneInput;
@@ -88,6 +89,31 @@ class RepositoryOperationsRecordsTest {
         var built = FetchCommitInput.builder().cache(cache).url(url).commit(commit).policy(policy).build();
 
         assertEquals(new FetchCommitInput(cache, url, commit, policy), built, "the builder builds the same input");
+    }
+
+    @Test
+    @DisplayName("PLAN-02 (f), GDR-NFR-3: the fetch-commit input renders its URL without user information and query")
+    void fetchCommitInputRendersNoSecret() {
+        var credential = GitGenerators.credentials().next();
+        var token = new String(credential.token());
+        var query = text();
+        var host = text().toLowerCase(Locale.ROOT) + ".example.invalid";
+        var repositoryPath = text();
+        var cache = path();
+        var commit = text();
+        var url = "https://" + credential.username() + ":" + token + "@" + host + "/" + repositoryPath
+                + ".git?access_token=" + query;
+        var input = new FetchCommitInput(cache, url, commit, RemotePolicy.localOnly());
+
+        var rendered = input.toString();
+
+        assertAll(
+                () -> assertTrue(rendered.contains(host), "the host is rendered"),
+                () -> assertTrue(rendered.contains(cache.toString()), "the cache is rendered"),
+                () -> assertTrue(rendered.contains(commit), "the commit is rendered"),
+                () -> assertFalse(rendered.contains(token), "no token is rendered"),
+                () -> assertFalse(rendered.contains("@"), "no user information is rendered"),
+                () -> assertFalse(rendered.contains(query), "no query is rendered"));
     }
 
     @Test

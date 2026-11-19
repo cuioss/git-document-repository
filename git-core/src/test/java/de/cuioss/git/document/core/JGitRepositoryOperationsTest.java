@@ -16,6 +16,7 @@
 package de.cuioss.git.document.core;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.net.Proxy;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +48,7 @@ import de.cuioss.git.document.core.RepositoryOperations.CloneInput;
 import de.cuioss.git.document.core.RepositoryOperations.CommitInfo;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
 import de.cuioss.git.document.core.RepositoryOperations.PushInput;
+import de.cuioss.git.document.core.RepositoryOperations.ReadFileInput;
 import de.cuioss.git.document.core.RepositoryOperations.RefUpdate;
 import de.cuioss.git.document.testing.GitCredential;
 import de.cuioss.git.document.testing.GitGenerators;
@@ -1135,6 +1138,116 @@ class JGitRepositoryOperationsTest {
                     () -> assertTrue(authenticated.connected(), "the authenticated fetch reached the transport"),
                     () -> assertEquals(Optional.of(caller), authenticated.credentials(),
                             "the caller's provider is used"));
+        }
+    }
+
+    @Nested
+    @DisplayName("PLAN-02 hardening")
+    class Hardening {
+
+        @Test
+        @DisplayName("PLAN-02 (b), GDR-CORE-7: a fetch whose tracking reference update meets a held lock is not OK")
+        void fetchUpdateNotWritten(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            var tracking = Constants.R_REMOTES + ORIGIN + "/" + Repository.shortenRefName(ref);
+            var lock = dir(client).resolve(tracking + ".lock");
+            Files.createDirectories(lock.getParent());
+            Files.createFile(lock);
+
+            var fetched = operations.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of())
+                    .build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, fetched.outcome(), "the unwritten update fails the fetch"),
+                    () -> assertEquals(tracking + ": LOCK_FAILURE", fetched.detail(),
+                            "the detail names the local reference and the result"),
+                    () -> assertNull(client.exactRef(tracking), "the tracking reference is not written"));
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (c), GDR-CORE-7: the clone's fetch, a fetch and a push run with the transport timeout")
+        void transportTimeout(@LocalRepository Repository client) throws Exception {
+            var marker = TestCommits.name();
+            var url = temp.resolve(marker).toUri().toString();
+            TestCommits.addRemote(client, ORIGIN, url);
+            var ref = branchRef();
+            TestCommits.commitOn(client, ref);
+            var clone = CloneInput.builder().gitDir(temp.resolve(TestCommits.name() + ".git")).url(url)
+                    .pushRefSpecs(List.of()).build();
+            var fetch = FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of()).build();
+            var push = PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(ref).remoteRef(ref).build();
+            var expected = Optional.of(JGitRepositoryOperations.TRANSPORT_TIMEOUT_SECONDS);
+
+            List<Optional<Integer>> timeouts = new ArrayList<>();
+            for (Runnable operation : List.<Runnable>of(() -> operations.cloneIfMissing(clone),
+                    () -> operations.fetch(fetch), () -> operations.push(push))) {
+                try (var recording = new RecordingTransportProtocol(marker)) {
+                    operation.run();
+                    timeouts.add(recording.timeout());
+                }
+            }
+
+            assertEquals(List.of(expected, expected, expected), timeouts,
+                    "the clone's fetch, the fetch and the push each set the transport timeout");
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (e), GDR-NFR-3: the stored origin of a clone carries no user information of the URL")
+        void cloneStoresNoUserInformation() {
+            var credential = GitGenerators.credentials().next();
+            var marker = TestCommits.name();
+            var url = "https://" + credential.username() + ":" + new String(credential.token()) + "@" + FOREIGN_HOST
+                    + "/" + marker + ".git";
+            var httpsOnly = new JGitRepositoryOperations(RemotePolicy.httpsOrigin(URI.create("https://" + FOREIGN_HOST)));
+            var input = CloneInput.builder().gitDir(temp.resolve(TestCommits.name() + ".git")).url(url)
+                    .pushRefSpecs(List.of()).build();
+
+            try (var recording = new RecordingTransportProtocol(marker)) {
+                httpsOnly.cloneIfMissing(input);
+
+                // the clone's fetch opens its transport from the stored origin, so its URL is the stored one
+                var stored = recording.uri().orElseThrow();
+                assertAll(
+                        () -> assertEquals(FOREIGN_HOST, stored.getHost(), "the stored origin keeps the host"),
+                        () -> assertNull(stored.getUser(), "the stored origin carries no user"),
+                        () -> assertNull(stored.getPass(), "the stored origin carries no password"));
+            }
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (g): an anonymous exception class is named by its binary name, never a blank detail")
+        void anonymousFailureNamed() {
+            var anonymous = new IOException() {
+
+                @Serial
+                private static final long serialVersionUID = 1L;
+            };
+
+            var result = assertDoesNotThrow(() -> JGitRepositoryOperations.failure(anonymous),
+                    "no blank detail is refused by GitResult");
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the failure is reported"),
+                    () -> assertEquals(anonymous.getClass().getName(), result.detail(),
+                            "the detail is the binary name of the anonymous class"));
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (g): an empty path is rendered non-blank in the detail of an operation")
+        void emptyPathNamed() {
+            var input = new ReadFileInput(Path.of(""), ObjectId.zeroId().name(), TestCommits.name());
+
+            var result = assertDoesNotThrow(() -> operations.readFile(input),
+                    "no blank detail is refused by GitResult");
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_A_REPOSITORY, result.outcome(), "the empty path is no cache"),
+                    () -> assertEquals(JGitRepositoryOperations.BLANK_PATH, result.detail(),
+                            "the empty path is rendered by its fixed rendering"),
+                    () -> assertEquals(JGitRepositoryOperations.BLANK_PATH,
+                            JGitRepositoryOperations.shown(Path.of("")), "Path.of(\"\") renders blank"));
         }
     }
 }

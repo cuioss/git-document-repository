@@ -100,6 +100,23 @@ public record RemotePolicy(@Nullable URI origin) {
                 && port(allowed.getPort()) == port(uri.getPort());
     }
 
+    /**
+     * Renders the policy without user information, path or query of the origin (GDR-NFR-3): the origin as scheme,
+     * host and, if explicit, port, e.g. {@code RemotePolicy[https://example.org:8443]}, and
+     * {@code RemotePolicy[localOnly]} for a policy without origin.
+     *
+     * @return the rendering
+     */
+    @Override
+    public String toString() {
+        if (origin == null) {
+            return "RemotePolicy[localOnly]";
+        }
+        URI shown = origin;
+        String port = shown.getPort() == -1 ? "" : ":" + shown.getPort();
+        return "RemotePolicy[" + shown.getScheme().toLowerCase(Locale.ROOT) + "://" + shown.getHost() + port + "]";
+    }
+
     private static boolean validPort(int port) {
         return port == -1 || port >= 1 && port <= MAX_PORT;
     }

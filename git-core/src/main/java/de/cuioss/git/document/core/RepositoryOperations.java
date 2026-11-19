@@ -15,6 +15,7 @@
  */
 package de.cuioss.git.document.core;
 
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.Objects;
 
 import lombok.Builder;
 import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.URIish;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -30,7 +32,10 @@ import org.jspecify.annotations.Nullable;
  * {@link GitOutcome} (GDR-GEN-3).
  * <p>
  * Every repository an implementation opens or creates is built on {@link RefusingFS}, so no operation starts a
- * process (GDR-CORE-1); transport operations contact only remotes the {@link RemotePolicy} admits (GDR-CORE-2).
+ * process through the repository's {@code FS} (GDR-CORE-1). The one process start outside it, the JVM-wide
+ * {@code SystemReader} locating the system configuration, is closed by installing
+ * {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)}, the recommended setup of an embedding
+ * application. Transport operations contact only remotes the {@link RemotePolicy} admits (GDR-CORE-2).
  * Credentials are passed per call as a JGit {@link CredentialsProvider} and are never stored, logged or put into a
  * result detail (GDR-CORE-7, GDR-NFR-3).
  *
@@ -89,12 +94,16 @@ public interface RepositoryOperations {
     GitResult<List<CommitInfo>> log(Path root, String revision, int maxCount);
 
     /**
-     * Fetches from a configured remote.
+     * Fetches from a configured remote. Every reference update of the fetch is checked: the result is
+     * {@link GitOutcome#OK} only when every one was written, and the first one that was not ends the fetch, its detail
+     * naming the local reference and the update's result.
      *
      * @param input the input
-     * @return {@link GitOutcome#OK} with the updated references, {@link GitOutcome#REFUSED_BY_POLICY} (nothing was
-     *         sent), {@link GitOutcome#NOT_FOUND} for an unknown remote, {@link GitOutcome#UNREACHABLE},
-     *         {@link GitOutcome#CREDENTIALS_INVALID}, {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}
+     * @return {@link GitOutcome#OK} with the updated references, {@link GitOutcome#REJECTED} for a reference update
+     *         that was rejected, {@link GitOutcome#FAILED} for one that failed (a lock or I/O failure included),
+     *         {@link GitOutcome#REFUSED_BY_POLICY} (nothing was sent), {@link GitOutcome#NOT_FOUND} for an unknown
+     *         remote, {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
+     *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED} for any other failure
      */
     GitResult<List<RefUpdate>> fetch(FetchInput input);
 
@@ -108,11 +117,16 @@ public interface RepositoryOperations {
      * at the expected head, also when the remote reference is already at the pushed commit. The reference update's
      * old id is {@code null} only for a reference the push created; for one that was already up to date it is the id
      * the remote reference already had.
+     * <p>
+     * A refusal by the policy or by more than one push destination happens before any contact, so nothing is sent. A
+     * refused pre-push hook is different: JGit 7.8.0 {@code PushProcess} runs the hook after it read the remote's
+     * reference advertisement, so the remote was contacted, but before any reference update or object is sent.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the reference update, {@link GitOutcome#REJECTED},
-     *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (nothing was sent: a URL outside
-     *         the policy or more than one push destination; or a hook was refused), {@link GitOutcome#AMBIGUOUS} for
+     *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (a URL outside the policy or more
+     *         than one push destination, nothing was sent; or a refused pre-push hook, after the advertisement was read
+     *         and before any update was sent), {@link GitOutcome#AMBIGUOUS} for
      *         an ambiguous local reference, {@link GitOutcome#NOT_FOUND}
      *         for an unknown remote or an unknown, abbreviated or unsupported local reference,
      *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
@@ -181,6 +195,24 @@ public interface RepositoryOperations {
             Objects.requireNonNull(url, "url");
             Objects.requireNonNull(commit, "commit");
             Objects.requireNonNull(policy, "policy");
+        }
+
+        /**
+         * Renders the cache, the commit and the URL, the URL through its display without user information, query and
+         * fragment (GDR-NFR-3); a URL that cannot be parsed is not rendered at all.
+         *
+         * @return the rendering
+         */
+        @Override
+        public String toString() {
+            String shownUrl;
+            try {
+                shownUrl = JGitRepositoryOperations.display(new URIish(url));
+            } catch (URISyntaxException | IllegalArgumentException e) {
+                // a port beyond int range is a NumberFormatException of JGit 7.8.0 URIish
+                shownUrl = "(not a URL)";
+            }
+            return "FetchCommitInput[cache=" + cache + ", commit=" + commit + ", url=" + shownUrl + "]";
         }
     }
 
@@ -398,7 +430,9 @@ public interface RepositoryOperations {
      * Input of {@link #cloneIfMissing(CloneInput)}.
      *
      * @param gitDir       the git directory of the bare clone
-     * @param url          the URL of the remote; a password in it is never stored
+     * @param url          the URL of the remote; its user information, a user name and a password, is never stored:
+     *                     the origin URL of the clone carries none, and the credentials of a call come from
+     *                     {@code credentials} only
      * @param pushRefSpecs the push reference specifications of remote {@code origin}; empty for none
      * @param credentials  the credentials of this call; {@code null} when none
      * @since 0.1
