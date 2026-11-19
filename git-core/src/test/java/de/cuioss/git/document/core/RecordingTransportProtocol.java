@@ -30,7 +30,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * A JGit transport protocol for tests that handles every URL whose path contains a marker, contacts nothing, and
- * records the URL and the credentials provider a connection would have used, then fails the connection.
+ * records the URL, the credentials provider and the timeout a connection would have used, then fails the connection.
  * <p>
  * It is registered with JGit 7.8.0 {@link Transport#register(TransportProtocol)}, ahead of the built-in protocols, and
  * unregistered on {@link #close()}. JGit holds a registered protocol by a weak reference only, so the test keeps this
@@ -43,6 +43,7 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
     private boolean connected;
     private @Nullable URIish uri;
     private @Nullable CredentialsProvider credentials;
+    private @Nullable Integer timeout;
 
     /**
      * Creates and registers the protocol.
@@ -82,12 +83,12 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
 
             @Override
             public FetchConnection openFetch() throws NotSupportedException {
-                throw attempt(getURI(), getCredentialsProvider());
+                throw attempt(getURI(), getCredentialsProvider(), getTimeout());
             }
 
             @Override
             public PushConnection openPush() throws NotSupportedException {
-                throw attempt(getURI(), getCredentialsProvider());
+                throw attempt(getURI(), getCredentialsProvider(), getTimeout());
             }
 
             @Override
@@ -97,11 +98,22 @@ final class RecordingTransportProtocol extends TransportProtocol implements Auto
         };
     }
 
-    private NotSupportedException attempt(URIish used, @Nullable CredentialsProvider provider) {
+    private NotSupportedException attempt(URIish used, @Nullable CredentialsProvider provider, int seconds) {
         connected = true;
         uri = used;
         credentials = provider;
+        timeout = seconds;
         return new NotSupportedException("the recording transport contacts nothing");
+    }
+
+    /**
+     * Returns the transport timeout of the attempted connection, as JGit 7.8.0 {@code Transport.getTimeout()} reports
+     * it: {@code 0} when none was set.
+     *
+     * @return the timeout in seconds, empty when no connection was attempted
+     */
+    Optional<Integer> timeout() {
+        return Optional.ofNullable(timeout);
     }
 
     /**

@@ -10,8 +10,10 @@ types such as `Repository`, `URIish`, `FS` and `CredentialsProvider` are part of
 `CuiLogger`, Lombok (scope `provided`, `requires static`) and `org.jspecify:jspecify` (`requires static`); see
 xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. The code is a plain copy of the repository part of `pm-provider-git`
 (xref:../clients/pm-mcp-core.adoc#_what_moves_where[Client: `pm-mcp-core`, What Moves Where]).
-<<GDR-CORE-1>>, <<GDR-CORE-2>>, <<GDR-CORE-3>>, <<GDR-CORE-7>>, <<GDR-CORE-8>> and <<GDR-CORE-11>> are implemented;
-<<GDR-CORE-4>>, <<GDR-CORE-5>>, <<GDR-CORE-6>>, <<GDR-CORE-9>> and <<GDR-CORE-10>> are planned. The JGit APIs named
+<<GDR-CORE-2>>, <<GDR-CORE-3>>, <<GDR-CORE-4>>, <<GDR-CORE-5>>, <<GDR-CORE-7>>, <<GDR-CORE-8>> and
+<<GDR-CORE-11>> are implemented. <<GDR-CORE-1>> is met except the one JVM-wide process start of JGit's `SystemReader`,
+which `git-core` does not prevent by itself; installing `RefusingFS.systemReader` closes it and is the recommended setup
+of an embedding application. <<GDR-CORE-6>>, <<GDR-CORE-9>> and <<GDR-CORE-10>> are planned. The JGit APIs named
 here are checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of https://github.com/eclipse-jgit/jgit). Rationale:
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules] and
 xref:../concepts/storage-engine.adoc[Storage Engine].
@@ -29,6 +31,12 @@ outcome
 |`RepositoryOperations` |The repository operations below and their input and value records
 |`JGitRepositoryOperations` |The implementation of `RepositoryOperations` on JGit, in process, bound to one
 `RemotePolicy`
+|`TreeEdit` |One edit of a tree: `TreeEdit.Put` sets a path to content, `TreeEdit.Delete` removes it
+|`CommitMetadata` |Author, committer, message and optional signing of a commit
+|`CommitSigning` |The JGit `Signer`, signing key and credentials a commit is signed with
+|`InCoreWriter` |Writes blobs, trees and commits from in-memory content, without a working tree
+|`TreeOperation` |Derives the edits of the next commit from a reference's current tree
+|`ReferenceUpdater` |Moves a reference by compare-and-swap and deletes one by compare-and-delete
 |`GitCoreLogMessages` |The `LogRecord` holder of the module, catalogued in `git-core/doc/LogMessages.adoc`
 (xref:general.adoc#GDR-GEN-4[GDR-GEN-4])
 |===
@@ -67,6 +75,12 @@ JVM, so the operations leave the process-wide `SystemReader` untouched and this 
 a `RefusingFS`; an application that needs the guarantee for its whole JVM installs it before any JGit use. With it the
 system configuration is skipped by design, because it cannot be located without running `git`, and the user and JGit
 configuration are read as before, in process.
+
+GDR-CORE-1 is therefore met with one limit: no operation starts a process through the repository's `FS`, and the
+JVM-wide `SystemReader` process start is closed only when the embedding application installs the reader of
+`RefusingFS.systemReader(SystemReader)` with `SystemReader.setInstance` at its start, before it constructs a
+repository. That installation is the recommended setup of every embedding application; `git-core` does not perform it,
+because it would change every other JGit user of the JVM.
 
 `CapabilityRefusedException` is a public class of `git-core` that extends JGit's unchecked
 `org.eclipse.jgit.api.errors.JGitInternalException`, so JGit propagates it unchanged through its callers of `FS`. Its
@@ -123,6 +137,15 @@ policy (`REFUSED_BY_POLICY` without contact), a bare repository is initialised, 
 and fetched. The fetch refspecs mirror the remote's branches, tags and notes into the clone:
 `+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`.
 
+The stored origin carries no user information: the URL is configured without user name and password
+(`URIish.setUser(null).setPass(null)`), so no credential reaches the persistent configuration of the clone; the
+credentials of a call come from its `CredentialsProvider` only (<<GDR-CORE-7>>).
+
+Accepted exception: an existing bare repository at the git directory is opened without comparing its `origin` with the
+URL of the call. The clone is a disposable cache owned by its caller
+(xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]), and the
+caller that chose the git directory is the one that knows which remote it belongs to.
+
 The push refspecs are configuration supplied by the caller (for `git-store`: `refs/heads/*`, `refs/tags/*`,
 `refs/notes/*`). A source-only refspec, a wildcard included, pushes to the reference of the same name and is configured
 as `<source>:<source>`; JGit's `new RefSpec("refs/heads/*")` rejects a source-only wildcard
@@ -144,7 +167,13 @@ the caller prepared, or a complete clone, never a partial one. The move itself r
 (POSIX `rename`) and never a non-empty one, so a failed move leaves the prepared directory as it was. Each attempt
 removes only its own staging directory; an attempt that finds a clone published concurrently opens it, also when its
 own move failed because of it. A clone that could not be completed leaves the git directory as it was; a transport
-failure is reported as in <<GDR-CORE-7>>.
+failure is reported as in <<GDR-CORE-7>>. The fetch of the clone runs with the transport timeout of <<GDR-CORE-7>>.
+
+Accepted exception: the staging directory is created by `Files.createTempDirectory`, which on a POSIX file system
+creates it with the mode `rwx------`
+(link:https://github.com/openjdk/jdk21u/blob/master/src/java.base/share/classes/java/nio/file/TempFileHelper.java[JDK 21
+`TempFileHelper`]), and the atomic move publishes that directory as the git directory, so the clone is readable by its
+owner only. A caller that serves the clone to another operating-system user adjusts its permissions itself.
 
 [#GDR-CORE-4]
 == GDR-CORE-4: In-Core Writing
@@ -153,10 +182,28 @@ failure is reported as in <<GDR-CORE-7>>.
 * Writing a commit must not create or change any file outside the object database and the references.
 * Author, committer, message and parents of a commit must be set by the caller.
 
-The new tree is built from the parent's tree in an in-core `DirCache` (`DirCache.read(ObjectReader, AnyObjectId)`,
-`DirCache.writeTree(ObjectInserter)`), and blob, tree and commit are inserted through one `ObjectInserter`. An edit
-sets a path to content or deletes it. The caller may pass a JGit `org.eclipse.jgit.lib.Signer` (since JGit 7.0), which
-signs the commit before it is inserted; `git-core` signs nothing itself.
+The writer is `InCoreWriter.write(Repository, List<String> parents, CommitMetadata, List<TreeEdit>)`. The new tree is
+built from the first parent's tree in an in-core `DirCache` (`DirCache.read(ObjectReader, AnyObjectId)`, an empty
+`DirCache.newInCore()` for a root commit, and `DirCache.writeTree(ObjectInserter)`;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCache.java[JGit
+7.8.0 `DirCache`]), and blobs, tree and commit are inserted through one `ObjectInserter`, flushed once after the
+commit. A `TreeEdit` is either `TreeEdit.Put`, which sets a path to content as a regular file (mode `100644`), or
+`TreeEdit.Delete`, which removes it. Every path is checked with the check JGit's `DirCacheEntry` applies before
+anything is written, and two edits of the same path are refused. `CommitMetadata` carries author, committer, message
+and an optional `CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.
+
+With a `CommitSigning` (a JGit `org.eclipse.jgit.lib.Signer`, the signing key and a `CredentialsProvider`), the commit
+is signed before it is inserted through
+`Signer.signObject(Repository, GpgConfig, ObjectBuilder, PersonIdent, String, CredentialsProvider)`, with
+`new GpgConfig(repository.getConfig())` and the committer of the metadata
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Signer.java[JGit
+7.8.0 `Signer`], since JGit 7.0); `git-core` brings no signer of its own.
+
+The writer creates objects only: it reads and writes no reference, so nothing outside the object database changes.
+Moving a reference to the commit is <<GDR-CORE-5>>, which writes no reflog. The outcomes: `OK` with the full id of the
+commit; `NOT_FOUND` when a parent is no full commit id or no commit of the repository, or an edit names an invalid or
+a repeated path, the detail naming the field (`parents` or `edits`) and nothing being written; `FAILED` for an I/O or
+a signing failure, the detail naming the exception class.
 
 [#GDR-CORE-5]
 == GDR-CORE-5: Compare-and-Swap Reference Update
@@ -183,6 +230,28 @@ a newer draft is kept (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-st
 `IO_FAILURE` is an unexpected I/O failure and is returned as `FAILED`, as
 xref:general.adoc#GDR-GEN-3[GDR-GEN-3] requires; it is neither retried nor a conflict. Every other result is returned
 at once as rejected, the detail naming it.
+
+The class is `ReferenceUpdater`, built on an `InCoreWriter`. `compareAndSwap(Repository, String refName,
+CommitMetadata, TreeOperation, int attempts)` reads the reference exactly (`Repository.exactRef`), hands the tree of
+its commit to the `TreeOperation` (`null` for a reference that does not exist yet), writes the next commit with the
+reference's commit as the only parent (<<GDR-CORE-4>>) and moves the reference. `compareAndDelete(Repository,
+String refName, String expectedOldId, int attempts)` deletes it. `attempts` is the total number of tries, at least one;
+fewer is an `IllegalArgumentException`. Neither writes a reflog (`RefUpdate.disableRefLog()`). The outcomes as built:
+
+* `compareAndSwap`: `OK` with the full id of the new commit for `NEW` or `FAST_FORWARD`; `CONFLICT` when every attempt
+  ended in `LOCK_FAILURE`, the reference left as the concurrent writers left it; the result of the `InCoreWriter` when
+  it wrote no commit, the reference untouched; `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other
+  result. The commit of a lost attempt stays unreferenced in the object database.
+* `compareAndDelete`: `OK` with the deleted id for `FORCED`; `NOT_FOUND` when `expectedOldId` is no full commit id,
+  nothing being read or written; `CONFLICT` when the reference moved away or is gone, or every attempt met a held lock;
+  `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other result.
+
+A detail names the reference and the `RefUpdate.Result`, never content or an identity
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an
+attempt in `LOCK_FAILURE` (`RefDirectoryUpdate.tryLock` and `LockFile.lock()`,
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/LockFile.java[JGit
+7.8.0 `LockFile`]); the in-memory DFS reference database compares and stores atomically, so there an attempt is lost
+only to another writer.
 
 [#GDR-CORE-6]
 == GDR-CORE-6: In-Core Merge
@@ -222,7 +291,25 @@ and `CloneInput`. The outcomes:
   7.8.0 `JGitText.properties`]);
 * `UNREACHABLE`: every other transport failure;
 * `REFUSED_BY_POLICY`: the remote's effective URL, after `insteadOf` rewriting, is outside the remote policy, or a
-  push names a remote with more than one push URL; nothing is sent.
+  push names a remote with more than one push URL; nothing is sent. A refused pre-push hook is `REFUSED_BY_POLICY` as
+  well, but later: JGit's `PushProcess` runs the hook after it read the remote's reference advertisement and before it
+  sends any update
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/PushProcess.java[JGit
+  7.8.0 `PushProcess.execute`]), so the remote was contacted, but no update and no object was sent.
+
+A fetch checks every reference update it reports, because JGit's `FetchProcess` returns the `FetchResult` also when
+an update was not written
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
+7.8.0 `FetchProcess`]). The `RefUpdate.Result` values `NEW`, `FORCED`, `FAST_FORWARD` and `NO_CHANGE` are written;
+`REJECTED`, `REJECTED_CURRENT_BRANCH`, `REJECTED_MISSING_OBJECT` and `REJECTED_OTHER_REASON` end the fetch `REJECTED`;
+`LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`. The detail names the local reference and the
+result.
+
+Every transport of a clone, a fetch and a push runs with a compiled timeout of 60 seconds
+(`JGitRepositoryOperations.TRANSPORT_TIMEOUT_SECONDS`, set through `TransportCommand.setTimeout`;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/TransportCommand.java[JGit
+7.8.0 `TransportCommand`]), as `fetchCommit` does (<<GDR-CORE-8>>): a remote that stops answering must not block a
+caller thread forever. The value bounds the connect and every single read, not the total duration of the operation.
 
 A call uses exactly the caller's `CredentialsProvider`, and none when the caller passes `null`: JGit's
 `TransportCommand` and `Transport` start with the process-wide `CredentialsProvider.getDefault()` and keep it when given
@@ -248,7 +335,11 @@ A detail and a log message never carry anything xref:general.adoc#GDR-NFR-3[GDR-
 its scheme, host, port and path only, without user information, query data or fragment, which JGit's `URIish` keeps
 in its path and would render. An invalid or unknown input value (a revision, a local reference, a commit, a path) is
 named by its field and the reason, never by the caller's value, and a failure detail names the exception class without
-its message.
+its message. A detail is never blank, so no operation fails with the `IllegalArgumentException` of `GitResult` for a
+blank detail: the class of an anonymous exception, whose simple name is empty, is named by its binary name, a path that
+renders blank (`Path.of("")`) is rendered as `(blank path)`, and a blank remote reference name as
+`(blank reference name)`. The `toString` of `RemotePolicy` renders the origin as scheme, host and port only
+(`RemotePolicy[localOnly]` without origin), and the one of `FetchCommitInput` renders its URL as above.
 
 [#GDR-CORE-8]
 == GDR-CORE-8: Cache Repository
@@ -268,6 +359,9 @@ a commit not in the cache or a path that is no regular file is `NOT_FOUND`. Both
 configuration describes it and refuse anything but a bare repository as `NOT_A_REPOSITORY`, so the git directory of a
 working tree is never used as a cache; JGit's `BaseRepositoryBuilder.setBare()` would override `core.bare`
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/BaseRepositoryBuilder.java[JGit 7.8.0 `BaseRepositoryBuilder`]).
+
+Accepted exception: `readFile` reads a blob without a size bound. The cache holds pinned commits of a source the remote
+policy admitted, and a bound would need a compiled limit that no requirement asks for.
 
 [#GDR-CORE-9]
 == GDR-CORE-9: Reading

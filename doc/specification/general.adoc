@@ -7,9 +7,10 @@
 The requirements every module meets: layering, platform modules, results, logging, secrets, testing and the
 non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module Structure]. `git-testing` implements
 its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]), and
-`git-core` implements part of its own (xref:git-core.adoc[`git-core`]), and `git-worktrees` implements all of its own
-(xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is planned, and the other modules
-are not yet created.
+`git-core` implements part of its own (xref:git-core.adoc[`git-core`]: hardening, remote policy, identity, results,
+repository operations, cache repository, in-core writing and compare-and-swap), and `git-worktrees` implements all of
+its own (xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is planned, and the other
+modules are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation

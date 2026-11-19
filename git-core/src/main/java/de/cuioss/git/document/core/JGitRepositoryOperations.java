@@ -83,8 +83,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * The repository operations on JGit (checked against JGit 7.8.0).
  * <p>
- * Every repository is opened or created with a {@link RefusingFS}, so no operation starts a process; an operation
- * that would run a present hook or a filter driver ends {@link GitOutcome#REFUSED_BY_POLICY} (GDR-CORE-1). Transport
+ * Every repository is opened or created with a {@link RefusingFS}, so no operation starts a process through the
+ * repository's {@code FS}; an operation that would run a present hook or a filter driver ends
+ * {@link GitOutcome#REFUSED_BY_POLICY}. That is what GDR-CORE-1 is met by, with the one exception described below: the
+ * JVM-wide {@code SystemReader}, which an embedding application closes by installing
+ * {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)}, the recommended setup. Transport
  * operations contact only remotes the {@link RemotePolicy} admits, checked against the effective URL after
  * {@code insteadOf} rewriting, before anything is sent (GDR-CORE-2). A refused authentication is
  * {@link GitOutcome#CREDENTIALS_INVALID}, every other transport failure {@link GitOutcome#UNREACHABLE} (GDR-CORE-7).
@@ -95,8 +98,12 @@ import org.jspecify.annotations.Nullable;
  * The operations change no process-wide JGit state. JGit 7.8.0 reads the user and system configuration of every
  * repository it constructs through the process-wide {@code SystemReader}, whose default locates the system
  * configuration by running {@code git} once per JVM; JGit offers no per-repository configuration source to avoid it.
- * That process is outside what {@link RefusingFS} can refuse, and an application that needs the guarantee for its
- * whole JVM installs {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)} itself.
+ * That process is outside what {@link RefusingFS} can refuse, so an embedding application installs
+ * {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)} once at its start, before it constructs a
+ * repository; that is the recommended setup, and the one under which no process is started at all.
+ * <p>
+ * Every transport, the fetch of a clone, a fetch and a push included, runs with the compiled
+ * {@link #TRANSPORT_TIMEOUT_SECONDS}.
  *
  * @since 0.1
  */
@@ -123,8 +130,20 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The infix of the name of a clone's private staging directory, after the clone's own name. */
     private static final String STAGING_INFIX = ".staging-";
 
-    /** The compiled transport timeout of {@link #fetchCommit(FetchCommitInput)}, in seconds: connect and every read. */
-    public static final int FETCH_TIMEOUT_SECONDS = 60;
+    /**
+     * The compiled transport timeout of every transport operation, in seconds: the fetch of
+     * {@link #cloneIfMissing(CloneInput)}, {@link #fetch(FetchInput)}, {@link #push(PushInput)} and
+     * {@link #fetchCommit(FetchCommitInput)} (JGit 7.8.0 {@code TransportCommand.setTimeout} and
+     * {@code Transport.setTimeout}). A remote that stops answering must not block a caller thread forever. The value
+     * bounds the connect and every single read, not the total duration of the operation.
+     */
+    public static final int TRANSPORT_TIMEOUT_SECONDS = 60;
+
+    /** The rendering of a path whose own rendering is blank, such as {@code Path.of("")}, in a detail. */
+    static final String BLANK_PATH = "(blank path)";
+
+    /** The rendering of a reference name that is blank in a detail. */
+    static final String BLANK_REF = "(blank reference name)";
 
     /** The references that keep the pinned commits of a cache repository reachable. */
     static final String PINNED_REFS = "refs/pinned/";
@@ -166,6 +185,15 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static final Pattern WANT_REFUSED =
             Pattern.compile("(?i)\\bwant [0-9a-f]{40}(?:[0-9a-f]{24})? not (?:valid|found)\\b");
 
+    /** The rendering of a value that cannot be shown as a URL without risking its user information (GDR-NFR-3). */
+    static final String NOT_A_URL = "(not a URL)";
+
+    /**
+     * The start of a path that is an unparsed authority: a scheme of any case followed by {@code //}, or {@code //}
+     * alone (see {@link #display(URIish)}).
+     */
+    private static final Pattern UNPARSED_AUTHORITY = Pattern.compile("(?:[A-Za-z][A-Za-z0-9+.-]*:)?//");
+
     private final FS fs;
     private final RemotePolicy remotePolicy;
 
@@ -186,7 +214,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         try (Repository repository = openRepository(root)) {
             return GitResult.ok(info(repository));
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(root));
         } catch (IOException | IllegalArgumentException e) {
             return failure(e);
         }
@@ -219,7 +247,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
         URIish uri;
         try {
-            uri = new URIish(input.url()).setPass(null);
+            // the stored origin carries no user information: the credentials are the caller's provider only
+            uri = new URIish(input.url()).setUser(null).setPass(null);
         } catch (URISyntaxException | IllegalArgumentException e) {
             // JGit 7.8.0 URIish parses a port with Integer.parseInt, so a port beyond int range is a
             // NumberFormatException, not a URISyntaxException
@@ -335,8 +364,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         try {
             FileUtils.delete(staging.toFile(), FileUtils.RECURSIVE | FileUtils.SKIP_MISSING | FileUtils.RETRY);
         } catch (IOException e) {
-            LOGGER.debug("Could not remove the clone staging directory %s: %s", staging,
-                    e.getClass().getSimpleName());
+            LOGGER.debug("Could not remove the clone staging directory %s: %s", staging, failureName(e));
         }
     }
 
@@ -368,6 +396,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             }
             FetchResult fetched = git.fetch().setRemote(ORIGIN)
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
+                    .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
                     .setTransportConfigCallback(guardedTransport(input.credentials())).call();
             requireMirroredRefs(fetched);
             linkHead(repository, fetched);
@@ -392,6 +421,27 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 default -> throw new IOException("mirrored reference not written: " + update.getResult());
             }
         }
+    }
+
+    /**
+     * Checks one reference update of {@link #fetch(FetchInput)} (GDR-CORE-7). JGit 7.8.0 {@code FetchProcess} returns
+     * the {@link FetchResult} even when a reference update was not written, so every update is checked:
+     * {@code NEW}, {@code FORCED}, {@code FAST_FORWARD} and {@code NO_CHANGE} are written; {@code REJECTED},
+     * {@code REJECTED_CURRENT_BRANCH}, {@code REJECTED_MISSING_OBJECT} and {@code REJECTED_OTHER_REASON} end
+     * {@link GitOutcome#REJECTED}; {@code LOCK_FAILURE}, {@code IO_FAILURE} and every other result end
+     * {@link GitOutcome#FAILED}. The detail names the local reference and the result.
+     *
+     * @return the result of a reference update that was not written, empty when it was written
+     */
+    private static <V> Optional<GitResult<V>> notWritten(TrackingRefUpdate update) {
+        var result = update.getResult();
+        String detail = shownRef(update.getLocalName()) + ": " + result;
+        return switch (result) {
+            case NEW, FORCED, FAST_FORWARD, NO_CHANGE -> Optional.empty();
+            case REJECTED, REJECTED_CURRENT_BRANCH, REJECTED_MISSING_OBJECT, REJECTED_OTHER_REASON ->
+                Optional.of(GitResult.of(GitOutcome.REJECTED, detail));
+            default -> Optional.of(GitResult.of(GitOutcome.FAILED, detail));
+        };
     }
 
     /** Points {@code HEAD} of a new clone at the branch the remote's {@code HEAD} points to, when it advertises one. */
@@ -438,7 +488,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             }
             return GitResult.ok(List.copyOf(commits));
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, root.toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(root));
         } catch (IOException | IllegalArgumentException e) {
             return failure(e);
         }
@@ -460,19 +510,25 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                     // JGit 7.8.0 FetchCommand fetches submodules of a working tree on demand, each from its own
                     // remote that the policy check above never saw
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
+                    .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
                     .setTransportConfigCallback(guardedTransport(input.credentials()))
                     .call();
-            var updates = result.getTrackingRefUpdates().stream()
-                    .map(update -> RefUpdate.builder()
-                            .ref(update.getLocalName())
-                            .oldId(id(update.getOldObjectId()).orElse(null))
-                            .newId(id(update.getNewObjectId()).orElse(null))
-                            .status(update.getResult().name().toLowerCase(Locale.ROOT))
-                            .build())
-                    .toList();
-            return GitResult.ok(updates);
+            var updates = new ArrayList<RefUpdate>();
+            for (TrackingRefUpdate update : result.getTrackingRefUpdates()) {
+                Optional<GitResult<List<RefUpdate>>> notWritten = notWritten(update);
+                if (notWritten.isPresent()) {
+                    return notWritten.get();
+                }
+                updates.add(RefUpdate.builder()
+                        .ref(update.getLocalName())
+                        .oldId(id(update.getOldObjectId()).orElse(null))
+                        .newId(id(update.getNewObjectId()).orElse(null))
+                        .status(update.getResult().name().toLowerCase(Locale.ROOT))
+                        .build());
+            }
+            return GitResult.ok(List.copyOf(updates));
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.root()));
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
                 | IllegalArgumentException | RemoteRefusedException e) {
             return transportFailure(e, input.remote(), target);
@@ -516,6 +572,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             var command = git.push()
                     .setRemote(input.remote())
                     .setRefSpecs(new RefSpec(source + ":" + input.remoteRef()))
+                    .setTimeout(TRANSPORT_TIMEOUT_SECONDS)
                     .setTransportConfigCallback(guardedTransport(input.credentials()));
             if (expectedRemoteHead != null) {
                 command.setRefLeaseSpecs(new RefLeaseSpec(input.remoteRef(), expectedRemoteHead));
@@ -528,7 +585,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             }
             return GitResult.of(GitOutcome.FAILED, "remoteRef: no update reported");
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.root().toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.root()));
         } catch (GitAPIException | IOException | JGitInternalException | URISyntaxException
                 | IllegalArgumentException | RemoteRefusedException e) {
             return transportFailure(e, input.remote(), target);
@@ -549,7 +606,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             Git.init().setBare(true).setGitDir(cache.toFile()).setFs(fs).call().close();
             return GitResult.ok(cache.toRealPath());
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, cache.toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(cache));
         } catch (CapabilityRefusedException e) {
             return refusedCapability(e);
         } catch (GitAPIException | IOException | JGitInternalException e) {
@@ -592,7 +649,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 }
                 // JGit 7.8.0 Transport starts with CredentialsProvider.getDefault(), the process-wide provider
                 transport.setCredentialsProvider(null);
-                transport.setTimeout(FETCH_TIMEOUT_SECONDS);
+                transport.setTimeout(TRANSPORT_TIMEOUT_SECONDS);
                 transport.setTagOpt(TagOpt.NO_TAGS);
                 transport.setCheckFetchedObjects(true);
                 transport.fetch(NullProgressMonitor.INSTANCE,
@@ -604,7 +661,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             pin(repository, commit);
             return GitResult.ok(commit.name());
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.cache()));
         } catch (CapabilityRefusedException e) {
             return refusedCapability(e);
         } catch (RemoteRefusedException e) {
@@ -652,7 +709,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 }
             }
         } catch (RepositoryNotFoundException e) {
-            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, input.cache().toString());
+            return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.cache()));
         } catch (IllegalArgumentException e) {
             return GitResult.of(GitOutcome.NOT_FOUND, "path: not a valid path");
         } catch (IOException | JGitInternalException e) {
@@ -811,11 +868,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static GitResult<RefUpdate> toPushResult(RemoteRefUpdate update, @Nullable Ref advertised,
             @Nullable String expectedRemoteHead) {
         String status = update.getStatus().name().toLowerCase(Locale.ROOT);
+        String remoteRef = shownRef(update.getRemoteName());
         boolean upToDate = update.getStatus() == RemoteRefUpdate.Status.UP_TO_DATE;
         Optional<String> advertisedId = advertised == null ? Optional.empty() : id(advertised.getObjectId());
         if (upToDate && expectedRemoteHead != null
                 && !advertisedId.map(expectedRemoteHead::equalsIgnoreCase).orElse(false)) {
-            return GitResult.of(GitOutcome.LEASE_REFUSED, update.getRemoteName());
+            return GitResult.of(GitOutcome.LEASE_REFUSED, remoteRef);
         }
         Optional<String> oldId = upToDate ? advertisedId.or(() -> id(update.getNewObjectId()))
                 : id(update.getExpectedOldObjectId());
@@ -828,9 +886,9 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         return switch (update.getStatus()) {
             case OK, UP_TO_DATE -> GitResult.ok(ref);
             case REJECTED_NONFASTFORWARD, REJECTED_OTHER_REASON, REJECTED_NODELETE ->
-                GitResult.of(GitOutcome.REJECTED, update.getRemoteName() + ": " + status);
-            case REJECTED_REMOTE_CHANGED -> GitResult.of(GitOutcome.LEASE_REFUSED, update.getRemoteName());
-            default -> GitResult.of(GitOutcome.FAILED, update.getRemoteName() + ": " + status);
+                GitResult.of(GitOutcome.REJECTED, remoteRef + ": " + status);
+            case REJECTED_REMOTE_CHANGED -> GitResult.of(GitOutcome.LEASE_REFUSED, remoteRef);
+            default -> GitResult.of(GitOutcome.FAILED, remoteRef + ": " + status);
         };
     }
 
@@ -907,7 +965,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return GitResult.of(outcome, target + ": " + (outcome == GitOutcome.CREDENTIALS_INVALID
                     ? "authentication refused" : "transport failed"));
         }
-        return GitResult.of(GitOutcome.FAILED, target + ": " + failure.getClass().getSimpleName());
+        return GitResult.of(GitOutcome.FAILED, target + ": " + failureName(failure));
     }
 
     private static <T extends Throwable> Optional<T> cause(Throwable failure, Class<T> type) {
@@ -984,9 +1042,21 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * Renders a URL for a detail or a log message from an allowlist of its components: scheme, host, port and path.
      * User information is omitted, and so are query data and a fragment, which JGit 7.8.0 {@link URIish} keeps in its
      * path and renders. The URL the transport uses is not changed.
+     * <p>
+     * A URL that JGit parsed as a local path although it carries an authority is rendered as {@link #NOT_A_URL}: JGit
+     * 7.8.0 {@code URIish} matches its scheme pattern {@code [a-z][a-z0-9+-]+://} in lower case only, so
+     * {@code HTTPS://user:secret@host/repo.git} falls through to its local-file pattern, the whole string, user
+     * information included, becomes the path, and the host stays {@code null}. Such a value is recognised by a path
+     * that starts like an authority, with a scheme and {@code //} or with {@code //} alone.
+     *
+     * @param uri the parsed URL
+     * @return the rendering, never carrying user information
      */
     static String display(URIish uri) {
         String path = uri.getPath();
+        if (uri.getHost() == null && path != null && UNPARSED_AUTHORITY.matcher(path).lookingAt()) {
+            return NOT_A_URL;
+        }
         if (path != null) {
             int end = indexOfQueryOrFragment(path);
             path = end < 0 ? path : path.substring(0, end);
@@ -1143,8 +1213,31 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     }
 
     /** The failure class only: the message of a failure may carry the caller's input (GDR-NFR-3). */
-    private static <V> GitResult<V> failure(Exception e) {
-        return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
+    static <V> GitResult<V> failure(Exception e) {
+        return GitResult.of(GitOutcome.FAILED, failureName(e));
+    }
+
+    /**
+     * The name of a failure's class for a detail, never blank: the simple name, or the binary name for an anonymous
+     * class, whose simple name is empty.
+     */
+    static String failureName(Throwable failure) {
+        String simpleName = failure.getClass().getSimpleName();
+        return simpleName.isEmpty() ? failure.getClass().getName() : simpleName;
+    }
+
+    /**
+     * Renders a path of the caller for a detail, never blank: {@code Path.of("")} renders empty, so a blank rendering
+     * is replaced by {@link #BLANK_PATH}, and {@link GitResult#of(GitOutcome, String)} never meets a blank detail.
+     */
+    static String shown(Path path) {
+        String rendered = path.toString();
+        return rendered.isBlank() ? BLANK_PATH : rendered;
+    }
+
+    /** Renders a reference name for a detail, never blank: a blank name is replaced by {@link #BLANK_REF}. */
+    static String shownRef(@Nullable String name) {
+        return name == null || name.isBlank() ? BLANK_REF : name;
     }
 
     /**

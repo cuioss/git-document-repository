@@ -39,8 +39,8 @@ image::../resources/diagrams/module-dependency-graph.svg["Module dependency grap
 |`git-core`
 |Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository,
 in-core writing, compare-and-swap, in-core merge, notes
-|implemented in part: hardening, remote policy, identity, results, repository operations, cache repository; the
-rest planned
+|implemented in part: hardening, remote policy, identity, results, repository operations, cache repository, in-core
+writing, compare-and-swap; the rest planned
 
 |`git-worktrees`
 |Linked working trees, commit from a working tree, working-tree status

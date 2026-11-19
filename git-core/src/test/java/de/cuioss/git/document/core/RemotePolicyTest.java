@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.util.Locale;
 
 
 import de.cuioss.test.generator.Generators;
@@ -148,5 +149,28 @@ class RemotePolicyTest {
         var policy = RemotePolicy.httpsOrigin(URI.create("https://github.com:443"));
 
         assertTrue(policy.permits(new URIish("https://github.com/cuioss/x.git")), "an omitted port means 443");
+    }
+
+    @Test
+    @DisplayName("PLAN-02 (f), GDR-NFR-3: toString renders the origin as scheme, host and port, never user, path or query")
+    void toStringRendersOriginOnly() {
+        var user = Generators.letterStrings(8, 16).next();
+        var password = Generators.letterStrings(24, 32).next();
+        var path = Generators.letterStrings(8, 16).next();
+        var query = Generators.letterStrings(8, 16).next();
+        var host = Generators.letterStrings(4, 12).next().toLowerCase(Locale.ROOT) + ".example.invalid";
+        var origin = URI.create("https://" + user + ":" + password + "@" + host + ":8443/" + path + "?" + query);
+
+        var rendered = new RemotePolicy(origin).toString();
+
+        assertAll(
+                () -> assertEquals("RemotePolicy[https://" + host + ":8443]", rendered,
+                        "the origin is rendered as scheme, host and port"),
+                () -> assertFalse(rendered.contains(user), "no user name is rendered"),
+                () -> assertFalse(rendered.contains(password), "no password is rendered"),
+                () -> assertFalse(rendered.contains(path), "no path is rendered"),
+                () -> assertFalse(rendered.contains(query), "no query is rendered"),
+                () -> assertEquals("RemotePolicy[localOnly]", RemotePolicy.localOnly().toString(),
+                        "a policy without origin is rendered as local only"));
     }
 }

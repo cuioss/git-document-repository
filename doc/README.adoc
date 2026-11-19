@@ -111,12 +111,16 @@ One document per module. Each lists the module's requirements (prefix `GDR`, num
 sections, each with its "must" statements first and the design that realises them after.
 Implemented are xref:specification/git-testing.adoc#GDR-TEST-1[GDR-TEST-1] and
 xref:specification/git-testing.adoc#GDR-TEST-2[GDR-TEST-2] of `git-testing`, and
-xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1], xref:specification/git-core.adoc#GDR-CORE-2[GDR-CORE-2],
-xref:specification/git-core.adoc#GDR-CORE-3[GDR-CORE-3], xref:specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7],
-xref:specification/git-core.adoc#GDR-CORE-8[GDR-CORE-8] and xref:specification/git-core.adoc#GDR-CORE-11[GDR-CORE-11]
-of `git-core`, and xref:specification/git-worktrees.adoc#GDR-WT-1[GDR-WT-1],
-xref:specification/git-worktrees.adoc#GDR-WT-2[GDR-WT-2], xref:specification/git-worktrees.adoc#GDR-WT-3[GDR-WT-3] and
-xref:specification/git-worktrees.adoc#GDR-WT-4[GDR-WT-4] of `git-worktrees`; every other requirement is planned.
+xref:specification/git-core.adoc#GDR-CORE-2[GDR-CORE-2], xref:specification/git-core.adoc#GDR-CORE-3[GDR-CORE-3],
+xref:specification/git-core.adoc#GDR-CORE-4[GDR-CORE-4], xref:specification/git-core.adoc#GDR-CORE-5[GDR-CORE-5],
+xref:specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7], xref:specification/git-core.adoc#GDR-CORE-8[GDR-CORE-8] and
+xref:specification/git-core.adoc#GDR-CORE-11[GDR-CORE-11] of `git-core`, and
+xref:specification/git-worktrees.adoc#GDR-WT-1[GDR-WT-1], xref:specification/git-worktrees.adoc#GDR-WT-2[GDR-WT-2],
+xref:specification/git-worktrees.adoc#GDR-WT-3[GDR-WT-3] and xref:specification/git-worktrees.adoc#GDR-WT-4[GDR-WT-4]
+of `git-worktrees`.
+xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's
+`SystemReader` is closed only when the embedding application installs `RefusingFS.systemReader`, the recommended
+setup. Every other requirement is planned.
 
 [cols="1,3"]
 |===
