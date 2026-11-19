@@ -82,7 +82,8 @@ public sealed interface TreeEdit permits TreeEdit.Put, TreeEdit.Delete {
          */
         @Override
         public boolean equals(@Nullable Object other) {
-            return other instanceof Put put && path.equals(put.path) && Arrays.equals(content, put.content);
+            return other instanceof Put(String otherPath, byte[] otherContent) && path.equals(otherPath)
+                    && Arrays.equals(content, otherContent);
         }
 
         /**

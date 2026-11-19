@@ -86,10 +86,12 @@ public final class InCoreWriter {
      * The outcomes:
      * <ul>
      * <li>{@link GitOutcome#OK}: the commit was written; the value is its full 40-digit id;</li>
-     * <li>{@link GitOutcome#NOT_FOUND}: a parent is no full commit id or no commit of the repository, or an edit names
+     * <li>{@link GitOutcome#NOT_FOUND}: a parent is no full commit id or no commit of the repository (the id of an
+     * annotated tag included, even one that points at a commit), or an edit names
      * an invalid path or a path another edit names too; the detail names the field ({@code parents} or {@code edits})
      * and the reason. Nothing is written;</li>
-     * <li>{@link GitOutcome#FAILED}: an I/O or a signing failure; the detail names the exception class.</li>
+     * <li>{@link GitOutcome#FAILED}: an I/O or a signing failure; the detail names the exception class, by its binary
+     * name for an anonymous class.</li>
      * </ul>
      *
      * @param repository the repository whose object database receives the objects
@@ -139,7 +141,7 @@ public final class InCoreWriter {
             inserter.flush();
             return GitResult.ok(commitId.name());
         } catch (IOException | GitAPIException | JGitInternalException e) {
-            return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
+            return JGitRepositoryOperations.failure(e);
         }
     }
 
@@ -161,10 +163,17 @@ public final class InCoreWriter {
         return Optional.empty();
     }
 
-    /** Parses a parent; empty when the id names no commit of the repository. */
+    /**
+     * Parses a parent; empty when the id names no commit of the repository.
+     * <p>
+     * The object is parsed as it is ({@code RevWalk.parseAny}) and must be a commit itself: JGit 7.8.0
+     * {@code RevWalk.parseCommit} peels an annotated tag to the commit it points at ({@code peel(parseAny(id))}), so it
+     * would accept the id of a tag and write the tagged commit as the parent.
+     */
     private static Optional<RevCommit> parseCommit(RevWalk walk, String id) throws IOException {
         try {
-            return Optional.of(walk.parseCommit(ObjectId.fromString(id)));
+            return walk.parseAny(ObjectId.fromString(id)) instanceof RevCommit commit ? Optional.of(commit)
+                    : Optional.empty();
         } catch (MissingObjectException | IncorrectObjectTypeException e) {
             return Optional.empty();
         }
@@ -174,10 +183,9 @@ public final class InCoreWriter {
         DirCacheEditor editor = tree.editor();
         for (TreeEdit edit : edits) {
             switch (edit) {
-                case TreeEdit.Put put -> {
-                    byte[] content = put.content();
+                case TreeEdit.Put(String path, byte[] content) -> {
                     ObjectId blob = inserter.insert(Constants.OBJ_BLOB, content);
-                    editor.add(new PathEdit(put.path()) {
+                    editor.add(new PathEdit(path) {
                         @Override
                         public void apply(DirCacheEntry entry) {
                             entry.setFileMode(FileMode.REGULAR_FILE);
@@ -186,7 +194,7 @@ public final class InCoreWriter {
                         }
                     });
                 }
-                case TreeEdit.Delete delete -> editor.add(new DeletePath(delete.path()));
+                case TreeEdit.Delete(String path) -> editor.add(new DeletePath(path));
             }
         }
         editor.finish();

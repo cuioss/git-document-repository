@@ -185,6 +185,15 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static final Pattern WANT_REFUSED =
             Pattern.compile("(?i)\\bwant [0-9a-f]{40}(?:[0-9a-f]{24})? not (?:valid|found)\\b");
 
+    /** The rendering of a value that cannot be shown as a URL without risking its user information (GDR-NFR-3). */
+    static final String NOT_A_URL = "(not a URL)";
+
+    /**
+     * The start of a path that is an unparsed authority: a scheme of any case followed by {@code //}, or {@code //}
+     * alone (see {@link #display(URIish)}).
+     */
+    private static final Pattern UNPARSED_AUTHORITY = Pattern.compile("(?:[A-Za-z][A-Za-z0-9+.-]*:)?//");
+
     private final FS fs;
     private final RemotePolicy remotePolicy;
 
@@ -355,8 +364,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         try {
             FileUtils.delete(staging.toFile(), FileUtils.RECURSIVE | FileUtils.SKIP_MISSING | FileUtils.RETRY);
         } catch (IOException e) {
-            LOGGER.debug("Could not remove the clone staging directory %s: %s", staging,
-                    e.getClass().getSimpleName());
+            LOGGER.debug("Could not remove the clone staging directory %s: %s", staging, failureName(e));
         }
     }
 
@@ -1034,9 +1042,21 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * Renders a URL for a detail or a log message from an allowlist of its components: scheme, host, port and path.
      * User information is omitted, and so are query data and a fragment, which JGit 7.8.0 {@link URIish} keeps in its
      * path and renders. The URL the transport uses is not changed.
+     * <p>
+     * A URL that JGit parsed as a local path although it carries an authority is rendered as {@link #NOT_A_URL}: JGit
+     * 7.8.0 {@code URIish} matches its scheme pattern {@code [a-z][a-z0-9+-]+://} in lower case only, so
+     * {@code HTTPS://user:secret@host/repo.git} falls through to its local-file pattern, the whole string, user
+     * information included, becomes the path, and the host stays {@code null}. Such a value is recognised by a path
+     * that starts like an authority, with a scheme and {@code //} or with {@code //} alone.
+     *
+     * @param uri the parsed URL
+     * @return the rendering, never carrying user information
      */
     static String display(URIish uri) {
         String path = uri.getPath();
+        if (uri.getHost() == null && path != null && UNPARSED_AUTHORITY.matcher(path).lookingAt()) {
+            return NOT_A_URL;
+        }
         if (path != null) {
             int end = indexOfQueryOrFragment(path);
             path = end < 0 ? path : path.substring(0, end);

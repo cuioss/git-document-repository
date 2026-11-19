@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -277,6 +278,44 @@ class ReferenceUpdaterTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-5: a symbolic reference is followed, its target moves and it stays symbolic")
+        void symbolicReferenceFollowed(@LocalRepository Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+
+            var result = updater.compareAndSwap(repository, alias, metadata(), new Recording(), 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the target is moved"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the symbolic reference exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update through the alias succeeds"),
+                    () -> assertEquals(initial, commit.getParent(0), "the new commit's parent is the target's commit"),
+                    () -> assertEquals(commit, refId(repository, target), "the target points at the new commit"),
+                    () -> assertTrue(aliasRef.isSymbolic(), "the alias stays a symbolic reference"),
+                    () -> assertEquals(target, aliasRef.getTarget().getName(), "the alias still points at the target"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an I/O failure of an anonymous exception class is a failure with a nonblank detail")
+        void anonymousFailure(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            try (var failing = new LockReleasingRepository(directoryOf(repository))) {
+                failing.failOnNextRead();
+
+                var result = updater.compareAndSwap(failing, refName, metadata(), new Recording(), 1);
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the failed read is a failure"),
+                        () -> assertFalse(Objects.requireNonNull(result.detail()).isBlank(),
+                                "the detail is not blank although the simple name is empty"),
+                        () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-CORE-5: fewer than one attempt is a programming error, nothing is read or written")
         void attemptsBelowOne(@InMemory Repository repository) throws Exception {
             var refName = GitIdentity.branchRef(TestCommits.name());
@@ -359,6 +398,43 @@ class ReferenceUpdaterTest {
                     () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is deleted"),
                     () -> assertEquals(initial.name(), result.value(), "the value is the deleted id"),
                     () -> assertNull(refId(repository, refName), "the reference is gone"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: deleting a symbolic reference removes it and keeps the reference it points at")
+        void deletesSymbolicReferenceOnly(@LocalRepository Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+
+            var result = updater.compareAndDelete(repository, alias, initial.name(), 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the symbolic reference is deleted"),
+                    () -> assertEquals(initial.name(), result.value(), "the value is the id it resolved to"),
+                    () -> assertNull(repository.exactRef(alias), "the symbolic reference is gone"),
+                    () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an I/O failure of an anonymous exception class is a failure with a nonblank detail")
+        void anonymousFailure(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var lock = Files.createFile(lockFile(repository, refName));
+            try (var failing = new LockReleasingRepository(directoryOf(repository))) {
+                failing.failOnNextRead();
+
+                var result = updater.compareAndDelete(failing, refName, initial.name(), 2);
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the failed re-read is a failure"),
+                        () -> assertFalse(Objects.requireNonNull(result.detail()).isBlank(),
+                                "the detail is not blank although the simple name is empty"),
+                        () -> assertTrue(Files.exists(lock), "the other writer's lock is left in place"),
+                        () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+            }
         }
 
         @Test
@@ -470,6 +546,12 @@ class ReferenceUpdaterTest {
         }
     }
 
+    /** Creates a symbolic reference {@code alias} pointing at {@code target}. */
+    private static void link(Repository repository, String alias, String target) throws IOException {
+        var result = repository.updateRef(alias).link(target);
+        assertEquals(RefUpdate.Result.NEW, result, "the symbolic reference is created");
+    }
+
     private static File directoryOf(Repository repository) {
         return Objects.requireNonNull(repository.getDirectory(), "a local repository has a directory");
     }
@@ -489,11 +571,13 @@ class ReferenceUpdaterTest {
      * database that delegates every call to the real {@code RefDirectory}. The updates it creates
      * ({@code RefDirectory.newUpdate}) work on the real database, so only the updater's own {@code exactRef} calls pass
      * through the double. {@code compareAndDelete} reads the reference only after a {@code LOCK_FAILURE}, so the lock is
-     * released exactly between the first and the second attempt.
+     * released exactly between the first and the second attempt. After {@link #failOnNextRead()} the next exact read
+     * throws an anonymous {@link IOException} instead, whose simple class name is empty.
      */
     private static final class LockReleasingRepository extends FileRepository {
 
         private @Nullable Path heldLock;
+        private boolean failNextRead;
         private int exactReads;
 
         LockReleasingRepository(File gitDir) throws IOException {
@@ -515,8 +599,21 @@ class ReferenceUpdaterTest {
             return new Releasing(super.getRefDatabase());
         }
 
+        /** Fails the next exact read with an instance of an anonymous {@link IOException} subclass. */
+        void failOnNextRead() {
+            failNextRead = true;
+        }
+
         private @Nullable Ref readReleasing(RefDatabase database, String name) throws IOException {
             exactReads++;
+            if (failNextRead) {
+                failNextRead = false;
+                throw new IOException(TestCommits.name()) {
+
+                    @Serial
+                    private static final long serialVersionUID = 1L;
+                };
+            }
             var lock = heldLock;
             if (lock != null) {
                 heldLock = null;

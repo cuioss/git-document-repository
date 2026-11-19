@@ -71,6 +71,11 @@ public final class ReferenceUpdater {
      * Writes the next commit of a reference and moves the reference to it, provided no other writer moved the
      * reference in between; a lost race is retried until the attempts are used up.
      * <p>
+     * A symbolic {@code refName} is followed, as git follows one when it commits on {@code HEAD}: JGit 7.8.0
+     * {@code Repository.updateRef(refName)} locks and moves the base reference, compares the expected id with that base
+     * reference's id, and keeps the symbolic reference pointing at it. The named reference thus reads as the new
+     * commit afterwards, which is what the result reports.
+     * <p>
      * The outcomes:
      * <ul>
      * <li>{@link GitOutcome#OK}: the reference was created ({@link RefUpdate.Result#NEW}) or moved
@@ -132,7 +137,7 @@ public final class ReferenceUpdater {
             return GitResult.of(GitOutcome.CONFLICT,
                     refName + ": " + RefUpdate.Result.LOCK_FAILURE + " on every attempt (" + attempts + ")");
         } catch (IOException e) {
-            return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
+            return JGitRepositoryOperations.failure(e);
         }
     }
 
@@ -146,6 +151,10 @@ public final class ReferenceUpdater {
      * The updater then re-reads the reference ({@code Repository.exactRef(String)}) only to tell the two apart: a
      * reference still at the expected id is retried with that same expected id, so the lock-held comparison decides
      * again, and a reference that moved or is gone ends the call at once; the id it moved to is never adopted.
+     * <p>
+     * A symbolic reference is deleted itself, never the reference it points at: the update is created with
+     * {@code Repository.updateRef(refName, true)}, because without {@code detach} JGit 7.8.0 resolves the symbolic
+     * reference and deletes its base reference instead. The expected id is the id the symbolic reference resolves to.
      * <p>
      * The outcomes:
      * <ul>
@@ -207,13 +216,20 @@ public final class ReferenceUpdater {
             return GitResult.of(GitOutcome.CONFLICT,
                     refName + ": " + RefUpdate.Result.LOCK_FAILURE + " on every attempt (" + attempts + ")");
         } catch (IOException e) {
-            return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
+            return JGitRepositoryOperations.failure(e);
         }
     }
 
+    /**
+     * Deletes the named reference itself. The update is created without dereferencing ({@code updateRef(name, true)}):
+     * JGit 7.8.0 {@code RefDirectory.newUpdate(name, false)} resolves a symbolic reference, and {@code RefUpdate.delete}
+     * then deletes its leaf, the base reference, and leaves the symbolic one; with {@code detach} set it locks and
+     * deletes the symbolic reference and leaves its target as it is. The expected id is still compared with the
+     * resolved id of the named reference.
+     */
     private static RefUpdate.Result delete(Repository repository, String refName, ObjectId expected)
             throws IOException {
-        RefUpdate delete = repository.updateRef(refName);
+        RefUpdate delete = repository.updateRef(refName, true);
         delete.setExpectedOldObjectId(expected);
         delete.setForceUpdate(true);
         delete.disableRefLog();

@@ -199,7 +199,8 @@ public interface RepositoryOperations {
 
         /**
          * Renders the cache, the commit and the URL, the URL through its display without user information, query and
-         * fragment (GDR-NFR-3); a URL that cannot be parsed is not rendered at all.
+         * fragment (GDR-NFR-3); a URL that cannot be parsed is not rendered at all, and neither is one that JGit 7.8.0
+         * parses as a local path although it carries an authority, such as one with an upper-case scheme.
          *
          * @return the rendering
          */
@@ -210,7 +211,7 @@ public interface RepositoryOperations {
                 shownUrl = JGitRepositoryOperations.display(new URIish(url));
             } catch (URISyntaxException | IllegalArgumentException e) {
                 // a port beyond int range is a NumberFormatException of JGit 7.8.0 URIish
-                shownUrl = "(not a URL)";
+                shownUrl = JGitRepositoryOperations.NOT_A_URL;
             }
             return "FetchCommitInput[cache=" + cache + ", commit=" + commit + ", url=" + shownUrl + "]";
         }

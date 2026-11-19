@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -47,13 +48,18 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.GpgConfig;
+import org.eclipse.jgit.lib.GpgSignature;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.Signer;
+import org.eclipse.jgit.lib.TagBuilder;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
@@ -283,6 +289,24 @@ class InCoreWriterTest {
         }
 
         @Test
+        @DisplayName("GDR-NFR-3: a failure of an anonymous exception class is a failure with a nonblank detail")
+        void anonymousFailure(@InMemory Repository repository) {
+            var marker = TestCommits.name();
+            var plain = metadata();
+            var metadata = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
+                    new CommitSigning(anonymouslyFailing(marker), null, null));
+
+            var result = writer.write(repository, List.of(), metadata, List.of(put(TestCommits.name(), content())));
+
+            var detail = Objects.requireNonNull(result.detail(), "a failure carries a detail");
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the signing failure is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertFalse(detail.isBlank(), "the detail is not blank although the simple name is empty"),
+                    () -> assertFalse(detail.contains(marker), "the detail carries no message of the failure"));
+        }
+
+        @Test
         @DisplayName("a null argument or list element is rejected")
         void nullArguments(@InMemory Repository repository) {
             var metadata = metadata();
@@ -307,7 +331,7 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: a parent that is no commit of the repository is not found, nothing is written")
-        void absentParent(@InMemory Repository repository) throws Exception {
+        void absentParent(@InMemory Repository repository) {
             var content = content();
 
             var result = writer.write(repository, List.of(ObjectId.zeroId().name()), metadata(),
@@ -333,8 +357,30 @@ class InCoreWriterTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-4: a parent that names an annotated tag of a commit is not found, nothing is written")
+        void parentIsAnnotatedTag(@InMemory Repository repository) throws Exception {
+            var tagged = writeRoot(repository, Map.of(TestCommits.name(), content()));
+            var tag = new TagBuilder();
+            tag.setObjectId(ObjectId.fromString(tagged), Constants.OBJ_COMMIT);
+            tag.setTag(TestCommits.name());
+            tag.setTagger(person());
+            tag.setMessage(message());
+            ObjectId tagId;
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                tagId = inserter.insert(tag);
+                inserter.flush();
+            }
+            var content = content();
+
+            var result = writer.write(repository, List.of(tagId.name()), metadata(),
+                    List.of(put(TestCommits.name(), content)));
+
+            assertNothingWritten(repository, result, "parents: not found", content);
+        }
+
+        @Test
         @DisplayName("GDR-CORE-11: an abbreviated parent id is no full commit id and is not found")
-        void abbreviatedParent(@InMemory Repository repository) throws Exception {
+        void abbreviatedParent(@InMemory Repository repository) {
             var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
             var content = content();
 
@@ -356,7 +402,7 @@ class InCoreWriterTest {
         @ParameterizedTest(name = "[{0}]")
         @MethodSource("invalidPaths")
         @DisplayName("GDR-CORE-4: an invalid path of a put is not found, nothing is written")
-        void invalidPutPath(String path, @InMemory Repository repository) throws Exception {
+        void invalidPutPath(String path, @InMemory Repository repository) {
             var content = content();
 
             var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
@@ -366,7 +412,7 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: an invalid path of a delete is not found, nothing is written")
-        void invalidDeletePath(@InMemory Repository repository) throws Exception {
+        void invalidDeletePath(@InMemory Repository repository) {
             var content = content();
 
             var result = writer.write(repository, List.of(), metadata(),
@@ -377,7 +423,7 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: two edits of one path are not found, nothing is written")
-        void duplicatePath(@InMemory Repository repository) throws Exception {
+        void duplicatePath(@InMemory Repository repository) {
             var path = TestCommits.name();
             var content = content();
 
@@ -411,7 +457,7 @@ class InCoreWriterTest {
         }
 
         private static void assertNothingWritten(Repository repository, GitResult<String> result, String detail,
-                String content) throws IOException {
+                String content) {
             assertAll(
                     () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the invalid input is not found"),
                     () -> assertNull(result.value(), "no commit is returned"),
@@ -460,6 +506,33 @@ class InCoreWriterTest {
     private static @Nullable ObjectId headCommit(Repository repository) throws IOException {
         Ref head = repository.exactRef(Constants.HEAD);
         return head == null ? null : head.getObjectId();
+    }
+
+    /**
+     * A signer that fails every signing with an instance of an anonymous {@link IOException} subclass, whose simple
+     * class name is empty.
+     *
+     * @param message the message of the exception, so a test can check it never reaches a result
+     */
+    private static Signer anonymouslyFailing(String message) {
+        return new Signer() {
+
+            @Override
+            public GpgSignature sign(Repository repository, GpgConfig config, byte[] data, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) throws IOException {
+                throw new IOException(message) {
+
+                    @Serial
+                    private static final long serialVersionUID = 1L;
+                };
+            }
+
+            @Override
+            public boolean canLocateSigningKey(Repository repository, GpgConfig config, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
+                return true;
+            }
+        };
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
