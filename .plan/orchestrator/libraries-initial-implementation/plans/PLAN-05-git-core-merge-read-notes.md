@@ -34,6 +34,21 @@ notes under a caller-named notes reference written through compare-and-swap (GDR
    and `AGENTS.md` state updated ("git-core implemented").
    - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing, pm-documents:ref-asciidoc
    - Persona: module-tester
+5. Test and verification residuals of PLAN-02 (leftovers of its landing analysis, folded here because this plan
+   closes `git-core`; each item is tested, or recorded as an accepted exception with its reason in
+   `doc/specification/git-core.adoc`): (a) a test that ties the constants of `GitOutcome` to the GDR-GEN-3 table in
+   `doc/specification/general.adoc` (the 20 rows are held by reading only); (b) the tautological assertions of
+   `AbsenceContractsTest` (`assertNull` on a value just passed to a constructor) replaced by assertions that can fail;
+   (c) refusal of a hook on the REMOTE side (`ReceivePack`) — first confirm in the JGit 7.8.0 sources whether
+   `ReceivePack` runs native hooks at all, then test it or record the answer; (d) an end-to-end redirect test through
+   `fetch` or `fetchCommit` (the guard is tested only at transport level) — a local HTTPS server needs a certificate
+   that cannot be made without a new dependency or an external tool, so the choice goes to the owner through the
+   question tool BEFORE any is added; (e) the declined CodeRabbit finding about `http.extraHeader` / `http.cookieFile`
+   from user or system configuration reaching the remote: verify in the JGit 7.8.0 sources whether JGit applies them and
+   record the answer; (f) untested branches named by the analysis: `publish()` losing a race, the
+   `requireMirroredRefs` failure branch and the log path of a refused redirect.
+   - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
+   - Persona: module-tester
 
 ## Standing Constraints
 
@@ -65,11 +80,24 @@ notes under a caller-named notes reference written through compare-and-swap (GDR
   {falsepositive|wontfix}`. The lane never records a dismissal of its own; a dismissal the run cannot transmit is a
   blocker. The merge gate reads the open-finding count at the head — `0`, or every remaining key operator-selected;
   an `undecidable` read blocks.
+- Rules the review of PLAN-04 (PR #35) established for the code this plan adds beside it in `git-core` (each was a
+  defect found in review and is now fixed and tested in the merged `InCoreWriter` / `ReferenceUpdater`; verify the
+  JGit behaviour at 7.8.0 before relying on it): (1) map a caught exception to a result only through
+  `JGitRepositoryOperations.failure(e)`, never a hand-written `getClass().getSimpleName()` detail (an anonymous
+  exception class has an empty simple name and `GitResult.of` rejects a blank detail); (2) where a contract says "the
+  id must name a commit" resolve it with `RevWalk.parseAny` and check the type, because `parseCommit` peels an annotated
+  tag; (3) a `RefUpdate` that acts on the named reference itself (the notes-reference update, a delete) uses the
+  detaching overload `updateRef(name, true)`, and its test includes a symbolic-reference case; (4) a concurrency test
+  that runs on both fixtures (deliverable 4, two writers on one notes reference) asserts the safety invariant on the
+  local fixture and a liveness bound only on the in-memory one, because the lock-file reference database reports
+  `LOCK_FAILURE` while another thread merely holds the lock.
 
 ## Done when
 
 - `verify` passes at the plan's head with GDR-CORE-6, GDR-CORE-9 and GDR-CORE-10 each covered by a test naming the
   requirement id; every GDR-CORE requirement is then covered.
+- Every item of deliverable 5 is tested at the plan's head, or recorded as an accepted exception with its reason in
+  `doc/specification/git-core.adoc`; a new test dependency is in the POM only with the owner's recorded approval.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
   open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
 
@@ -84,6 +112,16 @@ notes under a caller-named notes reference written through compare-and-swap (GDR
 - HYPOTHESIS: `NoteMap.read`, `NoteMap.set` and `NoteMap.writeTree` have the needed signatures in JGit 7.8.0 —
   confirm/refute at JGit `v7.8.0.202609011348-r` `org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteMap.java` §
   `NoteMap` (verify-at-outline).
+- OBSERVED: the residuals of deliverable 5 were read at PLAN-02's merge commit `2c728bc`: the redirect tests call the
+  guard and the connection factory directly
+  (`git-core/src/test/java/de/cuioss/git/document/core/JGitRepositoryOperationsTest.java` lines 329-371); only a local
+  `pre-push` hook is tested (same file, lines 953-981); `AbsenceContractsTest` asserts absence on values it just
+  passed in; `GitOutcome` has 20 constants and the GDR-GEN-3 table 20 rows, with no test between them.
+- HYPOTHESIS: JGit 7.8.0 `ReceivePack` does not run native hooks, so a remote-side hook refusal cannot occur — confirm/
+  refute at JGit `v7.8.0.202609011348-r` `org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceivePack.java` (verify-at-outline).
+- Verify-first clause: the three-layer analysis of PLAN-02 read the code only (no build, no test run); every OBSERVED
+  claim of deliverable 5 is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the item that
+  names it.
 
 ## Expected Surface
 
@@ -91,6 +129,9 @@ notes under a caller-named notes reference written through compare-and-swap (GDR
 - HYPOTHESIS: `git-core/src/test/java/` (created by PLAN-02)
 - OBSERVED: `doc/specification/git-core.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
+- HYPOTHESIS: `git-core/pom.xml` (a test-scope dependency for the HTTPS test server of deliverable 5 d, only with the
+  owner's approval)
 
 ## Dependencies and Sequencing
 

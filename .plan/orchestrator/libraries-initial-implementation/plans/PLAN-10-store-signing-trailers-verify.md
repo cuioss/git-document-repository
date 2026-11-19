@@ -93,6 +93,8 @@ file with validity periods, runnable from CI without the application (GDR-STORE-
   unresolved; the overlap with the other WS-02 plans is enforced by queue order, not by the gate)
 - OBSERVED: `doc/specification/git-store.adoc`
 - OBSERVED: `doc/specification/general.adoc`
+- HYPOTHESIS: `AGENTS.md` ("Current state" paragraph: new public classes of `git-store`)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

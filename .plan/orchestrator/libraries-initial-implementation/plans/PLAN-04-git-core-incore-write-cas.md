@@ -39,6 +39,29 @@ neither.
    state updated.
    - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
+5. Hardening of the repository operations PLAN-02 took over (leftovers of its three-layer landing analysis, folded
+   here because this plan edits the same package; each item is either fixed and tested or recorded as an accepted
+   exception with its reason in `doc/specification/git-core.adoc`):
+   (a) GDR-CORE-1 as shipped: the default `SystemReader` can still run `git` once per JVM to find the system
+   configuration, and `doc/README.adoc` lists GDR-CORE-1 as implemented — decide with the owner whether
+   `RefusingFS.systemReader` becomes the documented default for embedding applications, or make the "implemented"
+   wording of the specification, the Javadoc and `doc/README.adoc` say what is met; (b) `fetch` returns `OK` when a
+   tracking-reference update failed (`LOCK_FAILURE`, `REJECTED_CURRENT_BRANCH`, `IO_FAILURE`), while the clone checks
+   this — map a failed update to a non-success outcome or record why the per-update status is enough; (c) `fetch`,
+   `push` and `cloneIfMissing` set no transport timeout (only `fetchCommit` does) — add one with a reason, or record
+   it; (d) the staged clone directory is created with mode `rwx------` and published by an atomic move, so a clone
+   meant for another OS user becomes unreadable — apply the caller's directory permissions or record the limit;
+   (e) URL user information (a token passed as the user name) is written to the persistent bare clone's config while
+   the GDR-NFR-3 table says tokens are never stored — strip it or correct the table; (f) the generated `toString` of
+   `FetchCommitInput` (URL with user information, query) and of `RemotePolicy` renders secrets, only `CloneInput`
+   overrides it; (g) `GitResult` throws `IllegalArgumentException` for a blank detail, which an operation can trigger
+   (an anonymous exception class has an empty simple name, `open(Path.of(""))`) — never let an operation throw where
+   the contract says result; (h) the `push` Javadoc says a refused hook means "nothing was sent", but JGit runs the
+   pre-push hook after reading the remote's reference advertisement — correct the wording; (i) decide whether
+   `cloneIfMissing` verifies that an existing bare repository has the requested origin (the source's
+   `REMOTE_ORIGIN_MISMATCH` was dropped) and whether `readFile` bounds the blob size.
+   - Skills: pm-dev-java:java-core, pm-dev-java-cui:cui-logging, pm-dev-java:javadoc
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -77,6 +100,9 @@ neither.
 
 - `verify` passes at the plan's head with GDR-CORE-4 and GDR-CORE-5 (update and delete branches) each covered by a
   test naming the requirement id.
+- Every item of deliverable 5 is either fixed and tested at the plan's head, or recorded as an accepted exception with
+  its reason in `doc/specification/git-core.adoc`; no document lists a requirement as implemented that the code meets
+  only in part.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
   open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
 
@@ -86,21 +112,43 @@ neither.
   retrying reference update; its only `setExpectedOldObjectId` call creates a reference with `ObjectId.zeroId()` —
   grep of `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/JGitOperations.java`
   at pm-mcp-core `287e1a86` (line ~270).
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: claim re-read in pm-mcp-core at 287e1a86: JGitOperations.java:270 holds the only setExpectedOldObjectId (zeroId); only that file read
 - OBSERVED: the `RefUpdate` semantics (expected-old check before the force flag, `LOCK_FAILURE` on a moved reference,
   `REJECTED` for a delete without force) are stated with their JGit 7.8.0 source link in
   `doc/specification/git-core.adoc` § GDR-CORE-5.
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: RefUpdate JGit 7.8.0 lines 680-724 read: conflict check, lock, expected compare; the spec link text not separately re-read
 - HYPOTHESIS: `DirCache.read(ObjectReader, AnyObjectId)` and `DirCache.writeTree(ObjectInserter)` exist with these
   signatures in JGit 7.8.0 — confirm/refute at JGit `v7.8.0.202609011348-r`
   `org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCache.java` § `read` / `writeTree` (verify-at-outline).
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 DirCache.read(ObjectReader, AnyObjectId) at 136, writeTree(ObjectInserter) at 976, newInCore at 119
 - HYPOTHESIS: the `Signer` hook is reachable from a commit built by `ObjectInserter` (not only through `CommitCommand`)
   — confirm/refute at JGit 7.8.0 `org.eclipse.jgit/src/org/eclipse/jgit/lib/Signer.java` § `sign` and
   `org.eclipse.jgit/src/org/eclipse/jgit/lib/CommitBuilder.java` § `setGpgSignature` (verify-at-outline).
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 Signer.signObject 66-73 calls sign and setGpgSignature on an ObjectBuilder; InCoreWriter 203-210 uses it
+- OBSERVED: the leftovers of deliverable 5 were read in the merged `git-core` at PLAN-02's merge commit `2c728bc`:
+  the process-start limit in `JGitRepositoryOperations` § class Javadoc (lines 93-99) and `doc/specification/git-core.adoc`
+  § GDR-CORE-1; user information kept by `new URIish(input.url()).setPass(null)` (line 222); the staging directory by
+  `Files.createTempDirectory` (line 303); a clone `fetch` without `setTimeout` (lines 369-373) against `fetchCommit` with
+  `FETCH_TIMEOUT_SECONDS` (line 595); `GitResult` § compact constructor (line 56); the `push` Javadoc (line 114).
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: git diff 2c728bc 61ac7e1 -- git-core is empty, so the PLAN-02 state read at outline is the base state; no deliverable-5 item was already absent
+- OBSERVED: JGit 7.8.0 `PushProcess` runs the `PrePushHook` after the remote advertisement has been fetched (its
+  constructor Javadoc) — read in the local `org.eclipse.jgit` 7.8.0 sources jar.
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 PushProcess 140-168 fetches the advertisement before calling the pre-push hook
+- Verify-first clause: the three-layer analysis of PLAN-02 read the code only (no build, no test run); every OBSERVED
+  claim of deliverable 5 is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the item that
+  names it. The `fetch` status mapping (item b) was seen only as the mapping of `getTrackingRefUpdates()` to the
+  reference updates of the result — confirm at outline that no status check exists before changing the outcome.
+  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: base fetch only mapped getTrackingRefUpdates (no result check) while the clone had requireMirroredRefs; item (b) premise holds (leaf reading, base diff)
 
 ## Expected Surface
 
 - OBSERVED: `git-core/src/main/java/de/cuioss/git/document/core/`
 - HYPOTHESIS: `git-core/src/test/java/` (created by PLAN-02)
 - OBSERVED: `doc/specification/git-core.adoc`
+- HYPOTHESIS: `AGENTS.md` ("Current state" paragraph: new public classes of `git-core`)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
+- HYPOTHESIS: `doc/specification/general.adoc` (GDR-NFR-3 table, deliverable 5 e; GDR-GEN-3 table if an outcome changes)
+- HYPOTHESIS: `git-core/doc/LogMessages.adoc` (catalogue, if deliverable 5 adds a log message)
 
 ## Dependencies and Sequencing
 

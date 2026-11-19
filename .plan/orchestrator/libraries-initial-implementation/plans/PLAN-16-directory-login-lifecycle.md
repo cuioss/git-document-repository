@@ -91,6 +91,7 @@ and prefilled unbound entries saved by an administrator and bound only by a firs
 - OBSERVED: `doc/specification/git-directory.adoc`
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

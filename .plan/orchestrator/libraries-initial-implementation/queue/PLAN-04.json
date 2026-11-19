@@ -2,10 +2,10 @@
   "id": "PLAN-04",
   "slug": "git-core-incore-write-cas",
   "workstream": "WS-01",
-  "status": "staged",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "git-core-incore-write-cas",
+  "pr": "35",
+  "landing": "landings/PLAN-04.md",
   "seq": 4
 }

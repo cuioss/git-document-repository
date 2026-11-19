@@ -99,6 +99,8 @@ duplicate provider id stops the start).
 - OBSERVED: `doc/specification/git-store.adoc`
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `README.adoc` (module paragraph: `git-store` is created)
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

@@ -98,6 +98,7 @@ modules need (GDR-NFR-4). The rule choice (Maven Enforcer rule vs an architectur
 - OBSERVED: `doc/specification/general.adoc`
 - OBSERVED: `README.adoc`
 - OBSERVED: `AGENTS.md`
+- HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
 
 ## Dependencies and Sequencing
 

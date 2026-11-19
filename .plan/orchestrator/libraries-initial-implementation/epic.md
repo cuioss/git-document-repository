@@ -34,7 +34,17 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 
 - PLAN-01 — First plan. Launch only after the ledger PR (`chore/orchestrator-ledger-init`) is merged, so its
   worktree, branched from `main`, carries the specs.
-- PLAN-03 / PLAN-04 — May run side by side after PLAN-02 (git-worktrees vs git-core; shared only `AGENTS.md`).
+- PLAN-03 / PLAN-04 — Started side by side (git-worktrees vs git-core). Since the surface correction of 2026-11-18 they
+  share `AGENTS.md` and `doc/README.adoc` (two files), so the gate put the pair to the operator, who accepted it; the real
+  collision is the "Current state" paragraph and the "Implemented are ..." sentence. PLAN-03 shipped (PR #30), PLAN-04
+  shipped (PR #35, `c8feb0b`).
+- PLAN-04 / PLAN-05 — Each carries a deliverable 5 folded from the landing analysis of PLAN-02 (PLAN-04: code-side
+  hardening of the taken-over operations; PLAN-05: test and verification residuals). Five deliverables each, below the
+  split guard; they proceed unsplit because every item edits the files the plan already edits.
+- PLAN-19 — Hardening of `git-worktrees` from the landing analysis of PLAN-03 (staged 2026-11-18). Depends on PLAN-03 only;
+  shares `doc/specification/general.adoc` (and `GitOutcome.java` if a new outcome is needed) with PLAN-04, accepted by the
+  operator. Not a prerequisite of PLAN-06 or later plans. Shipped (PR #31, `e2aced9`): the diff shares only `general.adoc`
+  with PLAN-04, `GitOutcome.java` was not touched (the refused branch name reuses `REFUSED_BY_POLICY`).
 - PLAN-06 — Last foundation plan. After it lands: the operator runs `/release` for 0.1.0 (not a queue row, see
   Decisions), then the aspect modules start.
 - PLAN-07..PLAN-11 — Strictly sequential: all edit `git-store/`, which the surface reader cannot see until PLAN-07
@@ -44,8 +54,17 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `general.adoc`, `AGENTS.md` → the gate puts it to the operator).
 - PLAN-10, PLAN-12, PLAN-13, PLAN-17 — Each opens with an owner decision on a third-party library; expect a question
   early in the plan's refine phase.
-- PLAN-18 — Collection plan for leftovers (starts with the minor findings of PLAN-01). Held back from `next` until the
-  operator releases it; no technical dependency on any other staged plan. Further leftovers are folded in by `analyze`.
+- PLAN-18 — Shipped (PR #28). It was the collection plan for the minor leftovers of PLAN-01; once started its spec is
+  frozen, so the leftovers of later landings fold into the staged specs they touch (see Decisions) or into a Watch.
+- PLAN-04 — Shipped (PR #35, `c8feb0b`, `landings/PLAN-04.md`). PLAN-04 landed after PLAN-19 and its rebase conflicted by hand
+  in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `doc/specification/general.adoc`): the pairing gate had
+  predicted two of them plus `general.adoc`; the root `README.adoc` was in neither spec's surface. Sibling plans keep editing the
+  same state lists, so a plan that changes a module's state expects those hand merges.
+- PLAN-20 — Second collection plan (staged 2026-11-19 on the operator's word): the layer-3 defects of PLAN-19 and PLAN-04, the
+  test gaps beside them and the `git-testing` leftovers of PLAN-18, in one plan. **Held back from `next` until the operator
+  releases it**; later analyses fold further leftovers into it, in the same edit as its Expected Surface. It shares four
+  declared entries with PLAN-05 (`git-core` main and test, `git-core.adoc`, `AGENTS.md`), so release it after PLAN-05 lands or
+  accept the overlap at the pairing prompt.
 
 ## Decisions
 
@@ -102,20 +121,165 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   as shipped, because their rules are embodied in the merged code, tests and Javadoc and later plans use the
   `git-testing` fixtures rather than writing their own.
 
+- 2026-11-18 — Started PLAN-02 and PLAN-18 side by side (operator: "#2 is running", "#18 is running"; the gate showed no
+  shared file). Both shipped the same day: PLAN-02 as PR #25 (`2c728bc`), PLAN-18 as PR #28 (`7418f76`); landing reports
+  `landings/PLAN-02.md` and `landings/PLAN-18.md`. PLAN-18 was started by the operator although it was staged as held back,
+  so its spec was frozen before the leftovers of PLAN-02 arrived.
+- 2026-11-18 — Layer-3 routing of the two landings. PLAN-02: 1 major (GDR-CORE-1 met only in part by default; documented in
+  the Javadoc and in the specification, but `doc/README.adoc` lists it as implemented) and 8 minor; four hardening residuals
+  from its message `git-core-import-012`. PLAN-18: 2 minor, 5 minor gaps. Operator's choice, from three offered (stage a
+  second collection plan; fold into PLAN-04 and PLAN-05; Watch only): fold into PLAN-04 and PLAN-05. Code-side items and the
+  wording of the "implemented" claim went into PLAN-04 deliverable 5, test-side items and residuals 2 to 4 into PLAN-05
+  deliverable 5, each with its Expected Surface entries and OBSERVED claims. The `git-testing` leftovers have no staged spec
+  to join and are a Watch.
+- 2026-11-18 — Surface correction at PLAN-02's landing (two lessons: the module-state statement lives in `AGENTS.md`,
+  `README.adoc` and `doc/README.adoc`). `doc/README.adoc` was declared by no staged spec and `README.adoc` only by PLAN-06;
+  every plan that implements GDR requirements or creates a module edits them. Added to the Expected Surface of PLAN-03 to
+  PLAN-17: `doc/README.adoc` (all fifteen), `README.adoc` (PLAN-03, 07, 12, 15, 17), `AGENTS.md` (PLAN-04, 08 to 11, 13) and
+  `doc/concepts/module-structure.adoc` (PLAN-03), all HYPOTHESIS. Consequence: the gate now sees the shared state paragraphs
+  between plans that were declared disjoint before.
+- 2026-11-18 — Candidate lessons of PLAN-02 (12) and PLAN-18 (15), under the operator's earlier rule for PLAN-01: nine new
+  plan-marshall tooling lessons filed with `--allow-foreign-store` (`2026-11-18-13-001` to `-009`; the repeated findings
+  merged, e.g. the change-ledger flag from both plans and the bot-quota waits), two existing lessons extended with the
+  recurrences (`2026-11-18-07-001`: the documentation under-coverage again; `2026-11-18-07-006`: the keyless
+  dispatch-boundary rows again), eleven lessons about the `git-testing` test code discarded as shipped, one (the four
+  `git-core` residuals) routed as above.
+- 2026-11-18 — Started PLAN-03 and PLAN-04 side by side (operator: "both are running"; the gate put the overlap on
+  `AGENTS.md` and `doc/README.adoc` to the operator, who chose "Emit both"). PLAN-03 shipped the same day as PR #30
+  (`e89cf86`); landing report `landings/PLAN-03.md`. PLAN-04 is still running. PR #30 rewrote the "Current state" paragraph
+  of `AGENTS.md` and the module-state wording, so PLAN-04 meets that change when it rebases; the collision, if any, shows at
+  PLAN-04's landing and is then recorded under the same-act rule.
+- 2026-11-18 — Candidate lessons of PLAN-03 (19) under the operator's earlier rule: four new plan-marshall tooling
+  lessons filed with `--allow-foreign-store` (`2026-11-18-18-001`: outline self-check for a criterion naming a file outside
+  its deliverable and a forward reference to a missing open-question section, merging two messages; `-002`: `phase_handshake`
+  drift after the phase's own Q-Gate resolution; `-003`: unmeasured build tiers pinned to the orchestrator tier; `-004`:
+  configured-disabled build server logged at WARNING), two existing lessons extended with the third recurrence
+  (`2026-11-18-13-004` the change-ledger flag, `2026-11-18-07-006` the keyless dispatch-boundary rows), twelve lessons about
+  the `git-worktrees` code discarded as shipped (their rules are in the merged code, tests and specification).
+- 2026-11-18 — Layer-3 report of PLAN-03: one major (`worktreeAdd` turns an unvalidated branch name into a ref path; a name
+  such as `../../../x` writes a ref file outside `refs/`) and eight minor defects in `git-worktrees`, all in
+  `landings/PLAN-03.md` (L3-1 to L3-9). No staged spec touches `git-worktrees` code (PLAN-06 touches its POM and resources
+  only), so the routing was put to the operator. Operator's choice, from three offered (stage a hardening plan; stage a
+  plan for L3-1 to L3-3 only; Watch only): stage a hardening plan. Staged as PLAN-19 (`git-worktrees-hardening`, WS-01,
+  4 deliverables: input guards, result contract, races and path identity, tests), depends on PLAN-03; every item is first
+  reproduced by a test that fails at the base. The ordinal is the next free one (the queue held PLAN-01 to PLAN-18).
+- 2026-11-18 — PLAN-19 shares two files with the running PLAN-04 (`doc/specification/general.adoc`, and
+  `GitOutcome.java` if a new outcome is needed for a refused branch name), so the gate put it to the operator, who chose
+  "Emit now". Emitted, not recorded as launched or running (emit is not running; `auto_emit` is off).
+- 2026-11-18 — PLAN-19 recorded launched, then running, on the operator's word ("#19 is running"); PLAN-04 and PLAN-19 then
+  ran side by side.
+- 2026-11-19 — PLAN-19 shipped (PR #31, merge commit `e2aced9`, `landings/PLAN-19.md`). 8 of the 9 PLAN-03 defects are
+  closed (the major one, the unvalidated branch name, included), L3-9 (symlink aliases) only for paths that exist, and the
+  documented outcome lists (L3-8) are still short in two places. The lane added one public operation,
+  `releaseBranchReservation(Path, String)` (GDR-WT-4), and changed `worktreeRemove` to return `WORKTREE_NOT_FOUND`
+  instead of `IDENTITY_MISMATCH` for a foreign repository at a registered path — both owner decisions taken during the run,
+  not shims. `git-core` was not touched.
+- 2026-11-19 — Candidate lessons of PLAN-19 (17) under the operator's earlier rule: eight new plan-marshall tooling lessons
+  filed with `--allow-foreign-store` (`2026-11-19-06-001` `get-deliverable --number`; `-002` `review_completeness` bare versus
+  pair flags; `-003` ci-verify transient Maven Central failure; `-004` the phase-5 completion line `4/10`; `-005` no
+  build-duration row in the change-ledger; `-006` the per-deliverable commit trigger on a linear task chain; `-007` a
+  scripted fails-at-base check; `-008` the test-identifier helper reads only pytest output), six existing lessons extended
+  with a recurrence (`2026-11-18-18-001` the outline consistency defect, `2026-11-18-07-002` the invented `qgate query`
+  verb, `2026-11-18-13-004` the change-ledger flag, now the fourth plan, `2026-11-18-13-005` the bot quota window,
+  `2026-11-18-07-004` the criteria freeze before the outline's questions, `2026-11-18-18-004` the build-server WARNING),
+  three lessons about the `git-worktrees` code discarded as shipped (the `LOCK_FAILURE` inference, the `Config.getEnum`
+  exception, the reservation lifecycle: their rules are in the merged code and tests).
+- 2026-11-19 — Layer-3 report of PLAN-19: one major (`IllegalArgumentException` from `Config.getEnum` still escapes
+  `commit`, `worktreeStatus` and `worktreeRemove`, for example with `core.autocrlf = bogus`; TASK-11 fixed one reach of the
+  class, the reflog) and seven minor defects in `git-worktrees` (`landings/PLAN-19.md`, L3-1 to L3-8). Reported to the
+  operator at once; no spec is staged until the operator says how to route them.
+- 2026-11-19 — PLAN-04 (PR #35, merge commit `c8feb0b`) landed; its 17 inbox messages (16 candidate lessons, one landing)
+  drained. Lessons under the operator's earlier rule: three new plan-marshall tooling lessons filed with
+  `--allow-foreign-store` (`2026-11-19-14-001` the closed `--termination-cause` enum paraphrased as `completed`; `-002` the
+  hand-typed closing token delta that cannot be corrected; `-003` an under-coverage Q-Gate finding resolved
+  `taken_into_account` leaves the Affected files unchanged, which also carries the plan-time helper rule of message 004);
+  five existing lessons extended with a recurrence (`2026-11-18-07-001` the root README missing from a state-change
+  deliverable, `07-002` the invented `qgate query` verb, now the third plan, `2026-11-19-06-001` `--number` for
+  `--deliverable-number`, `2026-11-18-07-006` keyless dispatch-boundary rows, now the fourth plan, `13-004` the change-ledger
+  flag, now the fifth plan). The review-defect lessons of the shipped `git-core` code (`failure(e)` instead of
+  `getSimpleName()`, `parseAny` instead of `parseCommit`, `updateRef(name, true)`, and the threaded compare-and-swap test on
+  the local fixture) were folded into PLAN-05 as one Standing Constraints rule, because PLAN-05 adds notes, merge and read
+  code in the same package and a notes-concurrency test; its expected surface is unchanged (no file added). Two lessons
+  about the shipped tests (the retry seam, the digit-prefixed absent-value assertion) and the uppercase-scheme URL leak,
+  already fixed and tested in the merged code, were discarded.
+- 2026-11-19 — PLAN-04 shipped (PR #35, merge commit `c8feb0b`, `landings/PLAN-04.md`): in-core writing (GDR-CORE-4),
+  compare-and-swap and compare-and-delete (GDR-CORE-5) and hardening items (b), (c), (e), (f), (g), (h); (a), (d), (i) are
+  accepted exceptions in `git-core.adoc`. All seven spec claims corroborated; the Sonar gate reads OK, the review gate 0
+  unresolved threads and 5 body findings (`handled` not re-verified). The merge was held for the owner because the execution
+  manifest carries `final_merge_without_asking=true` against the AGENTS.md rule (see Watches).
+- 2026-11-19 — Layer-3 report of PLAN-04: one major (`dircache.InvalidPathException`, an `IllegalArgumentException`, escapes
+  `InCoreWriter.write` and `compareAndSwap` for a parent tree holding an entry such as `.GIT`) and eight minor defects in
+  `git-core`, plus three info points and four layer-2 residues (`landings/PLAN-04.md`, L3-1 to L3-12, L2-1 to L2-8). Reported to
+  the operator in the same turn. Routing: on the operator's word ("make it one plan for other leftovers again, not only a single
+  fix plan") the layer-3 defects of PLAN-04 and PLAN-19 and the `git-testing` Watch of PLAN-18 were collected into one
+  held-back plan, PLAN-20 (`leftover-fixes-2`, WS-01, 5 deliverables, below the split guard), staged with
+  `queue --add-row`; the ordinal is the next free one (the queue held PLAN-01 to PLAN-19). Not emitted and not released: the
+  operator releases it by naming it in a `next` round. Two items of it end in an owner decision (the platform dependence of the
+  path check, the size bound of `readFile`).
+
 ## Open Defects
 
-- Incomplete landing `git-testing-fixtures-017.md` (PLAN-01): `inbox landing-check` reports `complete: false`, missing
-  `unresolved_review_threads`, `review_body_findings_total`, `review_body_findings_handled`, `sonar_open_new_issues` (all
-  `unknown` — no finalize step records them and the post-merge Sonar read was undecidable). The landing was reconciled as
-  far as it goes; the analysis re-read the first two against the provider (0 and 6) and could not re-verify the handled
-  count or Sonar. A manual paste from that plan may still surface a required fact the inbox did not carry.
+- PLAN-03 layer-3 defects in `git-worktrees` (`landings/PLAN-03.md`, L3-1 to L3-9; one major, eight minor), including the
+  open item the lane itself stated (`worktreeList` on a bare repository throws `NoWorkTreeException`, confirmed and wider:
+  it also reaches `worktreeRemove` and `commit`). — routed to PLAN-19, which shipped (PR #31); its landing analysis confirms
+  L3-1 to L3-7 closed and L3-8 and L3-9 partly; the residue is the entry below. Retired.
+- PLAN-19 layer-3 defects in `git-worktrees` (`landings/PLAN-19.md`, L3-1 to L3-8; one major, seven minor): the major one is
+  an `IllegalArgumentException` from a malformed `core.*` enum in the repository config (`core.autocrlf = bogus`) that
+  escapes `commit`, `worktreeStatus` and `worktreeRemove` instead of ending as a `GitResult` (GDR-GEN-3); the minor ones
+  are an `UncheckedIOException` that skips the rest of the add rollback (created branch and reservation stay), a failed
+  reservation release on the success path that tears down a finished worktree, `realPath` I/O failures and a missing-path
+  alias that is not resolved, a reflog catch narrower than its failures, two stale Javadoc sentences, and the branch-name
+  rule being JGit's, not git's. The always-`PATH_REFUSED` add on a bare root is an undocumented behaviour change (layer 1).
+  — routed to PLAN-20 (deliverables 1 and 2) on the operator's word; open until PLAN-20 ships.
+- PLAN-04 layer-3 defects in `git-core` (`landings/PLAN-04.md`, L3-1 to L3-9; one major, eight minor): the major one is the
+  `dircache.InvalidPathException` from `DirCache.read` that escapes `InCoreWriter.write` and `compareAndSwap` instead of ending
+  as a `FAILED` result (GDR-GEN-3); the minor ones are unchecked exceptions of a `Signer`, `GpgConfig` or `TreeOperation`, a retry
+  loop that never ends for `attempts = Integer.MAX_VALUE`, a name conflict retried as a lost race, an unvalidated `refName`, a
+  file and a directory below it in one edit silently merged, a platform-dependent path check, a query-string token or an
+  uppercase-scheme credential kept in the clone's stored origin, and an unbounded `readFile`; with the layer-2 residues (untested
+  `notWritten` branches, no reflog test, `ReferenceUpdater.parseCommit` peels a tag). — routed to PLAN-20 (deliverables 3 and 4)
+  on the operator's word; open until PLAN-20 ships.
+- Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
+  `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
+  `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-04 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0 unresolved
+  threads, 5 review-body findings, `handled: 0`), the Sonar gate reads OK (new coverage 87.3 %), and the lane's own statement
+  (five CodeRabbit threads replied to and resolved) agrees with the 0 unresolved threads. PLAN-19 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0
+  unresolved threads, 2 review-body findings, `handled: 0`, `body_findings_undisposed`), the Sonar gate reads OK and the
+  hotspot read is empty. PLAN-01 misses
+  `unresolved_review_threads`, `review_body_findings_total`, `review_body_findings_handled`, `sonar_open_new_issues`;
+  PLAN-02, PLAN-18 and PLAN-03 miss `effort` and the first three (all `unknown`: no finalize step records them); the PLAN-03
+  `review-gate` read was undecidable too (CodeRabbit's "Minor comments: 7" section). Each landing was
+  reconciled as far as it goes. The provider re-read gave PLAN-01 0 and 6, PLAN-18 0 unresolved threads and 12 body findings,
+  and was undecidable for PLAN-02 (the review-body parser cannot read CodeRabbit's "Minor comments: 18" section); the handled
+  count and the open Sonar count were not re-verified for any of them (the Sonar gate reads OK for PLAN-02 and PLAN-18). A
+  manual paste from a plan may still surface a required fact the inbox did not carry. Recurring cause: a tooling gap, filed as a lesson.
 
 ## Watches
 
-- PLAN-18 holds the leftovers of PLAN-01: four test gaps, cleanup that depends on a JUnit setting, `@InMemory` without
-  HEAD, a descriptor never run on the module path, and three leads not settled by reading (`PER_CLASS` lifecycle,
-  dangling symlinks, EasyMock versus hand-written doubles). — release it with the operator once enough leftovers are
-  collected, or at the end of WS-01.
+- Leftovers of PLAN-18's own landing in `git-testing`, with no staged spec to join. The EasyMock part (the spec premise,
+  `git-testing.adoc:140` saying it needs approval, the exception reasons that were partly convenience) was settled outside
+  the queue by PR #29 (`b5ee5d7`, "use EasyMock for the repository doubles": EasyMock in test scope, the table of accepted
+  exceptions rewritten to the doubles that stay hand-written). #29 also rewrote the two extension tests, so the items below
+  are as of PLAN-18's landing and not re-read against it: `GitCredentialGeneratorTest` never held a double; the positive half of
+  the `@InMemory` type assertion is tautological; the rollback wiring `createBareRepository` to `rollBack` is unobserved;
+  nothing asserts that the "auto-close off" Surefire run received its setting; `TemporaryRepository.close` loses the first
+  failure when closing and deletion both fail; the public Javadoc of the three extensions is stale under `PER_CLASS`
+  (`landings/PLAN-18.md`, L1-5, L1-6, L2-1 to L2-5, L3-1, L3-2). — fold into the next staged spec that touches
+  `git-testing/`, or stage a second collection plan on the operator's word. — routed to PLAN-20 (deliverable 5), the second
+  collection plan, with a verify-first clause because #29 changed two of the tests since. Retired.
+- PLAN-19 and PLAN-04 both edited `doc/specification/general.adoc` and the state lists. — observed at PLAN-04's landing: its
+  rebase conflicted by hand in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `general.adoc`), both sides kept; no
+  re-verify signal. Recorded in Queue annotations (PLAN-04) for the next pairing. Retired.
+- The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicts the AGENTS.md rule "do not merge
+  unless the user says so"; the lane held the merge until the owner approved in chat and did not change the manifest value, and
+  PLAN-19's lane was told to merge when green. Whether the value comes from `.plan/marshal.json` or from the lane's defaults is not
+  established. — re-check at the next landing whether a lane held its merge, and raise it with the operator when one did not.
+- The store's draft references may embed a person-bound identifier; `compareAndSwap` and `compareAndDelete` put the reference
+  name in result details and DEBUG logs (`ReferenceUpdater` 127, 205, `landings/PLAN-04.md` L3-12), while GDR-NFR-3 forbids a
+  person name or `sub` there. — re-check at PLAN-08's outline (draft reference names) before the first caller exists.
+- The first `git-core` consumer of `git-testing` (PLAN-02) ran on the class path; no module-path run exists anywhere in the
+  reactor (recorded in `git-testing.adoc`). — re-check when PLAN-06 adds the layering guard.
 
 - The `pm-mcp-core` switch-over (`doc/clients/pm-mcp-core.adoc` § Order of the Switch-Over, step 2) follows the
   0.1.0 release and is work in `~/git/pm-mcp-core`. Its open question 3 (JGit in the native image of `pm-mcpd`

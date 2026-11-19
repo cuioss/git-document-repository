@@ -118,12 +118,15 @@ history".
 - HYPOTHESIS: the bare-clone-when-missing of GDR-CORE-3 has no counterpart in `JGitOperations` (only `initCache` +
   `fetchCommit` for a single commit) and is new code — confirm/refute at `JGitOperations.java` § `initCache` /
   `fetch` (verify-at-outline).
+  - verdict: corroborated | checked_at: 2c728bc97f34b06b22076f044235a54da72c3c00 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: cloneIfMissing is new code: the source JGitOperations has no clone code (three-layer read of the merge, PR #25)
 - Verify-first clause: GDR-CORE-11 says the library "must provide full and abbreviated commit ids"; the moved
   `GitIdentity` refuses abbreviations as identities. Settle at outline whether "provide" means producing an
   abbreviation (compatible) or resolving one (a change), and make code and spec agree.
+  - verdict: corroborated | checked_at: 2c728bc97f34b06b22076f044235a54da72c3c00 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: GDR-CORE-11 settled as producing: GitIdentity.abbreviate() yields a unique prefix, an abbreviation is never resolved as an identity; git-core.adoc and code agree
 - Verify-first clause: GDR-CORE-1 says `CapabilityRefusedException` is "an exception type of `git-core`, not of JGit";
   the moved type extends `JGitInternalException`. Settle whether it must stay unchecked-under-JGit so JGit propagates
   it through `FS` callers (likely), and phrase the spec accordingly.
+  - verdict: corroborated | checked_at: 2c728bc97f34b06b22076f044235a54da72c3c00 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: CapabilityRefusedException is a git-core class extending JGit's unchecked JGitInternalException; git-core.adoc phrases it that way
 - Verify-first clause: `git-testing` (landed by PLAN-01, merge commit `6cc64f0`) runs its own tests on the class path
   (`useModulePath=false` in `git-testing/pom.xml`) because `junit-jupiter-api` is a compile dependency there, and the
   module path made the Surefire launcher fail with `IllegalAccessError` on `org.junit.platform.commons.util`. No test
@@ -132,6 +135,7 @@ history".
   (module path or class path), and record the Surefire setting in `git-core/pom.xml`. A failure that needs a change in
   `git-testing` is put to the operator before it is made (`git-testing/` is not in this plan's surface; PLAN-18
   deliverable 4 collects the module-path question).
+  - verdict: unverifiable | checked_at: 2c728bc97f34b06b22076f044235a54da72c3c00 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: class path (useModulePath=false) in git-core/pom.xml; no evidence in the diff that a module-path run was tried, only javac checks module-info.java
 
 ## Expected Surface
 
