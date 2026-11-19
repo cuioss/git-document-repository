@@ -64,6 +64,13 @@
             <artifactId>cui-test-juli-logger</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- End-to-end redirect test against an HTTPS MockWebServer (RedirectEndToEndTest). Version and test scope
+             are managed by cui-java-bom; mockwebserver3 / okhttp-tls stay in this test scope only. -->
+        <dependency>
+            <groupId>de.cuioss.test</groupId>
+            <artifactId>cui-test-mockwebserver-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

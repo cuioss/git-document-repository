@@ -10,11 +10,9 @@ types such as `Repository`, `URIish`, `FS` and `CredentialsProvider` are part of
 `CuiLogger`, Lombok (scope `provided`, `requires static`) and `org.jspecify:jspecify` (`requires static`); see
 xref:general.adoc#GDR-GEN-1[GDR-GEN-1]. The code is a plain copy of the repository part of `pm-provider-git`
 (xref:../clients/pm-mcp-core.adoc#_what_moves_where[Client: `pm-mcp-core`, What Moves Where]).
-<<GDR-CORE-2>>, <<GDR-CORE-3>>, <<GDR-CORE-4>>, <<GDR-CORE-5>>, <<GDR-CORE-7>>, <<GDR-CORE-8>> and
-<<GDR-CORE-11>> are implemented. <<GDR-CORE-1>> is met except the one JVM-wide process start of JGit's `SystemReader`,
-which `git-core` does not prevent by itself; installing `RefusingFS.systemReader` closes it and is the recommended setup
-of an embedding application. <<GDR-CORE-6>>, <<GDR-CORE-9>> and <<GDR-CORE-10>> are planned. The JGit APIs named
-here are checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of https://github.com/eclipse-jgit/jgit). Rationale:
+<<GDR-CORE-2>> to <<GDR-CORE-11>> are implemented. <<GDR-CORE-1>> is met except the one JVM-wide process start of
+JGit's `SystemReader`, which `git-core` does not prevent by itself; installing `RefusingFS.systemReader` closes it and
+is the recommended setup of an embedding application. The JGit APIs named here are checked against JGit 7.8.0 (tag `v7.8.0.202609011348-r` of https://github.com/eclipse-jgit/jgit). Rationale:
 xref:../concepts/module-structure.adoc#_the_foundation_modules[Module Structure, The Foundation Modules] and
 xref:../concepts/storage-engine.adoc[Storage Engine].
 
@@ -37,6 +35,11 @@ outcome
 |`InCoreWriter` |Writes blobs, trees and commits from in-memory content, without a working tree
 |`TreeOperation` |Derives the edits of the next commit from a reference's current tree
 |`ReferenceUpdater` |Moves a reference by compare-and-swap and deletes one by compare-and-delete
+|`InCoreMerger` |Merges two commits at path level, in core, without a working tree
+|`MergeResult` |The result of a merge: the merged tree, the conflicting paths as data, or the outcome that prevented
+the merge
+|`RepositoryReader` |Reads the files of a commit, the history of a path and the paths changed between two commits
+|`GitNotes` |Reads and writes the note of a commit under a caller-named notes reference
 |`GitCoreLogMessages` |The `LogRecord` holder of the module, catalogued in `git-core/doc/LogMessages.adoc`
 (xref:general.adoc#GDR-GEN-4[GDR-GEN-4])
 |===
@@ -87,6 +90,28 @@ because it would change every other JGit user of the JVM.
 reason names the refused capability (`repository_hook` or `process_execution`); its message carries no secret.
 `RepositoryOperations` maps it to the outcome `REFUSED_BY_POLICY` with the capability as detail.
 
+The hooks and programs of a remote reached over the local transport are covered as well. JGit runs a native hook only
+through `GitHook`, which calls `FS.runHookIfPresent`; its hooks are the client-side `pre-commit`, `commit-msg`,
+`post-commit` and `pre-push`. `ReceivePack` runs Java hooks only, so a native `pre-receive` hook of a local remote is
+never run by a push
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/hooks/GitHook.java[JGit
+7.8.0 `GitHook`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceivePack.java[`ReceivePack`]).
+A configured `remote.<name>.receivepack` is never run either: `PushCommand` keeps its own receive-pack program, the
+default `git-receive-pack`, and sets it on every transport it opens, which replaces the configured one
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/PushCommand.java#L71[JGit
+7.8.0 `PushCommand`, line 71] and
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/PushCommand.java#L145-L146[lines 145-146]),
+so `TransportLocal` pushes through its in-process `ReceivePack`. A configured `remote.<name>.uploadpack` is used by a
+fetch (`Transport.applyConfig`), and `TransportLocal.openFetch` would start any program other than `git-upload-pack`
+through `FS.runInShell`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/Transport.java[JGit
+7.8.0 `Transport`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TransportLocal.java[`TransportLocal`]);
+`RefusingFS` refuses that start, so the fetch ends `REFUSED_BY_POLICY` and nothing is fetched. The tests
+`remotePreReceiveHookNeverRun`, `receivePackProgramNeverRun` and `uploadPackProgramRefused` of
+`JGitRepositoryOperationsTest` cover the three cases.
+
 [#GDR-CORE-2]
 == GDR-CORE-2: Remote Policy
 
@@ -122,6 +147,17 @@ does not depend on it. A refused redirect is `REFUSED_BY_POLICY` with a detail t
 logged with the `REMOTE_REFUSED` warning. A fetch does not recurse into submodules, which
 `FetchCommand` would fetch on demand from their own remotes
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/FetchCommand.java[JGit 7.8.0 `FetchCommand`]).
+
+`RedirectEndToEndTest` checks the refusal end to end against the CUI MockWebServer
+(`de.cuioss.test:cui-test-mockwebserver-junit5`, test scope, approved by the owner; see
+xref:general.adoc#GDR-GEN-1[GDR-GEN-1]) over HTTPS on the loopback interface. The server answers the first request
+(`GET .../info/refs?service=git-upload-pack`) with a `302` to the same server under the host `127.0.0.1`, while the
+policy admits `https://localhost:<port>` only. Both `fetchCommit` on a cache and `fetch` of a named remote end
+`REFUSED_BY_POLICY` with the detail `redirect to 127.0.0.1 is outside the remote policy`, the server receives exactly
+one request, and `REMOTE_REFUSED` is logged. The JGit transport accepts the certificate the extension generates
+because the configuration of the test's own repository sets `http.sslVerify=false`; no process-wide TLS state is
+changed. `refusedRedirectLogged` of `JGitRepositoryOperationsTest` checks that the log message names the host only,
+without user information.
 
 [#GDR-CORE-3]
 == GDR-CORE-3: Bare Clone of a Remote
@@ -168,6 +204,9 @@ the caller prepared, or a complete clone, never a partial one. The move itself r
 removes only its own staging directory; an attempt that finds a clone published concurrently opens it, also when its
 own move failed because of it. A clone that could not be completed leaves the git directory as it was; a transport
 failure is reported as in <<GDR-CORE-7>>. The fetch of the clone runs with the transport timeout of <<GDR-CORE-7>>.
+The tests `publishLosesRace` (a clone published concurrently is opened and the own staging directory removed) and
+`mirroredRefsNotWritten` (a fetch that could not write a mirrored reference ends `FAILED`, nothing is published and the
+staging directory is removed) of `JGitRepositoryOperationsTest` cover both branches.
 
 Accepted exception: the staging directory is created by `Files.createTempDirectory`, which on a POSIX file system
 creates it with the mode `rwx------`
@@ -246,6 +285,49 @@ fewer is an `IllegalArgumentException`. Neither writes a reflog (`RefUpdate.disa
   nothing being read or written; `CONFLICT` when the reference moved away or is gone, or every attempt met a held lock;
   `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other result.
 
+A package-private tree-level variant, `compareAndSwapTree`, runs the same retry loop with a finished tree instead of
+edits, for a caller that builds the whole tree itself (the notes of <<GDR-CORE-10>>): each attempt hands the tree of
+the reference's current commit to a tree source, and `InCoreWriter.writeTree` commits the tree it returns as it is,
+with the same parent, signing and single flush as `write`. Its update is created with
+`Repository.updateRef(refName, true)`, so a symbolic reference is replaced by one that points at the new commit and its
+former target is left as it is (`RefDirectory.newUpdate` and `DfsRefDatabase.newUpdate` with `detach`,
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/RefDirectory.java[JGit
+7.8.0 `RefDirectory`]); `compareAndSwap` follows a symbolic reference and moves its target instead. Its outcomes are
+those of `compareAndSwap`.
+
+For a symbolic reference replaced by `compareAndSwapTree` or deleted by `compareAndDelete`, the two backends check the
+expected id differently. The file backend compares it with the id the symbolic reference resolves to while it holds
+the lock (`RefDirectoryUpdate.tryLock` re-reads the reference under the lock). The in-memory DFS backend does not:
+`DfsRefUpdate.tryLock(false)` sets the old id of a symbolic reference to none, so `RefUpdate.updateImpl` compares the
+expected id with the zero id and reports `LOCK_FAILURE` for every expected id, and its compare-and-put checks only that
+the reference is still symbolic with the same target
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/dfs/DfsRefUpdate.java[JGit
+7.8.0 `DfsRefUpdate`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit
+7.8.0 `RefUpdate`]). When a detaching update or a delete of a symbolic reference ends in `LOCK_FAILURE` with no old id,
+the updater therefore decides through one atomic `BatchRefUpdate`: the unlink of the symbolic reference
+(`ReceiveCommand.unlink`, expecting its target), a no-op `ReceiveCommand.link` on every further link of a symbolic chain
+that holds only while the link still points at the same target, and a command on the base reference from the expected
+id to the same id, which changes nothing and holds only while the base reference still points at the expected id.
+`ReftableBatchRefUpdate.matchOld` compares a symbolic command with the immediate target name only
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/reftable/ReftableBatchRefUpdate.java[JGit
+7.8.0 `ReftableBatchRefUpdate`]), so without the commands on the links a writer that retargeted a middle link while the
+base reference stayed at the expected id would go unseen. A batch that lost a race is the `LOCK_FAILURE` it replaces: a
+retry, then `CONFLICT`, and for a delete the re-read above. A batch that failed on a storage error is not a lost race:
+`ReftableBatchRefUpdate.execute` reports an `IOException` as `LOCK_FAILURE` with the message `io error`, which the
+updater maps to `IO_FAILURE`, so the call ends in `FAILED` without a retry. The expected id is never replaced by the
+zero id and the check is never dropped; a backend that cannot run the batch atomically, such as the file backend's
+`PackedBatchRefUpdate`, which refuses a symbolic command in an atomic batch, writes nothing.
+
+A dangling symbolic reference has no resolved id, so the attempt expects none. `DfsRefUpdate.tryLock(false)` sets no
+old id for a symbolic reference whether or not its target has been written since, so there the zero expected id always
+matches and a `RefUpdate` would replace the alias with a root commit, dropping a commit another writer wrote to the
+target between the read and the update. For a dangling symbolic reference the updater therefore runs the batch before
+any `RefUpdate`, with the command on the base reference holding only while the base reference is still absent: a target
+written in between makes the batch fail, which is a lost race, and the next attempt reads the alias again and builds
+on the written commit. A backend that refuses the batch (the file backend) falls through to its `RefUpdate`, which
+re-reads the reference under its lock.
+
 A detail names the reference and the `RefUpdate.Result`, never content or an identity
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an
 attempt in `LOCK_FAILURE` (`RefDirectoryUpdate.tryLock` and `LockFile.lock()`,
@@ -260,15 +342,46 @@ only to another writer.
   that side's entry; a path changed differently by both sides is a conflict; file contents are never merged.
 * A merge with conflicts must report the conflicting paths and must not create a commit.
 
-The merger is `MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.newMerger(repo)` (class `StrategySimpleTwoWayInCore`, always in
-core): a three-way merge over the merge base and both tips at the path level only, which reports a path modified by
-both sides (content or file mode) as a conflict and never merges file contents
+The class is `InCoreMerger`. `merge(Repository, String ours, String theirs)` takes the full ids of two commits and runs
+`MergeStrategy.SIMPLE_TWO_WAY_IN_CORE.newMerger(repository)` (class `StrategySimpleTwoWayInCore`, always in core): a
+three-way merge over the merge base and both tips at the path level only, which never merges file contents
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/merge/StrategySimpleTwoWayInCore.java[JGit 7.8.0 `StrategySimpleTwoWayInCore`]).
+Its `NameConflictTreeWalk` takes an entry equal on both sides, or unchanged on one side, as it is, a whole subtree
+included, enters a subtree changed on both sides, and reports every other entry that is no tree on one of the three
+sides as a conflict, a file on one side and a directory of the same name on the other included.
 `MergeStrategy.RECURSIVE` is not used: it merges file contents textually, which
 xref:../adr/0001-Documents_are_written_in_core_without_working_trees_and_references_move_by_compare-and-swap.adoc[ADR-0001]
-rejects. Success yields a tree id, from which the caller builds the merge commit. The merger reports no conflicting
-paths, so on failure the library computes them itself with a tree walk over the merge base and both tips: every path
-whose entry (object id or file mode) differs from the base on both sides and differs between the sides.
+rejects. The merge base is the one merge base of the two commits (`Merger.getBaseCommit` with `RevFilter.MERGE_BASE`;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/merge/Merger.java[JGit
+7.8.0 `Merger`]); two commits without a common ancestor merge against the empty tree, and JGit refuses more than one
+merge base with a `NoMergeBaseException` of reason `MULTIPLE_MERGE_BASES_NOT_SUPPORTED`. A clean merge inserts the
+merged tree through the merger's own inserter; the merge writes no commit and moves no reference, and the caller builds
+the merge commit from the tree id.
+
+The merger reports no conflicting paths, so on failure the library computes them itself with a tree walk over the
+merge base and both tips: a `NameConflictTreeWalk` that applies the merger's own rule, so a path is conflicting when its
+entry (object id or file mode) differs from the base on both sides and differs between the sides.
+
+`merge` returns the sealed `MergeResult`, which carries its content as data:
+
+* `MergeResult.Merged`: outcome `OK`, no detail; `treeId()` is the full id of the merged tree, written to the object
+  database.
+* `MergeResult.Conflicting`: outcome `CONFLICT`; `paths()` is every conflicting path, repository-relative, sorted and
+  distinct, never empty. The detail names only their number (`N conflicting paths`), never a path, so a caller reads the
+  paths from `paths()` and never parses a detail.
+* `MergeResult.NotMerged`: every other non-success, with its outcome and its detail (the component `reason`, returned
+  by `detail()`): `NOT_FOUND` when a commit id is no full commit id or no commit of the repository (an annotated tag or
+  a tree included), the detail naming the field `ours` or `theirs`; `CONFLICT` with the detail
+  `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, the detail naming
+  the exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
+  detail `merge: no conflicting path`, because a `Conflicting` without a path would contradict its own contract.
+
+`MergeResult` composes the shape of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] (an outcome of the closed `GitOutcome` list
+and a detail for every non-success that carries nothing xref:general.adoc#GDR-NFR-3[GDR-NFR-3] forbids) instead of
+extending `GitResult`: a `GitResult` that is no success carries no value, and a conflict that names its paths would
+break that invariant. A caller branches with a pattern-matching `switch` over the three variants; `toResult()` gives the
+plain `GitResult<String>` to a caller that needs no more: `OK` with the tree id for `Merged`, otherwise the outcome and
+the detail without value, so the conflicting paths are not carried over.
 
 [#GDR-CORE-7]
 == GDR-CORE-7: Fetch and Push with Credentials and Lease
@@ -316,6 +429,17 @@ A call uses exactly the caller's `CredentialsProvider`, and none when the caller
 `null`
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/TransportCommand.java[JGit 7.8.0 `TransportCommand`]),
 so the operations set the provider on every transport they open.
+
+Accepted exception: `http.extraHeader` and the cookies of `http.cookieFile` in the repository or user configuration
+reach the remote. JGit's `TransportHttp` reads the cookie file when it is constructed and adds the configured extra
+headers and the cookies that match the URL to every request
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TransportHttp.java#L294[JGit
+7.8.0 `TransportHttp`, line 294] and
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TransportHttp.java#L1093-L1097[lines
+1093-1097]); the library neither strips nor refuses them. They are configuration the owner of the repository wrote, the library
+writes neither of them, and every connection that carries them goes to a URL the remote policy admits, because the
+policy-checking connection factory checks each connection, a redirect target included, before it is opened. The test
+`extraHeaderAndCookieFileReachRemote` of `JGitRepositoryOperationsTest` records that both reach the remote.
 
 A push has exactly one destination. JGit's `PushCommand` pushes to every push URL of a remote and reports one
 `PushResult` each
@@ -370,6 +494,42 @@ policy admitted, and a bound would need a compiled limit that no requirement ask
 * It must list the commits that changed a given path, newest first, with author, committer, time and message.
 * It must compute the added, modified and deleted paths between two commits.
 
+The class is `RepositoryReader`. It takes a JGit `Repository`, so it reads an in-memory repository as well as one on
+disk, and it writes no object and no reference. A revision of `snapshot` and `history` is a reference, by its short or
+full name, or a full commit id, resolved through the one resolution `log` uses (<<GDR-CORE-11>>): an ambiguous
+revision is `AMBIGUOUS`, an abbreviated commit id or a revision expression `NOT_FOUND`, a full commit id that reaches
+another commit `IDENTITY_MISMATCH`, and an annotated tag is peeled to its commit. The commits of `changes` are full
+commit ids, parsed as they are (`RevWalk.parseAny`) and required to be commits, so an annotated tag or a tree is
+`NOT_FOUND`. A detail names the input field (`revision`, `path`, `from` or `to`) and the reason, never a path or
+content; a failure detail names the exception class. The JGit APIs are checked against JGit 7.8.0
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/RevWalk.java[`RevWalk`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/treewalk/TreeWalk.java[`TreeWalk`]):
+
+* `snapshot(Repository, String revision)` returns a `Snapshot` with the commit id, the tree id and every regular and
+  executable file of the tree, recursively and in the tree's order, each as a `SnapshotFile` with its path, its
+  `FileKind` (`REGULAR`, mode `100644`, or `EXECUTABLE`, mode `100755`) and its blob id. A symbolic link or a submodule
+  entry is no file of the snapshot.
+* `history(Repository, String revision, String path, int maxCount)` returns the commits that changed the path, at most
+  `maxCount` (a value below 1 counts as 1, as for `log`), newest first, as the `CommitInfo` of `log` with id, parents,
+  author, committer, times and message. The walk visits the whole ancestry of the revision's commit, with no tree filter
+  on the `RevWalk`, and keeps a commit whose tree differs at the path from the tree of at least one of its parents,
+  compared per parent by a `TreeWalk` with `PathFilter` and `TreeFilter.ANY_DIFF`; a root commit that holds the path
+  counts as a change, a merge that equals every parent at the path does not, a directory changes when a path below it
+  changes, and no rename is followed. A merge that equals one parent at the path and differs from another is kept: a
+  `RevWalk` tree filter would drop it, because for such a merge JGit 7.8.0 `TreeRevFilter` reports no change and
+  follows only the parent the merge equals
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/TreeRevFilter.java[JGit
+  7.8.0 `TreeRevFilter`]). Without a tree filter the walk rewrites no parent, so the parents of a returned commit are
+  its real parents. The walk advances with `RevWalk.next()` and stops once `maxCount` commits are found, reading no
+  commit beyond them; an I/O failure of the walk, a missing tree included, is `FAILED`. A path that is blank, starts or
+  ends with `/` or holds an empty segment is `NOT_FOUND` with the detail `path: not a valid path`; a path no commit
+  changed yields an empty list.
+* `changes(Repository, String from, String to)` returns every changed path between the two trees as a `PathChange` with
+  its `ChangeType`, recursively, in the trees' order and without rename detection (`TreeWalk` with
+  `TreeFilter.ANY_DIFF`): `ADDED` for a path in the newer commit only, `DELETED` in the older one only, `MODIFIED` in
+  both with another content or file mode. A file replaced by a directory of the same name is the file deleted and the
+  files below the directory added. Equal trees yield an empty list.
+
 [#GDR-CORE-10]
 == GDR-CORE-10: Git Notes
 
@@ -377,8 +537,42 @@ policy admitted, and a bound would need a compiled limit that no requirement ask
   `refs/notes/anchors/rfc3161`).
 * Writing a note must use the compare-and-swap of <<GDR-CORE-5>> on the notes reference.
 
-Notes are read and written through JGit's `NoteMap` (`NoteMap.read`, `NoteMap.set`, `NoteMap.writeTree`). `git-core`
-reserves no notes reference itself.
+The class is `GitNotes`, built on a `ReferenceUpdater`. A note is attached to a commit under a notes reference the
+caller names, below `refs/notes/`; `git-core` reserves no notes reference itself. The notes reference points at a
+commit whose tree is the note map, which JGit's `NoteMap` reads (`NoteMap.read`, `NoteMap.readTree`), looks up
+(`NoteMap.get`, the id of the note's blob), sets (`NoteMap.set`) and writes back as a tree (`NoteMap.writeTree`)
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteMap.java[JGit
+7.8.0 `NoteMap`]). A commit is addressed by its full id and must be a commit itself: it is parsed as it is
+(`RevWalk.parseAny`), so neither a tree, a blob nor an annotated tag, not even one that points at a commit, receives a
+note.
+
+* `read(Repository, String notesRef, String commitId)` reads the notes reference exactly, a symbolic one resolved to
+  the commit it points at, and returns the note's content as a copy owned by the caller. `NOT_FOUND` names the commit
+  (`commit: not a full commit id`, `commit: not found`), an absent notes reference (`notesRef: not found`) or an absent
+  note (`note: not found`); a notes reference that points at no commit is `FAILED`.
+* `write(Repository, String notesRef, String commitId, byte[] note, CommitMetadata, int attempts)` sets the note,
+  replacing a note the commit already has, and returns the full id of the new notes commit. The note is copied on
+  entry. `NOT_FOUND` names the commit as for `read`, nothing being written; `CONFLICT` means every attempt lost its race
+  to another writer of the notes reference; `FAILED` is an I/O or a signing failure; `REJECTED` every other result of
+  the reference update.
+
+For both, a notes reference that is not below `refs/notes/` or no valid reference name
+(`Repository.isValidRefName`) is `REFUSED_BY_POLICY` with a detail naming the field only, as for an invalid branch
+name (xref:general.adoc#GDR-GEN-3[GDR-GEN-3]), and nothing is read or written. A detail never carries a note's content
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+A write is the compare-and-swap of <<GDR-CORE-5>> on the notes reference, through the tree-level variant
+`compareAndSwapTree`: each attempt reads the notes tree the reference currently points at (an empty map,
+`NoteMap.newEmptyMap()`, for a reference that does not exist yet), inserts the note as a blob, sets it for the commit
+and commits the map's tree, with the reference's commit as the only parent. A lost race re-reads the notes tree the
+concurrent writer left and sets the note on that tree again, so the other writer's notes are kept. Notes bypass
+`TreeEdit`, because the map decides its own fan-out: JGit's `LeafBucket.set` splits a bucket that already holds 256
+notes into a fan-out subtree before it adds another
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/notes/LeafBucket.java[JGit
+7.8.0 `LeafBucket`]), so a note expressed as a path edit could exist at two fan-out levels, while the map's own tree
+holds it at exactly one path. The update of the notes reference is detaching (`Repository.updateRef(refName, true)`):
+a symbolic notes reference is replaced by one that points at the new notes commit, and its former target is left as it
+is.
 
 [#GDR-CORE-11]
 == GDR-CORE-11: Identity of Commits and References
@@ -410,3 +604,17 @@ an abbreviation from two digits on and an expression on an abbreviated base
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/AbbreviatedObjectId.java[`AbbreviatedObjectId.isId`]),
 so none of them reaches it. A full commit id absent from the repository is `NOT_FOUND`, not `FAILED`; a full commit id
 that reaches another commit is `IDENTITY_MISMATCH`.
+
+[#tests]
+== Tests
+
+The tests of `git-core` run on the class path against the fixtures of xref:git-testing.adoc[`git-testing`]; each names
+the requirement it checks. Two tests guard contracts that span the module:
+
+* `GitOutcomeSpecificationTest` reads the `GitOutcome` table of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] and asserts that
+  its first column lists exactly the constants of `GitOutcome`, in their order, so a constant added without a row, a
+  row without a constant, a renamed or a reordered one fails the build.
+* `AbsenceContractsTest` asserts the `@Nullable` values of the results on absences that real operations produce:
+  opening a bare repository yields no working-tree root, `init` an unborn branch without head, a detached `HEAD` no
+  branch, a push that creates the remote reference no old id, a failed operation no value, and a local-only remote
+  policy no origin.

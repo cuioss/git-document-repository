@@ -20,6 +20,7 @@ import static de.cuioss.git.document.core.InCoreWriterTest.files;
 import static de.cuioss.git.document.core.InCoreWriterTest.metadata;
 import static de.cuioss.git.document.core.InCoreWriterTest.parse;
 import static de.cuioss.git.document.core.InCoreWriterTest.put;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,6 +34,7 @@ import java.io.Serial;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,8 +53,19 @@ import java.util.concurrent.TimeUnit;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheEditor;
+import org.eclipse.jgit.dircache.DirCacheEntry;
+import org.eclipse.jgit.internal.storage.dfs.DfsReftableBatchRefUpdate;
+import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
+import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
+import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.RefRename;
@@ -61,6 +74,7 @@ import org.eclipse.jgit.lib.ReflogReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.ReceiveCommand;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -90,6 +104,11 @@ import org.junit.jupiter.api.Test;
  * The release of a held lock between two attempts is deterministic: {@link LockReleasingRepository} deletes the lock
  * file in the re-read that {@code compareAndDelete} performs after a {@code LOCK_FAILURE}, so no test sleeps, starts
  * a thread or depends on timing.
+ * <p>
+ * A symbolic reference replaced or deleted itself is tested on both fixtures, because the two databases check its
+ * expected id differently (JGit 7.8.0): {@code RefDirectoryUpdate} compares it with the resolved id under the lock,
+ * while {@code DfsRefUpdate} compares it with no id at all, so on the in-memory fixture the updater's guarded batch
+ * decides, and a wrong expected id or a target moved in between must still be a lost race there.
  */
 @EnableGeneratorController
 @DisplayName("ReferenceUpdater (GDR-CORE-5)")
@@ -382,6 +401,395 @@ class ReferenceUpdaterTest {
         }
     }
 
+    /** A tree source that records the tree ids it is called with and puts one file on the tree it is handed. */
+    private static final class RecordingSource implements InCoreWriter.TreeSource {
+
+        /** The tree ids of the calls, in order; {@code null} for a reference that did not exist. */
+        private final List<@Nullable String> treeIds = new ArrayList<>();
+        private final String path = TestCommits.name();
+        private final String content = content();
+
+        @Override
+        public ObjectId write(ObjectReader reader, ObjectInserter inserter, @Nullable ObjectId firstParentTree)
+                throws IOException {
+            treeIds.add(firstParentTree == null ? null : firstParentTree.name());
+            DirCache tree = firstParentTree == null ? DirCache.newInCore() : DirCache.read(reader, firstParentTree);
+            ObjectId blob = inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8));
+            DirCacheEditor editor = tree.editor();
+            editor.add(new DirCacheEditor.PathEdit(path) {
+                @Override
+                public void apply(DirCacheEntry entry) {
+                    entry.setFileMode(FileMode.REGULAR_FILE);
+                    entry.setObjectId(blob);
+                }
+            });
+            editor.finish();
+            return tree.writeTree(inserter);
+        }
+
+        List<@Nullable String> treeIds() {
+            return new ArrayList<>(treeIds);
+        }
+    }
+
+    @Nested
+    @DisplayName("compareAndSwapTree")
+    class CompareAndSwapTree {
+
+        @Test
+        @DisplayName("GDR-CORE-5: creates a reference that does not exist with a root commit of the source's tree")
+        void createsReference(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the reference is created"));
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is created"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(0, commit.getParentCount(), "the first commit of a reference is a root commit"),
+                    () -> assertEquals(Collections.singletonList(null), source.treeIds(),
+                            "the source is called once, without a tree"),
+                    () -> assertEquals(Map.of(source.path, source.content), files(repository, commit),
+                            "the commit holds the source's tree"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: fast-forwards an existing reference, the source receives the tree of its commit")
+        void fastForwards(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the reference is moved"));
+            var expectedFiles = new HashMap<>(files(repository, parse(repository, initial.name())));
+            expectedFiles.put(source.path, source.content);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is fast-forwarded"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0), "the new commit's parent is the read commit"),
+                    () -> assertEquals(List.of(treeOf(repository, initial)), source.treeIds(),
+                            "the source receives the tree of the read commit"),
+                    () -> assertEquals(expectedFiles, files(repository, commit),
+                            "the commit holds the read tree with the source's file"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a lost race re-runs the source on the tree of the competing commit")
+        void lostRaceRetried(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                if (competing.isEmpty()) {
+                    competing.add(commitOnRef(repository, refName));
+                }
+                return source.write(reader, inserter, tree);
+            };
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), racing, 2);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the second attempt succeeds"));
+            var expectedFiles = new HashMap<>(files(repository, parse(repository, competing.getFirst().name())));
+            expectedFiles.put(source.path, source.content);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the second attempt succeeds"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(competing.getFirst(), commit.getParent(0),
+                            "the new commit's parent is the competing commit, which is kept"),
+                    () -> assertEquals(List.of(treeOf(repository, initial), treeOf(repository, competing.getFirst())),
+                            source.treeIds(), "the source is re-run on the competing commit's tree"),
+                    () -> assertEquals(expectedFiles, files(repository, commit),
+                            "the new commit keeps the competing commit's files and adds the source's file"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a race lost in the last attempt is a conflict, the competing commit stays")
+        void lastAttemptLost(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            TestCommits.commitOn(repository, refName);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                competing.add(commitOnRef(repository, refName));
+                return source.write(reader, inserter, tree);
+            };
+            int attempts = 2;
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), racing, attempts);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the lost race is a conflict"),
+                    () -> assertNull(result.value(), "a conflict carries no commit"),
+                    () -> assertEquals(refName + ": LOCK_FAILURE on every attempt (" + attempts + ")",
+                            result.detail(), "the detail names the reference, the result and the attempts"),
+                    () -> assertEquals(attempts, competing.size(), "the source is called once per attempt"),
+                    () -> assertEquals(competing.getLast(), refId(repository, refName),
+                            "the reference stays at the last competing commit"));
+        }
+
+        /**
+         * One test for both databases, because they check the expected id of a symbolic reference differently: the
+         * file backend under the lock, the in-memory backend through the updater's guarded batch.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: a symbolic reference is replaced by the update, the reference it pointed at is unchanged, on both databases")
+        void symbolicReferenceDetached(@LocalRepository Repository local, @InMemory Repository inMemory) {
+            assertAll(() -> assertSymbolicReferenceDetached(local), () -> assertSymbolicReferenceDetached(inMemory));
+        }
+
+        private void assertSymbolicReferenceDetached(Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the alias is replaced"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update of the alias succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0),
+                            "the new commit's parent is the commit the alias resolved to"),
+                    () -> assertEquals(List.of(treeOf(repository, initial)), source.treeIds(),
+                            "the source receives the tree the alias resolved to"),
+                    () -> assertEquals(initial, refId(repository, target), "the former target keeps its commit"));
+        }
+
+        /**
+         * The expected-id check on the in-memory database: the source moves the alias's target while it runs, so the
+         * update meets a base reference that no longer holds the id the attempt read. JGit 7.8.0 {@code DfsRefUpdate}
+         * compares only the symbolic reference itself; the updater's guarded batch must still see the moved target.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database a symbolic reference whose target moved is a lost race")
+        void symbolicTargetMovedInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                competing.add(commitOnRef(repository, target));
+                return source.write(reader, inserter, tree);
+            };
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), racing, 1);
+
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the moved target is a lost race"),
+                    () -> assertTrue(aliasRef.isSymbolic(), "the alias stays a symbolic reference"),
+                    () -> assertEquals(target, aliasRef.getTarget().getName(), "the alias still points at the target"),
+                    () -> assertEquals(competing.getFirst(), aliasRef.getObjectId(),
+                            "the alias resolves to the concurrent writer's commit"),
+                    () -> assertEquals(competing.getFirst(), refId(repository, target),
+                            "the target keeps the concurrent writer's commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a dangling symbolic reference is replaced by a root commit while its target stays absent, on both databases")
+        void danglingSymbolicReferenceReplaced(@LocalRepository Repository local, @InMemory Repository inMemory) {
+            assertAll(() -> assertDanglingReplaced(local), () -> assertDanglingReplaced(inMemory));
+        }
+
+        private void assertDanglingReplaced(Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            link(repository, alias, target);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the alias is replaced"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update of the dangling alias succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(0, commit.getParentCount(), "the first commit of the alias is a root commit"),
+                    () -> assertNull(repository.exactRef(target), "the absent target is not created"));
+        }
+
+        /**
+         * The guard of a dangling symbolic reference: the source writes the alias's absent target while it runs, so the
+         * alias resolves to a commit that the attempt never read. JGit 7.8.0 {@code DfsRefUpdate.tryLock(false)} sets no
+         * old id for a symbolic reference, so the zero expected id of the attempt would match and the root commit would
+         * replace the concurrently written notes; the updater must see the written target and retry on it.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: a dangling symbolic reference whose target is written meanwhile is a lost race, on both databases")
+        void danglingTargetWrittenMeanwhile(@LocalRepository Repository local, @InMemory Repository inMemory) {
+            assertAll(() -> assertDanglingTargetWritten(local), () -> assertDanglingTargetWritten(inMemory));
+        }
+
+        private void assertDanglingTargetWritten(Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            link(repository, alias, target);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                if (competing.isEmpty()) {
+                    competing.add(commitOnRef(repository, target));
+                }
+                return source.write(reader, inserter, tree);
+            };
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), racing, 2);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the second attempt succeeds"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the second attempt succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(1, commit.getParentCount(), "the new commit is no root commit"),
+                    () -> assertEquals(competing.getFirst(), commit.getParent(0),
+                            "the concurrently written commit is the parent, not discarded"),
+                    () -> assertEquals(Arrays.asList(null, treeOf(repository, competing.getFirst())), source.treeIds(),
+                            "the source is re-run on the tree the concurrent writer left"),
+                    () -> assertEquals(competing.getFirst(), refId(repository, target),
+                            "the target keeps the concurrent writer's commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a chain of symbolic references is replaced at its first link, the others unchanged, on both databases")
+        void symbolicChainDetached(@LocalRepository Repository local, @InMemory Repository inMemory) {
+            assertAll(() -> assertChainDetached(local), () -> assertChainDetached(inMemory));
+        }
+
+        private void assertChainDetached(Repository repository) throws Exception {
+            var base = GitIdentity.branchRef(TestCommits.name());
+            var middle = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, base);
+            link(repository, middle, base);
+            link(repository, alias, middle);
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), new RecordingSource(), 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the alias is replaced"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            var middleRef = Objects.requireNonNull(repository.exactRef(middle), "the middle link exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update of the alias succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0), "the parent is the commit the chain resolved to"),
+                    () -> assertTrue(middleRef.isSymbolic(), "the middle link stays a symbolic reference"),
+                    () -> assertEquals(base, middleRef.getTarget().getName(), "the middle link still points at the base"),
+                    () -> assertEquals(initial, refId(repository, base), "the base keeps its commit"));
+        }
+
+        /**
+         * The guard of a chain of symbolic references: the alias as read points at a middle link, which points at the
+         * base. A writer then retargets the middle link at another reference that holds another commit, while the base
+         * keeps the expected id. JGit 7.8.0 {@code ReftableBatchRefUpdate.matchOld} compares a symbolic command with the
+         * immediate target name only, so the unlink of the alias and a command on the base would both still hold; the
+         * guarded batch must also see the middle link.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: a retargeted middle link of a symbolic chain makes the guarded batch fail on the in-memory database")
+        void retargetedMiddleLinkFailsBatch(@InMemory Repository repository) throws Exception {
+            var base = GitIdentity.branchRef(TestCommits.name());
+            var middle = GitIdentity.branchRef(TestCommits.name());
+            var other = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var expected = TestCommits.commitOn(repository, base);
+            var otherId = TestCommits.commitOn(repository, other);
+            link(repository, middle, base);
+            link(repository, alias, middle);
+            var asRead = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            relink(repository, middle, other);
+            var replacement = TestCommits.commit(repository, expected);
+
+            var stale = ReferenceUpdater.guardedUnlink(repository, asRead, expected, replacement);
+
+            var current = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            var control = ReferenceUpdater.guardedUnlink(repository, current, otherId, replacement);
+            assertAll(
+                    () -> assertEquals(ReferenceUpdater.BatchOutcome.LOST_RACE, stale,
+                            "the retargeted middle link is a lost race although the base still holds the expected id"),
+                    () -> assertTrue(current.isSymbolic(), "nothing was written: the alias stayed symbolic"),
+                    () -> assertEquals(otherId, current.getObjectId(), "the alias resolved through the new chain"),
+                    () -> assertEquals(ReferenceUpdater.BatchOutcome.APPLIED, control,
+                            "the same batch on the chain as it is now holds and writes"),
+                    () -> assertEquals(replacement, refId(repository, alias), "the alias is replaced by the commit"));
+        }
+
+        /** A storage failure of the batch is a failure that is neither retried nor reported as a lost race. */
+        @Test
+        @DisplayName("GDR-CORE-5: an I/O failure of the guarded batch is a failure, not a lost race, and is not retried")
+        void batchFailureIsNotAConflict() throws Exception {
+            try (var repository = new BatchFailingRepository()) {
+                var target = GitIdentity.branchRef(TestCommits.name());
+                var alias = GitIdentity.branchRef(TestCommits.name());
+                TestCommits.commitOn(repository, target);
+                link(repository, alias, target);
+                repository.failBatches();
+                var source = new RecordingSource();
+
+                var result = updater.compareAndSwapTree(repository, alias, metadata(), source, 3);
+
+                var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+                assertAll(
+                        () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the storage failure is a failure"),
+                        () -> assertEquals(alias + ": IO_FAILURE", result.detail(),
+                                "the detail names the reference and the result"),
+                        () -> assertEquals(1, source.treeIds().size(), "the failure is not retried"),
+                        () -> assertTrue(aliasRef.isSymbolic(), "the alias is unchanged"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the class, the reference unchanged")
+        void sourceFailure(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var marker = TestCommits.name();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), (reader, inserter, tree) -> {
+                throw new IOException(marker);
+            }, 2);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the source's failure is a failure"),
+                    () -> assertEquals(IOException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class, never its message"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: fewer than one attempt is a programming error, the source is never called")
+        void attemptsBelowOne(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var source = new RecordingSource();
+            var metadata = metadata();
+
+            // 0 is the boundary of the rule "at least one attempt", -1 a value below it
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndSwapTree(repository, refName, metadata, source, 0),
+                            "zero attempts are rejected"),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndSwapTree(repository, refName, metadata, source, -1),
+                            "a negative number of attempts is rejected"),
+                    () -> assertTrue(source.treeIds().isEmpty(), "the source is never called"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+    }
+
     @Nested
     @DisplayName("compareAndDelete")
     class CompareAndDelete {
@@ -400,9 +808,14 @@ class ReferenceUpdaterTest {
                     () -> assertNull(refId(repository, refName), "the reference is gone"));
         }
 
+        /** One test for both databases, which check the expected id of a symbolic reference differently. */
         @Test
-        @DisplayName("GDR-CORE-5: deleting a symbolic reference removes it and keeps the reference it points at")
-        void deletesSymbolicReferenceOnly(@LocalRepository Repository repository) throws Exception {
+        @DisplayName("GDR-CORE-5: deleting a symbolic reference removes it and keeps the reference it points at, on both databases")
+        void deletesSymbolicReferenceOnly(@LocalRepository Repository local, @InMemory Repository inMemory) {
+            assertAll(() -> assertSymbolicReferenceDeleted(local), () -> assertSymbolicReferenceDeleted(inMemory));
+        }
+
+        private void assertSymbolicReferenceDeleted(Repository repository) throws Exception {
             var target = GitIdentity.branchRef(TestCommits.name());
             var alias = GitIdentity.branchRef(TestCommits.name());
             var initial = TestCommits.commitOn(repository, target);
@@ -415,6 +828,48 @@ class ReferenceUpdaterTest {
                     () -> assertEquals(initial.name(), result.value(), "the value is the id it resolved to"),
                     () -> assertNull(repository.exactRef(alias), "the symbolic reference is gone"),
                     () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database a symbolic reference at another id is not deleted")
+        void symbolicReferenceAtOtherIdInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var other = TestCommits.commit(repository, null);
+
+            var result = updater.compareAndDelete(repository, alias, other.name(), 2);
+
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the symbolic reference is kept");
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the other id is a conflict"),
+                    () -> assertEquals(alias + ": LOCK_FAILURE, the reference moved or is gone", result.detail(),
+                            "the detail names the reference and the result"),
+                    () -> assertTrue(aliasRef.isSymbolic(), "the alias stays a symbolic reference"),
+                    () -> assertEquals(target, aliasRef.getTarget().getName(), "the alias still points at the target"),
+                    () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: an I/O failure of the guarded batch is a failure, not a conflict, the symbolic reference is kept")
+        void batchFailureIsNotAConflict() throws Exception {
+            try (var repository = new BatchFailingRepository()) {
+                var target = GitIdentity.branchRef(TestCommits.name());
+                var alias = GitIdentity.branchRef(TestCommits.name());
+                var initial = TestCommits.commitOn(repository, target);
+                link(repository, alias, target);
+                repository.failBatches();
+
+                var result = updater.compareAndDelete(repository, alias, initial.name(), 3);
+
+                var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+                assertAll(
+                        () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the storage failure is a failure"),
+                        () -> assertEquals(alias + ": IO_FAILURE", result.detail(),
+                                "the detail names the reference and the result"),
+                        () -> assertTrue(aliasRef.isSymbolic(), "the alias is kept"));
+            }
         }
 
         @Test
@@ -550,6 +1005,54 @@ class ReferenceUpdaterTest {
     private static void link(Repository repository, String alias, String target) throws IOException {
         var result = repository.updateRef(alias).link(target);
         assertEquals(RefUpdate.Result.NEW, result, "the symbolic reference is created");
+    }
+
+    /** Points the existing symbolic reference {@code alias} at {@code target}, as another writer would. */
+    private static void relink(Repository repository, String alias, String target) throws IOException {
+        var result = repository.updateRef(alias).link(target);
+        assertTrue(result == RefUpdate.Result.FORCED || result == RefUpdate.Result.NEW,
+                "the symbolic reference is retargeted, was " + result);
+        assertEquals(target, Objects.requireNonNull(repository.exactRef(alias)).getTarget().getName(),
+                "the symbolic reference points at the new target");
+    }
+
+    /**
+     * An in-memory repository whose atomic reference batches fail with a storage error once told to, through the real
+     * JGit path: {@code DfsReftableBatchRefUpdate.applyUpdates} throws an {@link IOException}, which JGit 7.8.0
+     * {@code ReftableBatchRefUpdate.execute} catches and reports as {@code LOCK_FAILURE} with the message
+     * {@code "io error"}. Single-reference updates are batches as well, so the failure is switched on only after the
+     * fixture's references are written.
+     */
+    private static final class BatchFailingRepository extends InMemoryRepository {
+
+        private volatile boolean failing;
+
+        BatchFailingRepository() {
+            super(new DfsRepositoryDescription(TestCommits.name()));
+        }
+
+        void failBatches() {
+            failing = true;
+        }
+
+        @Override
+        protected MemRefDatabase createRefDatabase() {
+            return new MemRefDatabase() {
+                @Override
+                public BatchRefUpdate newBatchUpdate() {
+                    if (!failing) {
+                        return super.newBatchUpdate();
+                    }
+                    return new DfsReftableBatchRefUpdate(this, getObjectDatabase()) {
+                        @Override
+                        protected void applyUpdates(List<Ref> newRefs, List<ReceiveCommand> pending)
+                                throws IOException {
+                            throw new IOException("the reftable cannot be written");
+                        }
+                    };
+                }
+            };
+        }
     }
 
     private static File directoryOf(Repository repository) {

@@ -16,17 +16,21 @@
 package de.cuioss.git.document.core;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
 
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -44,6 +48,20 @@ import org.jspecify.annotations.Nullable;
  * lost race starts the next attempt, which reads the reference again and runs the operation again on the tree the
  * concurrent writer left. The commit written by a lost attempt stays in the object database unreferenced.
  * <p>
+ * A package-private tree-level variant runs the same loop with a finished tree instead of edits: its source receives
+ * the reference's current tree and returns the tree of the next commit, and its update replaces a symbolic reference
+ * instead of moving the reference it points at ({@code Repository.updateRef(refName, true)}).
+ * <p>
+ * For a symbolic reference replaced or deleted itself, which check decides depends on the backend: the file backend
+ * (JGit 7.8.0 {@code RefDirectoryUpdate}) compares the expected id with the resolved id under the reference's lock as
+ * for any other reference; the in-memory DFS backend ({@code DfsRefUpdate}) compares the expected id with no id at all
+ * and always reports {@link RefUpdate.Result#LOCK_FAILURE}, so the updater then decides through one atomic
+ * {@link BatchRefUpdate} that replaces or deletes the symbolic reference only while every link of its chain still
+ * points where it did and its base reference still points at the expected id; a dangling symbolic reference, which
+ * the backend would replace for the zero expected id even after its target was written, is replaced by that batch
+ * before any {@link RefUpdate} runs, and only while its base reference is still absent. A batch that fails on an I/O
+ * error is a failure, not a lost race. Neither path drops the expected-id check.
+ * <p>
  * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
  * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
  * <p>
@@ -54,6 +72,12 @@ import org.jspecify.annotations.Nullable;
 public final class ReferenceUpdater {
 
     private static final CuiLogger LOGGER = new CuiLogger(ReferenceUpdater.class);
+
+    /** The input field of the repository. */
+    private static final String REPOSITORY = "repository";
+
+    /** The input field of the reference name. */
+    private static final String REF_NAME = "refName";
 
     private final InCoreWriter writer;
 
@@ -100,26 +124,88 @@ public final class ReferenceUpdater {
      */
     public GitResult<String> compareAndSwap(Repository repository, String refName, CommitMetadata metadata,
             TreeOperation operation, int attempts) {
-        Objects.requireNonNull(repository, "repository");
-        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(operation, "operation");
-        if (attempts < 1) {
-            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
-        }
+        requireAttempts(attempts);
+        return swap(repository, refName, attempts, false, parent -> writer.write(repository, parentsOf(parent),
+                metadata, operation.apply(parent == null ? null : parent.getTree().name())));
+    }
+
+    /**
+     * Writes the next commit of a reference from a finished tree and moves the reference to it, provided no other
+     * writer moved the reference in between; a lost race is retried until the attempts are used up (GDR-CORE-5;
+     * checked against JGit 7.8.0).
+     * <p>
+     * The tree-level variant of {@link #compareAndSwap(Repository, String, CommitMetadata, TreeOperation, int)} for a
+     * caller that builds the whole tree itself, such as the notes of GDR-CORE-10, whose {@code NoteMap} decides its own
+     * fan-out: each attempt hands the tree of the reference's current commit to the {@link InCoreWriter.TreeSource}
+     * through {@link InCoreWriter#writeTree(Repository, List, CommitMetadata, InCoreWriter.TreeSource)}, and the
+     * commit is written with the returned tree as it is. After a lost race the source is called again with the tree the
+     * concurrent writer left.
+     * <p>
+     * The reference itself is moved, never the reference a symbolic one points at: the update is created with
+     * {@code Repository.updateRef(refName, true)}; with {@code detach} set JGit 7.8.0
+     * {@code RefDirectory.newUpdate} and {@code DfsRefDatabase.newUpdate} mark the update as detaching a symbolic
+     * reference, which replaces the symbolic reference by one that points at the new commit and leaves its former
+     * target as it is. The expected id is the id the named reference resolves to. On the file backend JGit compares it
+     * under the reference's lock as for {@code compareAndSwap}. On the in-memory DFS backend JGit 7.8.0
+     * {@code DfsRefUpdate.tryLock(false)} drops the resolved id of a symbolic reference, so {@code RefUpdate} reports
+     * {@link RefUpdate.Result#LOCK_FAILURE} for every expected id; the updater then replaces the symbolic reference
+     * through one atomic {@link BatchRefUpdate} that also requires every link of the symbolic chain to still point where
+     * it did and the base reference to still point at the expected id. A writer that moved one of them in between makes
+     * that batch fail, which is a lost race as for any other reference. A symbolic reference that is dangling (no
+     * expected id) is replaced by that batch before any {@link RefUpdate} runs, and only while its base reference is
+     * still absent: the backend would otherwise match the zero expected id even after the base reference was written
+     * and replace the alias without a conflict. A batch that fails on an I/O error ends the call in
+     * {@link GitOutcome#FAILED}, without a retry.
+     * <p>
+     * The outcomes are those of {@code compareAndSwap}: {@link GitOutcome#OK} with the full id of the new commit,
+     * {@link GitOutcome#CONFLICT} after a {@link RefUpdate.Result#LOCK_FAILURE} in every attempt,
+     * {@link GitOutcome#FAILED} for an I/O failure, {@link RefUpdate.Result#IO_FAILURE} included,
+     * {@link GitOutcome#REJECTED} for any other {@link RefUpdate.Result}, and the writer's result when it did not
+     * write the commit.
+     *
+     * @param repository the repository
+     * @param refName    the full name of the reference, e.g. {@code refs/notes/commits}
+     * @param metadata   author, committer, message and signing of every commit written
+     * @param source     derives the finished tree from the reference's current tree; called once per attempt
+     * @param attempts   the total number of tries, at least 1
+     * @return the full id of the commit the reference now points at, or the outcome that prevented it
+     * @throws NullPointerException     if an argument is {@code null}
+     * @throws IllegalArgumentException if {@code attempts} is less than 1
+     */
+    GitResult<String> compareAndSwapTree(Repository repository, String refName, CommitMetadata metadata,
+            InCoreWriter.TreeSource source, int attempts) {
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
+        Objects.requireNonNull(metadata, "metadata");
+        Objects.requireNonNull(source, "source");
+        requireAttempts(attempts);
+        return swap(repository, refName, attempts, true,
+                parent -> writer.writeTree(repository, parentsOf(parent), metadata, source));
+    }
+
+    /**
+     * The retry loop of both compare-and-swap variants: reads the reference exactly, lets {@code next} write the
+     * commit on the reference's commit, and moves the reference to it under the expected id.
+     *
+     * @param detach whether the update replaces a symbolic reference instead of moving its target
+     */
+    private static GitResult<String> swap(Repository repository, String refName, int attempts, boolean detach,
+            NextCommit next) {
         try {
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 Ref current = repository.exactRef(refName);
                 @Nullable ObjectId expected = current == null ? null : current.getObjectId();
                 @Nullable RevCommit parent = expected == null ? null : parseCommit(repository, expected);
-                List<TreeEdit> edits = operation.apply(parent == null ? null : parent.getTree().name());
-                GitResult<String> written = writer.write(repository,
-                        parent == null ? List.of() : List.of(parent.name()), metadata, edits);
+                GitResult<String> written = next.write(parent);
                 if (!written.isOk()) {
                     return written;
                 }
                 ObjectId commit = ObjectId.fromString(Objects.requireNonNull(written.value()));
-                RefUpdate.Result result = update(repository, refName, expected, commit);
+                RefUpdate.Result result = update(repository, refName, detach, expected, commit);
                 switch (result) {
                     case NEW, FAST_FORWARD -> {
                         return GitResult.ok(commit.name());
@@ -155,6 +241,12 @@ public final class ReferenceUpdater {
      * A symbolic reference is deleted itself, never the reference it points at: the update is created with
      * {@code Repository.updateRef(refName, true)}, because without {@code detach} JGit 7.8.0 resolves the symbolic
      * reference and deletes its base reference instead. The expected id is the id the symbolic reference resolves to.
+     * On the file backend JGit compares it under the lock; on the in-memory DFS backend, where JGit 7.8.0
+     * {@code DfsRefUpdate} compares it with no id and reports {@link RefUpdate.Result#LOCK_FAILURE}, the updater deletes
+     * the symbolic reference through one atomic {@link BatchRefUpdate} that also requires every link of its chain to
+     * still point where it did and its base reference to still point at the expected id. A batch that lost a race is
+     * the {@code LOCK_FAILURE} it replaces, decided by the re-read above; a batch that failed on an I/O error is an
+     * {@link RefUpdate.Result#IO_FAILURE}.
      * <p>
      * The outcomes:
      * <ul>
@@ -179,12 +271,10 @@ public final class ReferenceUpdater {
      */
     public GitResult<String> compareAndDelete(Repository repository, String refName, String expectedOldId,
             int attempts) {
-        Objects.requireNonNull(repository, "repository");
-        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(expectedOldId, "expectedOldId");
-        if (attempts < 1) {
-            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
-        }
+        requireAttempts(attempts);
         if (!GitIdentity.isFullCommitId(expectedOldId)) {
             return GitResult.of(GitOutcome.NOT_FOUND, "expectedOldId: not a full commit id");
         }
@@ -225,7 +315,8 @@ public final class ReferenceUpdater {
      * JGit 7.8.0 {@code RefDirectory.newUpdate(name, false)} resolves a symbolic reference, and {@code RefUpdate.delete}
      * then deletes its leaf, the base reference, and leaves the symbolic one; with {@code detach} set it locks and
      * deletes the symbolic reference and leaves its target as it is. The expected id is still compared with the
-     * resolved id of the named reference.
+     * resolved id of the named reference: under the lock on the file backend, through the guarded batch of
+     * {@code guardedUnlink} on the in-memory DFS backend (JGit 7.8.0).
      */
     private static RefUpdate.Result delete(Repository repository, String refName, ObjectId expected)
             throws IOException {
@@ -233,7 +324,12 @@ public final class ReferenceUpdater {
         delete.setExpectedOldObjectId(expected);
         delete.setForceUpdate(true);
         delete.disableRefLog();
-        return delete.delete();
+        RefUpdate.Result result = delete.delete();
+        if (unresolvedUnderLock(delete, result)) {
+            return resultOf(guardedUnlink(repository, delete.getRef(), expected, ObjectId.zeroId()),
+                    RefUpdate.Result.FORCED, result);
+        }
+        return result;
     }
 
     private static RevCommit parseCommit(Repository repository, ObjectId id) throws IOException {
@@ -242,12 +338,159 @@ public final class ReferenceUpdater {
         }
     }
 
-    private static RefUpdate.Result update(Repository repository, String refName, @Nullable ObjectId expected,
-            ObjectId commit) throws IOException {
-        RefUpdate update = repository.updateRef(refName);
+    private static RefUpdate.Result update(Repository repository, String refName, boolean detach,
+            @Nullable ObjectId expected, ObjectId commit) throws IOException {
+        RefUpdate update = repository.updateRef(refName, detach);
         update.setExpectedOldObjectId(expected == null ? ObjectId.zeroId() : expected);
         update.setNewObjectId(commit);
         update.disableRefLog();
-        return update.update();
+        if (detach && expected == null && update.getRef().isSymbolic()) {
+            // A dangling symbolic reference: the in-memory backend compares no id for it, so the zero expected id would
+            // match even after another writer populated its target. The batch replaces it only while the target is
+            // still absent; a backend that refuses the batch (the file backend) decides under its lock below.
+            BatchOutcome batch = guardedUnlink(repository, update.getRef(), null, commit);
+            if (batch != BatchOutcome.REFUSED) {
+                return resultOf(batch, RefUpdate.Result.NEW, RefUpdate.Result.LOCK_FAILURE);
+            }
+        }
+        RefUpdate.Result result = update.update();
+        if (detach && expected != null && unresolvedUnderLock(update, result)) {
+            return resultOf(guardedUnlink(repository, update.getRef(), expected, commit), RefUpdate.Result.NEW,
+                    result);
+        }
+        return result;
+    }
+
+    /**
+     * The result of an update or delete after its guarded batch: {@code applied} when the batch wrote, the I/O failure
+     * a batch reports as one, and {@code lost} for a lost race or a refused batch, the result the batch replaces.
+     */
+    private static RefUpdate.Result resultOf(BatchOutcome batch, RefUpdate.Result applied, RefUpdate.Result lost) {
+        return switch (batch) {
+            case APPLIED -> applied;
+            case IO_FAILED -> RefUpdate.Result.IO_FAILURE;
+            case LOST_RACE, REFUSED -> lost;
+        };
+    }
+
+    /**
+     * Whether a detaching update of a symbolic reference lost its race only because the backend compared the expected
+     * id with no id at all. JGit 7.8.0 {@code DfsRefUpdate.tryLock(false)} sets the old id of a symbolic reference to
+     * {@code null}, so {@code RefUpdate.updateImpl} compares the expected id with {@link ObjectId#zeroId()} and reports
+     * {@link RefUpdate.Result#LOCK_FAILURE} whatever the reference points at; {@code RefDirectoryUpdate.tryLock} instead
+     * re-reads the reference under its lock and keeps the resolved id, so there a {@code LOCK_FAILURE} with an old id
+     * is a real one.
+     */
+    private static boolean unresolvedUnderLock(RefUpdate update, RefUpdate.Result result) {
+        return result == RefUpdate.Result.LOCK_FAILURE && update.getRef().isSymbolic()
+                && update.getOldObjectId() == null;
+    }
+
+    /** What an atomic guarded batch ended in; nothing is written unless it is {@link #APPLIED}. */
+    enum BatchOutcome {
+
+        /** Every command passed and the batch wrote. */
+        APPLIED,
+
+        /** A command's expected value did not hold: another writer changed a reference the batch guards. */
+        LOST_RACE,
+
+        /** The backend reported an I/O failure while it ran the batch. */
+        IO_FAILED,
+
+        /** The backend did not run the batch, e.g. the file backend, which refuses a symbolic command in an atomic batch. */
+        REFUSED
+    }
+
+    /**
+     * The message JGit 7.8.0 {@code ReftableBatchRefUpdate.execute} sets, with {@link ReceiveCommand.Result#LOCK_FAILURE},
+     * on the first command when it catches an {@link IOException}. A mismatch of an expected value sets the same result
+     * with no message, so the message is the only way to tell a storage failure from a lost race. Should a later JGit
+     * change the text, an I/O failure is classified as {@link BatchOutcome#LOST_RACE}, as it was before.
+     */
+    private static final String REFTABLE_IO_ERROR = "io error";
+
+    /**
+     * Replaces or deletes a symbolic reference in one atomic {@link BatchRefUpdate} that also requires everything the
+     * symbolic reference resolves through to still hold (checked against JGit 7.8.0): an unlink command that expects
+     * the symbolic reference's target ({@code ReceiveCommand.unlink}), a no-op {@code ReceiveCommand.link} on each
+     * further symbolic reference of the chain that holds only while it still points at the same target, and a command
+     * on the base reference. For an {@code expected} id that command goes from the id to the same id, which changes
+     * nothing and holds only while the base reference is still at it; for no expected id (a dangling symbolic
+     * reference) it holds only while the base reference is still absent. JGit 7.8.0 {@code ReftableBatchRefUpdate}
+     * compares a symbolic command with its immediate target name only, so without the commands on the chain's links a
+     * writer that retargeted one of them while the base reference stayed at the expected id would go unseen. It also
+     * compares every command under one lock before it writes any, so a writer that changed any of them makes the
+     * whole batch fail and nothing is written. A backend without atomic batches, and the file backend, which refuses
+     * a symbolic command in an atomic batch ({@code PackedBatchRefUpdate}), write nothing either.
+     *
+     * @param symbolic the symbolic reference as read, with its chain of targets
+     * @param expected the id the symbolic reference must still resolve to; {@code null} when it must still be dangling
+     * @param newId    the new id of the reference; {@link ObjectId#zeroId()} deletes it
+     * @return how the batch ended
+     */
+    static BatchOutcome guardedUnlink(Repository repository, Ref symbolic, @Nullable ObjectId expected,
+            ObjectId newId) throws IOException {
+        ReceiveCommand unlink = ReceiveCommand.unlink(symbolic.getTarget().getName(), newId, symbolic.getName());
+        List<ReceiveCommand> commands = new ArrayList<>();
+        commands.add(unlink);
+        Ref link = symbolic.getTarget();
+        while (link.isSymbolic()) {
+            String target = link.getTarget().getName();
+            commands.add(ReceiveCommand.link(target, target, link.getName()));
+            link = link.getTarget();
+        }
+        ObjectId base = expected == null ? ObjectId.zeroId() : expected;
+        commands.add(new ReceiveCommand(base, base, link.getName()));
+        BatchRefUpdate batch = repository.getRefDatabase().newBatchUpdate();
+        batch.setAtomic(true);
+        batch.setAllowNonFastForwards(true);
+        batch.disableRefLog();
+        batch.addCommand(commands);
+        try (RevWalk walk = new RevWalk(repository)) {
+            batch.execute(walk, NullProgressMonitor.INSTANCE);
+        }
+        return outcomeOf(commands);
+    }
+
+    private static BatchOutcome outcomeOf(List<ReceiveCommand> commands) {
+        boolean applied = true;
+        boolean lost = false;
+        for (ReceiveCommand command : commands) {
+            if (command.getResult() == ReceiveCommand.Result.LOCK_FAILURE) {
+                if (REFTABLE_IO_ERROR.equals(command.getMessage())) {
+                    return BatchOutcome.IO_FAILED;
+                }
+                lost = true;
+            }
+            applied &= command.getResult() == ReceiveCommand.Result.OK;
+        }
+        if (applied) {
+            return BatchOutcome.APPLIED;
+        }
+        return lost ? BatchOutcome.LOST_RACE : BatchOutcome.REFUSED;
+    }
+
+    private static List<String> parentsOf(@Nullable RevCommit parent) {
+        return parent == null ? List.of() : List.of(parent.name());
+    }
+
+    private static void requireAttempts(int attempts) {
+        if (attempts < 1) {
+            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
+        }
+    }
+
+    /** Writes the next commit of an attempt on the reference's current commit. */
+    @FunctionalInterface
+    private interface NextCommit {
+
+        /**
+         * Writes the commit.
+         *
+         * @param parent the reference's current commit; {@code null} when the reference does not exist
+         * @return the writer's result
+         */
+        GitResult<String> write(@Nullable RevCommit parent);
     }
 }

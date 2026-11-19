@@ -6,11 +6,12 @@
 
 The requirements every module meets: layering, platform modules, results, logging, secrets, testing and the
 non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module Structure]. `git-testing` implements
-its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]), and
-`git-core` implements part of its own (xref:git-core.adoc[`git-core`]: hardening, remote policy, identity, results,
-repository operations, cache repository, in-core writing and compare-and-swap), and `git-worktrees` implements all of
-its own (xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is planned, and the other
-modules are not yet created.
+its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]),
+`git-core` implements its own (xref:git-core.adoc[`git-core`]: hardening, remote policy, identity, results, repository
+operations, cache repository, in-core writing, compare-and-swap, in-core merge, reading and notes; the hardening with
+the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states), and `git-worktrees`
+implements all of its own (xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is
+planned, and the other modules are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -30,11 +31,15 @@ architecture test) is open; a test consumer project depending on `git-core` alon
 dependency set holds no third-party artifact of the upper modules. The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`,
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
-JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5, `cui-test-generator`
-and `cui-test-juli-logger` in its test scope; and `cui-java-tools` and Lombok in `git-worktrees`, with `git-testing`,
-JUnit 5, `cui-test-generator` and `cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
-`cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17. The version of JGit is managed in the
-root POM, the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
+JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
+`cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
+`cui-java-tools` and Lombok in `git-worktrees`, with `git-testing`, JUnit 5, `cui-test-generator` and
+`cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+`cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17, and
+`de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
+end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
+`mockwebserver3` and `okhttp-tls` with it, in that test scope as well. The version of JGit is managed in the root POM,
+the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
 approval before it is added:
 
 [cols="1,3"]
@@ -43,7 +48,8 @@ approval before it is added:
 
 |every module |`org.jspecify:jspecify` (declared), annotations only
 |`git-core` |JGit (`requires transitive`), `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
-`cui-test-juli-logger` for the log capture of <<GDR-NFR-3>>, `cui-test-generator` and JUnit 5 (each declared)
+`cui-test-juli-logger` for the log capture of <<GDR-NFR-3>>, `cui-test-mockwebserver-junit5` for the end-to-end
+redirect test, `cui-test-generator` and JUnit 5 (each declared)
 |`git-worktrees` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
@@ -80,6 +86,10 @@ closed list for the outcomes of its domain and carries it in a result of the sam
 operation of an aspect module reports either a Git outcome it passes on or one of its own list. Adding an aspect module
 therefore changes nothing in `git-core`.
 
+`GitResult` carries a value for a success only. The merge of xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6], whose conflict
+must name its paths, therefore returns `MergeResult`, a result of the same shape (outcome and detail) that carries the
+conflicting paths as data in its variant `Conflicting`, never in the detail.
+
 `GitOutcome` (`git-core`), the outcomes of `git-worktrees` included; the first column names the constant, and the
 table lists exactly the constants of `GitOutcome`:
 
@@ -88,7 +98,8 @@ table lists exactly the constants of `GitOutcome`:
 |Constant |Outcome |Raised by
 
 |`OK` |success |every operation; reported by the store as saved
-|`CONFLICT` |conflict |compare-and-swap after the last attempt, merge, save, concurrent change detection
+|`CONFLICT` |conflict |compare-and-swap after the last attempt, also of a notes write; in-core merge, with the
+conflicting paths as data, or with more than one merge base; save, concurrent change detection
 |`REJECTED` |rejected |push refused by the remote (non-fast-forward, protected branch or another refusal); reference
 update refused locally; save after the last attempt
 |`LEASE_REFUSED` |lease refused |push with lease (`git-core`); the store retries and reports rejected after the last
@@ -98,10 +109,11 @@ the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
 |`REFUSED_BY_POLICY` |refused by policy |remote policy, refused capability (hook or process start); the detail names
 the refused remote or capability; an invalid branch name (`git-worktrees`: a new working tree or a reservation
-release), the detail naming the field only
+release) or notes reference (notes), the detail naming the field only
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
-reading, push, cache repository, in-core writing on a missing reference; a branch without a reservation to release
-(`git-worktrees`); the detail names which
+log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
+in-core merge and notes on an id that is no commit, notes on a missing notes reference or note; a branch without a
+reservation to release (`git-worktrees`); the detail names which
 |`UNSERVED` |unserved |cache repository: the remote does not serve the commit
 |`AMBIGUOUS` |ambiguous |identity resolution; the detail lists the candidates
 |`NOT_A_REPOSITORY` |not a repository |every operation on a path that holds no repository, or no bare repository
