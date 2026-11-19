@@ -44,6 +44,10 @@ import org.jspecify.annotations.Nullable;
  * lost race starts the next attempt, which reads the reference again and runs the operation again on the tree the
  * concurrent writer left. The commit written by a lost attempt stays in the object database unreferenced.
  * <p>
+ * A package-private tree-level variant runs the same loop with a finished tree instead of edits: its source receives
+ * the reference's current tree and returns the tree of the next commit, and its update replaces a symbolic reference
+ * instead of moving the reference it points at ({@code Repository.updateRef(refName, true)}).
+ * <p>
  * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
  * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
  * <p>
@@ -104,22 +108,75 @@ public final class ReferenceUpdater {
         Objects.requireNonNull(refName, "refName");
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(operation, "operation");
-        if (attempts < 1) {
-            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
-        }
+        requireAttempts(attempts);
+        return swap(repository, refName, attempts, false, parent -> writer.write(repository, parentsOf(parent),
+                metadata, operation.apply(parent == null ? null : parent.getTree().name())));
+    }
+
+    /**
+     * Writes the next commit of a reference from a finished tree and moves the reference to it, provided no other
+     * writer moved the reference in between; a lost race is retried until the attempts are used up (GDR-CORE-5;
+     * checked against JGit 7.8.0).
+     * <p>
+     * The tree-level variant of {@link #compareAndSwap(Repository, String, CommitMetadata, TreeOperation, int)} for a
+     * caller that builds the whole tree itself, such as the notes of GDR-CORE-10, whose {@code NoteMap} decides its own
+     * fan-out: each attempt hands the tree of the reference's current commit to the {@link InCoreWriter.TreeSource}
+     * through {@link InCoreWriter#writeTree(Repository, List, CommitMetadata, InCoreWriter.TreeSource)}, and the
+     * commit is written with the returned tree as it is. After a lost race the source is called again with the tree the
+     * concurrent writer left.
+     * <p>
+     * The reference itself is moved, never the reference a symbolic one points at: the update is created with
+     * {@code Repository.updateRef(refName, true)}; with {@code detach} set JGit 7.8.0
+     * {@code RefDirectory.newUpdate} and {@code DfsRefDatabase.newUpdate} mark the update as detaching a symbolic
+     * reference, which replaces the symbolic reference by one that points at the new commit and leaves its former
+     * target as it is. The expected id is the id the named reference resolves to, and JGit compares it under the
+     * reference's lock as for {@code compareAndSwap}.
+     * <p>
+     * The outcomes are those of {@code compareAndSwap}: {@link GitOutcome#OK} with the full id of the new commit,
+     * {@link GitOutcome#CONFLICT} after a {@link RefUpdate.Result#LOCK_FAILURE} in every attempt,
+     * {@link GitOutcome#FAILED} for an I/O failure, {@link RefUpdate.Result#IO_FAILURE} included,
+     * {@link GitOutcome#REJECTED} for any other {@link RefUpdate.Result}, and the writer's result when it did not
+     * write the commit.
+     *
+     * @param repository the repository
+     * @param refName    the full name of the reference, e.g. {@code refs/notes/commits}
+     * @param metadata   author, committer, message and signing of every commit written
+     * @param source     derives the finished tree from the reference's current tree; called once per attempt
+     * @param attempts   the total number of tries, at least 1
+     * @return the full id of the commit the reference now points at, or the outcome that prevented it
+     * @throws NullPointerException     if an argument is {@code null}
+     * @throws IllegalArgumentException if {@code attempts} is less than 1
+     */
+    GitResult<String> compareAndSwapTree(Repository repository, String refName, CommitMetadata metadata,
+            InCoreWriter.TreeSource source, int attempts) {
+        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(metadata, "metadata");
+        Objects.requireNonNull(source, "source");
+        requireAttempts(attempts);
+        return swap(repository, refName, attempts, true,
+                parent -> writer.writeTree(repository, parentsOf(parent), metadata, source));
+    }
+
+    /**
+     * The retry loop of both compare-and-swap variants: reads the reference exactly, lets {@code next} write the
+     * commit on the reference's commit, and moves the reference to it under the expected id.
+     *
+     * @param detach whether the update replaces a symbolic reference instead of moving its target
+     */
+    private static GitResult<String> swap(Repository repository, String refName, int attempts, boolean detach,
+            NextCommit next) {
         try {
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 Ref current = repository.exactRef(refName);
                 @Nullable ObjectId expected = current == null ? null : current.getObjectId();
                 @Nullable RevCommit parent = expected == null ? null : parseCommit(repository, expected);
-                List<TreeEdit> edits = operation.apply(parent == null ? null : parent.getTree().name());
-                GitResult<String> written = writer.write(repository,
-                        parent == null ? List.of() : List.of(parent.name()), metadata, edits);
+                GitResult<String> written = next.write(parent);
                 if (!written.isOk()) {
                     return written;
                 }
                 ObjectId commit = ObjectId.fromString(Objects.requireNonNull(written.value()));
-                RefUpdate.Result result = update(repository, refName, expected, commit);
+                RefUpdate.Result result = update(repository, refName, detach, expected, commit);
                 switch (result) {
                     case NEW, FAST_FORWARD -> {
                         return GitResult.ok(commit.name());
@@ -182,9 +239,7 @@ public final class ReferenceUpdater {
         Objects.requireNonNull(repository, "repository");
         Objects.requireNonNull(refName, "refName");
         Objects.requireNonNull(expectedOldId, "expectedOldId");
-        if (attempts < 1) {
-            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
-        }
+        requireAttempts(attempts);
         if (!GitIdentity.isFullCommitId(expectedOldId)) {
             return GitResult.of(GitOutcome.NOT_FOUND, "expectedOldId: not a full commit id");
         }
@@ -242,12 +297,35 @@ public final class ReferenceUpdater {
         }
     }
 
-    private static RefUpdate.Result update(Repository repository, String refName, @Nullable ObjectId expected,
-            ObjectId commit) throws IOException {
-        RefUpdate update = repository.updateRef(refName);
+    private static RefUpdate.Result update(Repository repository, String refName, boolean detach,
+            @Nullable ObjectId expected, ObjectId commit) throws IOException {
+        RefUpdate update = repository.updateRef(refName, detach);
         update.setExpectedOldObjectId(expected == null ? ObjectId.zeroId() : expected);
         update.setNewObjectId(commit);
         update.disableRefLog();
         return update.update();
+    }
+
+    private static List<String> parentsOf(@Nullable RevCommit parent) {
+        return parent == null ? List.of() : List.of(parent.name());
+    }
+
+    private static void requireAttempts(int attempts) {
+        if (attempts < 1) {
+            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
+        }
+    }
+
+    /** Writes the next commit of an attempt on the reference's current commit. */
+    @FunctionalInterface
+    private interface NextCommit {
+
+        /**
+         * Writes the commit.
+         *
+         * @param parent the reference's current commit; {@code null} when the reference does not exist
+         * @return the writer's result
+         */
+        GitResult<String> write(@Nullable RevCommit parent);
     }
 }

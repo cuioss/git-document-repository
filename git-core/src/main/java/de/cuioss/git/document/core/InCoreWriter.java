@@ -45,6 +45,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.util.SystemReader;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Writes blobs, trees and commits from in-memory content, without a working tree (GDR-CORE-4; checked against JGit
@@ -115,6 +116,43 @@ public final class InCoreWriter {
         if (invalidEdits.isPresent()) {
             return GitResult.of(GitOutcome.NOT_FOUND, invalidEdits.get());
         }
+        return writeTree(repository, parentIds, metadata, (reader, inserter, firstParentTree) -> {
+            DirCache tree = firstParentTree == null ? DirCache.newInCore() : DirCache.read(reader, firstParentTree);
+            applyEdits(tree, treeEdits, inserter);
+            return tree.writeTree(inserter);
+        });
+    }
+
+    /**
+     * Writes a commit whose tree is the finished tree a {@link TreeSource} inserts (checked against JGit 7.8.0).
+     * <p>
+     * The parents are parsed as {@link #write(Repository, List, CommitMetadata, List)} parses them; the source is then
+     * called once with the reader and the inserter of the commit and the tree of the first parent, and the id it
+     * returns becomes the commit's tree as it is. The source's objects, the commit and its signature go through the one
+     * inserter, which is flushed once, after the commit was inserted, so a source that fails leaves no flushed object.
+     * <p>
+     * The outcomes are those of the public {@code write}, except that no edit is checked: {@link GitOutcome#OK} with the
+     * full id of the new commit; {@link GitOutcome#NOT_FOUND} for a parent that is no full commit id or no commit of the
+     * repository, the detail naming the field {@code parents}; {@link GitOutcome#FAILED} for an I/O failure, of the
+     * source included ({@code JGitRepositoryOperations.failure}), or a signing failure, the detail naming the exception
+     * class only.
+     *
+     * @param repository the repository whose object database receives the objects
+     * @param parents    the full commit ids of the parents, in order; empty for a root commit
+     * @param metadata   author, committer, message and signing of the commit
+     * @param source     inserts the finished tree of the commit and returns its id
+     * @return the full id of the new commit, or the outcome that prevented it
+     * @throws NullPointerException if an argument or an element of {@code parents} is {@code null}
+     */
+    GitResult<String> writeTree(Repository repository, List<String> parents, CommitMetadata metadata,
+            TreeSource source) {
+        Objects.requireNonNull(repository, "repository");
+        List<String> parentIds = List.copyOf(Objects.requireNonNull(parents, PARENTS));
+        Objects.requireNonNull(metadata, "metadata");
+        Objects.requireNonNull(source, "source");
+        if (!parentIds.stream().allMatch(GitIdentity::isFullCommitId)) {
+            return GitResult.of(GitOutcome.NOT_FOUND, PARENTS + ": not a full commit id");
+        }
         try (ObjectReader reader = repository.newObjectReader();
              RevWalk walk = new RevWalk(reader);
              ObjectInserter inserter = repository.newObjectInserter()) {
@@ -126,12 +164,9 @@ public final class InCoreWriter {
                 }
                 parentCommits.add(parent.get());
             }
-            DirCache tree = parentCommits.isEmpty()
-                    ? DirCache.newInCore()
-                    : DirCache.read(reader, parentCommits.getFirst().getTree());
-            applyEdits(tree, treeEdits, inserter);
+            @Nullable ObjectId firstParentTree = parentCommits.isEmpty() ? null : parentCommits.getFirst().getTree();
             CommitBuilder commit = new CommitBuilder();
-            commit.setTreeId(tree.writeTree(inserter));
+            commit.setTreeId(source.write(reader, inserter, firstParentTree));
             commit.setParentIds(parentCommits);
             commit.setAuthor(metadata.author());
             commit.setCommitter(metadata.committer());
@@ -207,5 +242,30 @@ public final class InCoreWriter {
             signing.signer().signObject(repository, new GpgConfig(repository.getConfig()), commit,
                     metadata.committer(), signing.signingKey(), signing.credentials());
         }
+    }
+
+    /**
+     * Produces the finished tree of a commit the writer writes (checked against JGit 7.8.0).
+     * <p>
+     * The writer calls the source once per commit, with the reader and the inserter of that commit, and takes the
+     * returned id as the commit's tree as it is. The source inserts every object of the tree through the given
+     * inserter and does not flush it: the writer flushes once, after the commit. A source used in a compare-and-swap is
+     * called again after a lost race with the tree the concurrent writer left, so it must be free of side effects on
+     * references and derive its tree from the tree it is handed, not from a tree it read earlier.
+     */
+    @FunctionalInterface
+    interface TreeSource {
+
+        /**
+         * Inserts the finished tree and returns its id.
+         *
+         * @param reader          the reader of the commit's repository
+         * @param inserter        the inserter of the commit, not to be flushed by the source
+         * @param firstParentTree the tree of the first parent; {@code null} for a root commit
+         * @return the id of the inserted tree
+         * @throws IOException if reading or inserting an object fails
+         */
+        ObjectId write(ObjectReader reader, ObjectInserter inserter, @Nullable ObjectId firstParentTree)
+                throws IOException;
     }
 }

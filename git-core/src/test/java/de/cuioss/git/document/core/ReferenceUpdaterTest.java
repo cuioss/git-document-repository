@@ -20,6 +20,7 @@ import static de.cuioss.git.document.core.InCoreWriterTest.files;
 import static de.cuioss.git.document.core.InCoreWriterTest.metadata;
 import static de.cuioss.git.document.core.InCoreWriterTest.parse;
 import static de.cuioss.git.document.core.InCoreWriterTest.put;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,8 +52,15 @@ import java.util.concurrent.TimeUnit;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheEditor;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.RefRename;
@@ -379,6 +387,200 @@ class ReferenceUpdaterTest {
                             "every successful commit is in the history of the reference"),
                     () -> assertTrue(succeeded.isEmpty() || succeeded.contains(head.name()),
                             "the reference points at the head of that history"));
+        }
+    }
+
+    /** A tree source that records the tree ids it is called with and puts one file on the tree it is handed. */
+    private static final class RecordingSource implements InCoreWriter.TreeSource {
+
+        /** The tree ids of the calls, in order; {@code null} for a reference that did not exist. */
+        private final List<@Nullable String> treeIds = new ArrayList<>();
+        private final String path = TestCommits.name();
+        private final String content = content();
+
+        @Override
+        public ObjectId write(ObjectReader reader, ObjectInserter inserter, @Nullable ObjectId firstParentTree)
+                throws IOException {
+            treeIds.add(firstParentTree == null ? null : firstParentTree.name());
+            DirCache tree = firstParentTree == null ? DirCache.newInCore() : DirCache.read(reader, firstParentTree);
+            ObjectId blob = inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8));
+            DirCacheEditor editor = tree.editor();
+            editor.add(new DirCacheEditor.PathEdit(path) {
+                @Override
+                public void apply(DirCacheEntry entry) {
+                    entry.setFileMode(FileMode.REGULAR_FILE);
+                    entry.setObjectId(blob);
+                }
+            });
+            editor.finish();
+            return tree.writeTree(inserter);
+        }
+
+        List<@Nullable String> treeIds() {
+            return new ArrayList<>(treeIds);
+        }
+    }
+
+    @Nested
+    @DisplayName("compareAndSwapTree")
+    class CompareAndSwapTree {
+
+        @Test
+        @DisplayName("GDR-CORE-5: creates a reference that does not exist with a root commit of the source's tree")
+        void createsReference(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the reference is created"));
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is created"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(0, commit.getParentCount(), "the first commit of a reference is a root commit"),
+                    () -> assertEquals(Collections.singletonList(null), source.treeIds(),
+                            "the source is called once, without a tree"),
+                    () -> assertEquals(Map.of(source.path, source.content), files(repository, commit),
+                            "the commit holds the source's tree"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: fast-forwards an existing reference, the source receives the tree of its commit")
+        void fastForwards(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the reference is moved"));
+            var expectedFiles = new HashMap<>(files(repository, parse(repository, initial.name())));
+            expectedFiles.put(source.path, source.content);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is fast-forwarded"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0), "the new commit's parent is the read commit"),
+                    () -> assertEquals(List.of(treeOf(repository, initial)), source.treeIds(),
+                            "the source receives the tree of the read commit"),
+                    () -> assertEquals(expectedFiles, files(repository, commit),
+                            "the commit holds the read tree with the source's file"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a lost race re-runs the source on the tree of the competing commit")
+        void lostRaceRetried(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                if (competing.isEmpty()) {
+                    competing.add(commitOnRef(repository, refName));
+                }
+                return source.write(reader, inserter, tree);
+            };
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), racing, 2);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the second attempt succeeds"));
+            var expectedFiles = new HashMap<>(files(repository, parse(repository, competing.getFirst().name())));
+            expectedFiles.put(source.path, source.content);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the second attempt succeeds"),
+                    () -> assertEquals(commit, refId(repository, refName), "the reference points at the new commit"),
+                    () -> assertEquals(competing.getFirst(), commit.getParent(0),
+                            "the new commit's parent is the competing commit, which is kept"),
+                    () -> assertEquals(List.of(treeOf(repository, initial), treeOf(repository, competing.getFirst())),
+                            source.treeIds(), "the source is re-run on the competing commit's tree"),
+                    () -> assertEquals(expectedFiles, files(repository, commit),
+                            "the new commit keeps the competing commit's files and adds the source's file"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a race lost in the last attempt is a conflict, the competing commit stays")
+        void lastAttemptLost(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            TestCommits.commitOn(repository, refName);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                competing.add(commitOnRef(repository, refName));
+                return source.write(reader, inserter, tree);
+            };
+            int attempts = 2;
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), racing, attempts);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the lost race is a conflict"),
+                    () -> assertNull(result.value(), "a conflict carries no commit"),
+                    () -> assertEquals(refName + ": LOCK_FAILURE on every attempt (" + attempts + ")",
+                            result.detail(), "the detail names the reference, the result and the attempts"),
+                    () -> assertEquals(attempts, competing.size(), "the source is called once per attempt"),
+                    () -> assertEquals(competing.getLast(), refId(repository, refName),
+                            "the reference stays at the last competing commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a symbolic reference is replaced by the update, the reference it pointed at is unchanged")
+        void symbolicReferenceDetached(@LocalRepository Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the alias is replaced"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update of the alias succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0),
+                            "the new commit's parent is the commit the alias resolved to"),
+                    () -> assertEquals(List.of(treeOf(repository, initial)), source.treeIds(),
+                            "the source receives the tree the alias resolved to"),
+                    () -> assertEquals(initial, refId(repository, target), "the former target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the class, the reference unchanged")
+        void sourceFailure(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var marker = TestCommits.name();
+
+            var result = updater.compareAndSwapTree(repository, refName, metadata(), (reader, inserter, tree) -> {
+                throw new IOException(marker);
+            }, 2);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the source's failure is a failure"),
+                    () -> assertEquals(IOException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class, never its message"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: fewer than one attempt is a programming error, the source is never called")
+        void attemptsBelowOne(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var source = new RecordingSource();
+            var metadata = metadata();
+
+            // 0 is the boundary of the rule "at least one attempt", -1 a value below it
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndSwapTree(repository, refName, metadata, source, 0),
+                            "zero attempts are rejected"),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndSwapTree(repository, refName, metadata, source, -1),
+                            "a negative number of attempts is rejected"),
+                    () -> assertTrue(source.treeIds().isEmpty(), "the source is never called"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
         }
     }
 

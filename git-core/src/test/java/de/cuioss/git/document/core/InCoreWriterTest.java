@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -52,11 +53,13 @@ import org.eclipse.jgit.lib.GpgConfig;
 import org.eclipse.jgit.lib.GpgSignature;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.Signer;
 import org.eclipse.jgit.lib.TagBuilder;
+import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.CredentialsProvider;
@@ -464,6 +467,140 @@ class InCoreWriterTest {
                     () -> assertEquals(detail, result.detail(), "the detail names the field and the reason"),
                     () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
                             "the content of the put is not written"));
+        }
+    }
+
+    @Nested
+    @DisplayName("tree source")
+    class TreeSourceWriting {
+
+        @Test
+        @DisplayName("GDR-CORE-5: the tree the source returns is the commit's tree, the source receives the parent's tree")
+        void treeTakenAsReturned(@InMemory Repository repository) throws Exception {
+            var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
+            var path = TestCommits.name();
+            var content = content();
+            var source = new SingleFileSource(path, content);
+
+            var result = writer.writeTree(repository, List.of(parent), metadata(), source);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the commit is written"),
+                    () -> assertEquals(List.of(parent), Stream.of(commit.getParents()).map(RevCommit::name).toList(),
+                            "the parents are as passed"),
+                    () -> assertEquals(source.written(), commit.getTree(), "the commit's tree is the returned tree"),
+                    () -> assertEquals(Map.of(path, content), files(repository, commit),
+                            "the tree holds exactly what the source inserted, nothing of the parent's tree"),
+                    () -> assertEquals(Collections.singletonList(parse(repository, parent).getTree().name()),
+                            source.parentTrees(), "the source is called once with the first parent's tree"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a root commit hands the source no parent tree")
+        void rootCommitWithoutParentTree(@InMemory Repository repository) throws Exception {
+            var path = TestCommits.name();
+            var content = content();
+            var source = new SingleFileSource(path, content);
+            var refsBefore = refs(repository);
+
+            var result = writer.writeTree(repository, List.of(), metadata(), source);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the root commit is written"));
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the root commit is written"),
+                    () -> assertEquals(0, commit.getParentCount(), "a root commit has no parent"),
+                    () -> assertEquals(Collections.singletonList(null), source.parentTrees(),
+                            "the source is called once without a parent tree"),
+                    () -> assertEquals(Map.of(path, content), files(repository, commit),
+                            "the tree is the source's tree"),
+                    () -> assertEquals(refsBefore, refs(repository), "no reference moved"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the exception class, nothing flushed")
+        void sourceFailure(@InMemory Repository repository) {
+            var marker = TestCommits.name();
+            var content = content();
+
+            var result = writer.writeTree(repository, List.of(), metadata(), (reader, inserter, parentTree) -> {
+                inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8));
+                throw new IOException(marker);
+            });
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the source's failure is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals(IOException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class, never its message"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "the object the source inserted is not flushed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: an abbreviated parent is not found and the source is never called")
+        void abbreviatedParent(@InMemory Repository repository) {
+            var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
+            var source = new SingleFileSource(TestCommits.name(), content());
+
+            var result = writer.writeTree(repository, List.of(parent.substring(0, 12)), metadata(), source);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the abbreviated parent is not found"),
+                    () -> assertEquals("parents: not a full commit id", result.detail(), "the detail names the field"),
+                    () -> assertTrue(source.parentTrees().isEmpty(), "the source is never called"));
+        }
+
+        @Test
+        @DisplayName("a null argument is rejected")
+        void nullArguments(@InMemory Repository repository) {
+            var metadata = metadata();
+            List<String> parents = List.of();
+            var source = new SingleFileSource(TestCommits.name(), content());
+
+            assertAll(Stream.<Executable>of(
+                    () -> writer.writeTree(nullValue(), parents, metadata, source),
+                    () -> writer.writeTree(repository, nullValue(), metadata, source),
+                    () -> writer.writeTree(repository, parents, nullValue(), source),
+                    () -> writer.writeTree(repository, parents, metadata, nullValue()))
+                    .<Executable>map(call -> () -> assertThrows(NullPointerException.class, call, "null is rejected")));
+        }
+    }
+
+    /**
+     * A tree source that inserts a tree of one regular file and records the parent trees it is called with.
+     */
+    static final class SingleFileSource implements InCoreWriter.TreeSource {
+
+        private final String path;
+        private final String content;
+        private final List<@Nullable String> parentTrees = new ArrayList<>();
+        private @Nullable ObjectId written;
+
+        SingleFileSource(String path, String content) {
+            this.path = path;
+            this.content = content;
+        }
+
+        @Override
+        public ObjectId write(ObjectReader reader, ObjectInserter inserter, @Nullable ObjectId firstParentTree)
+                throws IOException {
+            parentTrees.add(firstParentTree == null ? null : firstParentTree.name());
+            var tree = new TreeFormatter();
+            tree.append(path, FileMode.REGULAR_FILE, inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8)));
+            var id = inserter.insert(tree);
+            written = id;
+            return id;
+        }
+
+        /** The parent trees of the calls, in order; {@code null} for a root commit. */
+        List<@Nullable String> parentTrees() {
+            return new ArrayList<>(parentTrees);
+        }
+
+        /** The tree of the last call. */
+        ObjectId written() {
+            return Objects.requireNonNull(written, "the source was called");
         }
     }
 
