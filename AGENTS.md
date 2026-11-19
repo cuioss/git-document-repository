@@ -35,8 +35,10 @@ Planned but not yet created: `git-store`, `git-forms`, `git-timestamp`, `git-dir
 `@Remote`). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
 `pm-provider-git` as a plain copy: `RefusingFS` with `CapabilityRefusedException`, `RemotePolicy`, `GitIdentity`,
 `GitResult` and `GitOutcome`, `RepositoryOperations` with `JGitRepositoryOperations` (open, init, `cloneIfMissing`,
-log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`; its tests run on the class path
-against the `git-testing` fixtures. `git-worktrees` exports `de.cuioss.git.document.worktrees` with the worktree part
+log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
+compare-and-swap: `InCoreWriter` with `TreeEdit`, `CommitMetadata` and `CommitSigning`, and `ReferenceUpdater` with
+`TreeOperation` (compare-and-swap and compare-and-delete of a reference); its tests run on the class path against the
+`git-testing` fixtures. `git-worktrees` exports `de.cuioss.git.document.worktrees` with the worktree part
 taken over from `pm-provider-git`: `WorktreeOperations` with `JGitWorktreeOperations` (add, list and remove linked
 working trees, commit from a working tree, working-tree status `WorktreeStatus`, release of a branch reservation left
 by an ended process), the package-private
