@@ -48,21 +48,30 @@ Dependencies and Sequencing) until the operator releases it.
    reproduced by a test that fails at the base. (a) `InCoreWriter.write` ends `FAILED` (class name only) when the
    parent tree holds an entry JGit's path check rejects — an entry named `.GIT` or `git~1` that arrived through a push
    without fsck — instead of letting `dircache.InvalidPathException` escape from `write` and `compareAndSwap`; the
-   test builds such a tree with an `ObjectInserter`; (b) the unchecked exceptions of caller code and configuration
-   (`Signer`, `gpg.format` through `GpgConfig`, `TreeOperation.apply`, a `null` result or element) are either returned
+   test builds such a tree with an `ObjectInserter`; `InCoreMerger.merge` (PLAN-05) has the same reach, because JGit's
+   merger builds a `DirCacheEntry` for every tree entry, and gets the same result and a test; (b) the unchecked exceptions of caller code and configuration
+   (`Signer`, `gpg.format` through `GpgConfig`, `TreeOperation.apply`, a `null` result or element, and — a lead to
+   confirm first — a `LargeObjectException` from the notes tree source of `GitNotes.write`) are either returned
    as `FAILED` with the class name or stated in the Javadoc as the caller's contract, decided and recorded, with a
    test; (c) the retry loops of `compareAndSwap` and `compareAndDelete` cannot overflow for `attempts =
    Integer.MAX_VALUE`, or the bound is validated and documented; the test terminates at the base too (a repository
    double ends the loop after a fixed number of calls and the assertion names the number); (d) `compareAndSwap` tells
    a name conflict (`refs/heads/a/b` while `refs/heads/a` exists) from contention, running the operation once and not
    on every attempt, and a `refName` that is not a valid reference name (`refs/heads/../../../outside/x`) is refused
-   before any file is touched, with the outcome `git-worktrees` uses for an invalid name (`REFUSED_BY_POLICY`, no new
-   constant); (e) edits that overlap as a file and a directory below it (`Put("a")` with `Put("a/b")`) are refused like a
+   before any file is touched by `compareAndSwap`, `compareAndDelete` and `compareAndSwapTree` (the notes entry points of
+   `GitNotes` already validate), with the outcome `git-worktrees` uses for an invalid name (`REFUSED_BY_POLICY`, no new
+   constant), and a notes reference that name-conflicts with an existing one (`refs/notes/a/b` while `refs/notes/a`
+   exists) is reported as that through `GitNotes.write`, not as a lost race; (e) edits that overlap as a file and a directory below it (`Put("a")` with `Put("a/b")`) are refused like a
    repeated path, or the loss is documented with a test; (f) `ReferenceUpdater.parseCommit` resolves with `parseAny`
    and checks the type, so a reference that points at an annotated tag is a result, not a silent peel; (g) the
    platform dependence of the path check (`SystemReader.checkPath`: Windows names and a trailing dot accepted on
    Linux, case-fold duplicates, an installed `SystemReader`) is put to the owner through the question tool — one
-   strictness on every host, or the host's rules, documented — and the choice is recorded in `git-core.adoc`.
+   strictness on every host, or the host's rules, documented — and the choice is recorded in `git-core.adoc`; (h) the guarded batch for symbolic references (PLAN-05): the
+   Javadoc of `unresolvedUnderLock` is corrected (a held lock on the file backend also leaves the old id unset, because
+   `RefDirectoryUpdate.tryLock` returns before it sets one; the batch is then refused and reported as the same
+   `LOCK_FAILURE`), a test pins the JGit 7.8.0 message text (`io error`) the lost-race classification relies on so an
+   upgrade fails loudly, and the fall-through of a refused batch to `update.update()` for a dangling alias, which cannot
+   happen at 7.8.0 but would replace the alias without an id comparison on the in-memory backend, is closed or recorded.
    - Skills: pm-dev-java:java-core, pm-dev-java:javadoc, pm-dev-java-cui:cui-logging
    - Persona: implementer
 4. `git-core` repository operations and test residue (PLAN-04 analysis L3-8, L3-9, L2-1, L2-2, L2-5, L2-7): (a) the
@@ -75,7 +84,12 @@ Dependencies and Sequencing) until the operator releases it.
    `notWritten` (and a `null` result of a `TrackingRefUpdate`, if JGit 7.8.0 can leave one); no reflog is written by
    `compareAndSwap` and `compareAndDelete`; `neverForces` fails when the force flag is set (observed through a
    repository double), not only when the expected id is dropped; the generated names of `InCoreWriterTest` cannot
-   collide in a `Map.of`.
+   collide in a `Map.of`; (d) `JGitRepositoryOperations.log` (reworked by PLAN-05) reads one commit past `maxCount` and does
+   not catch the unchecked `RevWalkException` of a missing parent, the defect PLAN-05's review fixed in
+   `RepositoryReader.history`: drive `walk.next()` and return `FAILED`, with a test whose commit after the limit has a
+   missing parent; (e) the `git-core` tests use hand-written doubles (`Proxy`, lambdas, a fake `Transport`) where AGENTS.md
+   prescribes EasyMock, although the approval list names it: EasyMock replaces them where it can (a test-scope entry in
+   `git-core/pom.xml`, covered by the standing approval) or the exception is recorded with its reason.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
 5. `git-testing` leftovers of PLAN-18's landing (`landings/PLAN-18.md` L1-5, L1-6, L2-1 to L2-5, L3-1, L3-2), each
@@ -84,7 +98,12 @@ Dependencies and Sequencing) until the operator releases it.
    the positive half of the `@InMemory` type assertion is tautological; the rollback wiring from `createBareRepository` to
    `rollBack` is unobserved; nothing asserts that the "auto-close off" Surefire run received its setting; `TemporaryRepository.close`
    loses the first failure when closing and deletion both fail; the public Javadoc of the three extensions is stale
-   under `PER_CLASS`; `GitCredentialGeneratorTest` never held a double (a premise to drop if the read confirms it).
+   under `PER_CLASS`; `GitCredentialGeneratorTest` never held a double (a premise to drop if the read confirms it);
+   and, from PLAN-05's review, the fixtures do not isolate a test from the developer's user and system git
+   configuration (PLAN-05's `RedirectEndToEndTest` was stopped first by `http.followRedirects=false` and, in the next round,
+   by `http.maxRedirects=0` from the user's configuration, before the guard under test ran): decide whether `git-testing`
+   offers a hermetic configuration (for example a `SystemReader` without user or system configuration) or records the
+   limit with what a test has to pin, after reading which existing tests depend on the host's configuration.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:javadoc
    - Persona: module-tester
 
@@ -99,7 +118,10 @@ Dependencies and Sequencing) until the operator releases it.
   detail, exception message, log message, stored configuration or commit metadata.
 - Verify every claim about a JGit API against JGit 7.8.0 source or documentation and name the version (CLAUDE.md).
 - Every behaviour fix is first reproduced by a test that fails at the base and passes at the head; an item whose
-  premise the re-read at outline refutes is dropped from the deliverable that names it.
+  premise the re-read at outline refutes is dropped from the deliverable that names it. A test of a guard pins every
+  setting that could stop the run before the guard is reached (the whole related configuration group, not the one key
+  a reviewer named), takes fixture content that is distinct by construction rather than from independent random draws,
+  and fails on the regressed code (its fixture breaks the forbidden behaviour, for example with a missing object).
 - Build only through the canonical commands in `CLAUDE.md` (compile, `verify -Ppre-commit`, `verify`); never call
   `javac` or `mvn` ad hoc.
 - No dependency without the owner's approval (AGENTS.md). Approved: JGit 7.8.0, `cui-test-generator`, JUnit 5,
@@ -122,7 +144,8 @@ Dependencies and Sequencing) until the operator releases it.
 ## Done when
 
 - `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 has a test that
-  fails at `c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c` (`main` after PLAN-04, where every defect below is present) and
+  fails at `14269fef44b97f690f104f420c88ef69db6d5c3d` (`main` after PLAN-05, where every `git-core` defect below is present; the
+  `git-worktrees` ones are present since `e2aced9`) and
   passes at the plan's head.
 - Every item of deliverables 1 to 5 is either fixed and tested at the plan's head, or recorded as an accepted exception
   or an owner decision with its reason in the specification document of its module; no document lists an outcome the
@@ -189,13 +212,36 @@ Dependencies and Sequencing) until the operator releases it.
   remote policy admitted" — read at `JGitRepositoryOperations.java` § `readFile` (708) and `doc/specification/git-core.adoc`
   § GDR-CORE-8 (363-365).
   - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at c8feb0b: JGitRepositoryOperations 708 content.readAllBytes(); git-core.adoc 363-365 states the accepted exception with that reason
+- OBSERVED: `InCoreMerger.merge` catches `NoMergeBaseException` and `IOException` only, and JGit 7.8.0
+  `StrategySimpleTwoWayInCore` builds `new DirCacheEntry(tw.getRawPath(), stage)` for every tree entry, which throws
+  `InvalidPathException` — read at `git-core/.../InCoreMerger.java` § `merge` (124, catches 135-142) at `14269fe` and JGit
+  7.8.0 `org/eclipse/jgit/merge/StrategySimpleTwoWayInCore.java` § `add` (152-165).
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 14269fe: InCoreMerger 124 and catches 135-142; JGit 7.8.0 StrategySimpleTwoWayInCore.add 148-165 builds new DirCacheEntry(rawPath, stage) which throws InvalidPathException
+- OBSERVED: `JGitRepositoryOperations.log` iterates `for (RevCommit commit : walk)` and checks `maxCount` inside the loop, and
+  catches `IOException | IllegalArgumentException` while JGit's `RevWalkException` is a `RuntimeException` — read at
+  `JGitRepositoryOperations.java` § `log` (473-482) at `14269fe`.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 14269fe: JGitRepositoryOperations 468-490 for-each over the walk, catch IOException | IllegalArgumentException; JGit 7.8.0 RevWalkException extends RuntimeException
+- OBSERVED: the Javadoc of `ReferenceUpdater.unresolvedUnderLock` says a `LOCK_FAILURE` with an old id is a real one on the
+  file backend, while JGit 7.8.0 `RefDirectoryUpdate.tryLock` returns false before `setOldObjectId` when the lock is held —
+  read at `ReferenceUpdater.java` § `unresolvedUnderLock` (376-384) at `14269fe` and `org/eclipse/jgit/internal/storage/file/RefDirectoryUpdate.java` (46-60).
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 14269fe: ReferenceUpdater 372-390 Javadoc; JGit 7.8.0 RefDirectoryUpdate.tryLock 46-60 returns false before setOldObjectId
+- OBSERVED: `GitNotes.write` validates the notes reference by syntax only (`Repository.isValidRefName`), and
+  `ReferenceUpdater` calls `isValidRefName` nowhere — read at `GitNotes.java` § `isNotesRef` (205-208) and a search of
+  `ReferenceUpdater.java` at `14269fe`.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 14269fe: GitNotes 205-208 isNotesRef uses Repository.isValidRefName; a search of ReferenceUpdater at 14269fe finds no isValidRefName
 - HYPOTHESIS: the `git-testing` leftovers of PLAN-18 (the tautological positive half of the `@InMemory` type assertion,
   the unobserved rollback wiring, the unasserted "auto-close off" setting, the lost first close failure, the stale
   `PER_CLASS` Javadoc) still hold after PR #29 — confirm/refute at
   `git-testing/src/test/java/de/cuioss/git/document/testing/InMemoryRepositoryExtensionTest.java`,
   `LocalRepositoryExtensionTest.java`, `git-testing/src/main/java/de/cuioss/git/document/testing/TemporaryDirectories.java`
   and the Javadoc of the three extensions (verify-at-outline; as of PLAN-18's landing, not re-read against `b5ee5d7`).
-- Verify-first clause: the three-layer analyses of PLAN-04 and PLAN-19 read the code only (no build, no test run); every
+- HYPOTHESIS: no `git-testing` fixture isolates a test from the user's and the system's git configuration, so a test of
+  a guard can be stopped by a host setting before the guard runs (PLAN-05's review round 1 and 2: `http.followRedirects`,
+  `http.maxRedirects`) — confirm/refute at `git-testing/src/main/java/de/cuioss/git/document/testing/LocalRepositoryExtension.java`
+  and `TemporaryDirectories.java` and the `SystemReader` use of `git-core` `RefusingFS` (verify-at-outline).
+- Verify-first clause: the three-layer analyses of PLAN-04, PLAN-05 and PLAN-19 read the code only (no build, no test run);
+  the `git-core` line references above are those of `c8feb0b`, and PLAN-05 moved them (`landings/PLAN-05.md` names where each
+  defect P1 to P10 sits at `14269fe`, all still present); every
   OBSERVED claim above is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the deliverable
   that names it. Item (b) of deliverable 3 and item (b) of deliverable 4 each end in an owner decision: put the
   question before the work, not after it.
@@ -221,11 +267,11 @@ Dependencies and Sequencing) until the operator releases it.
 - Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further leftovers into
   this spec as new deliverables or as items of a deliverable, in the same edit as their Expected Surface; the operator
   releases the plan by naming it in a `next` round. It is queued at the end of WS-01.
-- Depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-19 (PR #31, `e2aced9`) and PLAN-18 (PR #28).
-- Overlaps with: PLAN-05 (same `git-core` package, `doc/specification/git-core.adoc`, `AGENTS.md` and `doc/README.adoc`
-  if it edits them) — release this plan after PLAN-05 lands, or accept the overlap at the pairing prompt. It does not
-  overlap with PLAN-06 to PLAN-17 except through `AGENTS.md`, `doc/specification/general.adoc` and `pom.xml`, which a
-  folded-in leftover may touch.
+- Depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-19 (PR #31, `e2aced9`)
+  and PLAN-18 (PR #28).
+- Overlaps with: nothing in flight. It shares `AGENTS.md` and `doc/specification/general.adoc` (and `git-core/pom.xml` if
+  EasyMock is added) with PLAN-06 and the later plans that edit them, so the pairing gate puts the pair to the operator
+  when both are launched at once. PLAN-05, which shared four entries with it, has shipped.
 - Adjacent to: nothing in `git-store/` yet — PLAN-08 and PLAN-09 are the first consumers of `compareAndSwap` and
   `compareAndDelete`, so the items of deliverable 3 are cheaper to fix before them.
 

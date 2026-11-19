@@ -2,10 +2,10 @@
   "id": "PLAN-05",
   "slug": "git-core-merge-read-notes",
   "workstream": "WS-01",
-  "status": "staged",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "plan-05-git-core-merge-read-notes",
+  "pr": "37",
+  "landing": "landings/PLAN-05.md",
   "seq": 5
 }

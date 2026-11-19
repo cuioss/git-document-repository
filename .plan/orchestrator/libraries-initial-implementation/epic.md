@@ -56,15 +56,19 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   early in the plan's refine phase.
 - PLAN-18 — Shipped (PR #28). It was the collection plan for the minor leftovers of PLAN-01; once started its spec is
   frozen, so the leftovers of later landings fold into the staged specs they touch (see Decisions) or into a Watch.
+- PLAN-05 — Shipped (PR #37, `14269fe`, `landings/PLAN-05.md`). It ran alone after PLAN-04, so no rebase conflict in the state
+  documents; its outline split the five spec deliverables into six after the operator redesigned two recommendations.
 - PLAN-04 — Shipped (PR #35, `c8feb0b`, `landings/PLAN-04.md`). PLAN-04 landed after PLAN-19 and its rebase conflicted by hand
   in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `doc/specification/general.adoc`): the pairing gate had
   predicted two of them plus `general.adoc`; the root `README.adoc` was in neither spec's surface. Sibling plans keep editing the
   same state lists, so a plan that changes a module's state expects those hand merges.
 - PLAN-20 — Second collection plan (staged 2026-11-19 on the operator's word): the layer-3 defects of PLAN-19 and PLAN-04, the
   test gaps beside them and the `git-testing` leftovers of PLAN-18, in one plan. **Held back from `next` until the operator
-  releases it**; later analyses fold further leftovers into it, in the same edit as its Expected Surface. It shares four
-  declared entries with PLAN-05 (`git-core` main and test, `git-core.adoc`, `AGENTS.md`), so release it after PLAN-05 lands or
-  accept the overlap at the pairing prompt.
+  releases it**; later analyses fold further leftovers into it, in the same edit as its Expected Surface. PLAN-05, with
+  which it shared four declared entries, has shipped; it now shares `AGENTS.md` and `general.adoc` with PLAN-06 and the later
+  plans that edit them, so the gate puts the pair to the operator when both are launched together. PLAN-05's analysis folded
+  `InCoreMerger`, `GitNotes`, `JGitRepositoryOperations.log`, the guarded batch and the EasyMock question into it; all ten
+  PLAN-04 defects are still present at `14269fe`.
 
 ## Decisions
 
@@ -216,6 +220,32 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `queue --add-row`; the ordinal is the next free one (the queue held PLAN-01 to PLAN-19). Not emitted and not released: the
   operator releases it by naming it in a `next` round. Two items of it end in an owner decision (the platform dependence of the
   path check, the size bound of `readFile`).
+- 2026-11-19 — PLAN-05 recorded launched, then running, on the operator's word ("#5 is running"). It had already merged when the
+  next `analyze` ran (see the PLAN-05 entries below).
+- 2026-11-19 — Candidate lessons of PLAN-05 (12) under the operator's earlier rule: four new plan-marshall tooling lessons filed
+  with `--allow-foreign-store` (`2026-11-19-19-001` the Sonar test smells no pre-push check catches, `-002` a fix task created
+  with empty skills and no verification commands, `-003` outline questions that recommend first-principles options over the
+  project's BOM-managed test library, `-004` `git-workflow commit` reporting `FETCH_FAILURE` for an empty index); five existing
+  lessons extended with a recurrence (`2026-11-18-13-002` the finalize commit guard `no_sanction`, `13-004` the change-ledger
+  flag, now the sixth plan, `13-003` `manage-findings list --limit`, `2026-11-19-06-005` no build row in the change-ledger,
+  `2026-11-18-07-006` keyless dispatch-boundary rows, now the fifth plan); one folded into PLAN-20 (tests that depend on the
+  developer's git configuration: a `git-testing` item of deliverable 5, one Standing Constraints sentence and one claim, no
+  surface change because `git-testing/` is declared); two discarded as shipped code (the symbolic-reference fallback and the
+  JGit iteration, filter and inserter behaviours behind the `RepositoryReader`, `InCoreWriter` and `MergeResult` fixes).
+- 2026-11-19 — PLAN-05 shipped (PR #37, merge commit `14269fe`, `landings/PLAN-05.md`): in-core merge with a sealed
+  `MergeResult` conflict carrier, reading (`RepositoryReader`), git notes (`GitNotes`) over a package-private
+  `compareAndSwapTree`, and the residuals (a) to (f) of PLAN-02; all six spec claims corroborated; the Sonar gate reads OK
+  (new coverage 96.9 %), the review gate is undecidable (CodeRabbit's "Minor comments: 1" section). The folded PLAN-04 review
+  rules were applied except `parseAny` in `ReferenceUpdater.parseCommit`.
+- 2026-11-19 — Dependency decision of PLAN-05: `de.cuioss.test:cui-test-mockwebserver-junit5` (test scope of `git-core`, BOM-managed,
+  for the end-to-end redirect test) was added on the operator's answer at the outline question ("why not cuihttpmock"); the
+  lane recorded the approval (2026-11-19) in `general.adoc` and `git-core.adoc`. No independent decision record exists, so
+  this entry is the ledger's. The approved list in `AGENTS.md` is unchanged.
+- 2026-11-19 — Layer-3 report of PLAN-05: no blocker and no major; four minor defects re-read (`InCoreMerger.merge` lets
+  `InvalidPathException` escape, `JGitRepositoryOperations.log` reads past `maxCount` and lets `RevWalkException` escape, a notes
+  reference that name-conflicts is reported as a lost race, the `unresolvedUnderLock` Javadoc names the wrong discriminator),
+  two minor leads and two points not shown by reading. Reported to the operator at once and folded into PLAN-20 in the same
+  act (items 3 (a), (b), (d), (h), deliverable 4 (d) and (e), claims 15-18); the Done-when base of PLAN-20 is now `14269fe`.
 
 ## Open Defects
 
@@ -237,12 +267,16 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   loop that never ends for `attempts = Integer.MAX_VALUE`, a name conflict retried as a lost race, an unvalidated `refName`, a
   file and a directory below it in one edit silently merged, a platform-dependent path check, a query-string token or an
   uppercase-scheme credential kept in the clone's stored origin, and an unbounded `readFile`; with the layer-2 residues (untested
-  `notWritten` branches, no reflog test, `ReferenceUpdater.parseCommit` peels a tag). — routed to PLAN-20 (deliverables 3 and 4)
+  `notWritten` branches, no reflog test, `ReferenceUpdater.parseCommit` peels a tag). PLAN-05 (PR #37) left all of them in place
+  and added the same defect class to its new code (`landings/PLAN-05.md`, L3-1 to L3-8). — routed to PLAN-20 (deliverables 3 and 4)
   on the operator's word; open until PLAN-20 ships.
 - Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
-  `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-04 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0 unresolved
+  `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
+  `plan-05-git-core-merge-read-notes-013.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-05 misses the three review numbers and `sonar_open_new_issues` (`effort` is `medium`, self-reported); its
+  `review-gate` re-read is undecidable (the CodeRabbit "Minor comments: 1" section), the Sonar gate reads OK, and
+  `archive-plan` is `unknown` in its steps. PLAN-04 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0 unresolved
   threads, 5 review-body findings, `handled: 0`), the Sonar gate reads OK (new coverage 87.3 %), and the lane's own statement
   (five CodeRabbit threads replied to and resolved) agrees with the 0 unresolved threads. PLAN-19 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0
   unresolved threads, 2 review-body findings, `handled: 0`, `body_findings_undisposed`), the Sonar gate reads OK and the
@@ -271,7 +305,7 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - PLAN-19 and PLAN-04 both edited `doc/specification/general.adoc` and the state lists. — observed at PLAN-04's landing: its
   rebase conflicted by hand in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `general.adoc`), both sides kept; no
   re-verify signal. Recorded in Queue annotations (PLAN-04) for the next pairing. Retired.
-- The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicts the AGENTS.md rule "do not merge
+- The execution manifest of PLAN-04 carried `final_merge_without_asking=true` (PLAN-05's landing says nothing about holding its merge), which contradicts the AGENTS.md rule "do not merge
   unless the user says so"; the lane held the merge until the owner approved in chat and did not change the manifest value, and
   PLAN-19's lane was told to merge when green. Whether the value comes from `.plan/marshal.json` or from the lane's defaults is not
   established. — re-check at the next landing whether a lane held its merge, and raise it with the operator when one did not.
