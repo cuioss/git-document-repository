@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -49,9 +50,12 @@ import de.cuioss.git.document.core.RepositoryReader.SnapshotFile;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -63,7 +67,9 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * Reading without a working tree (GDR-CORE-9) against the in-memory fixture of {@code git-testing}: the snapshot of a
  * branch, a lightweight and an annotated tag and a full commit id, the refusal of an ambiguous, abbreviated or unknown
- * revision; the history of a path newest first, empty for a path never changed and bounded by {@code maxCount}; the
+ * revision; the history of a path newest first, empty for a path never changed, bounded by {@code maxCount} without
+ * reading ahead, with a merge that differs from one parent kept and one that equals every parent left out, and an I/O
+ * failure of the walk as {@link GitOutcome#FAILED}; the
  * paths added, modified in content or mode and deleted between two commits, nested paths, identical trees and ids that
  * are no commit.
  */
@@ -281,6 +287,121 @@ class RepositoryReaderTest {
                                     reader.history(fixture, tip, path, 10), "an invalid path")),
                     Stream.<Executable>of(() -> assertEquals(GitResult.of(GitOutcome.NOT_FOUND, "revision: not found"),
                             reader.history(fixture, TestCommits.name(), name, 10), "an unknown revision"))));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-9: a merge that equals one parent at the path and differs from the other is a change")
+        void mergeDiffersFromOneParent(@InMemory Repository fixture) throws Exception {
+            var path = TestCommits.name();
+            var other = path + "." + TestCommits.name();
+            var start = start();
+            var base = write(fixture, start, List.of(InCoreWriterTest.put(path, content()),
+                    InCoreWriterTest.put(other, content())));
+            var first = write(fixture, start.plusSeconds(3600),
+                    List.of(InCoreWriterTest.put(path, "first-" + content())), base);
+            var second = write(fixture, start.plusSeconds(7200),
+                    List.of(InCoreWriterTest.put(other, "second-" + content())), base);
+            var merge = commitAt(fixture, start.plusSeconds(10800), treeOf(fixture, first), first, second);
+
+            var result = reader.history(fixture, merge.name(), path, 10);
+
+            var history = Objects.requireNonNull(result.value(), "the history is read");
+            assertAll(
+                    () -> assertEquals(List.of(merge.name(), first.name(), base.name()),
+                            history.stream().map(CommitInfo::id).toList(),
+                            "the merge differs from its second parent, so it changed the path, newest first"),
+                    () -> assertEquals(List.of(first.name(), second.name()), history.getFirst().parents(),
+                            "the merge keeps its real parents"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-9: a merge that equals every parent at the path is no change")
+        void mergeEqualsEveryParent(@InMemory Repository fixture) throws Exception {
+            var path = TestCommits.name();
+            var other = path + "." + TestCommits.name();
+            var another = path + "-" + TestCommits.name();
+            var start = start();
+            var base = write(fixture, start, List.of(InCoreWriterTest.put(path, content()),
+                    InCoreWriterTest.put(other, content())));
+            var first = write(fixture, start.plusSeconds(3600),
+                    List.of(InCoreWriterTest.put(other, "first-" + content())), base);
+            var second = write(fixture, start.plusSeconds(7200),
+                    List.of(InCoreWriterTest.put(another, content())), base);
+            var merge = commitAt(fixture, start.plusSeconds(10800), treeOf(fixture, first), first, second);
+
+            var result = reader.history(fixture, merge.name(), path, 10);
+
+            assertEquals(List.of(base.name()), Objects.requireNonNull(result.value(), "the history is read").stream()
+                    .map(CommitInfo::id).toList(), "only the root commit that added the path changed it");
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-9: maxCount 1 returns the newest change and reads no commit beyond it")
+        void boundedWithoutReadingAhead(@InMemory Repository fixture) throws Exception {
+            var path = TestCommits.name();
+            var start = start();
+            // the grandparent's tree does not exist: reading on past the newest change would fail
+            var grandparent = commitAt(fixture, start, blobId(content()));
+            var parent = commitAt(fixture, start.plusSeconds(3600), treeWith(fixture, path, "parent-"), grandparent);
+            var tip = commitAt(fixture, start.plusSeconds(7200), treeWith(fixture, path, "tip-"), parent);
+
+            var result = reader.history(fixture, tip.name(), path, 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the walk stops before the grandparent"),
+                    () -> assertEquals(List.of(tip.name()), Objects.requireNonNull(result.value(),
+                            "the history is read").stream().map(CommitInfo::id).toList(), "the newest change only"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-9: an I/O failure during the walk is FAILED and names the exception class only")
+        void walkFailure(@InMemory Repository fixture) throws Exception {
+            var path = TestCommits.name();
+            var start = start();
+            var broken = commitAt(fixture, start, blobId(content()));
+            var tip = commitAt(fixture, start.plusSeconds(3600), treeWith(fixture, path, "tip-"), broken);
+
+            var result = reader.history(fixture, tip.name(), path, 10);
+
+            assertEquals(GitResult.of(GitOutcome.FAILED, MissingObjectException.class.getSimpleName()), result,
+                    "the missing tree of the parent is a failure, not an exception");
+        }
+
+        /** A generated start time that leaves room for later commits. */
+        private static Instant start() {
+            return Instant.ofEpochSecond(Generators.integers(0, Integer.MAX_VALUE / 2).next());
+        }
+
+        /** Writes a commit with the edits on the parents at the given time through the {@link InCoreWriter}. */
+        private ObjectId write(Repository repository, Instant when, List<TreeEdit> edits, ObjectId... parents) {
+            var result = writer.write(repository, Stream.of(parents).map(ObjectId::name).toList(),
+                    new CommitMetadata(person(when), person(when), InCoreWriterTest.message(), null), edits);
+            return ObjectId.fromString(Objects.requireNonNull(result.value(), "the fixture commit is written"));
+        }
+
+        /** Inserts a commit of the tree and the parents at the given time; the tree need not exist. */
+        private static ObjectId commitAt(Repository repository, Instant when, ObjectId tree, ObjectId... parents)
+                throws IOException {
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var commit = new CommitBuilder();
+                commit.setTreeId(tree);
+                commit.setParentIds(parents);
+                commit.setAuthor(person(when));
+                commit.setCommitter(person(when));
+                commit.setMessage(InCoreWriterTest.message());
+                var id = inserter.insert(commit);
+                inserter.flush();
+                return id;
+            }
+        }
+
+        private static ObjectId treeOf(Repository repository, ObjectId commit) throws IOException {
+            return parse(repository, commit.name()).getTree();
+        }
+
+        /** The tree of a commit that holds only the path, with generated content starting with the prefix. */
+        private static ObjectId treeWith(Repository repository, String path, String prefix) throws IOException {
+            return treeOf(repository, commit(repository, Map.of(path, file(prefix + content()))));
         }
 
         private static void assertInfo(RevCommit commit, CommitInfo info) {

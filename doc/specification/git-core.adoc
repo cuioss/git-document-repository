@@ -478,12 +478,19 @@ link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse
   entry is no file of the snapshot.
 * `history(Repository, String revision, String path, int maxCount)` returns the commits that changed the path, at most
   `maxCount` (a value below 1 counts as 1, as for `log`), newest first, as the `CommitInfo` of `log` with id, parents,
-  author, committer, times and message. The walk keeps a commit whose tree differs at the path from the tree of one of
-  its parents (`AndTreeFilter` of `PathFilter` and `TreeFilter.ANY_DIFF`); a root commit that holds the path counts as a
-  change, a directory changes when a path below it changes, and no rename is followed. The parents of a returned commit
-  are its real parents (`RevWalk.setRewriteParents(false)`), because with a tree filter `RevWalk` rewrites them to the
-  simplified history of the path by default. A path that is blank, starts or ends with `/` or holds an empty segment is
-  `NOT_FOUND` with the detail `path: not a valid path`; a path no commit changed yields an empty list.
+  author, committer, times and message. The walk visits the whole ancestry of the revision's commit, with no tree filter
+  on the `RevWalk`, and keeps a commit whose tree differs at the path from the tree of at least one of its parents,
+  compared per parent by a `TreeWalk` with `PathFilter` and `TreeFilter.ANY_DIFF`; a root commit that holds the path
+  counts as a change, a merge that equals every parent at the path does not, a directory changes when a path below it
+  changes, and no rename is followed. A merge that equals one parent at the path and differs from another is kept: a
+  `RevWalk` tree filter would drop it, because for such a merge JGit 7.8.0 `TreeRevFilter` reports no change and
+  follows only the parent the merge equals
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/TreeRevFilter.java[JGit
+  7.8.0 `TreeRevFilter`]). Without a tree filter the walk rewrites no parent, so the parents of a returned commit are
+  its real parents. The walk advances with `RevWalk.next()` and stops once `maxCount` commits are found, reading no
+  commit beyond them; an I/O failure of the walk, a missing tree included, is `FAILED`. A path that is blank, starts or
+  ends with `/` or holds an empty segment is `NOT_FOUND` with the detail `path: not a valid path`; a path no commit
+  changed yields an empty list.
 * `changes(Repository, String from, String to)` returns every changed path between the two trees as a `PathChange` with
   its `ChangeType`, recursively, in the trees' order and without rename detection (`TreeWalk` with
   `TreeFilter.ANY_DIFF`): `ADDED` for a path in the newer commit only, `DELETED` in the older one only, `MODIFIED` in

@@ -25,6 +25,7 @@ import java.util.Optional;
 import de.cuioss.git.document.core.RepositoryOperations.CommitInfo;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -225,11 +226,15 @@ public final class RepositoryReader {
     /**
      * Reads the commits that changed a path, newest first.
      * <p>
-     * The walk starts at the revision's commit and keeps a commit whose tree differs at the path from the tree of one
-     * of its parents (JGit 7.8.0 {@code AndTreeFilter} of {@code PathFilter} and {@code TreeFilter.ANY_DIFF}); a root
-     * commit that holds the path counts as a change. The path names a file or a directory; a directory changes when a
-     * path below it changes. No rename is followed. The parents of a returned commit are its real parents, not the
-     * simplified history of the path ({@code RevWalk.setRewriteParents(false)}).
+     * The walk starts at the revision's commit and visits its whole ancestry, with no tree filter on the
+     * {@code RevWalk}, and keeps a commit whose tree differs at the path from the tree of at least one of its parents,
+     * compared per parent by a {@code TreeWalk} with {@code PathFilter} and {@code TreeFilter.ANY_DIFF} (JGit 7.8.0); a
+     * root commit that holds the path counts as a change, and a merge that equals every parent at the path does not. A
+     * merge that equals one parent at the path and differs from another is kept: a {@code RevWalk} tree filter would
+     * drop it, because JGit 7.8.0 {@code TreeRevFilter} follows only the parent the merge equals. The path names a
+     * file or a directory; a directory changes when a path below it changes. No rename is followed. The parents of a
+     * returned commit are its real parents: without a tree filter, the walk rewrites no parent. The walk stops once
+     * {@code maxCount} commits are found ({@code RevWalk.next()}, which reads no commit ahead).
      * <p>
      * The outcomes:
      * <ul>
@@ -261,22 +266,55 @@ public final class RepositoryReader {
             if (!start.isOk()) {
                 return JGitRepositoryOperations.withoutValue(start);
             }
-            walk.setTreeFilter(AndTreeFilter.create(PathFilter.create(path), TreeFilter.ANY_DIFF));
-            // with a tree filter, JGit 7.8.0 RevWalk rewrites a commit's parents to the simplified history by default,
-            // so a CommitInfo would name the previous change of the path as the parent instead of the real one
-            walk.setRewriteParents(false);
+            // no tree filter on the walk: JGit 7.8.0 TreeRevFilter drops a merge that equals one parent at the path,
+            // so the walk visits the whole ancestry and changesPath decides per commit
             walk.markStart(walk.parseCommit(Objects.requireNonNull(start.value())));
+            PathFilter filter = PathFilter.create(path);
             int limit = Math.max(1, maxCount);
             List<CommitInfo> commits = new ArrayList<>();
-            for (RevCommit commit : walk) {
-                if (commits.size() >= limit) {
+            // RevWalk.next() rather than the iterator, which fetches one commit ahead and wraps an IOException in the
+            // unchecked RevWalkException
+            while (commits.size() < limit) {
+                RevCommit commit = walk.next();
+                if (commit == null) {
                     break;
                 }
-                commits.add(JGitRepositoryOperations.toInfo(commit));
+                if (changesPath(walk, commit, filter)) {
+                    commits.add(JGitRepositoryOperations.toInfo(commit));
+                }
             }
             return GitResult.ok(List.copyOf(commits));
         } catch (IOException e) {
             return JGitRepositoryOperations.failure(e);
+        }
+    }
+
+    /**
+     * Whether a commit changed the path: a root commit when the path exists in its tree, any other commit when its
+     * tree differs at the path from the tree of at least one parent.
+     */
+    private static boolean changesPath(RevWalk walk, RevCommit commit, PathFilter path) throws IOException {
+        ObjectReader objects = walk.getObjectReader();
+        if (commit.getParentCount() == 0) {
+            return matches(objects, path, commit.getTree());
+        }
+        TreeFilter differs = AndTreeFilter.create(path, TreeFilter.ANY_DIFF);
+        for (RevCommit parent : commit.getParents()) {
+            walk.parseHeaders(parent);
+            if (matches(objects, differs, parent.getTree(), commit.getTree())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a recursive walk of the trees under the filter yields an entry. */
+    private static boolean matches(ObjectReader objects, TreeFilter filter, ObjectId... trees) throws IOException {
+        try (TreeWalk tree = new TreeWalk(objects)) {
+            tree.reset(trees);
+            tree.setRecursive(true);
+            tree.setFilter(filter);
+            return tree.next();
         }
     }
 
