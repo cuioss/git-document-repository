@@ -95,13 +95,14 @@ class MergeResultTest {
         void refusesNonId() {
             var abbreviated = fullId().substring(0, 12);
             var nonHex = TestCommits.name();
+            String nullId = nullValue();
 
             assertAll(
                     () -> assertThrows(IllegalArgumentException.class, () -> new MergeResult.Merged(abbreviated),
                             "an abbreviated id"),
                     () -> assertThrows(IllegalArgumentException.class, () -> new MergeResult.Merged(nonHex),
                             "a name that is no id"),
-                    () -> assertThrows(NullPointerException.class, () -> new MergeResult.Merged(nullValue()),
+                    () -> assertThrows(NullPointerException.class, () -> new MergeResult.Merged(nullId),
                             "a null id"));
         }
     }
@@ -136,10 +137,11 @@ class MergeResultTest {
 
             input.add(TestCommits.name());
             var returned = conflicting.paths();
+            var added = TestCommits.name();
 
             assertAll(
                     () -> assertEquals(expected, conflicting.paths(), "a change of the input changes nothing"),
-                    () -> assertThrows(UnsupportedOperationException.class, () -> returned.add(TestCommits.name()),
+                    () -> assertThrows(UnsupportedOperationException.class, () -> returned.add(added),
                             "the returned list is unmodifiable"),
                     () -> assertThrows(UnsupportedOperationException.class, returned::clear,
                             "the returned list cannot be cleared"));
@@ -159,22 +161,34 @@ class MergeResultTest {
         }
 
         @Test
-        @DisplayName("GDR-CORE-6: a conflict refuses no path, a blank or absolute path and null")
+        @DisplayName("GDR-CORE-6: a conflict refuses no path, an empty or absolute path and null")
         void refusesInvalidPaths() {
             List<String> withNull = new ArrayList<>(paths());
             withNull.add(null);
+            List<String> noPaths = List.of();
+            List<String> emptyPath = List.of("");
+            List<String> absolutePath = List.of("/" + TestCommits.name());
+            List<String> nullList = nullValue();
 
             assertAll(Stream.<Executable>of(
-                    () -> assertThrows(IllegalArgumentException.class, () -> new MergeResult.Conflicting(List.of()),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new MergeResult.Conflicting(noPaths),
                             "an empty list"),
                     () -> assertThrows(IllegalArgumentException.class,
-                            () -> new MergeResult.Conflicting(List.of(" ")), "a blank path"),
+                            () -> new MergeResult.Conflicting(emptyPath), "an empty path"),
                     () -> assertThrows(IllegalArgumentException.class,
-                            () -> new MergeResult.Conflicting(List.of("/" + TestCommits.name())), "an absolute path"),
+                            () -> new MergeResult.Conflicting(absolutePath), "an absolute path"),
                     () -> assertThrows(NullPointerException.class, () -> new MergeResult.Conflicting(withNull),
                             "a null path"),
-                    () -> assertThrows(NullPointerException.class, () -> new MergeResult.Conflicting(nullValue()),
+                    () -> assertThrows(NullPointerException.class, () -> new MergeResult.Conflicting(nullList),
                             "a null list")));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-6: a path of whitespace only is a valid file name and is kept")
+        void keepsWhitespaceOnlyPath() {
+            var conflicting = new MergeResult.Conflicting(List.of(" ", "\t"));
+
+            assertEquals(List.of("\t", " "), conflicting.paths(), "a whitespace-only path is a path");
         }
     }
 
@@ -199,6 +213,8 @@ class MergeResultTest {
         @DisplayName("GDR-GEN-3: a merge that did not succeed refuses OK, a blank detail and null")
         void refusesOkAndBlank() {
             var reason = TestCommits.name();
+            GitOutcome nullOutcome = nullValue();
+            String nullDetail = nullValue();
 
             assertAll(Stream.<Executable>of(
                     () -> assertThrows(IllegalArgumentException.class,
@@ -208,9 +224,9 @@ class MergeResultTest {
                     () -> assertThrows(IllegalArgumentException.class,
                             () -> new MergeResult.NotMerged(GitOutcome.FAILED, ""), "an empty detail"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> new MergeResult.NotMerged(nullValue(), reason), "a null outcome"),
+                            () -> new MergeResult.NotMerged(nullOutcome, reason), "a null outcome"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> new MergeResult.NotMerged(GitOutcome.FAILED, nullValue()), "a null detail")));
+                            () -> new MergeResult.NotMerged(GitOutcome.FAILED, nullDetail), "a null detail")));
         }
     }
 

@@ -63,6 +63,9 @@ public final class GitNotes {
     /** The input field of the commit. */
     private static final String COMMIT = "commit";
 
+    /** The reason of a detail that names an input field no object answers to. */
+    private static final String NOT_FOUND_REASON = ": not found";
+
     private final ReferenceUpdater updater;
 
     /**
@@ -114,12 +117,12 @@ public final class GitNotes {
              RevWalk walk = new RevWalk(reader)) {
             Optional<RevCommit> commit = JGitRepositoryOperations.parseCommit(walk, commitId);
             if (commit.isEmpty()) {
-                return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + ": not found");
+                return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + NOT_FOUND_REASON);
             }
             Ref ref = repository.exactRef(notesRef);
             @Nullable ObjectId notesCommit = ref == null ? null : ref.getObjectId();
             if (notesCommit == null) {
-                return GitResult.of(GitOutcome.NOT_FOUND, NOTES_REF + ": not found");
+                return GitResult.of(GitOutcome.NOT_FOUND, NOTES_REF + NOT_FOUND_REASON);
             }
             NoteMap notes = NoteMap.read(reader, walk.parseCommit(notesCommit));
             ObjectId note = notes.get(commit.get());
@@ -185,7 +188,7 @@ public final class GitNotes {
         try (RevWalk walk = new RevWalk(repository)) {
             Optional<RevCommit> parsed = JGitRepositoryOperations.parseCommit(walk, commitId);
             if (parsed.isEmpty()) {
-                return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + ": not found");
+                return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + NOT_FOUND_REASON);
             }
             commit = parsed.get();
         } catch (IOException e) {

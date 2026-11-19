@@ -374,15 +374,18 @@ class GitNotesTest {
             var notesRef = notesRef();
             var note = noteContent();
             var metadata = metadata();
+            byte[] nullNote = nullValue();
+            String nullNotesRef = nullValue();
+            ReferenceUpdater nullUpdater = nullValue();
 
             assertAll(Stream.<Executable>of(
                     () -> assertThrows(IllegalArgumentException.class,
                             () -> notes.write(repository, notesRef, commit, note, metadata, 0), "zero attempts"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> notes.write(repository, notesRef, commit, nullValue(), metadata, 1), "a null note"),
+                            () -> notes.write(repository, notesRef, commit, nullNote, metadata, 1), "a null note"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> notes.read(repository, nullValue(), commit), "a null notes reference"),
-                    () -> assertThrows(NullPointerException.class, () -> new GitNotes(nullValue()),
+                            () -> notes.read(repository, nullNotesRef, commit), "a null notes reference"),
+                    () -> assertThrows(NullPointerException.class, () -> new GitNotes(nullUpdater),
                             "a null updater")));
         }
     }

@@ -56,6 +56,9 @@ import org.eclipse.jgit.treewalk.filter.TreeFilter;
  */
 public final class RepositoryReader {
 
+    /** The input field of the repository. */
+    private static final String REPOSITORY = "repository";
+
     /** The input field of the revision of a snapshot or a history. */
     private static final String REVISION = "revision";
 
@@ -196,7 +199,7 @@ public final class RepositoryReader {
      * @throws NullPointerException if an argument is {@code null}
      */
     public GitResult<Snapshot> snapshot(Repository repository, String revision) {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(revision, REVISION);
         try (RevWalk walk = new RevWalk(repository)) {
             GitResult<ObjectId> resolved = JGitRepositoryOperations.resolveRevision(repository, revision, REVISION);
@@ -247,7 +250,7 @@ public final class RepositoryReader {
      * @throws NullPointerException if an argument is {@code null}
      */
     public GitResult<List<CommitInfo>> history(Repository repository, String revision, String path, int maxCount) {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(revision, REVISION);
         Objects.requireNonNull(path, PATH);
         if (!isValidPath(path)) {
@@ -302,7 +305,7 @@ public final class RepositoryReader {
      * @throws NullPointerException if an argument is {@code null}
      */
     public GitResult<List<PathChange>> changes(Repository repository, String from, String to) {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(from, FROM);
         Objects.requireNonNull(to, TO);
         if (!GitIdentity.isFullCommitId(from)) {

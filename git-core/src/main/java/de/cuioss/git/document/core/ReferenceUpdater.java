@@ -59,6 +59,12 @@ public final class ReferenceUpdater {
 
     private static final CuiLogger LOGGER = new CuiLogger(ReferenceUpdater.class);
 
+    /** The input field of the repository. */
+    private static final String REPOSITORY = "repository";
+
+    /** The input field of the reference name. */
+    private static final String REF_NAME = "refName";
+
     private final InCoreWriter writer;
 
     /**
@@ -104,8 +110,8 @@ public final class ReferenceUpdater {
      */
     public GitResult<String> compareAndSwap(Repository repository, String refName, CommitMetadata metadata,
             TreeOperation operation, int attempts) {
-        Objects.requireNonNull(repository, "repository");
-        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(operation, "operation");
         requireAttempts(attempts);
@@ -149,8 +155,8 @@ public final class ReferenceUpdater {
      */
     GitResult<String> compareAndSwapTree(Repository repository, String refName, CommitMetadata metadata,
             InCoreWriter.TreeSource source, int attempts) {
-        Objects.requireNonNull(repository, "repository");
-        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(source, "source");
         requireAttempts(attempts);
@@ -236,8 +242,8 @@ public final class ReferenceUpdater {
      */
     public GitResult<String> compareAndDelete(Repository repository, String refName, String expectedOldId,
             int attempts) {
-        Objects.requireNonNull(repository, "repository");
-        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(repository, REPOSITORY);
+        Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(expectedOldId, "expectedOldId");
         requireAttempts(attempts);
         if (!GitIdentity.isFullCommitId(expectedOldId)) {

@@ -123,14 +123,17 @@ public sealed interface MergeResult permits MergeResult.Merged, MergeResult.Conf
          *
          * @param paths the conflicting paths, repository-relative
          * @throws NullPointerException     if {@code paths} or one of its elements is {@code null}
-         * @throws IllegalArgumentException if {@code paths} is empty or a path is blank or absolute
+         * @throws IllegalArgumentException if {@code paths} is empty or a path is empty or absolute; a path of
+         *                                  whitespace only is accepted, because a file of that name is valid in a Git
+         *                                  repository (JGit 7.8.0 {@code ObjectChecker} rejects an empty name only,
+         *                                  besides {@code .}, {@code ..} and {@code .git})
          */
         public Conflicting {
             Objects.requireNonNull(paths, "paths");
             var sorted = new TreeSet<String>();
             for (String path : paths) {
                 Objects.requireNonNull(path, "paths");
-                if (path.isBlank() || path.startsWith("/")) {
+                if (path.isEmpty() || path.startsWith("/")) {
                     throw new IllegalArgumentException("paths: not a repository-relative path");
                 }
                 sorted.add(path);

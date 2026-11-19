@@ -129,7 +129,10 @@ public final class InCoreWriter {
      * The parents are parsed as {@link #write(Repository, List, CommitMetadata, List)} parses them; the source is then
      * called once with the reader and the inserter of the commit and the tree of the first parent, and the id it
      * returns becomes the commit's tree as it is. The source's objects, the commit and its signature go through the one
-     * inserter, which is flushed once, after the commit was inserted, so a source that fails leaves no flushed object.
+     * inserter, which is flushed once, after the commit was inserted. A source that fails prevents that flush and the
+     * caller's reference update, but it does not undo an insertion: JGit 7.8.0 {@code ObjectDirectoryInserter} writes
+     * each object of a file-backed repository as a loose object when it is inserted, so the objects the source had
+     * already inserted may stay in the object database, unreferenced.
      * <p>
      * The outcomes are those of the public {@code write}, except that no edit is checked: {@link GitOutcome#OK} with the
      * full id of the new commit; {@link GitOutcome#NOT_FOUND} for a parent that is no full commit id or no commit of the

@@ -70,6 +70,12 @@ class InCoreMergerTest {
     /** The length of a loose object's file name: the object id without its two-digit directory. */
     private static final int LOOSE_NAME_LENGTH = Constants.OBJECT_ID_STRING_LENGTH - 2;
 
+    /** The side of the first tip of a conflict fixture. */
+    private static final String OURS = "ours";
+
+    /** The side of the second tip of a conflict fixture. */
+    private static final String THEIRS = "theirs";
+
     private final InCoreMerger merger = new InCoreMerger();
 
     /** A file of a fixture tree: its mode and its content. */
@@ -83,6 +89,14 @@ class InCoreMergerTest {
 
     static Entry file(String content) {
         return new Entry(FileMode.REGULAR_FILE, content);
+    }
+
+    /**
+     * A regular file whose content starts with the name of its side: two sides never receive the same content, and
+     * never the letters-only content a base file is generated with, however the generator draws.
+     */
+    static Entry sideFile(String side) {
+        return file(side + "-" + content());
     }
 
     static Entry executable(String content) {
@@ -151,8 +165,7 @@ class InCoreMergerTest {
     }
 
     /** Merges and asserts a clean merge whose tree holds exactly the expected files. */
-    private void assertMerged(Repository repository, ObjectId ours, ObjectId theirs, Map<String, Entry> expected)
-            throws IOException {
+    private void assertMerged(Repository repository, ObjectId ours, ObjectId theirs, Map<String, Entry> expected) {
         var result = merge(repository, ours, theirs);
         var merged = assertInstanceOf(MergeResult.Merged.class, result, "the merge is clean");
         assertAll(
@@ -258,8 +271,20 @@ class InCoreMergerTest {
             var path = TestCommits.name();
             var files = Map.of(path, file(), TestCommits.name(), file());
             var base = commit(repository, files);
-            var ours = commit(repository, with(files, Map.of(path, file())), base);
-            var theirs = commit(repository, with(files, Map.of(path, file())), base);
+            var ours = commit(repository, with(files, Map.of(path, sideFile(OURS))), base);
+            var theirs = commit(repository, with(files, Map.of(path, sideFile(THEIRS))), base);
+
+            assertConflicting(repository, ours, theirs, List.of(path));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-6: a conflict on a file whose name is whitespace only names that path")
+        void whitespaceOnlyNameConflict(@InMemory Repository repository) throws Exception {
+            var path = " ";
+            var files = Map.of(path, file(), TestCommits.name(), file());
+            var base = commit(repository, files);
+            var ours = commit(repository, with(files, Map.of(path, sideFile(OURS))), base);
+            var theirs = commit(repository, with(files, Map.of(path, sideFile(THEIRS))), base);
 
             assertConflicting(repository, ours, theirs, List.of(path));
         }
@@ -284,7 +309,7 @@ class InCoreMergerTest {
             var files = Map.of(path, file(), TestCommits.name(), file());
             var base = commit(repository, files);
             var ours = commit(repository, with(files, Map.of(), path), base);
-            var theirs = commit(repository, with(files, Map.of(path, file())), base);
+            var theirs = commit(repository, with(files, Map.of(path, sideFile(THEIRS))), base);
 
             assertAll(
                     () -> assertConflicting(repository, ours, theirs, List.of(path)),
@@ -297,8 +322,8 @@ class InCoreMergerTest {
             var path = nestedPath();
             var files = Map.of(TestCommits.name(), file());
             var base = commit(repository, files);
-            var ours = commit(repository, with(files, Map.of(path, file())), base);
-            var theirs = commit(repository, with(files, Map.of(path, file())), base);
+            var ours = commit(repository, with(files, Map.of(path, sideFile(OURS))), base);
+            var theirs = commit(repository, with(files, Map.of(path, sideFile(THEIRS))), base);
 
             assertConflicting(repository, ours, theirs, List.of(path));
         }
@@ -327,9 +352,10 @@ class InCoreMergerTest {
             var files = Map.of(contentConflict, file(), deleteConflict, file(), oursOnly, file(), theirsOnly, file());
             var base = commit(repository, files);
             var ours = commit(repository,
-                    with(files, Map.of(contentConflict, file(), oursOnly, file()), deleteConflict), base);
-            var theirs = commit(repository,
-                    with(files, Map.of(contentConflict, file(), deleteConflict, file(), theirsOnly, file())), base);
+                    with(files, Map.of(contentConflict, sideFile(OURS), oursOnly, file()), deleteConflict), base);
+            var theirs = commit(repository, with(files,
+                    Map.of(contentConflict, sideFile(THEIRS), deleteConflict, sideFile(THEIRS), theirsOnly, file())),
+                    base);
 
             assertConflicting(repository, ours, theirs, List.of(contentConflict, deleteConflict));
         }
@@ -346,8 +372,8 @@ class InCoreMergerTest {
             var other = TestCommits.name();
             var files = Map.of(path, file(), other, file());
             var base = commit(repository, files);
-            var ours = commit(repository, with(files, Map.of(path, file())), base);
-            var theirs = commit(repository, with(files, Map.of(path, file())), base);
+            var ours = commit(repository, with(files, Map.of(path, sideFile(OURS))), base);
+            var theirs = commit(repository, with(files, Map.of(path, sideFile(THEIRS))), base);
             var clean = commit(repository, with(files, Map.of(other, file())), base);
             TestCommits.setRef(repository, GitIdentity.branchRef(TestCommits.name()), ours);
             TestCommits.setRef(repository, GitIdentity.branchRef(TestCommits.name()), theirs);

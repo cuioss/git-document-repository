@@ -252,7 +252,7 @@ class RepositoryReaderTest {
 
         @Test
         @DisplayName("GDR-CORE-9: a path never changed has an empty history, maxCount bounds the commits")
-        void emptyAndBounded(@InMemory Repository fixture) throws Exception {
+        void emptyAndBounded(@InMemory Repository fixture) {
             var path = TestCommits.name();
             var commits = fourCommits(fixture, path, TestCommits.name());
             var tip = commits.getLast();
@@ -270,7 +270,7 @@ class RepositoryReaderTest {
 
         @Test
         @DisplayName("GDR-CORE-9: an invalid path and an unknown revision are not found")
-        void notFound(@InMemory Repository fixture) throws Exception {
+        void notFound(@InMemory Repository fixture) {
             var commits = fourCommits(fixture, TestCommits.name(), TestCommits.name());
             var tip = commits.getLast();
             var name = TestCommits.name();
@@ -411,15 +411,20 @@ class RepositoryReaderTest {
 
         var snapshot = new RepositoryReader.Snapshot(id, id, files);
         files.clear();
+        var snapshotFiles = snapshot.files();
+        String nullId = nullValue();
+        List<SnapshotFile> noFiles = List.of();
+        var changedPath = TestCommits.name();
+        ChangeType nullType = nullValue();
 
         assertAll(
                 () -> assertEquals(1, snapshot.files().size(), "a later change of the list changes nothing"),
-                () -> assertThrows(UnsupportedOperationException.class, () -> snapshot.files().clear(),
+                () -> assertThrows(UnsupportedOperationException.class, snapshotFiles::clear,
                         "the files are unmodifiable"),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new RepositoryReader.Snapshot(nullValue(), id, List.of()), "a null commit id"),
+                        () -> new RepositoryReader.Snapshot(nullId, id, noFiles), "a null commit id"),
                 () -> assertThrows(NullPointerException.class,
-                        () -> new PathChange(TestCommits.name(), nullValue()), "a null change type"),
+                        () -> new PathChange(changedPath, nullType), "a null change type"),
                 () -> assertEquals(id, snapshot.commitId(), "the commit id is kept"));
     }
 

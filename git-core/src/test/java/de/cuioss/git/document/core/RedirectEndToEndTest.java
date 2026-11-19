@@ -120,9 +120,14 @@ class RedirectEndToEndTest {
         return "https://" + ADMITTED_HOST + ":" + server.getPort() + "/" + TestCommits.name() + ".git";
     }
 
-    /** Trusts the generated certificate for the transports of this repository only. */
+    /**
+     * Trusts the generated certificate for the transports of this repository only, and pins the redirect handling to
+     * JGit 7.8.0's default ({@code http.followRedirects=initial}): a developer's {@code http.followRedirects=false}
+     * would otherwise make {@code TransportHttp} reject the first {@code 302} before the policy guard is reached.
+     */
     private static void trustGeneratedCertificate(StoredConfig config) throws IOException {
         config.setBoolean(HttpConfig.HTTP, null, HttpConfig.SSL_VERIFY_KEY, false);
+        config.setEnum(HttpConfig.HTTP, null, HttpConfig.FOLLOW_REDIRECTS_KEY, HttpConfig.HttpRedirectMode.INITIAL);
         config.save();
     }
 
