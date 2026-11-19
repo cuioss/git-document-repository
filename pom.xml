@@ -52,4 +52,41 @@
         <module>git-worktrees</module>
         <module>git-testing</module>
     </modules>
+    <build>
+        <plugins>
+            <!-- GDR-GEN-1: the modules depend on one another only along the graph of
+                 doc/concepts/module-structure.adoc. This rule bans every direct reactor dependency
+                 (de.cuioss:git-*) except git-testing in scope test, which every module may test against.
+                 Every module lists its allowed reactor edges in its own POM, one include per edge, appended
+                 to this rule with combine.children="append" in an execution of the same id. The inherited
+                 mojo-enforcer-rules execution stays untouched. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>module-layering</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>de.cuioss:git-*</exclude>
+                                    </excludes>
+                                    <includes>
+                                        <include>de.cuioss:git-testing:*:*:test</include>
+                                    </includes>
+                                    <message>GDR-GEN-1: a module declares a reactor dependency outside the module graph of doc/concepts/module-structure.adoc. Add an allowed edge to the module-layering rule of the module's own POM only when the graph names it.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
