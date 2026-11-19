@@ -107,21 +107,27 @@ notes under a caller-named notes reference written through compare-and-swap (GDR
   `MergeStrategy`, `NoteMap`, `DiffEntry` in
   `~/git/pm-mcp-core/pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/` at pm-mcp-core
   `287e1a86` finds none.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: the leaf read ~/git/pm-mcp-core/.../provider/git/ at 287e1a86 on disk: none of Merger, MergeStrategy, NoteMap, DiffEntry occurs
 - OBSERVED: the spec states `StrategySimpleTwoWayInCore` reports a path modified by both sides as a conflict and
   reports no conflicting paths, with its JGit 7.8.0 source link — `doc/specification/git-core.adoc` § GDR-CORE-6.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 StrategySimpleTwoWayInCore sets a boolean only (leaf reading 95-146); the add method 148-165 re-read
 - HYPOTHESIS: `NoteMap.read`, `NoteMap.set` and `NoteMap.writeTree` have the needed signatures in JGit 7.8.0 —
   confirm/refute at JGit `v7.8.0.202609011348-r` `org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteMap.java` §
   `NoteMap` (verify-at-outline).
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 NoteMap.java: read 84, readTree 134, set 277, writeTree 347, newEmptyMap 45 re-read
 - OBSERVED: the residuals of deliverable 5 were read at PLAN-02's merge commit `2c728bc`: the redirect tests call the
   guard and the connection factory directly
   (`git-core/src/test/java/de/cuioss/git/document/core/JGitRepositoryOperationsTest.java` lines 329-371); only a local
   `pre-push` hook is tested (same file, lines 953-981); `AbsenceContractsTest` asserts absence on values it just
   passed in; `GitOutcome` has 20 constants and the GDR-GEN-3 table 20 rows, with no test between them.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 2c728bc: redirect test and local pre-push hook test exist, AbsenceContractsTest asserts null on values just passed in, GitOutcome has 20 constants (counted) and the GDR-GEN-3 table 20 rows
 - HYPOTHESIS: JGit 7.8.0 `ReceivePack` does not run native hooks, so a remote-side hook refusal cannot occur — confirm/
   refute at JGit `v7.8.0.202609011348-r` `org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceivePack.java` (verify-at-outline).
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: JGit 7.8.0 ReceivePack.java 253, 300, 2146 hold the Java PreReceiveHook only; native hooks run through GitHook / FS.runHookIfPresent only (callers re-read by search)
 - Verify-first clause: the three-layer analysis of PLAN-02 read the code only (no build, no test run); every OBSERVED
   claim of deliverable 5 is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the item that
   names it.
+  - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: no OBSERVED claim of deliverable 5 was refuted at the plan's head (claims 0 and 3 re-read true)
 
 ## Expected Surface
 
