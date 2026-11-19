@@ -22,11 +22,15 @@ import static de.cuioss.git.document.core.InCoreWriterTest.parse;
 import static de.cuioss.git.document.core.InCoreWriterTest.put;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -46,10 +50,16 @@ import java.util.concurrent.TimeUnit;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefDatabase;
+import org.eclipse.jgit.lib.RefRename;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.ReflogReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -72,6 +82,13 @@ import org.junit.jupiter.api.Test;
  * {@code .lock} file, and {@code RefDirectoryUpdate.tryLock} then ends the update in {@code LOCK_FAILURE}; a single
  * competing success can cost several attempts, so on the local fixture the test asserts the invariant that no commit is
  * lost, not that every updater succeeds.
+ * <p>
+ * Compare-and-delete (GDR-CORE-5) runs on the local fixture, where a held {@code .lock} file of the reference makes
+ * the delete end in {@code LOCK_FAILURE} (checked against JGit 7.8.0: {@code RefUpdate.updateImpl} returns it when
+ * {@code RefDirectoryUpdate.tryLock} fails, and {@code LockFile.lock()} fails while the {@code .lock} file exists).
+ * The release of a held lock between two attempts is deterministic: {@link LockReleasingRepository} deletes the lock
+ * file in the re-read that {@code compareAndDelete} performs after a {@code LOCK_FAILURE}, so no test sleeps, starts
+ * a thread or depends on timing.
  */
 @EnableGeneratorController
 @DisplayName("ReferenceUpdater (GDR-CORE-5)")
@@ -323,6 +340,251 @@ class ReferenceUpdaterTest {
                             "every successful commit is in the history of the reference"),
                     () -> assertTrue(succeeded.isEmpty() || succeeded.contains(head.name()),
                             "the reference points at the head of that history"));
+        }
+    }
+
+    @Nested
+    @DisplayName("compareAndDelete")
+    class CompareAndDelete {
+
+        @Test
+        @DisplayName("GDR-CORE-5: deletes a reference that points at the expected id")
+        void deletesAtExpectedId(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+
+            var result = updater.compareAndDelete(repository, refName, initial.name(), 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the reference is deleted"),
+                    () -> assertEquals(initial.name(), result.value(), "the value is the deleted id"),
+                    () -> assertNull(refId(repository, refName), "the reference is gone"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a delete racing a newer draft commit is a conflict, the newer draft is kept")
+        void deleteRacingNewerDraft(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var draft = updater.compareAndSwap(repository, refName, metadata(), new Recording(), 1);
+            var newer = ObjectId.fromString(Objects.requireNonNull(draft.value(), "the newer draft is written"));
+
+            var result = updater.compareAndDelete(repository, refName, initial.name(), 3);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the moved reference is a conflict"),
+                    () -> assertNull(result.value(), "a conflict carries no id"),
+                    () -> assertEquals(refName + ": LOCK_FAILURE, the reference moved or is gone", result.detail(),
+                            "the detail names the reference and the result"),
+                    () -> assertEquals(newer, refId(repository, refName),
+                            "the reference stays at the newer draft commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a reference that does not exist is a conflict, nothing is created")
+        void referenceGone(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var unreferenced = TestCommits.commit(repository, null);
+
+            var result = updater.compareAndDelete(repository, refName, unreferenced.name(), 2);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the missing reference is a conflict"),
+                    () -> assertEquals(refName + ": LOCK_FAILURE, the reference moved or is gone", result.detail(),
+                            "the detail names the reference and the result"),
+                    () -> assertNull(refId(repository, refName), "the reference is still missing"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a held lock is retried with the same expected id and the delete succeeds once released")
+        void lockReleasedRetried(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var lock = Files.createFile(lockFile(repository, refName));
+            try (var releasing = new LockReleasingRepository(directoryOf(repository))) {
+                releasing.releaseOnNextRead(lock);
+
+                var result = updater.compareAndDelete(releasing, refName, initial.name(), 2);
+
+                int reads = releasing.exactReads();
+                assertAll(
+                        () -> assertEquals(GitOutcome.OK, result.outcome(), "the second attempt deletes"),
+                        () -> assertEquals(initial.name(), result.value(), "the value is the expected id"),
+                        () -> assertEquals(1, reads,
+                                "the reference is re-read exactly once, after the first attempt met the lock"),
+                        () -> assertFalse(Files.exists(lock), "the lock was released between the attempts"),
+                        () -> assertNull(refId(releasing, refName), "the reference is gone"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a lock held through every attempt is a conflict, the reference is unchanged")
+        void lockNeverReleased(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var lock = Files.createFile(lockFile(repository, refName));
+            int attempts = 3;
+
+            var result = updater.compareAndDelete(repository, refName, initial.name(), attempts);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the held lock is a conflict"),
+                    () -> assertNull(result.value(), "a conflict carries no id"),
+                    () -> assertEquals(refName + ": LOCK_FAILURE on every attempt (" + attempts + ")",
+                            result.detail(), "the detail names the reference, the result and the attempts"),
+                    () -> assertTrue(Files.exists(lock), "the other writer's lock is left in place"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: an expected id that is no full commit id is not found, nothing is deleted")
+        void abbreviatedExpectedId(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+
+            var result = updater.compareAndDelete(repository, refName, initial.abbreviate(7).name(), 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.NOT_FOUND, result.outcome(), "the abbreviated id is not found"),
+                    () -> assertEquals("expectedOldId: not a full commit id", result.detail(),
+                            "the detail names the field"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: fewer than one attempt is a programming error, nothing is deleted")
+        void attemptsBelowOne(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var expected = initial.name();
+
+            // 0 is the boundary of the rule "at least one attempt", -1 a value below it
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndDelete(repository, refName, expected, 0),
+                            "zero attempts are rejected"),
+                    () -> assertThrows(IllegalArgumentException.class,
+                            () -> updater.compareAndDelete(repository, refName, expected, -1),
+                            "a negative number of attempts is rejected"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+    }
+
+    private static File directoryOf(Repository repository) {
+        return Objects.requireNonNull(repository.getDirectory(), "a local repository has a directory");
+    }
+
+    /** The {@code .lock} file JGit creates next to a loose reference while it updates or deletes it. */
+    private static Path lockFile(Repository repository, String refName) {
+        return directoryOf(repository).toPath().resolve(refName + ".lock");
+    }
+
+    /**
+     * A second handle on a local repository, opened with the builder settings of the {@code @LocalRepository} fixture
+     * (a bare repository on the fixture's directory), whose reference database releases a held lock file in the first
+     * exact read after {@link #releaseOnNextRead(Path)}.
+     * <p>
+     * Checked against JGit 7.8.0: {@code Repository.exactRef(String)} is {@code final} and returns
+     * {@code getRefDatabase().exactRef(String)}, so the double overrides {@link FileRepository#getRefDatabase()} with a
+     * database that delegates every call to the real {@code RefDirectory}. The updates it creates
+     * ({@code RefDirectory.newUpdate}) work on the real database, so only the updater's own {@code exactRef} calls pass
+     * through the double. {@code compareAndDelete} reads the reference only after a {@code LOCK_FAILURE}, so the lock is
+     * released exactly between the first and the second attempt.
+     */
+    private static final class LockReleasingRepository extends FileRepository {
+
+        private @Nullable Path heldLock;
+        private int exactReads;
+
+        LockReleasingRepository(File gitDir) throws IOException {
+            super(new FileRepositoryBuilder().setGitDir(gitDir).setBare().setup());
+        }
+
+        /** Deletes the given lock file in the next exact read and starts counting the exact reads. */
+        void releaseOnNextRead(Path lock) {
+            heldLock = lock;
+            exactReads = 0;
+        }
+
+        int exactReads() {
+            return exactReads;
+        }
+
+        @Override
+        public RefDatabase getRefDatabase() {
+            return new Releasing(super.getRefDatabase());
+        }
+
+        private @Nullable Ref readReleasing(RefDatabase database, String name) throws IOException {
+            exactReads++;
+            var lock = heldLock;
+            if (lock != null) {
+                heldLock = null;
+                Files.delete(lock);
+            }
+            return database.exactRef(name);
+        }
+
+        /** Delegates to the real reference database; only the exact read releases the lock first. */
+        private final class Releasing extends RefDatabase {
+
+            private final RefDatabase delegate;
+
+            Releasing(RefDatabase delegate) {
+                this.delegate = delegate;
+            }
+
+            @Override
+            public void create() throws IOException {
+                delegate.create();
+            }
+
+            @Override
+            public void close() {
+                delegate.close();
+            }
+
+            @Override
+            public boolean isNameConflicting(String name) throws IOException {
+                return delegate.isNameConflicting(name);
+            }
+
+            @Override
+            public RefUpdate newUpdate(String name, boolean detach) throws IOException {
+                return delegate.newUpdate(name, detach);
+            }
+
+            @Override
+            public RefRename newRename(String fromName, String toName) throws IOException {
+                return delegate.newRename(fromName, toName);
+            }
+
+            @Override
+            public @Nullable Ref exactRef(String name) throws IOException {
+                return readReleasing(delegate, name);
+            }
+
+            @Override
+            public ReflogReader getReflogReader(Ref ref) throws IOException {
+                return delegate.getReflogReader(ref);
+            }
+
+            // the abstract method JGit 7.8.0 still declares; it delegates the deprecated call unchanged
+            @SuppressWarnings("deprecation")
+            @Override
+            public Map<String, Ref> getRefs(String prefix) throws IOException {
+                return delegate.getRefs(prefix);
+            }
+
+            @Override
+            public List<Ref> getAdditionalRefs() throws IOException {
+                return delegate.getAdditionalRefs();
+            }
+
+            @Override
+            public Ref peel(Ref ref) throws IOException {
+                return delegate.peel(ref);
+            }
         }
     }
 

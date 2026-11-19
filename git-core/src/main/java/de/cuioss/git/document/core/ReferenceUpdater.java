@@ -44,6 +44,9 @@ import org.jspecify.annotations.Nullable;
  * lost race starts the next attempt, which reads the reference again and runs the operation again on the tree the
  * concurrent writer left. The commit written by a lost attempt stays in the object database unreferenced.
  * <p>
+ * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
+ * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
+ * <p>
  * A detail names the reference and the {@link RefUpdate.Result}, never content or an identity (GDR-NFR-3).
  *
  * @since 0.1
@@ -131,6 +134,90 @@ public final class ReferenceUpdater {
         } catch (IOException e) {
             return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Deletes a reference, provided it still points at the expected commit (GDR-CORE-5; checked against JGit 7.8.0).
+     * <p>
+     * An attempt deletes through a {@link RefUpdate} that expects the given id ({@code setExpectedOldObjectId}), sets
+     * the force flag ({@code setForceUpdate(true)}: JGit 7.8.0 rejects a delete without it) and writes no reflog
+     * ({@code disableRefLog()}). JGit compares the expected id with the reference's id while it holds the reference's
+     * lock; a mismatch, like a lock held by another writer, ends the attempt in {@link RefUpdate.Result#LOCK_FAILURE}.
+     * The updater then re-reads the reference ({@code Repository.exactRef(String)}) only to tell the two apart: a
+     * reference still at the expected id is retried with that same expected id, so the lock-held comparison decides
+     * again, and a reference that moved or is gone ends the call at once; the id it moved to is never adopted.
+     * <p>
+     * The outcomes:
+     * <ul>
+     * <li>{@link GitOutcome#OK}: the reference was deleted ({@link RefUpdate.Result#FORCED}); the value is the deleted
+     * id, the expected id;</li>
+     * <li>{@link GitOutcome#NOT_FOUND}: {@code expectedOldId} is no full commit id; the detail names the field. Nothing
+     * is read or written;</li>
+     * <li>{@link GitOutcome#CONFLICT}: the reference moved away from the expected id or is gone, or every attempt met a
+     * held lock; the reference is left as the other writer left it;</li>
+     * <li>{@link GitOutcome#FAILED}: an I/O failure, including {@link RefUpdate.Result#IO_FAILURE}, which is neither
+     * retried nor reported as a conflict;</li>
+     * <li>{@link GitOutcome#REJECTED}: the delete ended in any other {@link RefUpdate.Result}; the detail names it.</li>
+     * </ul>
+     *
+     * @param repository    the repository
+     * @param refName       the full name of the reference, e.g. {@code refs/heads/main}
+     * @param expectedOldId the full id of the commit the reference must point at to be deleted
+     * @param attempts      the total number of tries, at least 1
+     * @return the deleted id, or the outcome that prevented the delete
+     * @throws NullPointerException     if an argument is {@code null}
+     * @throws IllegalArgumentException if {@code attempts} is less than 1
+     */
+    public GitResult<String> compareAndDelete(Repository repository, String refName, String expectedOldId,
+            int attempts) {
+        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(refName, "refName");
+        Objects.requireNonNull(expectedOldId, "expectedOldId");
+        if (attempts < 1) {
+            throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
+        }
+        if (!GitIdentity.isFullCommitId(expectedOldId)) {
+            return GitResult.of(GitOutcome.NOT_FOUND, "expectedOldId: not a full commit id");
+        }
+        ObjectId expected = ObjectId.fromString(expectedOldId);
+        try {
+            for (int attempt = 1; attempt <= attempts; attempt++) {
+                RefUpdate.Result result = delete(repository, refName, expected);
+                switch (result) {
+                    case FORCED -> {
+                        return GitResult.ok(expected.name());
+                    }
+                    case LOCK_FAILURE -> {
+                        Ref current = repository.exactRef(refName);
+                        if (current == null || !expected.equals(current.getObjectId())) {
+                            return GitResult.of(GitOutcome.CONFLICT,
+                                    refName + ": " + result + ", the reference moved or is gone");
+                        }
+                        LOGGER.debug("Compare-and-delete of %s met a held lock, attempt %s of %s", refName, attempt,
+                                attempts);
+                    }
+                    case IO_FAILURE -> {
+                        return GitResult.of(GitOutcome.FAILED, refName + ": " + result);
+                    }
+                    default -> {
+                        return GitResult.of(GitOutcome.REJECTED, refName + ": " + result);
+                    }
+                }
+            }
+            return GitResult.of(GitOutcome.CONFLICT,
+                    refName + ": " + RefUpdate.Result.LOCK_FAILURE + " on every attempt (" + attempts + ")");
+        } catch (IOException e) {
+            return GitResult.of(GitOutcome.FAILED, e.getClass().getSimpleName());
+        }
+    }
+
+    private static RefUpdate.Result delete(Repository repository, String refName, ObjectId expected)
+            throws IOException {
+        RefUpdate delete = repository.updateRef(refName);
+        delete.setExpectedOldObjectId(expected);
+        delete.setForceUpdate(true);
+        delete.disableRefLog();
+        return delete.delete();
     }
 
     private static RevCommit parseCommit(Repository repository, ObjectId id) throws IOException {
