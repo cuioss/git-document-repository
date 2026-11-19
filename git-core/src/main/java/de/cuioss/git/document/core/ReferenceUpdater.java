@@ -21,12 +21,15 @@ import java.util.Objects;
 
 
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -47,6 +50,13 @@ import org.jspecify.annotations.Nullable;
  * A package-private tree-level variant runs the same loop with a finished tree instead of edits: its source receives
  * the reference's current tree and returns the tree of the next commit, and its update replaces a symbolic reference
  * instead of moving the reference it points at ({@code Repository.updateRef(refName, true)}).
+ * <p>
+ * For a symbolic reference replaced or deleted itself, which check decides depends on the backend: the file backend
+ * (JGit 7.8.0 {@code RefDirectoryUpdate}) compares the expected id with the resolved id under the reference's lock as
+ * for any other reference; the in-memory DFS backend ({@code DfsRefUpdate}) compares the expected id with no id at all
+ * and always reports {@link RefUpdate.Result#LOCK_FAILURE}, so the updater then decides through one atomic
+ * {@link BatchRefUpdate} that replaces or deletes the symbolic reference only while its base reference still points at
+ * the expected id. Neither path drops the expected-id check.
  * <p>
  * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
  * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
@@ -135,8 +145,13 @@ public final class ReferenceUpdater {
      * {@code Repository.updateRef(refName, true)}; with {@code detach} set JGit 7.8.0
      * {@code RefDirectory.newUpdate} and {@code DfsRefDatabase.newUpdate} mark the update as detaching a symbolic
      * reference, which replaces the symbolic reference by one that points at the new commit and leaves its former
-     * target as it is. The expected id is the id the named reference resolves to, and JGit compares it under the
-     * reference's lock as for {@code compareAndSwap}.
+     * target as it is. The expected id is the id the named reference resolves to. On the file backend JGit compares it
+     * under the reference's lock as for {@code compareAndSwap}. On the in-memory DFS backend JGit 7.8.0
+     * {@code DfsRefUpdate.tryLock(false)} drops the resolved id of a symbolic reference, so {@code RefUpdate} reports
+     * {@link RefUpdate.Result#LOCK_FAILURE} for every expected id; the updater then replaces the symbolic reference
+     * through one atomic {@link BatchRefUpdate} that also requires the base reference to still point at the expected id.
+     * A writer that moved the base reference in between makes that batch fail, which is a lost race as for any other
+     * reference.
      * <p>
      * The outcomes are those of {@code compareAndSwap}: {@link GitOutcome#OK} with the full id of the new commit,
      * {@link GitOutcome#CONFLICT} after a {@link RefUpdate.Result#LOCK_FAILURE} in every attempt,
@@ -218,6 +233,10 @@ public final class ReferenceUpdater {
      * A symbolic reference is deleted itself, never the reference it points at: the update is created with
      * {@code Repository.updateRef(refName, true)}, because without {@code detach} JGit 7.8.0 resolves the symbolic
      * reference and deletes its base reference instead. The expected id is the id the symbolic reference resolves to.
+     * On the file backend JGit compares it under the lock; on the in-memory DFS backend, where JGit 7.8.0
+     * {@code DfsRefUpdate} compares it with no id and reports {@link RefUpdate.Result#LOCK_FAILURE}, the updater deletes
+     * the symbolic reference through one atomic {@link BatchRefUpdate} that also requires its base reference to still
+     * point at the expected id. A failed batch is the {@code LOCK_FAILURE} it replaces, decided by the re-read above.
      * <p>
      * The outcomes:
      * <ul>
@@ -286,7 +305,8 @@ public final class ReferenceUpdater {
      * JGit 7.8.0 {@code RefDirectory.newUpdate(name, false)} resolves a symbolic reference, and {@code RefUpdate.delete}
      * then deletes its leaf, the base reference, and leaves the symbolic one; with {@code detach} set it locks and
      * deletes the symbolic reference and leaves its target as it is. The expected id is still compared with the
-     * resolved id of the named reference.
+     * resolved id of the named reference: under the lock on the file backend, through the guarded batch of
+     * {@code guardedUnlink} on the in-memory DFS backend (JGit 7.8.0).
      */
     private static RefUpdate.Result delete(Repository repository, String refName, ObjectId expected)
             throws IOException {
@@ -294,7 +314,12 @@ public final class ReferenceUpdater {
         delete.setExpectedOldObjectId(expected);
         delete.setForceUpdate(true);
         delete.disableRefLog();
-        return delete.delete();
+        RefUpdate.Result result = delete.delete();
+        if (unresolvedUnderLock(delete, result)) {
+            return guardedUnlink(repository, delete.getRef(), expected, ObjectId.zeroId())
+                    ? RefUpdate.Result.FORCED : result;
+        }
+        return result;
     }
 
     private static RevCommit parseCommit(Repository repository, ObjectId id) throws IOException {
@@ -309,7 +334,52 @@ public final class ReferenceUpdater {
         update.setExpectedOldObjectId(expected == null ? ObjectId.zeroId() : expected);
         update.setNewObjectId(commit);
         update.disableRefLog();
-        return update.update();
+        RefUpdate.Result result = update.update();
+        if (detach && expected != null && unresolvedUnderLock(update, result)) {
+            return guardedUnlink(repository, update.getRef(), expected, commit) ? RefUpdate.Result.NEW : result;
+        }
+        return result;
+    }
+
+    /**
+     * Whether a detaching update of a symbolic reference lost its race only because the backend compared the expected
+     * id with no id at all. JGit 7.8.0 {@code DfsRefUpdate.tryLock(false)} sets the old id of a symbolic reference to
+     * {@code null}, so {@code RefUpdate.updateImpl} compares the expected id with {@link ObjectId#zeroId()} and reports
+     * {@link RefUpdate.Result#LOCK_FAILURE} whatever the reference points at; {@code RefDirectoryUpdate.tryLock} instead
+     * re-reads the reference under its lock and keeps the resolved id, so there a {@code LOCK_FAILURE} with an old id
+     * is a real one.
+     */
+    private static boolean unresolvedUnderLock(RefUpdate update, RefUpdate.Result result) {
+        return result == RefUpdate.Result.LOCK_FAILURE && update.getRef().isSymbolic()
+                && update.getOldObjectId() == null;
+    }
+
+    /**
+     * Replaces or deletes a symbolic reference in one atomic {@link BatchRefUpdate} that also requires its base
+     * reference to still point at the expected id: an unlink command that expects the symbolic reference's target
+     * ({@code ReceiveCommand.unlink}) and a command on the base reference from the expected id to the same id, which
+     * changes nothing and holds only when the base reference is still at the expected id. JGit 7.8.0
+     * {@code ReftableBatchRefUpdate} compares every command under one lock before it writes any, so a writer that moved
+     * the base reference makes the whole batch fail and nothing is written. A backend without atomic batches, and the
+     * file backend, which refuses a symbolic command in an atomic batch ({@code PackedBatchRefUpdate}), write nothing
+     * either: the batch fails and the caller keeps its lost race.
+     *
+     * @param newId the new id of the reference; {@link ObjectId#zeroId()} deletes it
+     * @return whether both commands succeeded
+     */
+    private static boolean guardedUnlink(Repository repository, Ref symbolic, ObjectId expected, ObjectId newId)
+            throws IOException {
+        ReceiveCommand unlink = ReceiveCommand.unlink(symbolic.getTarget().getName(), newId, symbolic.getName());
+        ReceiveCommand guard = new ReceiveCommand(expected, expected, symbolic.getLeaf().getName());
+        BatchRefUpdate batch = repository.getRefDatabase().newBatchUpdate();
+        batch.setAtomic(true);
+        batch.setAllowNonFastForwards(true);
+        batch.disableRefLog();
+        batch.addCommand(unlink, guard);
+        try (RevWalk walk = new RevWalk(repository)) {
+            batch.execute(walk, NullProgressMonitor.INSTANCE);
+        }
+        return unlink.getResult() == ReceiveCommand.Result.OK && guard.getResult() == ReceiveCommand.Result.OK;
     }
 
     private static List<String> parentsOf(@Nullable RevCommit parent) {

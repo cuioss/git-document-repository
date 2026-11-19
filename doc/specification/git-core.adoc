@@ -295,6 +295,23 @@ link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse
 7.8.0 `RefDirectory`]); `compareAndSwap` follows a symbolic reference and moves its target instead. Its outcomes are
 those of `compareAndSwap`.
 
+For a symbolic reference replaced by `compareAndSwapTree` or deleted by `compareAndDelete`, the two backends check the
+expected id differently. The file backend compares it with the id the symbolic reference resolves to while it holds
+the lock (`RefDirectoryUpdate.tryLock` re-reads the reference under the lock). The in-memory DFS backend does not:
+`DfsRefUpdate.tryLock(false)` sets the old id of a symbolic reference to none, so `RefUpdate.updateImpl` compares the
+expected id with the zero id and reports `LOCK_FAILURE` for every expected id, and its compare-and-put checks only that
+the reference is still symbolic with the same target
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/dfs/DfsRefUpdate.java[JGit
+7.8.0 `DfsRefUpdate`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit
+7.8.0 `RefUpdate`]). When a detaching update or a delete of a symbolic reference ends in `LOCK_FAILURE` with no old id,
+the updater therefore decides through one atomic `BatchRefUpdate` of two commands: the unlink of the symbolic reference
+(`ReceiveCommand.unlink`, expecting its target) and a command on its base reference from the expected id to the same
+id, which changes nothing and holds only while the base reference still points at the expected id. A failed batch is the
+`LOCK_FAILURE` it replaces: a retry, then `CONFLICT`, and for a delete the re-read above. The expected id is never
+replaced by the zero id and the check is never dropped; a backend that cannot run the batch atomically, such as the
+file backend's `PackedBatchRefUpdate`, which refuses a symbolic command in an atomic batch, writes nothing.
+
 A detail names the reference and the `RefUpdate.Result`, never content or an identity
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an
 attempt in `LOCK_FAILURE` (`RefDirectoryUpdate.tryLock` and `LockFile.lock()`,

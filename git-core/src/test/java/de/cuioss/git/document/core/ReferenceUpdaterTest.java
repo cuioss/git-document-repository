@@ -98,6 +98,11 @@ import org.junit.jupiter.api.Test;
  * The release of a held lock between two attempts is deterministic: {@link LockReleasingRepository} deletes the lock
  * file in the re-read that {@code compareAndDelete} performs after a {@code LOCK_FAILURE}, so no test sleeps, starts
  * a thread or depends on timing.
+ * <p>
+ * A symbolic reference replaced or deleted itself is tested on both fixtures, because the two databases check its
+ * expected id differently (JGit 7.8.0): {@code RefDirectoryUpdate} compares it with the resolved id under the lock,
+ * while {@code DfsRefUpdate} compares it with no id at all, so on the in-memory fixture the updater's guarded batch
+ * decides, and a wrong expected id or a target moved in between must still be a lost race there.
  */
 @EnableGeneratorController
 @DisplayName("ReferenceUpdater (GDR-CORE-5)")
@@ -546,6 +551,62 @@ class ReferenceUpdaterTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database a symbolic reference is replaced, its target unchanged")
+        void symbolicReferenceDetachedInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var source = new RecordingSource();
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), source, 1);
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the alias is replaced"));
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the update of the alias succeeds"),
+                    () -> assertFalse(aliasRef.isSymbolic(), "the alias is no longer a symbolic reference"),
+                    () -> assertEquals(commit, aliasRef.getObjectId(), "the alias points at the new commit"),
+                    () -> assertEquals(initial, commit.getParent(0),
+                            "the new commit's parent is the commit the alias resolved to"),
+                    () -> assertEquals(List.of(treeOf(repository, initial)), source.treeIds(),
+                            "the source receives the tree the alias resolved to"),
+                    () -> assertEquals(initial, refId(repository, target), "the former target keeps its commit"));
+        }
+
+        /**
+         * The expected-id check on the in-memory database: the source moves the alias's target while it runs, so the
+         * update meets a base reference that no longer holds the id the attempt read. JGit 7.8.0 {@code DfsRefUpdate}
+         * compares only the symbolic reference itself; the updater's guarded batch must still see the moved target.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database a symbolic reference whose target moved is a lost race")
+        void symbolicTargetMovedInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var competing = new ArrayList<ObjectId>();
+            var source = new RecordingSource();
+            InCoreWriter.TreeSource racing = (reader, inserter, tree) -> {
+                competing.add(commitOnRef(repository, target));
+                return source.write(reader, inserter, tree);
+            };
+
+            var result = updater.compareAndSwapTree(repository, alias, metadata(), racing, 1);
+
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the alias exists");
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the moved target is a lost race"),
+                    () -> assertTrue(aliasRef.isSymbolic(), "the alias stays a symbolic reference"),
+                    () -> assertEquals(target, aliasRef.getTarget().getName(), "the alias still points at the target"),
+                    () -> assertEquals(competing.getFirst(), aliasRef.getObjectId(),
+                            "the alias resolves to the concurrent writer's commit"),
+                    () -> assertEquals(competing.getFirst(), refId(repository, target),
+                            "the target keeps the concurrent writer's commit"));
+        }
+
+        @Test
         @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the class, the reference unchanged")
         void sourceFailure(@InMemory Repository repository) throws Exception {
             var refName = GitIdentity.branchRef(TestCommits.name());
@@ -616,6 +677,44 @@ class ReferenceUpdaterTest {
                     () -> assertEquals(GitOutcome.OK, result.outcome(), "the symbolic reference is deleted"),
                     () -> assertEquals(initial.name(), result.value(), "the value is the id it resolved to"),
                     () -> assertNull(repository.exactRef(alias), "the symbolic reference is gone"),
+                    () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database deleting a symbolic reference keeps its target")
+        void deletesSymbolicReferenceOnlyInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+
+            var result = updater.compareAndDelete(repository, alias, initial.name(), 1);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the symbolic reference is deleted"),
+                    () -> assertEquals(initial.name(), result.value(), "the value is the id it resolved to"),
+                    () -> assertNull(repository.exactRef(alias), "the symbolic reference is gone"),
+                    () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: on the in-memory database a symbolic reference at another id is not deleted")
+        void symbolicReferenceAtOtherIdInMemory(@InMemory Repository repository) throws Exception {
+            var target = GitIdentity.branchRef(TestCommits.name());
+            var alias = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, target);
+            link(repository, alias, target);
+            var other = TestCommits.commit(repository, null);
+
+            var result = updater.compareAndDelete(repository, alias, other.name(), 2);
+
+            var aliasRef = Objects.requireNonNull(repository.exactRef(alias), "the symbolic reference is kept");
+            assertAll(
+                    () -> assertEquals(GitOutcome.CONFLICT, result.outcome(), "the other id is a conflict"),
+                    () -> assertEquals(alias + ": LOCK_FAILURE, the reference moved or is gone", result.detail(),
+                            "the detail names the reference and the result"),
+                    () -> assertTrue(aliasRef.isSymbolic(), "the alias stays a symbolic reference"),
+                    () -> assertEquals(target, aliasRef.getTarget().getName(), "the alias still points at the target"),
                     () -> assertEquals(initial, refId(repository, target), "the target keeps its commit"));
         }
 
