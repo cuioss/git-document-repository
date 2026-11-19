@@ -73,28 +73,29 @@ class InCoreMergerTest {
     private final InCoreMerger merger = new InCoreMerger();
 
     /** A file of a fixture tree: its mode and its content. */
-    private record Entry(FileMode mode, String content) {
+    record Entry(FileMode mode, String content) {
     }
 
-    private static Entry file() {
+    /** A regular file with generated content. */
+    static Entry file() {
         return new Entry(FileMode.REGULAR_FILE, content());
     }
 
-    private static Entry file(String content) {
+    static Entry file(String content) {
         return new Entry(FileMode.REGULAR_FILE, content);
     }
 
-    private static Entry executable(String content) {
+    static Entry executable(String content) {
         return new Entry(FileMode.EXECUTABLE_FILE, content);
     }
 
     /** A generated nested path of three segments. */
-    private static String nestedPath() {
+    static String nestedPath() {
         return TestCommits.name() + "/" + TestCommits.name() + "/" + TestCommits.name();
     }
 
-    /** A copy of the files with the given changes; a {@code null}-free map, so a delete is passed separately. */
-    private static Map<String, Entry> with(Map<String, Entry> files, Map<String, Entry> changes, String... deleted) {
+    /** A copy of the files with the changes applied and the deleted paths removed. */
+    static Map<String, Entry> with(Map<String, Entry> files, Map<String, Entry> changes, String... deleted) {
         Map<String, Entry> result = new HashMap<>(files);
         result.putAll(changes);
         for (String path : deleted) {
@@ -107,7 +108,7 @@ class InCoreMergerTest {
      * Writes a commit whose tree holds exactly the files, through JGit's in-core {@link DirCache}, without moving any
      * reference.
      */
-    private static ObjectId commit(Repository repository, Map<String, Entry> files, ObjectId... parents)
+    static ObjectId commit(Repository repository, Map<String, Entry> files, ObjectId... parents)
             throws IOException {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
             DirCache index = DirCache.newInCore();
@@ -462,7 +463,7 @@ class InCoreMergerTest {
         }
     }
 
-    private static ObjectId annotatedTag(Repository repository, ObjectId commit) throws IOException {
+    static ObjectId annotatedTag(Repository repository, ObjectId commit) throws IOException {
         var tag = new TagBuilder();
         tag.setObjectId(commit, Constants.OBJ_COMMIT);
         tag.setTag(TestCommits.name());

@@ -462,22 +462,11 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         Objects.requireNonNull(root, "root");
         Objects.requireNonNull(revision, REVISION);
         try (Repository repository = openRepository(root); RevWalk walk = new RevWalk(repository)) {
-            var lookup = GitIdentity.lookup(repository, revision);
-            Optional<GitResult<List<CommitInfo>>> refused = refuseUnsupported(lookup, REVISION);
-            if (refused.isPresent()) {
-                return refused.get();
+            GitResult<ObjectId> start = resolveRevision(repository, revision, REVISION);
+            if (!start.isOk()) {
+                return withoutValue(start);
             }
-            Optional<ObjectId> resolved = resolveCommit(repository, lookup);
-            if (resolved.isEmpty()) {
-                return GitResult.of(GitOutcome.NOT_FOUND, REVISION + NOT_FOUND_SUFFIX);
-            }
-            ObjectId start = resolved.get();
-            if (lookup.resolution() == GitIdentity.Resolution.FULL_COMMIT_ID
-                    && !start.name().equalsIgnoreCase(revision)) {
-                return GitResult.of(GitOutcome.IDENTITY_MISMATCH,
-                        "the pin " + revision + " reached " + start.name());
-            }
-            walk.markStart(walk.parseCommit(start));
+            walk.markStart(walk.parseCommit(Objects.requireNonNull(start.value())));
             int limit = Math.max(1, maxCount);
             var commits = new ArrayList<CommitInfo>();
             for (RevCommit commit : walk) {
@@ -785,7 +774,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * @param field the name of the input field that carries the revision
      * @return the refusal, or empty when the revision may be resolved
      */
-    private static <V> Optional<GitResult<V>> refuseUnsupported(GitIdentity.Lookup lookup, String field) {
+    static <V> Optional<GitResult<V>> refuseUnsupported(GitIdentity.Lookup lookup, String field) {
         if (GitIdentity.isAmbiguous(lookup.resolution())) {
             return Optional.of(GitResult.of(GitOutcome.AMBIGUOUS,
                     field + " names " + String.join(", ", lookup.candidates())));
@@ -805,7 +794,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      *
      * @return the commit, or empty when the identity names no commit of the repository
      */
-    private static Optional<ObjectId> resolveCommit(Repository repository, GitIdentity.Lookup lookup)
+    static Optional<ObjectId> resolveCommit(Repository repository, GitIdentity.Lookup lookup)
             throws IOException {
         Optional<ObjectId> selected = selectedObject(repository, lookup);
         if (selected.isEmpty()) {
@@ -1019,7 +1008,60 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 .build();
     }
 
-    private static CommitInfo toInfo(RevCommit commit) {
+    /**
+     * Resolves the revision of a read to its commit (GDR-CORE-11), the one resolution {@code log},
+     * {@link RepositoryReader#snapshot(Repository, String)} and
+     * {@link RepositoryReader#history(Repository, String, String, int)} share: the revision is classified by
+     * {@link GitIdentity#lookup(Repository, String)}, refused by {@link #refuseUnsupported(GitIdentity.Lookup, String)}
+     * when it is no supported identity, and resolved by {@link #resolveCommit(Repository, GitIdentity.Lookup)}, an
+     * annotated tag peeled to its commit. A full commit id that reaches another commit, such as the id of an annotated
+     * tag, is a pin that does not hold.
+     *
+     * @param repository the repository
+     * @param revision   a reference, short or full name, or a full commit id
+     * @param field      the name of the input field that carries the revision
+     * @return {@link GitOutcome#OK} with the commit; {@link GitOutcome#AMBIGUOUS}, {@link GitOutcome#NOT_FOUND} or
+     *         {@link GitOutcome#IDENTITY_MISMATCH} with a detail naming the field
+     * @throws IOException if the repository cannot be read
+     */
+    static GitResult<ObjectId> resolveRevision(Repository repository, String revision, String field)
+            throws IOException {
+        var lookup = GitIdentity.lookup(repository, revision);
+        Optional<GitResult<ObjectId>> refused = refuseUnsupported(lookup, field);
+        if (refused.isPresent()) {
+            return refused.get();
+        }
+        Optional<ObjectId> resolved = resolveCommit(repository, lookup);
+        if (resolved.isEmpty()) {
+            return GitResult.of(GitOutcome.NOT_FOUND, field + NOT_FOUND_SUFFIX);
+        }
+        ObjectId commit = resolved.get();
+        if (lookup.resolution() == GitIdentity.Resolution.FULL_COMMIT_ID
+                && !commit.name().equalsIgnoreCase(revision)) {
+            return GitResult.of(GitOutcome.IDENTITY_MISMATCH, "the pin " + revision + " reached " + commit.name());
+        }
+        return GitResult.ok(commit);
+    }
+
+    /**
+     * Carries a non-success over to a result of another value type; a non-success carries no value (GDR-GEN-3).
+     *
+     * @param nonSuccess the result that did not succeed
+     * @param <V>        the value type of the new result
+     * @return a result with the same outcome and detail
+     * @throws IllegalArgumentException if {@code nonSuccess} is a success
+     */
+    static <V> GitResult<V> withoutValue(GitResult<?> nonSuccess) {
+        return GitResult.of(nonSuccess.outcome(), Objects.requireNonNull(nonSuccess.detail(), "detail"));
+    }
+
+    /**
+     * Converts a parsed commit into its description.
+     *
+     * @param commit the commit, with its headers parsed
+     * @return the id, the parents, author and committer with their times, and the full message
+     */
+    static CommitInfo toInfo(RevCommit commit) {
         var parents = Arrays.stream(commit.getParents()).map(RevCommit::name).toList();
         PersonIdent author = commit.getAuthorIdent();
         PersonIdent committer = commit.getCommitterIdent();
