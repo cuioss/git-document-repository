@@ -31,16 +31,20 @@ import java.io.IOException;
 import java.io.Serial;
 import java.net.Proxy;
 import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 
@@ -63,6 +67,8 @@ import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.errors.TransportException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.ConfigConstants;
@@ -82,6 +88,8 @@ import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.transport.http.HttpConnection;
+import org.eclipse.jgit.transport.http.HttpConnectionFactory;
 import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.util.SystemReader;
 import org.jspecify.annotations.Nullable;
@@ -1248,6 +1256,297 @@ class JGitRepositoryOperationsTest {
                             "the empty path is rendered by its fixed rendering"),
                     () -> assertEquals(JGitRepositoryOperations.BLANK_PATH,
                             JGitRepositoryOperations.shown(Path.of("")), "Path.of(\"\") renders blank"));
+        }
+    }
+
+    @Nested
+    @DisplayName("PLAN-02 residuals (c), (e), (f)")
+    class Residuals {
+
+        /** The host the policy of the HTTP test admits; nothing connects to it. */
+        private static final String ADMITTED_HOST = "admitted.example.invalid";
+
+        private static void assumePosix() {
+            assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                    "The default file system supports the posix file attribute view");
+        }
+
+        /** Writes an executable shell script that creates the marker when it runs. */
+        private static void markerScript(Path script, Path marker) throws IOException {
+            Files.createDirectories(script.getParent());
+            Files.writeString(script, "#!/bin/sh\ntouch " + marker + "\n");
+            Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+
+        /** A URL of a local path whose last segment is the marker an intercepting protocol handles. */
+        private String markerUrl(String marker) {
+            return temp.resolve(marker).toUri().toString();
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (c), GDR-CORE-1: a native pre-receive hook of the remote is never run by a push")
+        void remotePreReceiveHookNeverRun(@Remote LocalRemote remote, @LocalRepository Repository client)
+                throws Exception {
+            // JGit 7.8.0 runs native hooks only through GitHook (FS.runHookIfPresent), whose subclasses are the
+            // client-side pre-commit, commit-msg, post-commit and pre-push hooks; ReceivePack runs Java hooks only
+            assumePosix();
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(client, ref);
+            var marker = temp.resolve(TestCommits.name());
+            Path hook = dir(remote.repository()).resolve("hooks/pre-receive");
+            markerScript(hook, marker);
+            var config = remote.repository().getConfig();
+            config.setString(ConfigConstants.CONFIG_CORE_SECTION, null, ConfigConstants.CONFIG_KEY_HOOKS_PATH,
+                    hook.getParent().toAbsolutePath().toString());
+            config.save();
+
+            var result = operations.push(PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(ref)
+                    .remoteRef(ref).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the push is accepted"),
+                    () -> assertEquals(commit, refId(remote.repository(), ref), "the remote holds the commit"),
+                    () -> assertFalse(Files.exists(marker), "the remote's pre-receive hook is never run"));
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (c), GDR-CORE-1: a configured receive-pack program of a local remote is never run")
+        void receivePackProgramNeverRun(@Remote LocalRemote remote, @LocalRepository Repository client)
+                throws Exception {
+            // JGit 7.8.0 PushCommand keeps its own receivePack, RemoteConfig.DEFAULT_RECEIVE_PACK unless set, and
+            // passes it to Transport.setOptionReceivePack, which replaces remote.<name>.receivepack; TransportLocal
+            // therefore pushes through its in-process ReceivePack and forks nothing
+            assumePosix();
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(client, ref);
+            var marker = temp.resolve(TestCommits.name());
+            var program = temp.resolve(TestCommits.name());
+            markerScript(program, marker);
+            var config = client.getConfig();
+            config.setString("remote", ORIGIN, "receivepack", program.toAbsolutePath().toString());
+            config.save();
+
+            var result = operations.push(PushInput.builder().root(dir(client)).remote(ORIGIN).localRef(ref)
+                    .remoteRef(ref).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, result.outcome(), "the push runs in process"),
+                    () -> assertEquals(commit, refId(remote.repository(), ref), "the remote holds the commit"),
+                    () -> assertFalse(Files.exists(marker), "the configured program is never run"));
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (c), GDR-CORE-1: a configured upload-pack program of a local remote is refused, never run")
+        void uploadPackProgramRefused(@Remote LocalRemote remote, @LocalRepository Repository client)
+                throws Exception {
+            // JGit 7.8.0 FetchCommand keeps remote.<name>.uploadpack (Transport.applyConfig), and TransportLocal.openFetch
+            // forks it through local.getFS().runInShell when it is anything but git-upload-pack; RefusingFS refuses that
+            assumePosix();
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            var marker = temp.resolve(TestCommits.name());
+            var program = temp.resolve(TestCommits.name());
+            markerScript(program, marker);
+            var config = client.getConfig();
+            config.setString("remote", ORIGIN, "uploadpack", program.toAbsolutePath().toString());
+            config.save();
+
+            var result = operations.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of())
+                    .build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the program is refused"),
+                    () -> assertNull(client.exactRef(Constants.R_REMOTES + ORIGIN + "/" + Repository.shortenRefName(ref)),
+                            "nothing is fetched"),
+                    () -> assertFalse(Files.exists(marker), "the program is never run"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                    GitCoreLogMessages.WARN.CAPABILITY_REFUSED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (e): http.extraHeader and http.cookieFile of the repository configuration reach the remote")
+        void extraHeaderAndCookieFileReachRemote(@LocalRepository Repository repository) throws Exception {
+            // pins JGit 7.8.0 TransportHttp: every request carries http.getExtraHeaders() and the cookies of
+            // http.cookieFile that match the URL; the library neither strips nor refuses them
+            var headerName = "X-" + TestCommits.name();
+            var headerValue = TestCommits.name();
+            var cookieName = TestCommits.name();
+            var cookieValue = TestCommits.name();
+            var cookies = temp.resolve(TestCommits.name());
+            long expires = Instant.now().plus(Duration.ofDays(365)).getEpochSecond();
+            Files.writeString(cookies, String.join("\t", ADMITTED_HOST, "FALSE", "/", "TRUE",
+                    Long.toString(expires), cookieName, cookieValue) + "\n");
+            var config = repository.getConfig();
+            config.setString(HttpConfig.HTTP, null, HttpConfig.EXTRA_HEADER, headerName + ": " + headerValue);
+            config.setString(HttpConfig.HTTP, null, HttpConfig.COOKIE_FILE_KEY, cookies.toAbsolutePath().toString());
+            config.save();
+            var policy = RemotePolicy.httpsOrigin(URI.create("https://" + ADMITTED_HOST));
+            List<String> sent = new ArrayList<>();
+
+            try (var transport = org.eclipse.jgit.transport.Transport.open(repository,
+                         new URIish("https://" + ADMITTED_HOST + "/" + TestCommits.name() + ".git"))) {
+                ((TransportHttp) transport).setHttpConnectionFactory(new RecordingConnectionFactory(sent));
+                JGitRepositoryOperations.guard(transport, policy);
+
+                assertThrows(TransportException.class, transport::openFetch,
+                        "the recording connection answers nothing");
+            }
+
+            assertAll(
+                    () -> assertTrue(sent.contains(headerName + ": " + headerValue),
+                            "the configured extra header is sent"),
+                    () -> assertTrue(sent.stream().anyMatch(header -> header.startsWith("Cookie: ")
+                                    && header.contains(cookieName) && header.contains(cookieValue)),
+                            "the cookie of the configured cookie file is sent"));
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (f), GDR-CORE-3: a clone published concurrently is opened and the staging is removed")
+        void publishLosesRace(@Remote LocalRemote remote) throws Exception {
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            var marker = TestCommits.name();
+            var parent = Files.createDirectories(temp.resolve(TestCommits.name()));
+            var gitDir = parent.resolve(TestCommits.name() + ".git");
+            var concurrentRef = branchRef();
+            var concurrentCommit = new AtomicReference<ObjectId>();
+
+            try (var intercepting = new InterceptingTransportProtocol(marker, remote.uri(), local -> {
+                     try (Git concurrent = Git.init().setBare(true).setGitDir(gitDir.toFile()).call()) {
+                         concurrentCommit.set(TestCommits.commitOn(concurrent.getRepository(), concurrentRef));
+                     } catch (GitAPIException e) {
+                         throw new IOException(e);
+                     }
+                 })) {
+                var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir).url(markerUrl(marker))
+                        .pushRefSpecs(List.of()).build());
+
+                try (Repository published = openBare(gitDir)) {
+                    assertAll(
+                            () -> assertEquals(GitOutcome.OK, result.outcome(), "the published clone is opened"),
+                            () -> assertEquals(gitDir.toRealPath(), Objects.requireNonNull(result.value()).gitDir(),
+                                    "the result is the clone's place"),
+                            () -> assertEquals(concurrentCommit.get(), refId(published, concurrentRef),
+                                    "the clone's place holds the concurrently published clone"),
+                            () -> assertNull(published.exactRef(ref), "this attempt's clone was not published"),
+                            () -> assertEquals(List.of(gitDir.getFileName().toString()), entries(parent),
+                                    "the staging directory is removed"));
+                }
+            }
+            assertFalse(TestLoggerFactory.getTestHandler().getRecordsAsString()
+                            .contains(GitCoreLogMessages.INFO.CLONE_CREATED.resolveIdentifierString()),
+                    "the losing attempt logs no created clone");
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (f), GDR-CORE-3: a clone whose mirrored references are not written is not published")
+        void mirroredRefsNotWritten(@Remote LocalRemote remote) throws Exception {
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            var marker = TestCommits.name();
+            var parent = Files.createDirectories(temp.resolve(TestCommits.name()));
+            var gitDir = parent.resolve(TestCommits.name() + ".git");
+
+            // a held lock of the one mirrored reference makes its update end LOCK_FAILURE (JGit 7.8.0
+            // PackedBatchRefUpdate updates a single reference one by one, RefDirectoryUpdate), while FetchProcess
+            // still returns its FetchResult
+            try (var intercepting = new InterceptingTransportProtocol(marker, remote.uri(), local -> {
+                     var lock = local.getDirectory().toPath().resolve(ref + ".lock");
+                     Files.createDirectories(lock.getParent());
+                     Files.createFile(lock);
+                 })) {
+                var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir).url(markerUrl(marker))
+                        .pushRefSpecs(List.of()).build());
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the incomplete clone fails"),
+                        () -> assertTrue(Objects.requireNonNull(result.detail()).endsWith(": IOException"),
+                                "the detail names the failure class"),
+                        () -> assertFalse(Files.exists(gitDir), "no clone is published"),
+                        () -> assertEquals(List.of(), entries(parent), "the staging directory is removed"));
+            }
+        }
+
+        @Test
+        @DisplayName("PLAN-02 (f), GDR-NFR-3: a refused redirect is logged REMOTE_REFUSED by its host only")
+        void refusedRedirectLogged(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            var credential = GitGenerators.credentials().next();
+            var token = new String(credential.token());
+            var redirect = new URIish("https://" + credential.username() + ":" + token + "@" + FOREIGN_HOST + "/"
+                    + TestCommits.name() + ".git");
+            var marker = TestCommits.name();
+            TestCommits.addRemote(client, ORIGIN, markerUrl(marker));
+
+            try (var intercepting = new InterceptingTransportProtocol(marker, remote.uri(), local -> {
+                     // what PolicyCheckedConnectionFactory throws for a redirect to a host outside the policy
+                     throw new JGitRepositoryOperations.RemoteRefusedException(redirect, true);
+                 })) {
+                var result = operations.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN)
+                        .refSpecs(List.of()).build());
+
+                var records = TestLoggerFactory.getTestHandler().getRecordsAsString();
+                assertAll(
+                        () -> assertEquals(GitResult.of(GitOutcome.REFUSED_BY_POLICY,
+                                        "redirect to " + FOREIGN_HOST + " is outside the remote policy"), result,
+                                "the redirect is refused by its host"),
+                        () -> assertFalse(records.contains(token), "no log record carries the token"),
+                        () -> assertFalse(records.contains(credential.username()), "no log record carries the user"));
+                LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                        GitCoreLogMessages.WARN.REMOTE_REFUSED.resolveIdentifierString());
+                LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, FOREIGN_HOST);
+            }
+        }
+    }
+
+    /**
+     * An HTTP connection factory for tests that connects nowhere: each connection records every request header as
+     * {@code name: value} and fails as soon as the request would be sent.
+     */
+    private static final class RecordingConnectionFactory implements HttpConnectionFactory {
+
+        private final List<String> sent;
+
+        RecordingConnectionFactory(List<String> sent) {
+            this.sent = sent;
+        }
+
+        @Override
+        public HttpConnection create(URL url) {
+            return create(url, Proxy.NO_PROXY);
+        }
+
+        @Override
+        public HttpConnection create(URL url, @Nullable Proxy proxy) {
+            return (HttpConnection) java.lang.reflect.Proxy.newProxyInstance(HttpConnection.class.getClassLoader(),
+                    new Class<?>[]{HttpConnection.class}, (instance, method, args) -> switch (method.getName()) {
+                        case "setRequestProperty", "addRequestProperty" -> {
+                            sent.add(args[0] + ": " + args[1]);
+                            yield null;
+                        }
+                        case "getURL" -> url;
+                        case "connect", "getResponseCode", "getInputStream", "getOutputStream" ->
+                            throw new IOException("the recording connection connects nowhere");
+                        case "toString" -> "RecordingConnection[" + url.getHost() + "]";
+                        case "hashCode" -> System.identityHashCode(instance);
+                        case "equals" -> instance == args[0];
+                        default -> defaultValue(method.getReturnType());
+                    });
+        }
+
+        private static @Nullable Object defaultValue(Class<?> type) {
+            if (type == boolean.class) {
+                return false;
+            }
+            if (type == int.class) {
+                return 0;
+            }
+            if (type == long.class) {
+                return 0L;
+            }
+            return null;
         }
     }
 }
