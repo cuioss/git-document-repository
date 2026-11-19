@@ -23,8 +23,6 @@ import java.util.Optional;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.CommitInfo;
-import org.eclipse.jgit.errors.IncorrectObjectTypeException;
-import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
@@ -314,11 +312,11 @@ public final class RepositoryReader {
             return GitResult.of(GitOutcome.NOT_FOUND, TO + ": not a full commit id");
         }
         try (RevWalk walk = new RevWalk(repository)) {
-            Optional<RevCommit> fromCommit = parseCommit(walk, from);
+            Optional<RevCommit> fromCommit = JGitRepositoryOperations.parseCommit(walk, from);
             if (fromCommit.isEmpty()) {
                 return GitResult.of(GitOutcome.NOT_FOUND, FROM + ": not found");
             }
-            Optional<RevCommit> toCommit = parseCommit(walk, to);
+            Optional<RevCommit> toCommit = JGitRepositoryOperations.parseCommit(walk, to);
             if (toCommit.isEmpty()) {
                 return GitResult.of(GitOutcome.NOT_FOUND, TO + ": not found");
             }
@@ -356,20 +354,5 @@ public final class RepositoryReader {
     /** A repository-relative path: not blank, neither starting nor ending with {@code /}, without an empty segment. */
     private static boolean isValidPath(String path) {
         return !path.isBlank() && !path.startsWith("/") && !path.endsWith("/") && !path.contains("//");
-    }
-
-    /**
-     * Parses a commit; empty when the id names no commit of the repository.
-     * <p>
-     * The object is parsed as it is ({@code RevWalk.parseAny}) and must be a commit itself: JGit 7.8.0
-     * {@code RevWalk.parseCommit} peels an annotated tag to the commit it points at.
-     */
-    private static Optional<RevCommit> parseCommit(RevWalk walk, String id) throws IOException {
-        try {
-            return walk.parseAny(ObjectId.fromString(id)) instanceof RevCommit commit ? Optional.of(commit)
-                    : Optional.empty();
-        } catch (MissingObjectException | IncorrectObjectTypeException e) {
-            return Optional.empty();
-        }
     }
 }

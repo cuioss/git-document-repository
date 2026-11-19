@@ -22,8 +22,6 @@ import java.util.Objects;
 import java.util.Optional;
 
 
-import org.eclipse.jgit.errors.IncorrectObjectTypeException;
-import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.NoMergeBaseException;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.FileMode;
@@ -114,11 +112,11 @@ public final class InCoreMerger {
             return new MergeResult.NotMerged(GitOutcome.NOT_FOUND, THEIRS + ": not a full commit id");
         }
         try (RevWalk walk = new RevWalk(repository)) {
-            Optional<RevCommit> oursCommit = parseCommit(walk, ours);
+            Optional<RevCommit> oursCommit = JGitRepositoryOperations.parseCommit(walk, ours);
             if (oursCommit.isEmpty()) {
                 return new MergeResult.NotMerged(GitOutcome.NOT_FOUND, OURS + ": not found");
             }
-            Optional<RevCommit> theirsCommit = parseCommit(walk, theirs);
+            Optional<RevCommit> theirsCommit = JGitRepositoryOperations.parseCommit(walk, theirs);
             if (theirsCommit.isEmpty()) {
                 return new MergeResult.NotMerged(GitOutcome.NOT_FOUND, THEIRS + ": not found");
             }
@@ -199,21 +197,5 @@ public final class InCoreMerger {
     private static MergeResult notMerged(IOException e) {
         GitResult<String> failure = JGitRepositoryOperations.failure(e);
         return new MergeResult.NotMerged(failure.outcome(), Objects.requireNonNull(failure.detail()));
-    }
-
-    /**
-     * Parses a commit; empty when the id names no commit of the repository.
-     * <p>
-     * The object is parsed as it is ({@code RevWalk.parseAny}) and must be a commit itself: JGit 7.8.0
-     * {@code RevWalk.parseCommit} peels an annotated tag to the commit it points at, so it would merge the tagged
-     * commit.
-     */
-    private static Optional<RevCommit> parseCommit(RevWalk walk, String id) throws IOException {
-        try {
-            return walk.parseAny(ObjectId.fromString(id)) instanceof RevCommit commit ? Optional.of(commit)
-                    : Optional.empty();
-        } catch (MissingObjectException | IncorrectObjectTypeException e) {
-            return Optional.empty();
-        }
     }
 }

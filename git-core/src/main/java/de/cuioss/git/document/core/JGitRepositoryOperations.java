@@ -43,6 +43,7 @@ import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.errors.NoRemoteRepositoryException;
 import org.eclipse.jgit.errors.RepositoryNotFoundException;
@@ -1053,6 +1054,27 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      */
     static <V> GitResult<V> withoutValue(GitResult<?> nonSuccess) {
         return GitResult.of(nonSuccess.outcome(), Objects.requireNonNull(nonSuccess.detail(), "detail"));
+    }
+
+    /**
+     * Parses a commit by its full id; empty when the id names no commit of the repository.
+     * <p>
+     * The object is parsed as it is ({@code RevWalk.parseAny}) and must be a commit itself: JGit 7.8.0
+     * {@code RevWalk.parseCommit} peels an annotated tag to the commit it points at, so a caller that must act on the
+     * addressed commit alone would act on the tagged commit.
+     *
+     * @param walk the walk that parses the object
+     * @param id   the full id of the object
+     * @return the commit, or empty when the object is missing or no commit
+     * @throws IOException if the repository cannot be read
+     */
+    static Optional<RevCommit> parseCommit(RevWalk walk, String id) throws IOException {
+        try {
+            return walk.parseAny(ObjectId.fromString(id)) instanceof RevCommit commit ? Optional.of(commit)
+                    : Optional.empty();
+        } catch (MissingObjectException | IncorrectObjectTypeException e) {
+            return Optional.empty();
+        }
     }
 
     /**

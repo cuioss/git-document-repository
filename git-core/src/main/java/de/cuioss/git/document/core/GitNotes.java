@@ -20,9 +20,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 
-import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.LargeObjectException;
-import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -114,7 +112,7 @@ public final class GitNotes {
         }
         try (ObjectReader reader = repository.newObjectReader();
              RevWalk walk = new RevWalk(reader)) {
-            Optional<RevCommit> commit = parseCommit(walk, commitId);
+            Optional<RevCommit> commit = JGitRepositoryOperations.parseCommit(walk, commitId);
             if (commit.isEmpty()) {
                 return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + ": not found");
             }
@@ -185,7 +183,7 @@ public final class GitNotes {
         }
         RevCommit commit;
         try (RevWalk walk = new RevWalk(repository)) {
-            Optional<RevCommit> parsed = parseCommit(walk, commitId);
+            Optional<RevCommit> parsed = JGitRepositoryOperations.parseCommit(walk, commitId);
             if (parsed.isEmpty()) {
                 return GitResult.of(GitOutcome.NOT_FOUND, COMMIT + ": not found");
             }
@@ -204,21 +202,5 @@ public final class GitNotes {
     private static boolean isNotesRef(String notesRef) {
         return notesRef.startsWith(Constants.R_NOTES) && notesRef.length() > Constants.R_NOTES.length()
                 && Repository.isValidRefName(notesRef);
-    }
-
-    /**
-     * Parses a commit; empty when the id names no commit of the repository.
-     * <p>
-     * The object is parsed as it is ({@code RevWalk.parseAny}) and must be a commit itself: JGit 7.8.0
-     * {@code RevWalk.parseCommit} peels an annotated tag to the commit it points at, so it would attach the note to the
-     * tagged commit.
-     */
-    private static Optional<RevCommit> parseCommit(RevWalk walk, String id) throws IOException {
-        try {
-            return walk.parseAny(ObjectId.fromString(id)) instanceof RevCommit commit ? Optional.of(commit)
-                    : Optional.empty();
-        } catch (MissingObjectException | IncorrectObjectTypeException e) {
-            return Optional.empty();
-        }
     }
 }
