@@ -340,8 +340,9 @@ class RepositoryReaderTest {
         void boundedWithoutReadingAhead(@InMemory Repository fixture) throws Exception {
             var path = TestCommits.name();
             var start = start();
-            // the grandparent's tree does not exist: reading on past the newest change would fail
-            var grandparent = commitAt(fixture, start, blobId(content()));
+            // the grandparent commit does not exist: JGit 7.8.0 RevWalk.iterator() fetches one commit ahead, which pops
+            // the parent and parses its parents' headers, so a walk that reads ahead of the newest change fails on it
+            var grandparent = ObjectId.fromString(Generators.strings("0123456789abcdef", 40, 40).next());
             var parent = commitAt(fixture, start.plusSeconds(3600), treeWith(fixture, path, "parent-"), grandparent);
             var tip = commitAt(fixture, start.plusSeconds(7200), treeWith(fixture, path, "tip-"), parent);
 

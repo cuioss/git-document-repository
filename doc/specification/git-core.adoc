@@ -305,12 +305,28 @@ the reference is still symbolic with the same target
 7.8.0 `DfsRefUpdate`],
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit
 7.8.0 `RefUpdate`]). When a detaching update or a delete of a symbolic reference ends in `LOCK_FAILURE` with no old id,
-the updater therefore decides through one atomic `BatchRefUpdate` of two commands: the unlink of the symbolic reference
-(`ReceiveCommand.unlink`, expecting its target) and a command on its base reference from the expected id to the same
-id, which changes nothing and holds only while the base reference still points at the expected id. A failed batch is the
-`LOCK_FAILURE` it replaces: a retry, then `CONFLICT`, and for a delete the re-read above. The expected id is never
-replaced by the zero id and the check is never dropped; a backend that cannot run the batch atomically, such as the
-file backend's `PackedBatchRefUpdate`, which refuses a symbolic command in an atomic batch, writes nothing.
+the updater therefore decides through one atomic `BatchRefUpdate`: the unlink of the symbolic reference
+(`ReceiveCommand.unlink`, expecting its target), a no-op `ReceiveCommand.link` on every further link of a symbolic chain
+that holds only while the link still points at the same target, and a command on the base reference from the expected
+id to the same id, which changes nothing and holds only while the base reference still points at the expected id.
+`ReftableBatchRefUpdate.matchOld` compares a symbolic command with the immediate target name only
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/reftable/ReftableBatchRefUpdate.java[JGit
+7.8.0 `ReftableBatchRefUpdate`]), so without the commands on the links a writer that retargeted a middle link while the
+base reference stayed at the expected id would go unseen. A batch that lost a race is the `LOCK_FAILURE` it replaces: a
+retry, then `CONFLICT`, and for a delete the re-read above. A batch that failed on a storage error is not a lost race:
+`ReftableBatchRefUpdate.execute` reports an `IOException` as `LOCK_FAILURE` with the message `io error`, which the
+updater maps to `IO_FAILURE`, so the call ends in `FAILED` without a retry. The expected id is never replaced by the
+zero id and the check is never dropped; a backend that cannot run the batch atomically, such as the file backend's
+`PackedBatchRefUpdate`, which refuses a symbolic command in an atomic batch, writes nothing.
+
+A dangling symbolic reference has no resolved id, so the attempt expects none. `DfsRefUpdate.tryLock(false)` sets no
+old id for a symbolic reference whether or not its target has been written since, so there the zero expected id always
+matches and a `RefUpdate` would replace the alias with a root commit, dropping a commit another writer wrote to the
+target between the read and the update. For a dangling symbolic reference the updater therefore runs the batch before
+any `RefUpdate`, with the command on the base reference holding only while the base reference is still absent: a target
+written in between makes the batch fail, which is a lost race, and the next attempt reads the alias again and builds
+on the written commit. A backend that refuses the batch (the file backend) falls through to its `RefUpdate`, which
+re-reads the reference under its lock.
 
 A detail names the reference and the `RefUpdate.Result`, never content or an identity
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an

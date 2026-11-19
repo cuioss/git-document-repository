@@ -16,6 +16,7 @@
 package de.cuioss.git.document.core;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -55,8 +56,11 @@ import org.jspecify.annotations.Nullable;
  * (JGit 7.8.0 {@code RefDirectoryUpdate}) compares the expected id with the resolved id under the reference's lock as
  * for any other reference; the in-memory DFS backend ({@code DfsRefUpdate}) compares the expected id with no id at all
  * and always reports {@link RefUpdate.Result#LOCK_FAILURE}, so the updater then decides through one atomic
- * {@link BatchRefUpdate} that replaces or deletes the symbolic reference only while its base reference still points at
- * the expected id. Neither path drops the expected-id check.
+ * {@link BatchRefUpdate} that replaces or deletes the symbolic reference only while every link of its chain still
+ * points where it did and its base reference still points at the expected id; a dangling symbolic reference, which
+ * the backend would replace for the zero expected id even after its target was written, is replaced by that batch
+ * before any {@link RefUpdate} runs, and only while its base reference is still absent. A batch that fails on an I/O
+ * error is a failure, not a lost race. Neither path drops the expected-id check.
  * <p>
  * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
  * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
@@ -149,9 +153,13 @@ public final class ReferenceUpdater {
      * under the reference's lock as for {@code compareAndSwap}. On the in-memory DFS backend JGit 7.8.0
      * {@code DfsRefUpdate.tryLock(false)} drops the resolved id of a symbolic reference, so {@code RefUpdate} reports
      * {@link RefUpdate.Result#LOCK_FAILURE} for every expected id; the updater then replaces the symbolic reference
-     * through one atomic {@link BatchRefUpdate} that also requires the base reference to still point at the expected id.
-     * A writer that moved the base reference in between makes that batch fail, which is a lost race as for any other
-     * reference.
+     * through one atomic {@link BatchRefUpdate} that also requires every link of the symbolic chain to still point where
+     * it did and the base reference to still point at the expected id. A writer that moved one of them in between makes
+     * that batch fail, which is a lost race as for any other reference. A symbolic reference that is dangling (no
+     * expected id) is replaced by that batch before any {@link RefUpdate} runs, and only while its base reference is
+     * still absent: the backend would otherwise match the zero expected id even after the base reference was written
+     * and replace the alias without a conflict. A batch that fails on an I/O error ends the call in
+     * {@link GitOutcome#FAILED}, without a retry.
      * <p>
      * The outcomes are those of {@code compareAndSwap}: {@link GitOutcome#OK} with the full id of the new commit,
      * {@link GitOutcome#CONFLICT} after a {@link RefUpdate.Result#LOCK_FAILURE} in every attempt,
@@ -235,8 +243,10 @@ public final class ReferenceUpdater {
      * reference and deletes its base reference instead. The expected id is the id the symbolic reference resolves to.
      * On the file backend JGit compares it under the lock; on the in-memory DFS backend, where JGit 7.8.0
      * {@code DfsRefUpdate} compares it with no id and reports {@link RefUpdate.Result#LOCK_FAILURE}, the updater deletes
-     * the symbolic reference through one atomic {@link BatchRefUpdate} that also requires its base reference to still
-     * point at the expected id. A failed batch is the {@code LOCK_FAILURE} it replaces, decided by the re-read above.
+     * the symbolic reference through one atomic {@link BatchRefUpdate} that also requires every link of its chain to
+     * still point where it did and its base reference to still point at the expected id. A batch that lost a race is
+     * the {@code LOCK_FAILURE} it replaces, decided by the re-read above; a batch that failed on an I/O error is an
+     * {@link RefUpdate.Result#IO_FAILURE}.
      * <p>
      * The outcomes:
      * <ul>
@@ -316,8 +326,8 @@ public final class ReferenceUpdater {
         delete.disableRefLog();
         RefUpdate.Result result = delete.delete();
         if (unresolvedUnderLock(delete, result)) {
-            return guardedUnlink(repository, delete.getRef(), expected, ObjectId.zeroId())
-                    ? RefUpdate.Result.FORCED : result;
+            return resultOf(guardedUnlink(repository, delete.getRef(), expected, ObjectId.zeroId()),
+                    RefUpdate.Result.FORCED, result);
         }
         return result;
     }
@@ -334,11 +344,33 @@ public final class ReferenceUpdater {
         update.setExpectedOldObjectId(expected == null ? ObjectId.zeroId() : expected);
         update.setNewObjectId(commit);
         update.disableRefLog();
+        if (detach && expected == null && update.getRef().isSymbolic()) {
+            // A dangling symbolic reference: the in-memory backend compares no id for it, so the zero expected id would
+            // match even after another writer populated its target. The batch replaces it only while the target is
+            // still absent; a backend that refuses the batch (the file backend) decides under its lock below.
+            BatchOutcome batch = guardedUnlink(repository, update.getRef(), null, commit);
+            if (batch != BatchOutcome.REFUSED) {
+                return resultOf(batch, RefUpdate.Result.NEW, RefUpdate.Result.LOCK_FAILURE);
+            }
+        }
         RefUpdate.Result result = update.update();
         if (detach && expected != null && unresolvedUnderLock(update, result)) {
-            return guardedUnlink(repository, update.getRef(), expected, commit) ? RefUpdate.Result.NEW : result;
+            return resultOf(guardedUnlink(repository, update.getRef(), expected, commit), RefUpdate.Result.NEW,
+                    result);
         }
         return result;
+    }
+
+    /**
+     * The result of an update or delete after its guarded batch: {@code applied} when the batch wrote, the I/O failure
+     * a batch reports as one, and {@code lost} for a lost race or a refused batch, the result the batch replaces.
+     */
+    private static RefUpdate.Result resultOf(BatchOutcome batch, RefUpdate.Result applied, RefUpdate.Result lost) {
+        return switch (batch) {
+            case APPLIED -> applied;
+            case IO_FAILED -> RefUpdate.Result.IO_FAILURE;
+            case LOST_RACE, REFUSED -> lost;
+        };
     }
 
     /**
@@ -354,32 +386,89 @@ public final class ReferenceUpdater {
                 && update.getOldObjectId() == null;
     }
 
+    /** What an atomic guarded batch ended in; nothing is written unless it is {@link #APPLIED}. */
+    enum BatchOutcome {
+
+        /** Every command passed and the batch wrote. */
+        APPLIED,
+
+        /** A command's expected value did not hold: another writer changed a reference the batch guards. */
+        LOST_RACE,
+
+        /** The backend reported an I/O failure while it ran the batch. */
+        IO_FAILED,
+
+        /** The backend did not run the batch, e.g. the file backend, which refuses a symbolic command in an atomic batch. */
+        REFUSED
+    }
+
     /**
-     * Replaces or deletes a symbolic reference in one atomic {@link BatchRefUpdate} that also requires its base
-     * reference to still point at the expected id: an unlink command that expects the symbolic reference's target
-     * ({@code ReceiveCommand.unlink}) and a command on the base reference from the expected id to the same id, which
-     * changes nothing and holds only when the base reference is still at the expected id. JGit 7.8.0
-     * {@code ReftableBatchRefUpdate} compares every command under one lock before it writes any, so a writer that moved
-     * the base reference makes the whole batch fail and nothing is written. A backend without atomic batches, and the
-     * file backend, which refuses a symbolic command in an atomic batch ({@code PackedBatchRefUpdate}), write nothing
-     * either: the batch fails and the caller keeps its lost race.
-     *
-     * @param newId the new id of the reference; {@link ObjectId#zeroId()} deletes it
-     * @return whether both commands succeeded
+     * The message JGit 7.8.0 {@code ReftableBatchRefUpdate.execute} sets, with {@link ReceiveCommand.Result#LOCK_FAILURE},
+     * on the first command when it catches an {@link IOException}. A mismatch of an expected value sets the same result
+     * with no message, so the message is the only way to tell a storage failure from a lost race. Should a later JGit
+     * change the text, an I/O failure is classified as {@link BatchOutcome#LOST_RACE}, as it was before.
      */
-    private static boolean guardedUnlink(Repository repository, Ref symbolic, ObjectId expected, ObjectId newId)
-            throws IOException {
+    private static final String REFTABLE_IO_ERROR = "io error";
+
+    /**
+     * Replaces or deletes a symbolic reference in one atomic {@link BatchRefUpdate} that also requires everything the
+     * symbolic reference resolves through to still hold (checked against JGit 7.8.0): an unlink command that expects
+     * the symbolic reference's target ({@code ReceiveCommand.unlink}), a no-op {@code ReceiveCommand.link} on each
+     * further symbolic reference of the chain that holds only while it still points at the same target, and a command
+     * on the base reference. For an {@code expected} id that command goes from the id to the same id, which changes
+     * nothing and holds only while the base reference is still at it; for no expected id (a dangling symbolic
+     * reference) it holds only while the base reference is still absent. JGit 7.8.0 {@code ReftableBatchRefUpdate}
+     * compares a symbolic command with its immediate target name only, so without the commands on the chain's links a
+     * writer that retargeted one of them while the base reference stayed at the expected id would go unseen. It also
+     * compares every command under one lock before it writes any, so a writer that changed any of them makes the
+     * whole batch fail and nothing is written. A backend without atomic batches, and the file backend, which refuses
+     * a symbolic command in an atomic batch ({@code PackedBatchRefUpdate}), write nothing either.
+     *
+     * @param symbolic the symbolic reference as read, with its chain of targets
+     * @param expected the id the symbolic reference must still resolve to; {@code null} when it must still be dangling
+     * @param newId    the new id of the reference; {@link ObjectId#zeroId()} deletes it
+     * @return how the batch ended
+     */
+    static BatchOutcome guardedUnlink(Repository repository, Ref symbolic, @Nullable ObjectId expected,
+            ObjectId newId) throws IOException {
         ReceiveCommand unlink = ReceiveCommand.unlink(symbolic.getTarget().getName(), newId, symbolic.getName());
-        ReceiveCommand guard = new ReceiveCommand(expected, expected, symbolic.getLeaf().getName());
+        List<ReceiveCommand> commands = new ArrayList<>();
+        commands.add(unlink);
+        Ref link = symbolic.getTarget();
+        while (link.isSymbolic()) {
+            String target = link.getTarget().getName();
+            commands.add(ReceiveCommand.link(target, target, link.getName()));
+            link = link.getTarget();
+        }
+        ObjectId base = expected == null ? ObjectId.zeroId() : expected;
+        commands.add(new ReceiveCommand(base, base, link.getName()));
         BatchRefUpdate batch = repository.getRefDatabase().newBatchUpdate();
         batch.setAtomic(true);
         batch.setAllowNonFastForwards(true);
         batch.disableRefLog();
-        batch.addCommand(unlink, guard);
+        batch.addCommand(commands);
         try (RevWalk walk = new RevWalk(repository)) {
             batch.execute(walk, NullProgressMonitor.INSTANCE);
         }
-        return unlink.getResult() == ReceiveCommand.Result.OK && guard.getResult() == ReceiveCommand.Result.OK;
+        return outcomeOf(commands);
+    }
+
+    private static BatchOutcome outcomeOf(List<ReceiveCommand> commands) {
+        boolean applied = true;
+        boolean lost = false;
+        for (ReceiveCommand command : commands) {
+            if (command.getResult() == ReceiveCommand.Result.LOCK_FAILURE) {
+                if (REFTABLE_IO_ERROR.equals(command.getMessage())) {
+                    return BatchOutcome.IO_FAILED;
+                }
+                lost = true;
+            }
+            applied &= command.getResult() == ReceiveCommand.Result.OK;
+        }
+        if (applied) {
+            return BatchOutcome.APPLIED;
+        }
+        return lost ? BatchOutcome.LOST_RACE : BatchOutcome.REFUSED;
     }
 
     private static List<String> parentsOf(@Nullable RevCommit parent) {

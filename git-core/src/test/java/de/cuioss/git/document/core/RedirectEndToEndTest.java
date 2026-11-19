@@ -79,6 +79,9 @@ class RedirectEndToEndTest {
     /** The host of the redirect target: the same server on the loopback interface, outside the policy. */
     private static final String REDIRECT_HOST = "127.0.0.1";
 
+    /** JGit 7.8.0's default {@code http.maxRedirects}: positive, so the first redirect reaches the policy guard. */
+    private static final int DEFAULT_MAX_REDIRECTS = 5;
+
     /** The detail of the refused redirect: the host only (GDR-NFR-3). */
     private static final String REFUSED_DETAIL = "redirect to " + REDIRECT_HOST + " is outside the remote policy";
 
@@ -122,12 +125,16 @@ class RedirectEndToEndTest {
 
     /**
      * Trusts the generated certificate for the transports of this repository only, and pins the redirect handling to
-     * JGit 7.8.0's default ({@code http.followRedirects=initial}): a developer's {@code http.followRedirects=false}
-     * would otherwise make {@code TransportHttp} reject the first {@code 302} before the policy guard is reached.
+     * JGit 7.8.0's defaults ({@code http.followRedirects=initial}, {@code http.maxRedirects=5}): a developer's
+     * {@code http.followRedirects=false} would otherwise make {@code TransportHttp} reject the first {@code 302}
+     * before the policy guard is reached, and so would an {@code http.maxRedirects=0}, because
+     * {@code TransportHttp.redirect} rejects a redirect when the number of redirects so far is not below the limit
+     * (JGit 7.8.0 {@code TransportHttp}, {@code HttpConfig}).
      */
     private static void trustGeneratedCertificate(StoredConfig config) throws IOException {
         config.setBoolean(HttpConfig.HTTP, null, HttpConfig.SSL_VERIFY_KEY, false);
         config.setEnum(HttpConfig.HTTP, null, HttpConfig.FOLLOW_REDIRECTS_KEY, HttpConfig.HttpRedirectMode.INITIAL);
+        config.setInt(HttpConfig.HTTP, null, HttpConfig.MAX_REDIRECTS_KEY, DEFAULT_MAX_REDIRECTS);
         config.save();
     }
 
