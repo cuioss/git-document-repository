@@ -48,6 +48,14 @@ by an ended process), the package-private
 `git-testing` fixtures. Add an `exports` directive together with the first public class of a package: javac rejects
 exporting a package that contains only `package-info.java`.
 
+The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
+already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
+graph, and the execution `consumer-isolation` of `git-core/pom.xml` bans every compile or runtime artifact outside the
+closure a consumer of `git-core` alone receives. `DomainTermAbsenceTest` in each module asserts that no public type
+carries a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
+`META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
+reaches; `git-worktrees` ships none and relies on that of `git-core` (GDR-NFR-4).
+
 ## Build
 
 ```bash
@@ -78,6 +86,10 @@ These follow the conventions of the foundation code that moves into this reposit
 - Third-party dependencies stay out of the lower modules: a consumer of `git-core` alone must pull none of
   the dependencies of `git-store`, `git-forms` or `git-timestamp`.
 - **Never add a dependency without the owner's approval**, JGit included.
+- A new module adds its allowed reactor edges to the `module-layering` rule: one `<include>` per edge of the module
+  graph, in its own POM (see `git-worktrees/pom.xml`).
+- A new compile dependency of `git-core` is added to the `consumer-isolation` rule of `git-core/pom.xml` only after the
+  owner's approval; until then the build fails.
 - Documentation is AsciiDoc; Javadoc on every public type and method.
 - Every source file carries the license header; `-Ppre-commit` maintains it. `inceptionYear` in the root pom
   must stay set, otherwise every run restamps all headers.

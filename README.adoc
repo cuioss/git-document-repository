@@ -28,7 +28,8 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |Module |Content
 
 |`git-core`
-|Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing.
+|Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing,
+compare-and-swap, in-core merge, notes.
 
 |`git-worktrees`
 |Linked working trees, commit from a working tree, working-tree status. Depends on `git-core` only.
@@ -38,13 +39,18 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
-repository operations and the cache repository, plus in-core writing and compare-and-swap reference updates.
-`git-worktrees` holds the worktree part taken over from the same
-client: adding, listing and removing linked working trees and the commit from a working tree, plus a new working-tree
-status. `git-testing` holds its credential generator and its repository fixtures (see
+repository operations and the cache repository, plus in-core writing, compare-and-swap reference updates, in-core
+merge, reading (snapshot, path history, changed paths) and notes. `git-worktrees` holds the worktree part taken over
+from the same client: adding, listing and removing linked working trees and the commit from a working tree, plus a new
+working-tree status. `git-testing` holds its credential generator and its repository fixtures (see
 link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
 The aspect modules (`git-store`, `git-forms`, `git-timestamp`,
 `git-directory`) follow as the document store needs them.
+
+The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
+the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
+`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-worktrees` relies on it (see
+link:doc/specification/general.adoc[General Requirements], GDR-GEN-1 and GDR-NFR-4).
 
 === Maven Coordinates
 

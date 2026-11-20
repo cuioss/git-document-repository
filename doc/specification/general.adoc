@@ -10,8 +10,9 @@ its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing
 `git-core` implements its own (xref:git-core.adoc[`git-core`]: hardening, remote policy, identity, results, repository
 operations, cache repository, in-core writing, compare-and-swap, in-core merge, reading and notes; the hardening with
 the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states), and `git-worktrees`
-implements all of its own (xref:git-worktrees.adoc[`git-worktrees`]); every other requirement of the libraries is
-planned, and the other modules are not yet created.
+implements all of its own (xref:git-worktrees.adoc[`git-worktrees`]). Of the requirements below, <<GDR-GEN-1>> is
+implemented, and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does not verify
+yet; every other requirement of the libraries is planned, and the other modules are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -26,9 +27,36 @@ planned, and the other modules are not yet created.
 
 image::../resources/diagrams/module-dependency-graph.svg["Module dependency graph of git-document-repository: existing modules solid, planned modules dashed",align=center]
 
-The reactor dependencies are the edges of the graph. The build rule that enforces them (Maven Enforcer rule or an
-architecture test) is open; a test consumer project depending on `git-core` alone is to assert that its resolved
-dependency set holds no third-party artifact of the upper modules. The third-party dependencies declared are
+The reactor dependencies are the edges of the graph. The build checks them with the `maven-enforcer-plugin` 3.6.3 that
+`cui-parent-pom` 1.7.7 manages and binds in every module, inherited through `cui-java-parent` 1.7.7
+(link:https://repo1.maven.org/maven2/de/cuioss/cui-parent-pom/1.7.7/cui-parent-pom-1.7.7.pom[`cui-parent-pom` 1.7.7
+POM]), and its built-in rule `bannedDependencies`
+(link:https://maven.apache.org/enforcer/enforcer-rules/bannedDependencies.html[Maven Enforcer, Banned Dependencies]).
+No plugin and no dependency is added for it; an architecture test was rejected because it would have needed a new
+dependency. Three checks realise the requirement:
+
+* The execution `module-layering` of the root POM (phase `validate`, declared dependencies only) bans every
+  dependency on an artifact `de.cuioss:git-*` except `git-testing` in scope `test`, against which every module may
+  test. Each module lists its allowed edges in its own POM, one `<include>` per edge, appended to the rule with
+  `combine.children="append"` in an execution of the same id: `git-worktrees` lists `git-core`; `git-core` and
+  `git-testing` list none. A new module adds exactly the edges the graph names.
+* The execution `consumer-isolation` of `git-core` (phase `validate`, transitive) bans every artifact in scope
+  `compile` or `runtime` outside the closure a consumer of `git-core` alone receives: `org.jspecify:jspecify`, JGit
+  with the compile dependencies its 7.8.0 POM declares (`com.googlecode.javaewah:JavaEWAH`, `org.slf4j:slf4j-api`,
+  `commons-codec:commons-codec`;
+  link:https://repo1.maven.org/maven2/org/eclipse/jgit/org.eclipse.jgit/7.8.0.202609011348-r/org.eclipse.jgit-7.8.0.202609011348-r.pom[JGit
+  7.8.0.202609011348-r POM]), and `de.cuioss:cui-java-tools`, whose 2.7.0 POM declares no compile dependency beyond
+  JSpecify (link:https://repo1.maven.org/maven2/de/cuioss/cui-java-tools/2.7.0/cui-java-tools-2.7.0.pom[`cui-java-tools`
+  2.7.0 POM]). Test and provided scope never reach a consumer and stay outside the rule. This rule is the consumer
+  check, in place of a separate test consumer project (owner's decision, 2026-11-19): it asserts the same compile and
+  runtime closure a consumer of `git-core` alone resolves, publishes nothing extra, and needs no new plugin or
+  dependency, where a consumer project would be a new module of the reactor that needs a test harness or a parser of
+  its dependency tree. A new compile dependency of `git-core` is added to the rule only after the owner's approval.
+* `DomainTermAbsenceTest` of `git-core`, `git-worktrees` and `git-testing` loads the classes of the module's main
+  output and fails when the simple name or the package name of a public type contains `assessment`, `threat`,
+  `incident` or `risk`, compared case-insensitively, or when the scan finds no public type.
+
+The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`,
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
@@ -238,9 +266,34 @@ and `git-worktrees`, see <<GDR-GEN-1>>) and with checks of result details.
 * Every module except `git-testing` must work in a GraalVM native image; reflection and resource metadata the module
   needs must ship in `META-INF/native-image`.
 
-The metadata lies under `META-INF/native-image/de.cuioss/<artifactId>/`. This repository does not verify the
-requirement yet: until a native test lane exists here (open), only a consuming application's native build verifies
-it.
+The metadata lies under `META-INF/native-image/de.cuioss/<artifactId>/`, in the files `reflect-config.json` and
+`resource-config.json` (link:https://www.graalvm.org/latest/reference-manual/native-image/overview/BuildConfiguration/[GraalVM,
+Native Image Build Configuration]).
+
+`git-core` ships both files under `META-INF/native-image/de.cuioss/git-core/`. JGit 7.8.0.202609011348-r ships no
+native-image metadata of its own (its jar holds no `META-INF/native-image/` entry), and its `TranslationBundle` fills
+the public fields of a translation class reflectively from the resource bundle of the same name
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/nls/TranslationBundle.java[JGit
+7.8.0, `TranslationBundle`]). The one translation class the code paths of `git-core` reach is
+`org.eclipse.jgit.internal.JGitText`: `reflect-config.json` lists it with all public fields and its public no-argument
+constructor, `resource-config.json` lists its resource bundle. The classes of `git-core` itself use no reflection and
+are not listed. `NativeImageMetadataTest` of `git-core` asserts that both files are on the class path, that every
+listed class loads and that every listed bundle resolves, so a JGit upgrade that moves or renames an entry fails this
+build instead of the native image of a consumer.
+
+`git-worktrees` ships no native-image metadata (owner's decision after research, 2026-11-20): GraalVM reads the
+metadata under `META-INF/native-image` from every entry of the class path
+(link:https://www.graalvm.org/latest/reference-manual/native-image/metadata/[GraalVM, Reachability Metadata]), so a
+consumer of `git-worktrees` receives the metadata of `git-core` through the dependency; the main code of
+`git-worktrees` itself has no reflection, resource or resource-bundle access; and GraalVM recommends no empty
+placeholder file, where an empty array would not even be a valid `resource-config.json`, which its schema requires to
+be an object
+(link:https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/assets/resource-config-schema-v1.1.0.json[GraalVM,
+`resource-config-schema-v1.1.0.json`]).
+
+This repository does not verify the requirement yet: until a native test lane exists here (open), only a consuming
+application's native build verifies it, the first being the native build of
+xref:../clients/pm-mcp-core.adoc[`pm-mcp-core`].
 
 [#test-approach]
 == Test Approach
