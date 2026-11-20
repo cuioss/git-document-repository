@@ -48,7 +48,10 @@ request carries and is checked against its own token, and nothing an agent did e
 `GET` and `DELETE` on `/mcp` are answered with `405`, because the server opens no stream outside a request and keeps
 no session to delete. The
 server validates the `Origin` header of every request and answers an invalid origin with `403`. A STDIO transport is not
-offered: the specification does not apply its authorization to STDIO, and a local process could not prove a user.
+offered: the specification does not apply its authorization to STDIO, and a local process of the server could not prove
+a user. A client that needs STDIO, or a pre-registered client for an identity provider without client metadata
+documents, uses a local gateway that holds the user's login and calls this server as a remote resource server
+(xref:local-mcp-gateway.adoc[Local MCP Gateway], proposal).
 
 == Scopes and Rights
 
@@ -139,6 +142,8 @@ human.
 . Which protocol revisions the server supports besides 2026-07-28 (in revision 2025-11-25 protocol sessions are
   optional).
 . Whether the organisation's authorization server supports Client ID Metadata Documents, or agents are pre-registered.
+  A local gateway would be one pre-registered public client for all agents
+  (xref:local-mcp-gateway.adoc#_an_honest_look_at_the_need[Local MCP Gateway]).
 . The exact tool list per category, and whether recipes are offered as MCP prompts.
 . How a release request is stored in Git: as a field of the document on its working branch or as a document of a kind
   of its own, and in which repository
@@ -152,6 +157,7 @@ human.
 
 * xref:authentication-and-identity.adoc[Authentication and Identity]
 * xref:web-app.adoc[Web App] — where humans complete what agents request
+* xref:local-mcp-gateway.adoc[Local MCP Gateway] — proposal: the client side, a local login and token vault for agents
 * Sources: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[MCP Authorization 2026-07-28],
   https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[MCP Transports 2026-07-28],
   https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http[Streamable HTTP 2026-07-28],

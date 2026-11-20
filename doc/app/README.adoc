@@ -44,6 +44,9 @@ In reading order:
 . xref:concepts/web-app.adoc[Web App] -- what is taken from `pm-web-app`, structure, what differs, page security
 . xref:concepts/mcp-server.adoc[MCP Server] -- protected resource, transport, scopes and rights, attribution
 . xref:concepts/deployment.adoc[Deployment] -- what runs where, image, secrets, compose sample, operating duties
+. xref:concepts/local-mcp-gateway.adoc[Local MCP Gateway] -- proposal: a reusable local base project that logs the user
+  in and holds the token for agents
+. xref:concepts/brand.adoc[Name and Brand] -- proposal: name candidates, mark, mascot
 
 The library concepts these build on start with
 xref:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents].
@@ -122,4 +125,8 @@ describe its planned design, including every check and CI job they name.
 |xref:adr/0001-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0001]
 |Authentication through Token Sheriff, server-side session for the web app
 |Accepted
+
+|xref:adr/0002-A_local_gateway_base_project_holds_the_user_tokens_for_MCP_agents.adoc[ADR-0002]
+|A local gateway base project holds the user's tokens for MCP agents
+|Proposed
 |===

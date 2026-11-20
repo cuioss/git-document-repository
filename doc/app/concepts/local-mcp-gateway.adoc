@@ -1,0 +1,388 @@
+= Local MCP Gateway
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+xref:../README.adoc[CISOs-Friend documentation] » Concepts
+
+Status: *proposal* (xref:../adr/0002-A_local_gateway_base_project_holds_the_user_tokens_for_MCP_agents.adoc[ADR-0002],
+proposed). The MCP server of the application is a remote OAuth 2.1 resource server
+(xref:mcp-server.adoc[MCP Server]). This page is about the other end: who logs the user in, on the user's own machine,
+and keeps the credential, so that an AI agent can call that server, or any other service of the organisation, as the
+user. The idea is a reusable *base project*, a small Quarkus native application that does exactly that, and
+*descendant projects* that only say which tools exist and which routes they call.
+
+The gateway is not part of this application and not part of the `git-document-repository` libraries. It is described
+here because CISOs-Friend is its first consumer and because its design answers an open question of the MCP server
+concept. It is meant to move into a repository of its own, like `doc/app/`.
+
+== The Question
+
+An MCP client that talks to the server must hold an access token whose audience is the server
+(xref:mcp-server.adoc#_the_server_as_a_protected_resource[MCP Server, Protected Resource]). Someone has to run the login
+at the identity provider, keep the refresh token, refresh the access token and put it on each request. Today that is
+the MCP client's job, and four things can go wrong with that:
+
+. The client does not do OAuth at all, because it only speaks STDIO.
+. The identity provider supports neither Client ID Metadata Documents nor dynamic registration, and the client has no
+  way to use a pre-registered client.
+. Every MCP client of one person logs in and stores a refresh token of its own; an organisation with several services
+  gets many logins and many token files.
+. A service has a REST API but no MCP endpoint, and nobody wants to build and run one more server for it.
+
+== What Exists Already
+
+Checked on 2026-11-20. Capabilities exist, but separately.
+
+[cols="2,3,2"]
+|===
+|Building block |What it does |Source
+
+|*Claude Code, remote MCP*
+|Logs in with `/mcp` and refreshes tokens itself. Accepts a pre-registered client (`--client-id`, `--callback-port`,
+the JSON key `oauth`), and a `headersHelper`: a command that prints the headers for a server; when its output has an
+`Authorization` header, the client uses it and does not fall back to OAuth. Where the MCP tokens are stored is not
+stated in the documentation.
+|https://code.claude.com/docs/en/mcp[Claude Code, MCP]
+
+|*mcp-remote*
+|A local STDIO-to-remote bridge with OAuth, MIT, about 1.7k stars. Stores client information and tokens as plain JSON
+under `~/.mcp-auth`, files with mode `0600`; it does not encrypt.
+|https://github.com/geelen/mcp-remote[geelen/mcp-remote]
+
+|*Small bridges*
+|`oauth-mcp-bridge` (Node, MIT, no stars; the default file store is not encrypted, `op` and libsecret stores
+exist), `mcp-oauth2-proxy` (AES-256-GCM cache, keychain planned; only a catalogue snippet read), `mcpc` (OS keychain,
+`0600` file as fallback), `mcp-warden` (Rust, secrets only in the OS keychain, injects the credential into requests).
+|https://github.com/obonhector/oauth-mcp-bridge[oauth-mcp-bridge],
+https://mcpservers.org/servers/chengleiyuan/mcp-oauth2-proxy[mcp-oauth2-proxy],
+https://github.com/apify/mcpc[mcpc], https://github.com/ermoluk/mcp-warden[mcp-warden]
+
+|*Server-side gateways*
+|Multi-user, run by the organisation: IBM ContextForge, Microsoft `mcp-gateway`, agentgateway, Pomerium, Auth0 Token
+Vault. They hold the upstream tokens centrally. Docker's MCP Gateway is local, but runs MCP servers as containers and
+needs Docker Desktop.
+|https://github.com/IBM/mcp-context-forge[ContextForge],
+https://github.com/microsoft/mcp-gateway[Microsoft], https://github.com/agentgateway/agentgateway[agentgateway],
+https://www.pomerium.com/docs/capabilities/mcp[Pomerium],
+https://auth0.com/docs/secure/call-apis-on-users-behalf/token-vault[Auth0],
+https://github.com/docker/mcp-gateway[Docker]
+
+|*Local OAuth helpers*
+|The model for a native helper: Git Credential Manager delegates storage to the OS (Keychain, DPAPI, Secret Service);
+kubelogin does authorization code with PKCE on a loopback redirect and caches the token in a file, or in the keyring
+on request; the GitHub CLI uses the system credential store and falls back to a plain-text file. None of them
+generates its own encryption key.
+|https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/credstores.md[GCM],
+https://github.com/int128/kubelogin/blob/master/docs/usage.md[kubelogin],
+https://cli.github.com/manual/gh_auth_login[gh]
+
+|*OpenAPI to MCP*
+|FastMCP's `from_openapi` turns every route into a tool by default; ordered `RouteMap` rules select by method, path
+and tag, the first match wins, and `EXCLUDE` drops a route. Python.
+|https://gofastmcp.com/integrations/openapi[FastMCP]
+
+|*Quarkus MCP Server*
+|Quarkiverse extension, Apache-2.0: STDIO (separate artifact `quarkus-mcp-server-stdio`), Streamable HTTP, native
+image, Quarkus Security hook. Tools are annotated methods; whether tools can be registered from a declarative file at
+run time is not documented on the pages read.
+|https://docs.quarkiverse.io/quarkus-mcp-server/dev/[Quarkus MCP Server]
+|===
+
+*What was not found:* a single reusable base that combines a loopback PKCE login with a small local UI, a refresh
+token under a locally generated key, a JVM or Quarkus-native runtime, and a declarative mapping of routes to tools. The
+closer matches are Node, Python or Rust, young (zero to 14 stars) and aimed at one case each. The search was not
+exhaustive.
+
+== An Honest Look at the Need
+
+For CISOs-Friend alone, a gateway is *not necessary*. Claude Code already logs in to a remote MCP server, can be
+given a pre-registered client and a fixed callback port, and refreshes its own tokens; other clients with OAuth
+support do the same. The server needs nothing from a gateway.
+
+The gateway earns its place where one of the four cases of <<_the_question>> is real:
+
+* *Clients without OAuth* (case 1): a STDIO-only client or a script.
+* *An identity provider without client metadata documents or dynamic registration* (case 2): the open question 2 of the
+  xref:mcp-server.adoc#_open_questions[MCP Server concept]. The MCP specification orders the options pre-registered
+  client, Client ID Metadata Document, Dynamic Client Registration (deprecated in revision 2026-07-28), manual entry
+  (https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration[Client
+  Registration]); a gateway is one pre-registered public client for every agent on every machine, registered once.
+* *One login for several services* (case 3) and *services without MCP* (case 4): the case for the *base* project. This
+  is where the reuse pays, and it rests on descendants that are not specified yet.
+
+*Recommendation:* build it as a thin base, in stages (<<_stages>>), and start when the second descendant or a
+client without OAuth is real, not before. The server design is complete without it and stays unchanged.
+
+== Design
+
+=== Base and Descendants
+
+[cols="1,2,2"]
+|===
+|Concern |Base project (one, reusable) |Descendant (one per service)
+
+|Login
+|Discovery, authorization code with PKCE on a loopback redirect, external browser, a small local page to add and remove
+connections, logout and revocation
+|The issuer, the client id, the scopes and the resource identifier
+
+|Credential
+|Vault, refresh, sender constraint, forgetting a connection
+|Nothing: it never sees a token
+
+|Agent side
+|A STDIO MCP server; the tool listing; error and size limits; audit log
+|The tools (<<_the_mapping>>), their texts and schemas
+
+|Remote side
+|Bearer on every request, only to the server the connection is for; retry once on `401`
+|The base URL and the routes
+
+|Product
+|Packaging as a native executable for macOS, Windows and Linux; update check
+|Name, icon and the first-run text
+|===
+
+A descendant is a configuration file and, at most, a small module. It writes no OAuth code and no cryptography.
+
+=== Three Faces
+
+The same vault serves three ways of use, from the least to the most the gateway does:
+
+. *Credential helper.* `gateway token <connection>` prints the `Authorization` header as JSON on standard output. It
+  fits the `headersHelper` of clients that support one, and is the Git Credential Manager pattern: the client keeps its
+  own MCP transport and OAuth stays out of it.
+. *Bridge.* A STDIO MCP server that forwards every JSON-RPC message of the client to the remote Streamable HTTP endpoint
+  with a fresh bearer. The tools live on the server. This is what CISOs-Friend needs.
+. *Mapped.* The gateway is the MCP server: it lists tools that the descendant declared and turns each call into one
+  request to a REST route (<<_the_mapping>>). For services with an API and no MCP endpoint.
+
+=== Login and Registration
+
+* *Public client.* A binary that is distributed to many users cannot keep a secret; RFC 8252 section 8.5 says such a
+  secret "should not be treated as confidential"
+  (https://www.rfc-editor.org/rfc/rfc8252.txt[RFC 8252], BCP 212). The gateway authenticates as a public client.
+* *Loopback redirect.* `http://127.0.0.1:{port}/{path}`, with the authorization server required to allow any port (RFC
+  8252 section 7.3); `localhost` is not recommended (section 8.3). PKCE is required of public clients (section 8.1; RFC
+  9700 section 2.1.1), and the login runs in the system browser, never an embedded view (section 8.12).
+* *Device authorization grant* (https://www.rfc-editor.org/rfc/rfc8628.txt[RFC 8628]) only as a documented option for a
+  machine without a browser: the RFC warns that the flow can be started on a device in an attacker's possession, so the
+  user must be told which device they authorize (section 5.4).
+* *Registration.* A pre-registered client id, kept per issuer: the MCP specification requires pre-registered credentials
+  to be associated with the issuer that issued them. A Client ID Metadata Document is the forward path where the
+  authorization server supports it; its Internet-Draft (`draft-ietf-oauth-client-id-metadata-document`, version -03 of
+  2 November 2026) is not yet an RFC, and the MCP guidance notes that such a document cannot by itself prevent
+  impersonation of a `localhost` redirect.
+* *Resource and issuer.* The `resource` parameter (RFC 8707) is sent on every authorization and token request, and the
+  `iss` of the response is checked (RFC 9207), as the MCP revision 2026-07-28 requires.
+* *Opening the browser.* The authorization URL comes from a server's metadata and is therefore untrusted. The gateway
+  checks its scheme and opens it without a shell. The command injection CVE-2025-6514 in `mcp-remote` before 0.1.16 came
+  from a crafted `authorization_endpoint` (https://jfrog.com/blog/2025-6514-critical-mcp-remote-rce-vulnerability/[JFrog
+  analysis]).
+
+=== The Vault
+
+The user's wish is a refresh token stored encrypted, with keys created locally on the first and on every updated
+launch. The research says what that protects and what it does not:
+
+* A key that sits next to the encrypted file protects against nothing that copying the directory does not also copy:
+  the OWASP Cryptographic Storage Cheat Sheet advises to keep keys "in a separate location from encrypted data" and to
+  use "the secure storage mechanisms provided by the operating system"
+  (https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html[OWASP]). Against another local
+  user the permissions `0600` give the same; against malware running as the user neither helps.
+* The tools in <<_what_exists_already>> delegate to the OS and fall back to a plain file. None generates its own key.
+
+The design therefore has two layers:
+
+. *Data key in the OS store.* On first launch the gateway generates a random 256-bit data key, keeps it in the macOS
+  Keychain, in Windows DPAPI or Credential Manager, or in the Secret Service on Linux, and encrypts the token file
+  (`AES-256-GCM`, one nonce per write) with it. On an updated launch it can rotate the key and re-encrypt. The file can be
+  backed up or copied without exposing a token.
+. *No silent fallback.* Where no OS store exists (a Linux server without a session bus: the Secret Service needs a D-Bus
+  session and an unlocked keyring), the gateway starts in a *reduced mode* that is named on the local page and on the
+  command line, and stores the key in a file with mode `0600`. It never pretends to more than it does.
+. *Sender constraint, optional.* Refresh tokens issued to public clients must be sender-constrained or rotated (RFC
+  9700 section 2.2.2). With DPoP (RFC 9449 section 5) the refresh token is bound to a key of the gateway, and a copy of
+  the token store is useless without that key; section 11.4 notes that this holds when the key cannot be exported, and
+  that malware on the machine can still sign proofs while the gateway is online. So the proof key belongs in the OS
+  store as well, and as a non-exportable key where the platform allows it. Whether the identity provider supports DPoP
+  and rotation for public clients is a precondition to be asked (<<_open_questions>>).
+
+Access to the OS store from Java 25 native: the Foreign Function & Memory API is final since JDK 22, and GraalVM Native
+Image enables it by default from GraalVM 25, with the downcalls declared in build-time metadata
+(https://www.graalvm.org/latest/reference-manual/native-image/native-code-interoperability/ffm-api/[GraalVM]). The
+alternative is the command line of each OS (`security`, `secret-tool`, PowerShell). On macOS the `security add-generic-password`
+option `-w` takes the secret as an argument unless it is the last argument, when the tool prompts for it
+(`man security`); a process argument is readable by other processes of the same user, so a command-line path must pass
+the secret on standard input or by prompt. The one Java keyring library found, `java-keyring`, was last released in
+2023 and documents no native-image support, so it is not a candidate.
+
+=== The Local Trust Boundary
+
+A gateway that can call the server as the user is worth stealing from. The honest statement of what it defends:
+
+* *Over STDIO* the gateway is a child of the agent host. The MCP specification does not apply its authorization to STDIO
+  and says to take credentials from the environment (revision 2026-07-28, "Implementations using an STDIO transport
+  SHOULD NOT follow this specification"). The vault is that environment. Any process running as the same user can start
+  the gateway and use the connection; that is the boundary of every local helper (`gh`, `kubelogin`, `git-credential-manager`),
+  and the gateway does not claim more.
+* *No listening port by default.* The local page and the login callback bind `127.0.0.1` only, for the minutes of a
+  login. A permanent port is not offered. If one is added later, it needs a per-start secret or a Unix domain socket, and
+  a `Host` and `Origin` check; an unauthenticated local proxy reachable from a browser is the pattern of CVE-2025-49596 in
+  the MCP Inspector
+  (https://www.oligo.security/blog/critical-rce-vulnerability-in-anthropic-mcp-inspector-cve-2025-49596[Oligo]).
+* *No token passthrough.* The gateway sends a token only to the server of the connection it was issued for, and never
+  puts an agent-supplied value into an `Authorization` header. The MCP specification forbids a client to send tokens
+  other than those issued by the server's authorization server
+  (https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices[Security Best
+  Practices]).
+* *No token to the agent.* No tool result, error text or log line contains token material.
+* *Content is data.* In bridge mode the gateway forwards; in mapped mode the arguments a model supplies are validated
+  against the declared schema before they become a path, a query or a body.
+
+=== What Changes for the Server
+
+Nothing in the server's requirements: it validates the same audience-bound token and applies the same rights
+(xref:../specification/mcp-server.adoc#CIFR-MCP-3[CIFR-MCP-3]). Two consequences follow for the documents, and they are
+visible in the changes that accompany this page:
+
+* The sentence "a local process could not prove a user" of the MCP server concept is true of a process that presents no
+  credential. A gateway process proves the user by holding the user's refresh token, obtained by a login.
+  `CIFR-MCP-1` (no STDIO transport on the *server*) is unchanged: STDIO is the gateway's.
+* *Attribution of the client.* The server records `azp` or `client_id` in the audit log to tell which agent acted
+  (xref:mcp-server.adoc#_attribution_of_agent_actions[MCP Server, Attribution]). Behind a gateway every agent on every
+  machine presents the gateway's client id. The audit log then shows "the gateway", not the agent. Whether the gateway
+  passes an agent label (which the server could record as unverified data) is an open question.
+
+=== The Mapping
+
+Only for the mapped face. A descendant's file declares tools; the engine follows the semantics proven in FastMCP's route
+maps, so that nobody has to learn a new model:
+
+* A rule selects routes by method, path pattern and tag; the first rule that matches wins; a rule can exclude.
+* A tool has a name, a description, an input schema, the route it calls, and a statement of which arguments go to the
+  path, the query and the body.
+* Read-only methods become tools by default; a method that changes something needs an explicit rule and is marked in the
+  tool description.
+* The authentication is not part of the mapping; it belongs to the connection.
+
+A sketch (names are illustrative; the file format is not specified yet):
+
+[source,yaml]
+----
+connection:
+  issuer: https://idp.example.org/realms/main
+  client-id: gateway
+  resource: https://service.example.org
+  scopes: [service:read]
+tools:
+  - name: list_documents
+    route: GET /api/v1/documents
+    description: List the documents the user may read.
+    query: [category, limit]
+  - name: get_document
+    route: GET /api/v1/documents/{id}
+    path: [id]
+----
+
+Whether Quarkus MCP Server can register such tools at run time, or the base has to implement the MCP server side
+itself, is the first thing a spike has to answer. A STDIO process must write only protocol messages to standard output;
+the Quarkus documentation builds a native STDIO runner, so the runtime is feasible.
+
+=== What Token Sheriff Has and Lacks
+
+Token Sheriff provides the OAuth flows as libraries, so the gateway should reuse it
+(xref:authentication-and-identity.adoc[Authentication and Identity]). Read in the local checkout
+(`0.9.8-33-ga9ce05df`) on 2026-11-20:
+
+[cols="2,3"]
+|===
+|Present |Absent for this use
+
+|`TokenStore` with `store`, `retrieve`, `remove`, `update`, keyed by a session id, and `InMemoryTokenStore`: the vault is
+an implementation of this interface.
+|`ClientAuthMethod` lists `client_secret_basic`, `client_secret_post`, `private_key_jwt` and `tls_client_auth`: *no
+`none`*, so no public client.
+
+|`AuthorizationCodeFlow`, `RefreshFlow`, `PkceChallenge`, `ParClient`, `StepUpHandler`.
+|The client documentation describes a *server-side confidential-client engine* and rules out public-client token
+storage in the browser; a native public client is not addressed.
+
+|`DpopProofGenerator` and `ConstraintBinding`: the proof for a key pair given to it, and a stored binding that must not
+be downgraded on refresh.
+|No device authorization grant.
+
+|`RefreshTokenFamily` and rotation handling.
+|`ClientConfiguration.redirectUri` is one exact string; a loopback port is therefore fixed in the registration or a
+configuration is built per login.
+|===
+
+These are additions to a project the author owns: a `none` authentication method for public clients, a loopback redirect
+rule, optionally the device grant. They are not decided here.
+
+== Alternatives
+
+[cols="1,3"]
+|===
+|Alternative |Why not (or when)
+
+|*Nothing: the MCP client does OAuth*
+|The right answer for a client that supports pre-registration and refresh, which includes Claude Code. The gateway is
+for what remains (<<_an_honest_look_at_the_need>>).
+
+|*Adopt `mcp-remote` or a small bridge*
+|Node, and tokens in a plain file (`mcp-remote`) or a young project of one maintainer; the stack and the storage differ
+from the rest of the family and give no route mapping. Worth testing as the reference the gateway must beat.
+
+|*A server-side gateway of the organisation*
+|Holds all users' upstream tokens centrally, which is a larger target and a service to run. The design of CISOs-Friend
+avoids an additional component to operate; a local gateway keeps each user's token with the user.
+
+|*A credential helper only*
+|The smallest thing, and stage 1 of this plan. It does not help a client without a `headersHelper`.
+|===
+
+[#_stages]
+== Stages
+
+. *Spike*: Quarkus native STDIO server on the three platforms; dynamic tool registration; FFM access to the OS store on
+  macOS; a loopback login against Keycloak with a hand-written public client. Throw it away; keep the findings.
+. *Token Sheriff*: the public-client method and the loopback rule, in Token Sheriff and with its tests.
+. *Base, credential helper and bridge*: login, vault, `gateway token`, the bridge. Descendant: CISOs-Friend, as a
+  configuration only. The test of the base is that this descendant needs no code.
+. *Mapped mode*, when a service without MCP is real.
+
+[#_open_questions]
+== Open Questions
+
+. Does the organisation's identity provider issue refresh tokens to a public client, rotate them, and support DPoP? The
+  whole vault design rests on the answer.
+. Pre-registration at the identity provider: one client id for all installations, with a fixed loopback port, or
+  `127.0.0.1` with any port as RFC 8252 requires of the server.
+. Agent attribution behind the gateway (<<_what_changes_for_the_server>>).
+. Dynamic tool registration in Quarkus MCP Server, and the exact current version to depend on (the sources read name
+  both `2.0.4` and `2.1.0.Beta1`).
+. The Quarkus OIDC security hook is untested here; whether it is useful for a *client* is open.
+. Linux without a session bus: reduced mode, or refuse to start.
+. Whether the DPoP proof key can be non-exportable from Java on each platform (Secure Enclave, TPM) or must be a software
+  key under the data key.
+. Name and licence of the base project (xref:brand.adoc#_open_decisions[Name and Brand]).
+
+== Related
+
+* xref:mcp-server.adoc[MCP Server] -- the resource server the gateway talks to
+* xref:authentication-and-identity.adoc[Authentication and Identity]
+* xref:brand.adoc[Name and Brand]
+* Sources: the MCP specification, revision 2026-07-28:
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[Authorization],
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration[Client Registration],
+  https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio[STDIO];
+  https://www.rfc-editor.org/rfc/rfc8252.txt[RFC 8252],
+  https://www.rfc-editor.org/rfc/rfc8628.txt[RFC 8628],
+  https://www.rfc-editor.org/rfc/rfc9700.txt[RFC 9700],
+  https://www.rfc-editor.org/rfc/rfc9449.txt[RFC 9449],
+  https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
+  https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/[OAuth Client ID Metadata Document]

@@ -1,0 +1,95 @@
+= ADR-0002: A local gateway base project holds the user's tokens for MCP agents
+:toc: left
+:toclevels: 3
+:toc-title: Table of Contents
+:sectnums:
+:source-highlighter: highlight.js
+
+// adr-metadata
+// summary: Proposed: a separate, reusable Quarkus native base project runs the OAuth login on the user's machine, keeps the refresh token in a vault whose key is held by the operating system, and exposes tools to agents over STDIO; descendants only declare connection and tools. The application's MCP server stays a remote resource server and gains no STDIO transport.
+// tags: mcp, authentication, token-sheriff, gateway, vault
+// affects: cisos-friend, mcp-server
+// supersedes:
+// end-adr-metadata
+
+== Status
+
+Proposed. Not accepted until the questions of the stage-1 spike are answered
+(xref:../concepts/local-mcp-gateway.adoc#_stages[Local MCP Gateway, Stages]).
+
+== Decision
+
+The application's MCP server stays what ADR-0001 and `CIFR-MCP-1` say: a remote OAuth 2.1 resource server over
+Streamable HTTP, without STDIO. What an agent on a user's machine needs to call it, a login and a held refresh token,
+is delegated to a *local gateway*:
+
+* It is a *separate base project*, not a module of this application and not of the `git-document-repository`
+  libraries, with its own repository and release.
+* It is a Quarkus native application that uses Token Sheriff for the OAuth flows. It is a public client: authorization
+  code with PKCE on a `127.0.0.1` loopback redirect, in the system browser.
+* It keeps the refresh token in a vault: the token file is encrypted under a key generated on first launch, and the key is
+  held by the operating system's store. Without such a store it runs in a named reduced mode and never silently.
+* It exposes the user's connection three ways: a credential helper, a STDIO bridge to a remote MCP endpoint, and a STDIO
+  MCP server that maps declared tools to REST routes.
+* A *descendant* project declares the connection (issuer, client id, resource, scopes) and the tools. It contains no OAuth
+  or cryptography code.
+
+The details are in xref:../concepts/local-mcp-gateway.adoc[Local MCP Gateway].
+
+== Alternatives rejected
+
+=== Offer STDIO on the application's server
+
+*Rejected because* a local process of the application would have no user: the MCP authorization specification does not
+apply to STDIO and says to take credentials from the environment. The user's identity is the point of the design
+(xref:../concepts/mcp-server.adoc[MCP Server]).
+
+=== Rely on every MCP client's own OAuth
+
+*Not sufficient because* clients differ: some speak only STDIO, some cannot use a pre-registered client, and each keeps
+its own tokens. It remains the right answer for a client that does it well, and the gateway is optional.
+
+=== Adopt an existing bridge
+
+`mcp-remote` and the smaller bridges are Node projects that keep tokens in plain files or are one-maintainer projects,
+and none maps routes to tools. *Kept as the reference* the gateway has to beat, not adopted.
+
+=== A server-side gateway of the organisation
+
+*Rejected because* it concentrates every user's upstream tokens in one place and is a component to operate; the
+application deliberately adds none.
+
+== Consequences
+
+=== Properties of the design
+
+* The server's requirements do not change.
+* One login and one vault per machine serve every agent and every descendant.
+* No token reaches an agent.
+
+=== Accepted costs
+
+* A new project to build, release and secure: native executables for three platforms and the OS-store access that goes
+  with them.
+* Behind the gateway every agent presents the gateway's client id, so the audit log of the server no longer tells agents
+  apart unless an agent label is added.
+* Token Sheriff needs additions: a public-client authentication method and a loopback redirect rule.
+* The protection of the vault is bounded by the operating system: another process of the same user can use the
+  connection.
+
+=== When this is revisited
+
+* When the spike shows that Quarkus MCP Server cannot serve declared tools, or that the OS store cannot be reached from a
+  native image on one of the three platforms.
+* When the identity provider supports neither rotation nor DPoP for public clients: the vault then holds a refresh token
+  with no sender constraint, and the risk has to be accepted explicitly.
+* When no second descendant and no client without OAuth materialises: the gateway is then not worth building.
+
+== Links
+
+* xref:../concepts/local-mcp-gateway.adoc[Local MCP Gateway]
+* xref:0001-Authentication_is_delegated_to_Token_Sheriff_with_a_server-side_session_for_the_web_app.adoc[ADR-0001]
+* https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[MCP Authorization, revision 2026-07-28]
+* https://www.rfc-editor.org/rfc/rfc8252.txt[RFC 8252, OAuth 2.0 for Native Apps] (BCP 212)
+* https://www.rfc-editor.org/rfc/rfc9700.txt[RFC 9700, OAuth 2.0 Security Best Current Practice]
+* https://www.rfc-editor.org/rfc/rfc9449.txt[RFC 9449, DPoP]
