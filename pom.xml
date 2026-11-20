@@ -50,6 +50,7 @@
     <modules>
         <module>git-core</module>
         <module>git-worktrees</module>
+        <module>git-store</module>
         <module>git-testing</module>
     </modules>
     <build>

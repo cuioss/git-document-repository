@@ -4,16 +4,33 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, the signature and the identity trailers of every commit, the in-memory index, post-commit listeners,
-the anchoring with the own timestamp `signed`, and the person directory interface. It depends on `git-core` only.
+`git-store` (module `de.cuioss.git.document.store`) turns `git-core` into a document store: drafts, saving, release,
+the signature and the identity trailers of every commit, the in-memory index, post-commit listeners, the anchoring
+with the own timestamp `signed`, and the person directory interface. It depends on `git-core` only.
 Rationale: xref:../concepts/storage-engine.adoc[Storage Engine], xref:../concepts/identity-and-signing.adoc[Identity
 and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
 
+Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
+configuration (<<store-configuration>>), the outcome list with its result, and the three service interfaces below with
+the selection of their providers; the providers themselves (`file`, `signed`) and every other requirement are planned.
+Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
+`GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
+`org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
+requires transitively because its public API exposes `GitOutcome`, `GitResult`, `RemotePolicy` and JGit's `ObjectId`.
+
+Every operation of `git-store` whose expected outcomes include a non-success returns a `StoreResult` (outcome, value,
+detail), and signals no expected non-success by an exception: that is the scope of
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3], "every operation whose expected outcomes include a non-success". An operation
+without an expected non-success returns its value directly, such as `Codec.encode`, which returns `byte[]`, and
+`RepositoryRegistry.find`, which returns an `Optional`. The outcome of a `StoreResult` is a constant of the closed list `StoreOutcome`, or a
+non-success Git outcome the operation passes on as `StoreResult.PassedOn`; only `StoreOutcome.OK` is a success. A
+success carries no detail; a non-success carries a detail that is not blank and no value. `StoreResult.passOn` keeps
+the outcome and the detail of the `GitResult` it passes on and refuses a success.
+
 It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`), each
 provider named by configuration. For `SigningKeySource` and `PersonDirectory` exactly one provider is active; for
-`AnchorProvider` at most one, and without one the store anchors nothing (<<GDR-STORE-15>>). A named provider that is
-not found, or two providers with the same id, stop the start of the store.
+`AnchorProvider` at most one, and without one the store anchors nothing (<<GDR-STORE-15>>). A configured id that no
+provider carries, or that two providers carry, stops the start of the store.
 
 [cols="1,2,2"]
 |===
@@ -26,6 +43,54 @@ KMS or HSM sources supplied by the application
 |`PersonDirectory` |Pseudonyms, person entries, holders of a role, erasure (<<GDR-STORE-19>>) |`git` in
 xref:git-directory.adoc[`git-directory`], or a provider for the operator's own source
 |===
+
+Each interface has `String id()`, the value the configuration names the provider by. The operations, each returning a
+`StoreResult`:
+
+* `SigningKeySource`: `sign(keyReference, data)`, the raw signature; `publicKey(keyReference)`, the public key as an
+  OpenSSH public key line, needed because the SSH signature format embeds the signer's public key in every signature
+  (the field `publickey` of the signature blob,
+  link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). Non-success:
+  `UNAVAILABLE` or `REFUSED`; the private key never leaves the source.
+* `AnchorProvider`: `obtain(repository, subject, previous)`, the proof for the object id `subject` of the repository
+  with that alias (`UNAVAILABLE`, `REFUSED`); `verify(subject, proof, previous)`, the time the proof establishes
+  (`IMPRINT_MISMATCH`, `SIGNATURE_INVALID`, `CHAIN_BROKEN`). `previous` is the provider's previous proof as bytes,
+  empty for the first. The id names the notes reference `refs/notes/anchors/<id>`, so `anchor.provider` takes the
+  alphabet of a repository alias, `[a-z0-9-]+` (<<GDR-STORE-1>>), and a configured id outside it is refused at start
+  as `MALFORMED` with the detail `anchor.provider is malformed` (<<store-configuration>>). A reference name cannot
+  contain, among others, a space, `~`, `^`, `:`, `?`, `*`, `[`, `\`, two consecutive dots or ASCII control characters
+  (link:https://git-scm.com/docs/git-check-ref-format[git-check-ref-format(1)]); an id of `[a-z0-9-]+` contains none
+  of them, nor a dot or a slash, so `refs/notes/anchors/<id>` is a valid reference name by construction, and the notes
+  writer and the verifier use that same name. An `AnchorProvider` whose own `id()` lies outside the alphabet can never
+  be selected: no configured id can match it, so the start stops with the refusal `AnchorProvider: no provider with
+  the id of anchor.provider`.
+* `PersonDirectory`: `pseudonym(issuer, subject)`; `entry(pseudonym)`, a `PersonEntry` that is either a `Member`
+  (pseudonym, name, memberships) or a `FormerMember` (pseudonym, the memberships still known, possibly none);
+  `holders(team, role)`; `save(member)`; `saveUnbound(name, memberships)`, the pseudonym of the new entry;
+  `unbound(memberships)`; `bind(pseudonym, issuer, subject)`; `erase(pseudonym)`. A `Membership` is a pair of team and
+  role, neither blank; the memberships of an entry are copied immutably, and `Member.toString()` renders no name
+  (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+`ServiceLoader` locates a provider deployed as a module through the `provides` directive of the provider's module
+declaration, for an application module whose declaration has a `uses` directive for the service, and a provider
+packaged as a JAR on the class path through a provider-configuration file in `META-INF/services` named by the fully
+qualified binary name of the service
+(link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/ServiceLoader.html[Java SE 21 API,
+`java.util.ServiceLoader`], sections _Obtaining a service loader_, _Deploying service providers as modules_ and
+_Deploying service providers on the class path_). The module `de.cuioss.git.document.store` declares `uses` for each
+of the three interfaces. `StoreProviders.load(configuration)` finds the candidates with `ServiceLoader.load` for each
+interface and hands them to
+`StoreProviders.select(configuration, signing, anchors, persons)`, which picks the provider whose id is
+`signing.key-source`, the one whose id is `directory.persons.provider`, and, when `anchor.provider` is present, the one
+with that id; without `anchor.provider` no anchor provider is selected. A configured id that no candidate carries, or
+that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with the id of <key>` or
+`<interface>: more than one provider with the id of <key>`, where `<key>` is the configuration key the id is read from;
+the detail never carries the configured id, a configured value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). Two candidates
+with an id nobody configured do not stop the start. A `ServiceConfigurationError` while loading is `MALFORMED` naming
+the interface; only the interface and the class name of the error are logged (DEBUG), never the message of the error
+or of its cause, which a failing provider may fill with a credential. A selection is logged as
+`GIT_STORE-1` with the three ids, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
+`git-store/doc/LogMessages.adoc` (xref:general.adoc#GDR-GEN-4[GDR-GEN-4]).
 
 [#GDR-STORE-1]
 == GDR-STORE-1: Repository Registry
@@ -42,6 +107,36 @@ repositories:
     confidentiality: restricted  # application-defined class name, mapped to access rules by the application
     retention: P10Y              # optional; after it the operator deletes the repository; the store only reports it
 ----
+
+A repository is the record `StoreRepository` (alias, remote, confidentiality, optional retention as a
+`java.time.Period`); its `toString()` renders the remote without user information. `RepositoryRegistry.of(repositories,
+policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
+`RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
+server, or on a single server local bare repositories
+(xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]). The
+first refusal is returned:
+
+[cols="2,1,2"]
+|===
+|Check |Outcome |Detail
+
+|alias outside `[a-z0-9-]+` |`MALFORMED` |`repositories[<n>]: invalid alias`, by zero-based position, since the alias
+itself is invalid
+|alias registered twice |`MALFORMED` |`repository <alias>: duplicate alias`
+|blank confidentiality class |`MALFORMED` |`repository <alias>: blank confidentiality`
+|remote that JGit's `URIish` cannot parse, including a port beyond the range of `int`: the constructor
+`URIish(String)` of JGit 7.8.0 parses the port with `Integer.parseInt` without catching its `NumberFormatException`,
+so it throws that instead of `URISyntaxException`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/URIish.java[JGit
+7.8.0 `URIish`], checked in the sources jar of `org.eclipse.jgit` 7.8.0.202609011348-r); `RepositoryRegistryTest`
+shows the resulting refusal |`MALFORMED` |`repository <alias>: malformed remote`
+|remote with a user or a password |`MALFORMED` |`repository <alias>: remote carries user information`
+|remote the policy does not permit (`RemotePolicy.permits`) |`PassedOn(REFUSED_BY_POLICY)` |`repository <alias>: remote
+not permitted by the remote policy`
+|===
+
+No detail carries the remote. `repositories()` returns the repositories in registration order, `find(alias)` an
+`Optional` of the repository. The retention period is only reported through the record; the store never acts on it.
 
 [#GDR-STORE-2]
 == GDR-STORE-2: Drafts per User and Document
@@ -188,8 +283,15 @@ image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source 
 * File content must be produced by a codec interface.
 * Encoding an unchanged value must produce byte-identical content, so that saving unchanged data creates no change.
 
-Every codec guarantees `encode(decode(encode(v))) == encode(v)` byte for byte. `git-store` carries no YAML library:
+Every codec guarantees a byte-identical round trip: for every value `v`, decoding the output of `encode(v)` succeeds
+with a value `d` (the value of the successful `StoreResult`), and `encode(d)` equals `encode(v)` byte for byte.
+`git-store` carries no YAML library:
 `git-forms` supplies the YAML codec.
+
+The interface is `Codec<V>` with `byte[] encode(V value)` and `StoreResult<V> decode(byte[] content)`. Encoding is
+canonical: two equal values, and an unchanged value encoded again, yield byte-identical content. A content the codec
+cannot read is `MALFORMED`, never an exception, and its detail names what could not be read (a line number or a key)
+without repeating the content.
 
 [#GDR-STORE-12]
 == GDR-STORE-12: Commit Signature
@@ -260,7 +362,9 @@ A proof is bytes the store does not interpret. The outcomes are those of the `gi
 xref:general.adoc#GDR-GEN-3[GDR-GEN-3], used identically by every provider. Obtaining a proof yields the proof,
 unavailable (the provider cannot be reached) or refused (the provider refuses or answers with an error). Verifying
 yields the time the proof establishes, no proof (a subject without a stored proof), imprint mismatch, signature invalid
-(also for a proof that cannot be read) or chain broken. The provider id names its notes reference.
+(also for a proof that cannot be read) or chain broken. The provider id names its notes reference
+`refs/notes/anchors/<id>`; the id is of the form `[a-z0-9-]+`, so that name is a valid reference name by construction
+(<<store-configuration>>).
 
 [#GDR-STORE-16]
 == GDR-STORE-16: Anchored Subjects and Checkpoints
@@ -294,6 +398,9 @@ push and fetch and every `anchor.retry-interval`.
   requesting a new one.
 * A verification must check every stored proof and list every reference a checkpoint lists whose object id is no
   longer reachable from that reference (or, for a tag, no longer its target), and every missing checkpoint number.
+
+`<provider>` is the id of the provider, of the form `[a-z0-9-]+` (<<GDR-STORE-15>>); the notes writer and the
+verifier use the same reference name `refs/notes/anchors/<provider>`, which is valid by construction.
 
 The pending subjects are derived from the Git state: the release commits and checkpoints without a note of the provider
 in the remote's notes reference as of the last fetch. A subject with a local note that the remote lacks needs only the
@@ -370,7 +477,8 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 |`fetch.interval` |required; ISO 8601 duration of the periodic fetch
 |`signing.key-source`, `signing.key` |the commit-signing key; source default `file`
 |`signing.allowed-signers` |required for verification; public commit-signing keys with validity periods
-|`anchor.provider` |the active anchor provider, `signed` or `rfc3161`; default none, so nothing is anchored
+|`anchor.provider` |the active anchor provider, `signed` or `rfc3161`, of the form `[a-z0-9-]+`; default none, so
+nothing is anchored
 |`anchor.releases` |anchor the commit of every release tag; default `true`
 |`anchor.checkpoint-interval` |ISO 8601 duration; default `P1D`
 |`anchor.retry-interval` |ISO 8601 duration of the periodic due check and retry; default `PT15M`
@@ -379,3 +487,39 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 |`anchor.signed.max-clock-skew` |ISO 8601 duration; default `PT5M`
 |`directory.persons.provider` |the active person directory; default `git`
 |===
+
+`StoreConfiguration.from(tree, policy)` reads the configuration at start and returns a `StoreResult` of the typed
+record `StoreConfiguration`, whose nested records mirror the sections: `Save`, `Drafts`, `Fetch`, `Signing`, `Anchor`
+with `Anchor.Signed`, and `Directory`, plus the `RepositoryRegistry` (<<GDR-STORE-1>>) checked against the one
+`RemotePolicy` the caller passes. The input is an already-parsed tree of nested maps as a YAML or JSON parser delivers
+it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map `signed` of the map `anchor`), so
+`git-store` needs no parser library:
+
+* Integers are `Byte`, `Short`, `Integer`, `Long`, `BigInteger` or `BigDecimal` values that are integral and within
+  the range of `int`, converted exactly, so `BigDecimal` `3.00` reads as 3 while `3.01` and a value beyond `int` are
+  malformed; `Float` and `Double` are malformed, because binary floating point is no exact representation of an
+  integer. Booleans are `Boolean`, and other values non-blank strings. Durations and periods are ISO 8601 strings
+  parsed with `java.time.Duration` and `java.time.Period` (`drafts.expiry` and `retention` are periods); every
+  duration and period must be positive, and a text whose value overflows on parsing, such as the period `P306783379W`
+  whose weeks exceed `int` as days, is malformed. `save.max-attempts` must be at least 1.
+* `anchor.provider`, when present, must match `[a-z0-9-]+`, because the id names the notes reference
+  `refs/notes/anchors/<id>` (<<GDR-STORE-15>>); `signing.key-source` and `directory.persons.provider` only have to be
+  non-blank.
+* `save.max-attempts`, `drafts.expiry` and `fetch.interval` are required. Every other key may be absent at start and
+  then takes the default of the table; a key without a default, such as `signing.key` or the allowed-signers files that
+  only a verification needs, stays absent.
+* Only an omitted key is absent. A key supplied with a null value, as a leaf (`anchor.releases:` without a value) or as
+  a section on the way (`anchor:` without a value), is malformed and named by its dotted key; it never takes the
+  default.
+* Keys outside the table are ignored, because the tree is shared with the modules above `git-store` (for example
+  `timestamp.*` of xref:git-timestamp.adoc[`git-timestamp`]). An absent `repositories` is an empty registry.
+* An anchor key equal to the commit-signing key is refused (<<GDR-STORE-18>>): the start compares the effective key
+  source (`anchor.signed.key-source`, an absent one taken as the default `file`) with `signing.key-source`, and
+  `anchor.signed.key` with `signing.key`, and refuses when both are equal. Comparing the public keys themselves needs
+  the key source and is left to the provider `signed`.
+
+The first refusal is returned and logged once as `GIT_STORE-100`. Its outcome is `MALFORMED`, or the passed-on
+`REFUSED_BY_POLICY` of the registry; its detail names the dotted key or the alias, never the value:
+`<key> is missing`, `<key> is malformed` (a key of a repository as `repositories[<n>].<key>`), or
+`anchor.signed.key equals the commit-signing key`. The `toString()` of `Signing` and `Anchor.Signed` states only whether
+a key reference is set (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).

@@ -9,10 +9,13 @@ non-functional limits. Rationale: xref:../concepts/module-structure.adoc[Module 
 its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing.adoc#GDR-TEST-2[GDR-TEST-2]),
 `git-core` implements its own (xref:git-core.adoc[`git-core`]: hardening, remote policy, identity, results, repository
 operations, cache repository, in-core writing, compare-and-swap, in-core merge, reading and notes; the hardening with
-the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states), and `git-worktrees`
-implements all of its own (xref:git-worktrees.adoc[`git-worktrees`]). Of the requirements below, <<GDR-GEN-1>> is
-implemented, and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does not verify
-yet; every other requirement of the libraries is planned, and the other modules are not yet created.
+the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states), `git-worktrees`
+implements all of its own (xref:git-worktrees.adoc[`git-worktrees`]), and `git-store` is created: it implements
+xref:git-store.adoc#GDR-STORE-1[GDR-STORE-1] and xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11] and its configuration,
+and defines its three service interfaces, whose providers are planned (xref:git-store.adoc[`git-store`]). Of the
+requirements below, <<GDR-GEN-1>> is implemented, and for <<GDR-NFR-4>> `git-core` ships its native-image metadata,
+which this repository does not verify yet; every other requirement of the libraries is planned, and the other modules
+are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -38,8 +41,8 @@ dependency. Three checks realise the requirement:
 * The execution `module-layering` of the root POM (phase `validate`, declared dependencies only) bans every
   dependency on an artifact `de.cuioss:git-*` except `git-testing` in scope `test`, against which every module may
   test. Each module lists its allowed edges in its own POM, one `<include>` per edge, appended to the rule with
-  `combine.children="append"` in an execution of the same id: `git-worktrees` lists `git-core`; `git-core` and
-  `git-testing` list none. A new module adds exactly the edges the graph names.
+  `combine.children="append"` in an execution of the same id: `git-worktrees` and `git-store` each list `git-core`;
+  `git-core` and `git-testing` list none. A new module adds exactly the edges the graph names.
 * The execution `consumer-isolation` of `git-core` (phase `validate`, transitive) bans every artifact in scope
   `compile` or `runtime` outside the closure a consumer of `git-core` alone receives: `org.jspecify:jspecify`, JGit
   with the compile dependencies its 7.8.0 POM declares (`com.googlecode.javaewah:JavaEWAH`, `org.slf4j:slf4j-api`,
@@ -52,7 +55,8 @@ dependency. Three checks realise the requirement:
   runtime closure a consumer of `git-core` alone resolves, publishes nothing extra, and needs no new plugin or
   dependency, where a consumer project would be a new module of the reactor that needs a test harness or a parser of
   its dependency tree. A new compile dependency of `git-core` is added to the rule only after the owner's approval.
-* `DomainTermAbsenceTest` of `git-core`, `git-worktrees` and `git-testing` loads the classes of the module's main
+* `DomainTermAbsenceTest` of `git-core`, `git-worktrees`, `git-testing` and `git-store` loads the classes of the
+  module's main
   output and fails when the simple name or the package name of a public type contains `assessment`, `threat`,
   `incident` or `risk`, compared case-insensitively, or when the scan finds no public type.
 
@@ -61,8 +65,8 @@ The third-party dependencies declared are
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
 `cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
-`cui-java-tools` and Lombok in `git-worktrees`, with `git-testing`, JUnit 5, `cui-test-generator` and
-`cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+`cui-java-tools` and Lombok in `git-worktrees` and in `git-store`, each with `git-testing`, JUnit 5,
+`cui-test-generator` and `cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
 `cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17, and
 `de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
 end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
@@ -82,7 +86,9 @@ redirect test, `cui-test-generator` and JUnit 5 (each declared)
 `git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
-|`git-store` |possibly JGit's `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
+|`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
+`git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); possibly JGit's
+`org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
 |`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
 |`git-timestamp` |an RFC 3161 client library (open)
 |`git-directory` |none beyond those of `git-forms`
@@ -137,7 +143,8 @@ the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
 |`REFUSED_BY_POLICY` |refused by policy |remote policy, refused capability (hook or process start); the detail names
 the refused remote or capability; an invalid branch name (`git-worktrees`: a new working tree or a reservation
-release) or notes reference (notes), the detail naming the field only
+release) or notes reference (notes), the detail naming the field only; `git-store`: a registered remote the policy
+does not permit, the detail naming the alias
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
 log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
 in-core merge and notes on an id that is no commit, notes on a missing notes reference or note; a branch without a
@@ -159,28 +166,37 @@ repository at the registered path
 |`PATH_REFUSED` |path refused |`git-worktrees`: a derived path outside the permitted root, or the main working tree
 |===
 
-The outcome list of `git-store`, used by `git-timestamp` for its provider and by every `PersonDirectory` provider as
-well:
+`StoreOutcome` (`git-store`) is the outcome list of `git-store`, used by `git-timestamp` for its provider and by every
+`PersonDirectory` provider as well. Its result is `StoreResult`, of the same shape as `GitResult` (outcome, value,
+detail), whose outcome is either a constant of `StoreOutcome` or a non-success Git outcome passed on as its variant
+`PassedOn`; only `OK` of `StoreOutcome` is a success. The first column names the constant, and the table
+lists exactly the constants of `StoreOutcome`:
 
-[cols="1,2"]
+[cols="2,2,4"]
 |===
-|Outcome |Raised by
+|Constant |Outcome |Raised by
 
-|incomplete |release whose tag is still missing after `main` moved
-|unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending
-|refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161 authority
-by an error response; the subject stays pending
-|no proof |anchor verification: a subject that should be anchored has no proof
-|imprint mismatch |anchor verification: the proof is about another object id
-|signature invalid |anchor and commit-signature verification: the signature does not verify against the allowed
-signers or `timestamp.trust`, or the proof cannot be read
-|chain broken |verification of the `signed` chain: a gap in the sequence numbers, a wrong predecessor or a decreasing
-time
-|not supported, managed by source |a `PersonDirectory` provider whose source the operator maintains: saving an entry,
-erasing a pseudonym
+|`OK` |success |every operation; a valid proof is success with the time it establishes
+|`INCOMPLETE` |incomplete |release whose tag is still missing after `main` moved
+|`UNAVAILABLE` |unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending; a
+signing key source that cannot be reached
+|`REFUSED` |refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161
+authority by an error response; the subject stays pending; a signing key source that refuses
+|`NO_PROOF` |no proof |anchor verification: a subject that should be anchored has no proof
+|`IMPRINT_MISMATCH` |imprint mismatch |anchor verification: the proof is about another object id
+|`SIGNATURE_INVALID` |signature invalid |anchor and commit-signature verification: the signature does not verify
+against the allowed signers or `timestamp.trust`, or the proof cannot be read
+|`CHAIN_BROKEN` |chain broken |verification of the `signed` chain: a gap in the sequence numbers, a wrong predecessor
+or a decreasing time
+|`NOT_SUPPORTED` |not supported |a `PersonDirectory` provider whose source the operator maintains: saving an entry,
+unbound entries, binding
+|`MANAGED_BY_SOURCE` |managed by source |a `PersonDirectory` provider whose source the operator maintains: erasing a
+pseudonym
+|`MALFORMED` |malformed |start: a configuration that lacks a required key, holds a malformed value, an invalid or
+duplicate alias, a remote with user information or an anchor key equal to the commit-signing key, or names a provider
+that is missing or not unique; a content a codec cannot decode; the detail names the key, alias, path or provider id,
+never the value
 |===
-
-A valid proof is success with the time it establishes.
 
 The outcome list of `git-forms`:
 
@@ -257,8 +273,8 @@ read from the application's configuration for the call; never stored, logged, co
 entry; never in the metadata of a commit (author, committer, message, trailers), a document or a log
 |===
 
-Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`
-and `git-worktrees`, see <<GDR-GEN-1>>) and with checks of result details.
+Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`,
+`git-worktrees` and `git-store`, see <<GDR-GEN-1>>) and with checks of result details.
 
 [#GDR-NFR-4]
 == GDR-NFR-4: Native Image
@@ -290,6 +306,19 @@ placeholder file, where an empty array would not even be a valid `resource-confi
 be an object
 (link:https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/assets/resource-config-schema-v1.1.0.json[GraalVM,
 `resource-config-schema-v1.1.0.json`]).
+
+`git-store` ships no native-image metadata either, on the same grounds as `git-worktrees`: its main code has no
+reflection, resource or resource-bundle access of its own; the JGit translation class it reaches, `JGitText` through
+`URIish` (which imports it in JGit 7.8.0,
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/URIish.java[JGit
+7.8.0, `URIish`]), is covered by the metadata of `git-core`. The provider lookup of `StoreProviders` through
+`ServiceLoader` needs no metadata of `git-store`: the native-image builder's `ServiceLoaderFeature`, enabled by
+default, adds the `META-INF/services` files and the provider classes of every service interface its analysis sees as
+reachable, and registers each provider class for reflective instantiation
+(link:https://github.com/oracle/graal/blob/master/substratevm/src/com.oracle.svm.hosted/src/com/oracle/svm/hosted/ServiceLoaderFeature.java[GraalVM,
+`ServiceLoaderFeature`], checked on 2026-11-20). Whether a provider module registered only by a `provides` directive
+of its `module-info.java`, without a `META-INF/services` file, is found the same way is not checked here and stays
+open; it concerns the providers, all of which are planned.
 
 This repository does not verify the requirement yet: until a native test lane exists here (open), only a consuming
 application's native build verifies it, the first being the native build of
