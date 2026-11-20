@@ -14,9 +14,11 @@ together with their design.
 Read the concepts before changing the architecture. Every statement about an external product, standard or law cites
 the source it was checked against; do not add unverified statements.
 
-`doc/app/` documents the application built on these libraries, CISOs-Friend (prefix `CIFR`). It moves to its own
-repository later: keep it self-contained, and link from it into the library documentation only to concepts and
-specifications, never the other way round except from the index.
+The application built on these libraries, TrailHand, lives in its own repository,
+[`cuioss/TrailHand`](https://github.com/cuioss/TrailHand), together with its documentation (it was `doc/app/` here until
+2026-11-20). Do not document the application here: this repository's documentation names it only in the index
+[`doc/README.adoc`](doc/README.adoc), and the application's documentation links into this one only to concepts and
+specifications, so keep their addresses stable.
 
 The repository is a multi-module Maven reactor (group `de.cuioss`, parent `cui-java-parent`): the modules are
 released together and consumed separately.

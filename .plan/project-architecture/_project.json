@@ -7,7 +7,7 @@
   ],
   "modules": {
     "documentation": {
-      "description": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR), plus the self-contained CISOs-Friend application docs (prefix CIFR) in doc/app.",
+      "description": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR). The application built on the libraries, TrailHand, documents itself in its own repository (cuioss/TrailHand).",
       "generation": {
         "by": "architecture",
         "tree_sha": "2410b926db52773cd33a205a8ef501c6fd0462d373e0e893a7debd9f098bf5bb"

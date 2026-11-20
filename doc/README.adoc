@@ -14,8 +14,9 @@ law has to cite the source it was checked against; a statement without one is a 
 
 [NOTE]
 ====
-`doc/app/` documents xref:app/README.adoc[CISOs-Friend], the application built on these libraries. It moves to its own
-repository later and is not part of the library documentation.
+https://github.com/cuioss/TrailHand[TrailHand], the application built on these libraries, is documented in its own
+repository (https://github.com/cuioss/TrailHand/blob/main/doc/README.adoc[`doc/` of `cuioss/TrailHand`]). It is not part
+of the library documentation. Until 2026-11-20 that documentation was `doc/app/` of this repository.
 ====
 
 [[_concepts]]
@@ -73,7 +74,7 @@ changes in `pm-mcp-core`, the order of the switch-over
 Every decision record has the same structure on purpose: _Status_; _Decision_, opening with the question and its
 context; _Alternatives rejected_, each with a one-sentence description and the reason; _Consequences_, split into
 _Properties of the design_, _Accepted costs_ and _When this is revisited_; and _Links_. The decision records of the
-application in `doc/app/adr/` follow the same structure.
+application, in its repository, follow the same structure.
 
 [cols="1,4"]
 |===
