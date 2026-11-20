@@ -1,0 +1,41 @@
+= Log Messages for git-store
+:toc: left
+:toclevels: 2
+
+== Overview
+
+The log-message catalogue of `git-store`
+(xref:../../doc/specification/general.adoc#GDR-GEN-4[GDR-GEN-4]). Every message at level INFO, WARN or ERROR carries a
+stable identifier of the form `GIT_STORE-<identifier>`, rendered by `LogRecord#resolveIdentifierString()` without
+leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO 1-99,
+WARN 100-199, ERROR 200-299). The messages are declared in
+`de.cuioss.git.document.store.GitStoreLogMessages`.
+
+No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message names a
+provider id, a configuration key, a repository alias or a path, never a configured value, a key reference, key
+material, a token, a password or the user information of a remote.
+Debug and trace messages carry no identifier and are not listed.
+
+== INFO Level (1-99)
+
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_STORE-1 |GIT_STORE |Selected the providers: signing key source %s, person directory %s, anchor provider %s
+|Logged when the providers of the store were selected at start: the ids of the selected signing key source, person
+directory and anchor provider, the provider ids only.
+|===
+
+== WARN Level (100-199)
+
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_STORE-100 |GIT_STORE |Refused the start: %s |Logged once when the start was refused, for a configuration or a
+provider selection the store does not accept: the detail of the result, which names a key, an alias or a provider id,
+never a value.
+|===
+
+== ERROR Level (200-299)
+
+`git-store` logs no message at level ERROR: an unexpected failure is returned as an outcome of the result.
