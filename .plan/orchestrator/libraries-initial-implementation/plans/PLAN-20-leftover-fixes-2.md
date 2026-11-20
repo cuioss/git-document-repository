@@ -1,4 +1,4 @@
-# PLAN-20: Collected leftover fixes (git-worktrees, git-core, git-testing)
+# PLAN-20: Collected leftover fixes (git-worktrees, git-core, git-testing, build guards)
 
 epic: libraries-initial-implementation
 workstream: WS-01
@@ -10,7 +10,7 @@ workstream: WS-01
 ## Objective
 
 Collect the leftovers the three-layer analyses of landed plans find — the layer-3 defects of PLAN-19 (`git-worktrees`)
-and PLAN-04 (`git-core`), the test gaps beside them, and the `git-testing` leftovers of PLAN-18 that have no other
+and PLAN-04 (`git-core`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
 spec — and fix them in one plan instead of one plan per landing. This is the second collection plan, after PLAN-18.
 None of the items gives a wrong result on the default path: each needs a malformed configuration, a hostile or
 unusual input, or a failure in the middle of an operation. Later analyses fold further leftovers into this spec (see
@@ -103,9 +103,34 @@ Dependencies and Sequencing) until the operator releases it.
    configuration (PLAN-05's `RedirectEndToEndTest` was stopped first by `http.followRedirects=false` and, in the next round,
    by `http.maxRedirects=0` from the user's configuration, before the guard under test ran): decide whether `git-testing`
    offers a hermetic configuration (for example a `SystemReader` without user or system configuration) or records the
-   limit with what a test has to pin, after reading which existing tests depend on the host's configuration.
+   limit with what a test has to pin, after reading which existing tests depend on the host's configuration; and, from
+   three consecutive plans, a flake of one kind: a negative assertion that a generated letters-only value does not
+   appear in free text (PLAN-04's `RepositoryOperationsRecordsTest` line 116, PLAN-06's `JGitRepositoryOperationsTest`
+   `refusedRedirectLogged`, which failed for seed `-3633849498368272603` while the same source had passed minutes
+   earlier) or that two generated fixture contents differ (PLAN-05's merge conflict fixtures): `git-testing` offers a
+   generator for a value made distinctive by a fixed marker, or the rule and the helper a test has to use are recorded in
+   `git-testing.adoc`, and the tests of that kind in `git-core` use it.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:javadoc
    - Persona: module-tester
+
+6. Build guards and native-image residue (leftovers of PLAN-06's analysis, `landings/PLAN-06.md`): (a) the
+   `consumer-isolation` rule of `git-core/pom.xml` does not see a direct optional dependency (Enforcer 3.6.3 drops it
+   when `searchTransitive` is true), so a new optional compile dependency of `git-core` passes the build without an
+   allow-list edit or the owner's approval: a rule or check bans every direct third-party dependency of `git-core` outside
+   the approved list whatever its `optional` flag (the same rule with `searchTransitive=false` has no optional filter),
+   shown by a deliberately wrong optional dependency; (b) the guards are proven by negative runs that are recorded only
+   in the squash message of PR #39 (`git-testing` at scope `compile` in `git-worktrees`; `cui-test-generator` at scope
+   `compile` in `git-core`): record the runs (the edit, the command, the failure message) in `general.adoc`, or make
+   them repeatable by a check that needs no new library (a new library goes to the owner first); (c) the trade-offs the
+   review raised and the lane accepted (the four domain terms copied into three module tests, the allowed-edge
+   includes that mirror `module-structure.adoc` by hand, a module widening its own edges in its own POM) are recorded as
+   accepted exceptions with their reasons in `general.adoc`, or derived; (d) `NativeImageMetadataTest` also asserts the
+   top-level shape of each file (an array of objects for `reflect-config.json`, an object for `resource-config.json`) and
+   that a removed entry fails it, because the regular-expression extraction passes a malformed file; (e) the wording of
+   `README.adoc` and `general.adoc` ("the JGit classes it reaches") matches what is listed (one class, one bundle): decide,
+   after the DFS lead of the claims, whether `DfsText` is reached and either list it or word the documents to what is listed.
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:manage-maven-profiles
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -117,6 +142,8 @@ Dependencies and Sequencing) until the operator releases it.
 - Secrets (GDR-NFR-3): no token, password, key material, session id, `sub`, e-mail address or person name in a result
   detail, exception message, log message, stored configuration or commit metadata.
 - Verify every claim about a JGit API against JGit 7.8.0 source or documentation and name the version (CLAUDE.md).
+- A guard is proven by a deliberately wrong input that fails it, recorded or repeatable; the guards of deliverable 6 are the
+  only items of this plan that change the build configuration, and a new plugin or library goes to the owner first.
 - Every behaviour fix is first reproduced by a test that fails at the base and passes at the head; an item whose
   premise the re-read at outline refutes is dropped from the deliverable that names it. A test of a guard pins every
   setting that could stop the run before the guard is reached (the whole related configuration group, not the one key
@@ -144,10 +171,10 @@ Dependencies and Sequencing) until the operator releases it.
 ## Done when
 
 - `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 has a test that
-  fails at `14269fef44b97f690f104f420c88ef69db6d5c3d` (`main` after PLAN-05, where every `git-core` defect below is present; the
-  `git-worktrees` ones are present since `e2aced9`) and
+  fails at `e43c7e915a9d0667117b72970bc156bbe73b6506` (`main` after PLAN-06, which changed no `git-core` or `git-worktrees`
+  code, so every defect below is present as at `14269fe`; the `git-worktrees` ones are present since `e2aced9`) and
   passes at the plan's head.
-- Every item of deliverables 1 to 5 is either fixed and tested at the plan's head, or recorded as an accepted exception
+- Every item of deliverables 1 to 6 is either fixed and tested at the plan's head, or recorded as an accepted exception
   or an owner decision with its reason in the specification document of its module; no document lists an outcome the
   code does not return.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
@@ -229,6 +256,23 @@ Dependencies and Sequencing) until the operator releases it.
   `ReferenceUpdater` calls `isValidRefName` nowhere — read at `GitNotes.java` § `isNotesRef` (205-208) and a search of
   `ReferenceUpdater.java` at `14269fe`.
   - verdict: corroborated | checked_at: 14269fef44b97f690f104f420c88ef69db6d5c3d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 14269fe: GitNotes 205-208 isNotesRef uses Repository.isValidRefName; a search of ReferenceUpdater at 14269fe finds no isValidRefName
+- OBSERVED: the `consumer-isolation` rule drops direct optional dependencies: it uses `searchTransitive=true`, and Enforcer 3.6.3
+  `ResolverUtil.resolveTransitiveDependenciesVerbose` calls `resolveTransitiveDependencies(true, false, true, ...)`, whose third
+  flag filters every `Dependency.isOptional()` — read at `git-core/pom.xml` § `consumer-isolation` (83-115) at `e43c7e9` and
+  the `javap` bytecode of `org/apache/maven/enforcer/rules/dependency/ResolverUtil` in `enforcer-rules-3.6.3.jar`.
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e43c7e9: git-core/pom.xml 83-115 (searchTransitive true); javap of ResolverUtil in enforcer-rules-3.6.3.jar: resolveTransitiveDependenciesVerbose calls resolveTransitiveDependencies(true,false,true,list) and the lambda filters Dependency.isOptional() on the third flag
+- OBSERVED: `NativeImageMetadataTest` extracts names with a regular expression and parses no JSON, and the two metadata files list
+  one class and one bundle (`org.eclipse.jgit.internal.JGitText`), while `README.adoc` says `git-core` ships the metadata "for
+  the JGit classes it reaches" — read at `git-core/src/test/java/de/cuioss/git/document/core/NativeImageMetadataTest.java`
+  (58-59, 101-108), `git-core/src/main/resources/META-INF/native-image/de.cuioss/git-core/` and `README.adoc` (52-53) at `e43c7e9`.
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e43c7e9: NativeImageMetadataTest 50-109 (regex QUALIFIED_NAME, no JSON parse), reflect-config.json and resource-config.json list JGitText only, README.adoc 52-53 says the JGit classes it reaches
+- OBSERVED: the negative runs that prove the two guards are recorded only in the squash message of PR #39 — read at
+  `git show e43c7e9` § Test Plan (the diff `364dc50..e43c7e9` holds no test of the layering rule).
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e43c7e9: git show -s e43c7e9 Test Plan lists both negative runs; the diff 364dc50..e43c7e9 holds no layering test (only DomainTermAbsenceTest x3 and NativeImageMetadataTest as new tests)
+- HYPOTHESIS: a code path of `git-core`, or of a consumer that uses an in-memory (DFS) repository with it, reaches
+  `org.eclipse.jgit.internal.storage.dfs.DfsText` or `RepoText`, which the metadata does not list — confirm/refute at JGit 7.8.0
+  `org/eclipse/jgit/internal/storage/dfs/DfsText.java` (callers) and the main sources of `git-core` (a search for `DfsText` and
+  `storage.dfs` finds none at `e43c7e9`) (verify-at-outline).
 - HYPOTHESIS: the `git-testing` leftovers of PLAN-18 (the tautological positive half of the `@InMemory` type assertion,
   the unobserved rollback wiring, the unasserted "auto-close off" setting, the lost first close failure, the stale
   `PER_CLASS` Javadoc) still hold after PR #29 — confirm/refute at
@@ -239,6 +283,10 @@ Dependencies and Sequencing) until the operator releases it.
   a guard can be stopped by a host setting before the guard runs (PLAN-05's review round 1 and 2: `http.followRedirects`,
   `http.maxRedirects`) — confirm/refute at `git-testing/src/main/java/de/cuioss/git/document/testing/LocalRepositoryExtension.java`
   and `TemporaryDirectories.java` and the `SystemReader` use of `git-core` `RefusingFS` (verify-at-outline).
+- HYPOTHESIS: `GitGenerators` offers no generator for a value that cannot collide with free text, so each test prefixes by
+  hand (PLAN-04 and PLAN-06 each fixed one flake that way) — confirm/refute at
+  `git-testing/src/main/java/de/cuioss/git/document/testing/GitGenerators.java` and the tests of `git-core` that assert a
+  generated value is absent from a log record or a rendering (verify-at-outline).
 - Verify-first clause: the three-layer analyses of PLAN-04, PLAN-05 and PLAN-19 read the code only (no build, no test run);
   the `git-core` line references above are those of `c8feb0b`, and PLAN-05 moved them (`landings/PLAN-05.md` names where each
   defect P1 to P10 sits at `14269fe`, all still present); every
@@ -254,6 +302,10 @@ Dependencies and Sequencing) until the operator releases it.
 - OBSERVED: `git-core/src/test/java/de/cuioss/git/document/core/`
 - OBSERVED: `git-testing/src/main/java/de/cuioss/git/document/testing/`
 - OBSERVED: `git-testing/src/test/java/de/cuioss/git/document/testing/`
+- OBSERVED: `pom.xml`
+- OBSERVED: `git-core/pom.xml`
+- HYPOTHESIS: `git-core/src/main/resources/META-INF/native-image/`
+- HYPOTHESIS: `README.adoc` (the native-image wording, if it changes)
 - OBSERVED: `doc/specification/git-worktrees.adoc`
 - OBSERVED: `doc/specification/git-core.adoc`
 - OBSERVED: `doc/specification/git-testing.adoc`
@@ -267,11 +319,11 @@ Dependencies and Sequencing) until the operator releases it.
 - Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further leftovers into
   this spec as new deliverables or as items of a deliverable, in the same edit as their Expected Surface; the operator
   releases the plan by naming it in a `next` round. It is queued at the end of WS-01.
-- Depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-19 (PR #31, `e2aced9`)
-  and PLAN-18 (PR #28).
-- Overlaps with: nothing in flight. It shares `AGENTS.md` and `doc/specification/general.adoc` (and `git-core/pom.xml` if
-  EasyMock is added) with PLAN-06 and the later plans that edit them, so the pairing gate puts the pair to the operator
-  when both are launched at once. PLAN-05, which shared four entries with it, has shipped.
+- Depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-06 (PR #39, `e43c7e9`),
+  PLAN-19 (PR #31, `e2aced9`) and PLAN-18 (PR #28).
+- Overlaps with: nothing in flight. PLAN-05 and PLAN-06, which shared entries with it, have shipped. It shares the root
+  `pom.xml`, `AGENTS.md` and `doc/specification/general.adoc` with the later module-creating plans (PLAN-07 adds a module line
+  and an allowed-edge block), so the pairing gate puts the pair to the operator when both are launched at once.
 - Adjacent to: nothing in `git-store/` yet — PLAN-08 and PLAN-09 are the first consumers of `compareAndSwap` and
   `compareAndDelete`, so the items of deliverable 3 are cheaper to fix before them.
 

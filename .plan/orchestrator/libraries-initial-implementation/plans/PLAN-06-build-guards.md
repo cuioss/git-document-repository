@@ -80,13 +80,17 @@ modules need (GDR-NFR-4). The rule choice (Maven Enforcer rule vs an architectur
 
 - OBSERVED: the root `pom.xml` lists the modules `git-core`, `git-worktrees`, `git-testing` and has no enforcer
   configuration — read at `pom.xml` § `<modules>` (grep for `enforcer` finds none).
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: base 364dc50: pom.xml has 3 modules and 0 matches for enforcer; the leaf read git-core and git-worktrees poms at the base too
 - OBSERVED: `doc/specification/general.adoc` § GDR-GEN-1 says the build rule "is open" and § GDR-NFR-4 that "this
   repository does not verify the requirement yet".
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: base 364dc50 general.adoc line 30 says the rule is open and the NFR-4 sentence 'does not verify the requirement yet' is present; after the PR only the NFR-4 sentence remains (general.adoc 294-296)
 - HYPOTHESIS: `cui-java-parent` 1.7.7 already configures `maven-enforcer-plugin` with rules a reactor rule could join
   — confirm/refute at the effective pom (`help:effective-pom`) of `pom.xml` § `maven-enforcer-plugin`
   (verify-at-outline).
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: confirmed one level up: cui-java-parent 1.7.7 and cui-java-bom 1.7.7 hold no enforcer entry; the ancestor cui-parent-pom 1.7.7 manages maven-enforcer-plugin (3.6.3) with execution mojo-enforcer-rules and extra-enforcer-rules (pom lines 205-209, 378, 636); the PR added separate executions instead of joining the inherited list
 - HYPOTHESIS: JGit 7.8.0 ships no GraalVM metadata of its own — confirm/refute at the `org.eclipse.jgit` 7.8.0 jar §
   `META-INF/native-image/` (verify-at-outline).
+  - verdict: corroborated | checked_at: e43c7e915a9d0667117b72970bc156bbe73b6506 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: the JGit 7.8.0 jar lists no META-INF/native-image entry and no META-INF/services entry (unzip -l re-run)
 
 ## Expected Surface
 
