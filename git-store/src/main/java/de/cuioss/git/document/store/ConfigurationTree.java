@@ -62,13 +62,8 @@ final class ConfigurationTree {
         this.prefix = prefix;
     }
 
-    /**
-     * Returns the name of a key as a detail names it.
-     *
-     * @param key the dotted key relative to this tree
-     * @return the key with the prefix of this tree
-     */
-    String name(String key) {
+    /** Returns the name of a key as a detail names it: the dotted key with the prefix of this tree. */
+    private String name(String key) {
         return prefix + key;
     }
 
@@ -235,13 +230,8 @@ final class ConfigurationTree {
         return value == null ? absent() : StoreResult.ok(value);
     }
 
-    /**
-     * Returns the success without value of an absent key.
-     *
-     * @param <V> the value type
-     * @return a success without value
-     */
-    static <V> StoreResult<V> absent() {
+    /** Returns the success without value of an absent key. */
+    private static <V> StoreResult<V> absent() {
         return new StoreResult<>(StoreOutcome.OK, null, null);
     }
 
