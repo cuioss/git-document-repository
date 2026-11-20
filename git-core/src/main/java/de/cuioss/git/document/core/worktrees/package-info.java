@@ -16,11 +16,7 @@
 /**
  * Linked working trees, commit from a working tree and working-tree status.
  */
-module de.cuioss.git.document.worktrees {
-    exports de.cuioss.git.document.worktrees;
+@NullMarked
+package de.cuioss.git.document.core.worktrees;
 
-    requires transitive de.cuioss.git.document.core;
-    requires de.cuioss.java.tools;
-    requires static lombok;
-    requires static org.jspecify;
-}
+import org.jspecify.annotations.NullMarked;

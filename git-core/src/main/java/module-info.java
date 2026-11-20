@@ -17,10 +17,12 @@
  * Hardened Git repositories, remote policy, identity, results, transport, cache repository, in-core writing,
  * compare-and-swap, in-core merge (with its {@code MergeResult}), reading (a file of a cached commit, and with
  * {@code RepositoryReader} the snapshot of a commit, the history of a path and the paths changed between two commits)
- * and notes ({@code GitNotes}) on JGit.
+ * and notes ({@code GitNotes}) on JGit, and in the package {@code de.cuioss.git.document.core.worktrees} linked
+ * working trees, commit from a working tree and working-tree status.
  */
 module de.cuioss.git.document.core {
     exports de.cuioss.git.document.core;
+    exports de.cuioss.git.document.core.worktrees;
 
     requires transitive org.eclipse.jgit;
     requires de.cuioss.java.tools;

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -198,7 +198,7 @@ class LinkedWorktreesTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: a failed initialization write leaves no administration directory and keeps the worktree")
+    @DisplayName("GDR-CORE-12: a failed initialization write leaves no administration directory and keeps the worktree")
     void failedCreationRemovesAdministration(@LocalRepository Repository repository) throws Exception {
         var name = name();
         var worktree = worktreeRoot(name);
@@ -222,7 +222,7 @@ class LinkedWorktreesTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: an entry without gitdir or HEAD is skipped, a complete locked one is listed")
+    @DisplayName("GDR-CORE-12: an entry without gitdir or HEAD is skipped, a complete locked one is listed")
     void incompleteEntriesSkipped(@LocalRepository Repository repository) throws Exception {
         var worktree = worktreeRoot(name());
         var complete = LinkedWorktrees.create(commonDir(repository), worktree, Constants.R_HEADS + name());
@@ -243,7 +243,7 @@ class LinkedWorktreesTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: a relative gitdir entry resolves against the administration directory")
+    @DisplayName("GDR-CORE-12: a relative gitdir entry resolves against the administration directory")
     void relativeGitdirResolved(@LocalRepository Repository repository) throws Exception {
         var worktree = worktreeRoot(name());
         var admin = LinkedWorktrees.create(commonDir(repository), worktree, Constants.R_HEADS + name());
@@ -259,7 +259,7 @@ class LinkedWorktreesTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: a branch is reserved for one creation at a time and free again once released")
+    @DisplayName("GDR-CORE-12: a branch is reserved for one creation at a time and free again once released")
     void branchReservation(@LocalRepository Repository repository) throws Exception {
         var branch = Constants.R_HEADS + name();
 

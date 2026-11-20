@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,14 +48,15 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
+import de.cuioss.git.document.core.GitCoreLogMessages;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.GitResult;
 import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.CommitInput;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.git.document.testing.LocalRepository;
-import de.cuioss.git.document.worktrees.WorktreeOperations.CommitInput;
-import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
@@ -89,7 +90,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The working-tree operations on JGit: add, list, remove and commit against a main working tree cloned from a
- * {@code git-testing} fixture repository, with every outcome of each operation (GDR-WT-1, GDR-WT-2), and the absence of
+ * {@code git-testing} fixture repository, with every outcome of each operation (GDR-CORE-12, GDR-CORE-13), and the absence of
  * author and committer names, e-mail addresses and commit messages from every log message and every result detail
  * (GDR-NFR-3).
  * <p>
@@ -338,7 +339,7 @@ class JGitWorktreeOperationsTest {
     class Add {
 
         @Test
-        @DisplayName("GDR-WT-1: a working tree on a new branch is created in git's layout, checked out and listed")
+        @DisplayName("GDR-CORE-12: a working tree on a new branch is created in git's layout, checked out and listed")
         void onNewBranchAtHead(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -368,11 +369,11 @@ class JGitWorktreeOperationsTest {
                             "the new working tree is listed after the main one"),
                     () -> assertEquals(branch, all.get(1).branch(), "the listed working tree is on the branch"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
-                    GitWorktreesLogMessages.INFO.WORKTREE_ADDED.resolveIdentifierString());
+                    GitCoreLogMessages.INFO.WORKTREE_ADDED.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a detached working tree at a full commit id has no branch and records the commit")
+        @DisplayName("GDR-CORE-12: a detached working tree at a full commit id has no branch and records the commit")
         void detachedAtFullCommitId(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var path = main.root().resolve(name());
@@ -391,7 +392,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a working tree on an existing branch checks out the branch's commit")
+        @DisplayName("GDR-CORE-12: a working tree on an existing branch checks out the branch's commit")
         void existingBranchAtItsCommit(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -414,7 +415,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: an empty directory is taken, a non-empty one or an existing new branch already exists")
+        @DisplayName("GDR-CORE-12: an empty directory is taken, a non-empty one or an existing new branch already exists")
         void alreadyExists(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var empty = Files.createDirectories(main.root().resolve(name()));
@@ -440,7 +441,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a branch checked out in the main or in a linked working tree is refused")
+        @DisplayName("GDR-CORE-12: a branch checked out in the main or in a linked working tree is refused")
         void branchCheckedOut(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var linkedBranch = name();
@@ -463,7 +464,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: an unknown branch, an unknown, abbreviated or absent start point is not found")
+        @DisplayName("GDR-CORE-12: an unknown branch, an unknown, abbreviated or absent start point is not found")
         void notFound(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var absent = ObjectId.fromRaw(Generators.letterStrings(20, 20).next()
@@ -492,7 +493,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a start point naming a branch and a tag is ambiguous and lists both")
+        @DisplayName("GDR-CORE-12: a start point naming a branch and a tag is ambiguous and lists both")
         void ambiguous(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var tag = Constants.R_TAGS + main.branch();
@@ -510,7 +511,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a pin the branch is not at, or that reaches another commit, is an identity mismatch")
+        @DisplayName("GDR-CORE-12: a pin the branch is not at, or that reaches another commit, is an identity mismatch")
         void identityMismatch(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -547,7 +548,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a path outside the main working tree or the main working tree itself is refused")
+        @DisplayName("GDR-CORE-12: a path outside the main working tree or the main working tree itself is refused")
         void pathRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var outside = temp.resolve(name());
@@ -562,7 +563,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a branch name that is no valid reference name is refused before anything is written")
+        @DisplayName("GDR-CORE-12: a branch name that is no valid reference name is refused before anything is written")
         void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var escape = name();
@@ -605,7 +606,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a linked working tree as root is refused and nothing is created")
+        @DisplayName("GDR-CORE-12: a linked working tree as root is refused and nothing is created")
         void linkedRootRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var linked = added(main, name());
@@ -625,7 +626,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a target inside the git directory, its administration area or another linked working "
+        @DisplayName("GDR-CORE-12: a target inside the git directory, its administration area or another linked working "
                 + "tree is refused")
         void targetInsideAdministrationRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
@@ -655,7 +656,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a root outside any repository is not a repository")
+        @DisplayName("GDR-CORE-12: a root outside any repository is not a repository")
         void notARepository() throws Exception {
             var plain = Files.createDirectories(temp.resolve(name())).toRealPath();
 
@@ -666,7 +667,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a checkout that would run a filter driver is refused and leaves no working tree")
+        @DisplayName("GDR-CORE-13: a checkout that would run a filter driver is refused and leaves no working tree")
         void filterDriverRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             configureFilter(main, "smudge");
@@ -681,11 +682,11 @@ class JGitWorktreeOperationsTest {
                     () -> assertFalse(Files.exists(main.admin(path.getFileName().toString())),
                             "the administration directory is removed again"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                    GitWorktreesLogMessages.WARN.CAPABILITY_REFUSED.resolveIdentifierString());
+                    GitCoreLogMessages.WARN.WORKTREE_CAPABILITY_REFUSED.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-1: unreadable administration files fail the add with the failure class only")
+        @DisplayName("GDR-CORE-12: unreadable administration files fail the add with the failure class only")
         void failed(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -701,7 +702,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a refused checkout removes the branch it created, keeps an existing one, a retry succeeds")
+        @DisplayName("GDR-CORE-12: a refused checkout removes the branch it created, keeps an existing one, a retry succeeds")
         void refusedCheckoutRollsBackBranch(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var existing = name();
@@ -735,7 +736,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: of concurrent additions for one target or one unused branch exactly one succeeds")
+        @DisplayName("GDR-CORE-12: of concurrent additions for one target or one unused branch exactly one succeeds")
         void concurrentAdditions(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             int attempts = 4;
@@ -784,7 +785,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: an unknown start point is not found for an existing branch, HEAD selects its tip")
+        @DisplayName("GDR-CORE-12: an unknown start point is not found for an existing branch, HEAD selects its tip")
         void unknownStartPointForExistingBranch(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -810,7 +811,7 @@ class JGitWorktreeOperationsTest {
     class ListWorktrees {
 
         @Test
-        @DisplayName("GDR-WT-1: the main working tree comes first, then the linked ones by name, from any root")
+        @DisplayName("GDR-CORE-12: the main working tree comes first, then the linked ones by name, from any root")
         void mainFirstThenByName(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var first = added(main, name());
@@ -834,7 +835,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a locked working tree is listed locked, one whose directory is gone prunable")
+        @DisplayName("GDR-CORE-12: a locked working tree is listed locked, one whose directory is gone prunable")
         void lockedAndPrunable(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var locked = added(main, name());
@@ -855,7 +856,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a directory outside any repository is not a repository")
+        @DisplayName("GDR-CORE-12: a directory outside any repository is not a repository")
         void notARepository() throws Exception {
             var plain = Files.createDirectories(temp.resolve(name()));
 
@@ -864,7 +865,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: unreadable administration files fail the list with the failure class only")
+        @DisplayName("GDR-CORE-12: unreadable administration files fail the list with the failure class only")
         void failed(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             corruptAdministration(main);
@@ -877,7 +878,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: an entry still being initialized fails neither the list nor another removal")
+        @DisplayName("GDR-CORE-12: an entry still being initialized fails neither the list nor another removal")
         void incompleteEntrySkipped(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var worktree = added(main, name());
@@ -903,7 +904,7 @@ class JGitWorktreeOperationsTest {
     class Remove {
 
         @Test
-        @DisplayName("GDR-WT-1: a clean linked working tree is removed with its administration directory")
+        @DisplayName("GDR-CORE-12: a clean linked working tree is removed with its administration directory")
         void removesClean(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var worktree = added(main, name());
@@ -918,11 +919,11 @@ class JGitWorktreeOperationsTest {
                     () -> assertEquals(List.of(main.root()), listed(main).stream().map(Worktree::path).toList(),
                             "only the main working tree is listed"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
-                    GitWorktreesLogMessages.INFO.WORKTREE_REMOVED.resolveIdentifierString());
+                    GitCoreLogMessages.INFO.WORKTREE_REMOVED.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a prunable working tree is removed by its administration directory")
+        @DisplayName("GDR-CORE-12: a prunable working tree is removed by its administration directory")
         void removesPrunable(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var worktree = added(main, name());
@@ -937,7 +938,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a dirty or a locked working tree is kept, the removal is never forced")
+        @DisplayName("GDR-CORE-12: a dirty or a locked working tree is kept, the removal is never forced")
         void dirtyAndLocked(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var dirty = added(main, name());
@@ -958,7 +959,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: the main working tree is refused and an unknown root is not found")
+        @DisplayName("GDR-CORE-12: the main working tree is refused and an unknown root is not found")
         void mainRefusedUnknownNotFound(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var unknown = main.root().resolve(name());
@@ -977,7 +978,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a dirty check that would run a filter driver is refused and keeps the working tree")
+        @DisplayName("GDR-CORE-12: a dirty check that would run a filter driver is refused and keeps the working tree")
         void filterDriverRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var worktree = added(main, name());
@@ -995,7 +996,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a root outside any repository is not a repository, unreadable administration fails")
+        @DisplayName("GDR-CORE-12: a root outside any repository is not a repository, unreadable administration fails")
         void notARepositoryAndFailed(@LocalRepository Repository source) throws Exception {
             var plain = Files.createDirectories(temp.resolve(name()));
             var main = mainTree(source, temp);
@@ -1013,7 +1014,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a replaced repository at the root is not found, a reused prunable path is kept")
+        @DisplayName("GDR-CORE-12: a replaced repository at the root is not found, a reused prunable path is kept")
         void replacedRepositoryAndReusedPath(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var replaced = added(main, name());
@@ -1050,7 +1051,7 @@ class JGitWorktreeOperationsTest {
     class Commit {
 
         @Test
-        @DisplayName("GDR-WT-2: every addition, modification and deletion is committed unsigned on the tree's branch")
+        @DisplayName("GDR-CORE-13: every addition, modification and deletion is committed unsigned on the tree's branch")
         void commitsEveryChange(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             try (Repository repository = open(main.root())) {
@@ -1097,7 +1098,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a commit from the main working tree moves its branch")
+        @DisplayName("GDR-CORE-13: a commit from the main working tree moves its branch")
         void commitsInMain(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             Files.writeString(main.root().resolve(name()), content());
@@ -1110,7 +1111,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a clean working tree has nothing to commit")
+        @DisplayName("GDR-CORE-13: a clean working tree has nothing to commit")
         void nothingToCommit(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1126,7 +1127,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a hook present in the repository is refused and never run")
+        @DisplayName("GDR-CORE-13: a hook present in the repository is refused and never run")
         void hookRefused(@LocalRepository Repository source) throws Exception {
             assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
                     "The default file system supports the posix file attribute view");
@@ -1146,11 +1147,11 @@ class JGitWorktreeOperationsTest {
                             "nothing is committed"),
                     () -> assertFalse(Files.exists(marker), "the hook is never run"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                    GitWorktreesLogMessages.WARN.CAPABILITY_REFUSED.resolveIdentifierString());
+                    GitCoreLogMessages.WARN.WORKTREE_CAPABILITY_REFUSED.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a present post-commit hook is refused before anything is staged or committed")
+        @DisplayName("GDR-CORE-13: a present post-commit hook is refused before anything is staged or committed")
         void postCommitHookRefused(@LocalRepository Repository source) throws Exception {
             assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
                     "The default file system supports the posix file attribute view");
@@ -1175,7 +1176,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a commit in the main working tree does not stage the root of a linked working tree")
+        @DisplayName("GDR-CORE-13: a commit in the main working tree does not stage the root of a linked working tree")
         void linkedRootNotStaged(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var linked = added(main, name());
@@ -1201,7 +1202,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a commit in a linked working tree writes its HEAD reflog there, not into the main one")
+        @DisplayName("GDR-CORE-13: a commit in a linked working tree writes its HEAD reflog there, not into the main one")
         void linkedReflog(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1226,7 +1227,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a root outside any repository is not a repository, a locked index fails the commit")
+        @DisplayName("GDR-CORE-13: a root outside any repository is not a repository, a locked index fails the commit")
         void notARepositoryAndFailed(@LocalRepository Repository source) throws Exception {
             var plain = Files.createDirectories(temp.resolve(name()));
             var main = mainTree(source, temp);
@@ -1275,7 +1276,7 @@ class JGitWorktreeOperationsTest {
     class RegisteredIdentity {
 
         @Test
-        @DisplayName("GDR-WT-1: a new or an existing branch whose reservation another addition holds is checked out")
+        @DisplayName("GDR-CORE-12: a new or an existing branch whose reservation another addition holds is checked out")
         void reservedBranchCheckedOut(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var commonDir = main.root().resolve(Constants.DOT_GIT);
@@ -1312,7 +1313,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a working tree registered through a symbolic link is found and removed by its real path")
+        @DisplayName("GDR-CORE-12: a working tree registered through a symbolic link is found and removed by its real path")
         void removeThroughSymlink(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var worktree = added(main, name());
@@ -1331,7 +1332,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a commit in the main working tree stages no root registered through a symbolic link")
+        @DisplayName("GDR-CORE-13: a commit in the main working tree stages no root registered through a symbolic link")
         void linkedRootThroughSymlinkNotStaged(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var linked = added(main, name());
@@ -1411,7 +1412,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: a reservation a crashed process left is released, and the addition succeeds again")
+        @DisplayName("GDR-CORE-15: a reservation a crashed process left is released, and the addition succeeds again")
         void crashedProcessRecovered(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1441,11 +1442,11 @@ class JGitWorktreeOperationsTest {
                     () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO,
                             main.root().toString()).isEmpty(), "no INFO message carries a path"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
-                    GitWorktreesLogMessages.INFO.BRANCH_RESERVATION_RELEASED.resolveIdentifierString());
+                    GitCoreLogMessages.INFO.BRANCH_RESERVATION_RELEASED.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-4: a branch without a reservation is not found")
+        @DisplayName("GDR-CORE-15: a branch without a reservation is not found")
         void noReservation(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
 
@@ -1459,7 +1460,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: an invalid branch name is refused and deletes nothing in or outside the common directory")
+        @DisplayName("GDR-CORE-15: an invalid branch name is refused and deletes nothing in or outside the common directory")
         void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var escape = name();
@@ -1480,7 +1481,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: a path without a repository is not a repository")
+        @DisplayName("GDR-CORE-15: a path without a repository is not a repository")
         void notARepository() throws Exception {
             var plain = Files.createDirectories(temp.resolve(name()));
 
@@ -1492,7 +1493,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: a repository without a working tree fails as a result")
+        @DisplayName("GDR-CORE-15: a repository without a working tree fails as a result")
         void bareRepositoryFails() throws Exception {
             var bare = temp.resolve(name());
             Git.init().setBare(true).setDirectory(bare.toFile()).call().close();
@@ -1508,7 +1509,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: called from a linked working tree it releases the reservation in the common directory")
+        @DisplayName("GDR-CORE-15: called from a linked working tree it releases the reservation in the common directory")
         void fromLinkedRoot(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var linked = added(main, name());
@@ -1526,7 +1527,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-4: the release deletes only the named branch's reservation")
+        @DisplayName("GDR-CORE-15: the release deletes only the named branch's reservation")
         void onlyNamedReservation(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1568,7 +1569,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: an unchecked failure of the addition is a result and leaves nothing behind")
+        @DisplayName("GDR-CORE-12: an unchecked failure of the addition is a result and leaves nothing behind")
         void uncheckedFailureRolledBack(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1604,7 +1605,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a created branch another writer advanced is kept, one that cannot be deleted stays")
+        @DisplayName("GDR-CORE-12: a created branch another writer advanced is kept, one that cannot be deleted stays")
         void branchDeletionResultRead(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var advancedBranch = name();
@@ -1644,7 +1645,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: the branch stays reserved until the rollback of a failed addition has deleted it")
+        @DisplayName("GDR-CORE-12: the branch stays reserved until the rollback of a failed addition has deleted it")
         void reservationOutlivesRollback(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1672,7 +1673,7 @@ class JGitWorktreeOperationsTest {
         }
 
         @Test
-        @DisplayName("GDR-WT-1: a created branch a held reference lock keeps at its start commit is reported")
+        @DisplayName("GDR-CORE-12: a created branch a held reference lock keeps at its start commit is reported")
         void heldRefLockReported(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1692,11 +1693,11 @@ class JGitWorktreeOperationsTest {
                     () -> assertFalse(Files.exists(path), "the target is removed again"),
                     () -> assertEquals(List.of(), reservations(main), "no branch reservation is left"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                    GitWorktreesLogMessages.WARN.ROLLBACK_INCOMPLETE.resolveIdentifierString());
+                    GitCoreLogMessages.WARN.ROLLBACK_INCOMPLETE.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-2: a reflog entry that cannot be written does not fail the created commit")
+        @DisplayName("GDR-CORE-13: a reflog entry that cannot be written does not fail the created commit")
         void reflogFailureKeepsCommit(@LocalRepository Repository source) throws Exception {
             var upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
             var main = mainTree(source, temp);
@@ -1727,11 +1728,11 @@ class JGitWorktreeOperationsTest {
                     () -> assertAll(forbidden.stream().<Executable>map(value -> () -> assertFalse(
                             logs.contains(value), "no log message carries " + value))));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
+                    GitCoreLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
         }
 
         @Test
-        @DisplayName("GDR-WT-2: an invalid core.logAllRefUpdates value does not fail the created commit")
+        @DisplayName("GDR-CORE-13: an invalid core.logAllRefUpdates value does not fail the created commit")
         void invalidLogAllRefUpdatesKeepsCommit(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
             var branch = name();
@@ -1756,7 +1757,7 @@ class JGitWorktreeOperationsTest {
                     () -> assertTrue(TestLoggerFactory.getTestHandler().getRecordsAsString().contains(info.id()),
                             "the warning names the commit id"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                    GitWorktreesLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
+                    GitCoreLogMessages.WARN.REFLOG_NOT_WRITTEN.resolveIdentifierString());
         }
     }
 
@@ -1797,7 +1798,7 @@ class JGitWorktreeOperationsTest {
             var forbidden = List.of(author.name(), author.email(), committer.name(), committer.email(), message);
             assertAll(
                     () -> assertEquals(2, handler.resolveLogMessagesContaining(TestLogLevel.INFO,
-                            GitWorktreesLogMessages.PREFIX).size(), "the add and the remove are logged at INFO"),
+                            GitCoreLogMessages.PREFIX).size(), "the add and the remove are logged at INFO"),
                     () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO,
                             worktree.path().toString()).isEmpty(), "no INFO message carries the working-tree path"),
                     () -> assertTrue(handler.resolveLogMessagesContaining(TestLogLevel.INFO,

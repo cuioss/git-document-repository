@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.module.ModuleDescriptor;
 import java.lang.reflect.Modifier;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
@@ -26,6 +28,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
@@ -33,10 +38,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * GDR-GEN-1: the libraries carry no domain term. No public type of {@code git-core}, by its simple name or its package
- * name, contains one of the domain terms of the application, compared case-insensitively. The scan reads the main
- * output directory of the module, located through the code source of {@link GitResult}, and loads each class without
- * initialising it.
+ * GDR-GEN-1: the libraries carry no domain term. No public type of {@code git-core}, in its packages
+ * {@code de.cuioss.git.document.core} and {@code de.cuioss.git.document.core.worktrees}, by its simple name or its
+ * package name, contains one of the domain terms of the application, compared case-insensitively. The scan reads the
+ * main output directory of the module, located through the code source of {@link GitResult}, and loads each class
+ * without initialising it. Every package the compiled {@code module-info.class} of that directory exports must hold at
+ * least one of the public types found, so an exported package the scan does not reach fails the test instead of
+ * passing it unexamined.
  */
 @DisplayName("git-core public types carry no domain term (GDR-GEN-1)")
 class DomainTermAbsenceTest {
@@ -47,10 +55,14 @@ class DomainTermAbsenceTest {
     /** The file suffix of a compiled class. */
     private static final String CLASS_SUFFIX = ".class";
 
+    /** The compiled module descriptor of the main output directory. */
+    private static final String MODULE_INFO = "module-info";
+
     @Test
     @DisplayName("Should find public types and none of them names a domain term")
     void shouldCarryNoDomainTermInPublicTypes() throws Exception {
-        var publicTypes = publicTypesOfMainOutput();
+        var root = mainOutput();
+        var publicTypes = publicTypesOf(root);
 
         var violations = new ArrayList<String>();
         for (Class<?> type : publicTypes) {
@@ -62,19 +74,47 @@ class DomainTermAbsenceTest {
                 }
             }
         }
+        var exportedPackages = exportedPackagesOf(root);
+        var scannedPackages = publicTypes.stream().map(Class::getPackageName).collect(Collectors.toSet());
+        var unscannedExports = new TreeSet<>(exportedPackages);
+        unscannedExports.removeAll(scannedPackages);
 
         assertFalse(publicTypes.isEmpty(), "The scan must find at least one public type of git-core");
+        assertFalse(exportedPackages.isEmpty(), "The module descriptor of git-core must export at least one package");
+        assertEquals(Set.of(), unscannedExports, "Every package git-core exports must hold a public type of the scan");
         assertEquals(List.of(), violations, "Public types of git-core must not carry a domain term of GDR-GEN-1");
+    }
+
+    /**
+     * The main output directory of the module, located through the code source of {@link GitResult}.
+     *
+     * @return the main output directory, never {@code null}
+     */
+    private static Path mainOutput() throws URISyntaxException {
+        return Path.of(GitResult.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+    }
+
+    /**
+     * Reads the packages the compiled module descriptor of the main output directory exports.
+     *
+     * @param root the main output directory
+     * @return the exported packages, never {@code null}
+     */
+    private static Set<String> exportedPackagesOf(Path root) throws IOException {
+        try (InputStream descriptor = Files.newInputStream(root.resolve(MODULE_INFO + CLASS_SUFFIX))) {
+            return ModuleDescriptor.read(descriptor).exports().stream()
+                    .map(ModuleDescriptor.Exports::source)
+                    .collect(Collectors.toCollection(TreeSet::new));
+        }
     }
 
     /**
      * Loads every class of the main output directory without initialising it and keeps the public ones.
      *
+     * @param root the main output directory
      * @return the public types of the main output directory, never {@code null}
      */
-    private static List<Class<?>> publicTypesOfMainOutput()
-            throws IOException, URISyntaxException, ClassNotFoundException {
-        var root = Path.of(GitResult.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+    private static List<Class<?>> publicTypesOf(Path root) throws IOException, ClassNotFoundException {
         var loader = GitResult.class.getClassLoader();
         List<String> classNames;
         try (Stream<Path> files = Files.walk(root)) {
@@ -83,7 +123,7 @@ class DomainTermAbsenceTest {
                     .map(Path::toString)
                     .filter(name -> name.endsWith(CLASS_SUFFIX))
                     .map(name -> name.substring(0, name.length() - CLASS_SUFFIX.length()))
-                    .filter(name -> !name.endsWith("module-info") && !name.endsWith("package-info"))
+                    .filter(name -> !name.endsWith(MODULE_INFO) && !name.endsWith("package-info"))
                     .map(name -> name.replace(root.getFileSystem().getSeparator(), "."))
                     .toList();
         }
