@@ -101,11 +101,13 @@ class PersonEntryTest {
 
             var member = new PersonEntry.Member(word(), word(), memberships);
             memberships.add(membership());
+            var copied = member.memberships();
+            var another = membership();
 
             assertAll(
-                    () -> assertEquals(expected, member.memberships(), "later changes of the source do not leak"),
-                    () -> assertThrows(UnsupportedOperationException.class,
-                            () -> member.memberships().add(membership()), "the memberships are immutable"));
+                    () -> assertEquals(expected, copied, "later changes of the source do not leak"),
+                    () -> assertThrows(UnsupportedOperationException.class, () -> copied.add(another),
+                            "the memberships are immutable"));
         }
 
         @Test
@@ -156,11 +158,13 @@ class PersonEntryTest {
 
             var former = new PersonEntry.FormerMember(word(), memberships);
             memberships.add(membership());
+            var copied = former.memberships();
+            var another = membership();
 
             assertAll(
-                    () -> assertEquals(expected, former.memberships(), "later changes of the source do not leak"),
-                    () -> assertThrows(UnsupportedOperationException.class,
-                            () -> former.memberships().add(membership()), "the memberships are immutable"));
+                    () -> assertEquals(expected, copied, "later changes of the source do not leak"),
+                    () -> assertThrows(UnsupportedOperationException.class, () -> copied.add(another),
+                            "the memberships are immutable"));
         }
 
         @Test
@@ -179,9 +183,10 @@ class PersonEntryTest {
         @DisplayName("refuses missing components")
         void refusesNull() {
             var word = word();
+            Set<Membership> none = Set.of();
 
             assertAll(
-                    () -> assertThrows(NullPointerException.class, () -> new PersonEntry.FormerMember(null, Set.of())),
+                    () -> assertThrows(NullPointerException.class, () -> new PersonEntry.FormerMember(null, none)),
                     () -> assertThrows(NullPointerException.class, () -> new PersonEntry.FormerMember(word, null)));
         }
     }
