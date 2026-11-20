@@ -120,11 +120,13 @@ xref:specification/git-core.adoc#GDR-CORE-10[GDR-CORE-10] and
 xref:specification/git-core.adoc#GDR-CORE-11[GDR-CORE-11] of `git-core`, and
 xref:specification/git-worktrees.adoc#GDR-WT-1[GDR-WT-1], xref:specification/git-worktrees.adoc#GDR-WT-2[GDR-WT-2],
 xref:specification/git-worktrees.adoc#GDR-WT-3[GDR-WT-3] and xref:specification/git-worktrees.adoc#GDR-WT-4[GDR-WT-4]
-of `git-worktrees`.
+of `git-worktrees`, and xref:specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1] and
+xref:specification/git-store.adoc#GDR-STORE-11[GDR-STORE-11] of `git-store`, together with its configuration, its
+outcome list and its service interfaces.
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's
 `SystemReader` is closed only when the embedding application installs `RefusingFS.systemReader`, the recommended
 setup. For xref:specification/general.adoc#GDR-NFR-4[GDR-NFR-4], `git-core` ships its native-image metadata and
-`git-worktrees` relies on it; this repository does not verify the requirement yet. Every other requirement is planned.
+`git-worktrees` and `git-store` rely on it; this repository does not verify the requirement yet. Every other requirement is planned.
 
 [cols="1,3"]
 |===
@@ -144,8 +146,8 @@ repository, reading, notes, identity
 |Repository fixtures and the credential generator
 
 |xref:specification/git-store.adoc[git-store]
-|Registry, drafts, saving, release, identity, index, listeners, codecs, signature, verification, anchoring, own
-timestamp, person directory interface
+|Registry, outcome list, drafts, saving, release, identity, index, listeners, codecs, signature, verification,
+anchoring, own timestamp, person directory interface, configuration
 
 |xref:specification/git-forms.adoc[git-forms]
 |Kinds of documents, schema validation, data layout, generated output, workflow, deadlines, step-up, links, running

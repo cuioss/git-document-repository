@@ -4,11 +4,24 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-store` (module `de.cuioss.git.document.store`, not yet created) turns `git-core` into a document store: drafts,
-saving, release, the signature and the identity trailers of every commit, the in-memory index, post-commit listeners,
-the anchoring with the own timestamp `signed`, and the person directory interface. It depends on `git-core` only.
+`git-store` (module `de.cuioss.git.document.store`) turns `git-core` into a document store: drafts, saving, release,
+the signature and the identity trailers of every commit, the in-memory index, post-commit listeners, the anchoring
+with the own timestamp `signed`, and the person directory interface. It depends on `git-core` only.
 Rationale: xref:../concepts/storage-engine.adoc[Storage Engine], xref:../concepts/identity-and-signing.adoc[Identity
 and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
+
+Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
+configuration (<<store-configuration>>), the outcome list with its result, and the three service interfaces below with
+the selection of their providers; the providers themselves (`file`, `signed`) and every other requirement are planned.
+Its third-party dependencies are `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`) and
+`org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
+requires transitively because its public API exposes `GitOutcome`, `GitResult`, `RemotePolicy` and JGit's `ObjectId`.
+
+Every operation of `git-store` returns a `StoreResult` (outcome, value, detail; xref:general.adoc#GDR-GEN-3[GDR-GEN-3]),
+never an exception for an expected outcome. Its outcome is a constant of the closed list `StoreOutcome`, or a
+non-success Git outcome the operation passes on as `StoreResult.PassedOn`; only `StoreOutcome.OK` is a success. A
+success carries no detail; a non-success carries a detail that is not blank and no value. `StoreResult.passOn` keeps
+the outcome and the detail of the `GitResult` it passes on and refuses a success.
 
 It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`), each
 provider named by configuration. For `SigningKeySource` and `PersonDirectory` exactly one provider is active; for
@@ -27,6 +40,36 @@ KMS or HSM sources supplied by the application
 xref:git-directory.adoc[`git-directory`], or a provider for the operator's own source
 |===
 
+Each interface has `String id()`, the value the configuration names the provider by. The operations, each returning a
+`StoreResult`:
+
+* `SigningKeySource`: `sign(keyReference, data)`, the raw signature; `publicKey(keyReference)`, the public key as an
+  OpenSSH public key line, needed because the SSH signature format embeds the signer's public key in every signature
+  (the field `publickey` of the signature blob,
+  link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). Non-success:
+  `UNAVAILABLE` or `REFUSED`; the private key never leaves the source.
+* `AnchorProvider`: `obtain(repository, subject, previous)`, the proof for the object id `subject` of the repository
+  with that alias (`UNAVAILABLE`, `REFUSED`); `verify(subject, proof, previous)`, the time the proof establishes
+  (`IMPRINT_MISMATCH`, `SIGNATURE_INVALID`, `CHAIN_BROKEN`). `previous` is the provider's previous proof as bytes,
+  empty for the first. The id names the notes reference `refs/notes/anchors/<id>`.
+* `PersonDirectory`: `pseudonym(issuer, subject)`; `entry(pseudonym)`, a `PersonEntry` that is either a `Member`
+  (pseudonym, name, memberships) or a `FormerMember` (pseudonym, the memberships still known, possibly none);
+  `holders(team, role)`; `save(member)`; `saveUnbound(name, memberships)`, the pseudonym of the new entry;
+  `unbound(memberships)`; `bind(pseudonym, issuer, subject)`; `erase(pseudonym)`. A `Membership` is a pair of team and
+  role, neither blank; the memberships of an entry are copied immutably, and `Member.toString()` renders no name
+  (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+`StoreProviders.load(configuration)` finds the candidates with `ServiceLoader.load` for each interface (through the
+`uses` directives of the module, or `META-INF/services` on the class path) and hands them to
+`StoreProviders.select(configuration, signing, anchors, persons)`, which picks the provider whose id is
+`signing.key-source`, the one whose id is `directory.persons.provider`, and, when `anchor.provider` is present, the one
+with that id; without `anchor.provider` no anchor provider is selected. A configured id that no candidate carries, or
+that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with id <id>` or
+`<interface>: more than one provider with id <id>`; two candidates with an id nobody configured do not stop the start.
+A `ServiceConfigurationError` while loading is `MALFORMED` naming the interface. A selection is logged as
+`GIT_STORE-1` with the three ids, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
+`git-store/doc/LogMessages.adoc` (xref:general.adoc#GDR-GEN-4[GDR-GEN-4]).
+
 [#GDR-STORE-1]
 == GDR-STORE-1: Repository Registry
 
@@ -42,6 +85,31 @@ repositories:
     confidentiality: restricted  # application-defined class name, mapped to access rules by the application
     retention: P10Y              # optional; after it the operator deletes the repository; the store only reports it
 ----
+
+A repository is the record `StoreRepository` (alias, remote, confidentiality, optional retention as a
+`java.time.Period`); its `toString()` renders the remote without user information. `RepositoryRegistry.of(repositories,
+policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
+`RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
+server, or on a single server local bare repositories
+(xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]). The
+first refusal is returned:
+
+[cols="2,1,2"]
+|===
+|Check |Outcome |Detail
+
+|alias outside `[a-z0-9-]+` |`MALFORMED` |`repositories[<n>]: invalid alias`, by zero-based position, since the alias
+itself is invalid
+|alias registered twice |`MALFORMED` |`repository <alias>: duplicate alias`
+|blank confidentiality class |`MALFORMED` |`repository <alias>: blank confidentiality`
+|remote that JGit's `URIish` cannot parse |`MALFORMED` |`repository <alias>: malformed remote`
+|remote with a user or a password |`MALFORMED` |`repository <alias>: remote carries user information`
+|remote the policy does not permit (`RemotePolicy.permits`) |`PassedOn(REFUSED_BY_POLICY)` |`repository <alias>: remote
+not permitted by the remote policy`
+|===
+
+No detail carries the remote. `repositories()` returns the repositories in registration order, `find(alias)` an
+`Optional` of the repository. The retention period is only reported through the record; the store never acts on it.
 
 [#GDR-STORE-2]
 == GDR-STORE-2: Drafts per User and Document
@@ -190,6 +258,11 @@ image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source 
 
 Every codec guarantees `encode(decode(encode(v))) == encode(v)` byte for byte. `git-store` carries no YAML library:
 `git-forms` supplies the YAML codec.
+
+The interface is `Codec<V>` with `byte[] encode(V value)` and `StoreResult<V> decode(byte[] content)`. Encoding is
+canonical: two equal values, and an unchanged value encoded again, yield byte-identical content. A content the codec
+cannot read is `MALFORMED`, never an exception, and its detail names what could not be read (a line number or a key)
+without repeating the content.
 
 [#GDR-STORE-12]
 == GDR-STORE-12: Commit Signature
@@ -379,3 +452,30 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 |`anchor.signed.max-clock-skew` |ISO 8601 duration; default `PT5M`
 |`directory.persons.provider` |the active person directory; default `git`
 |===
+
+`StoreConfiguration.from(tree, policy)` reads the configuration at start and returns a `StoreResult` of the typed
+record `StoreConfiguration`, whose nested records mirror the sections: `Save`, `Drafts`, `Fetch`, `Signing`, `Anchor`
+with `Anchor.Signed`, and `Directory`, plus the `RepositoryRegistry` (<<GDR-STORE-1>>) checked against the one
+`RemotePolicy` the caller passes. The input is an already-parsed tree of nested maps as a YAML or JSON parser delivers
+it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map `signed` of the map `anchor`), so
+`git-store` needs no parser library:
+
+* Integers are integral `Number` values within the range of `int`, booleans `Boolean`, and other values non-blank
+  strings. Durations and periods are ISO 8601 strings parsed with `java.time.Duration` and `java.time.Period`
+  (`drafts.expiry` and `retention` are periods); every duration and period must be positive. `save.max-attempts` must
+  be at least 1.
+* `save.max-attempts`, `drafts.expiry` and `fetch.interval` are required. Every other key may be absent at start and
+  then takes the default of the table; a key without a default, such as `signing.key` or the allowed-signers files that
+  only a verification needs, stays absent.
+* Keys outside the table are ignored, because the tree is shared with the modules above `git-store` (for example
+  `timestamp.*` of xref:git-timestamp.adoc[`git-timestamp`]). An absent `repositories` is an empty registry.
+* An anchor key equal to the commit-signing key is refused (<<GDR-STORE-18>>): the start compares the effective key
+  source (`anchor.signed.key-source`, an absent one taken as the default `file`) with `signing.key-source`, and
+  `anchor.signed.key` with `signing.key`, and refuses when both are equal. Comparing the public keys themselves needs
+  the key source and is left to the provider `signed`.
+
+The first refusal is returned and logged once as `GIT_STORE-100`. Its outcome is `MALFORMED`, or the passed-on
+`REFUSED_BY_POLICY` of the registry; its detail names the dotted key or the alias, never the value:
+`<key> is missing`, `<key> is malformed` (a key of a repository as `repositories[<n>].<key>`), or
+`anchor.signed.key equals the commit-signing key`. The `toString()` of `Signing` and `Anchor.Signed` states only whether
+a key reference is set (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).

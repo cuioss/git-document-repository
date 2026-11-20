@@ -55,7 +55,8 @@ reading, notes
 |`git-store`
 |Drafts, saving, release, commit signature and identity trailers, index, post-commit listeners, anchoring with the own
 timestamp (xref:storage-engine.adoc[Storage Engine], xref:identity-and-signing.adoc[Identity and Signing])
-|planned
+|implemented: repository registry, typed configuration, codec interface, outcome list and result, service interfaces
+and provider selection; planned: drafts, saving, release, signature, trailers, index, listeners, anchoring
 
 |`git-forms`
 |Schema-driven documents: schema, template, workflow, deadlines, step-up for releases
@@ -83,7 +84,8 @@ repository; its kinds of documents are configuration of `git-forms`.
 `git-directory` builds on `git-forms`. `git-testing` depends on no other module of the reactor; it declares JGit
 directly, since its fixtures create JGit repositories.
 
-`git-store` defines three service interfaces that `ServiceLoader` finds (JPMS `uses` and `provides`), so no module
+`git-store` defines three service interfaces that `ServiceLoader` finds (JPMS `uses` and `provides`, or
+`META-INF/services` on the class path), so no module
 calls a module it does not depend on. Providers are named by configuration; `SigningKeySource` and `PersonDirectory`
 have exactly one active provider each, `AnchorProvider` at most one:
 

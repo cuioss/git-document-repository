@@ -26,8 +26,9 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes | - |
 | `git-worktrees` | Linked working trees, commit from a working tree, working-tree status | `git-core` |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
+| `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection | `git-core` |
 
-Planned but not yet created: `git-store`, `git-forms`, `git-timestamp`, `git-directory` (see
+Planned but not yet created: `git-forms`, `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
@@ -45,16 +46,24 @@ taken over from `pm-provider-git`: `WorktreeOperations` with `JGitWorktreeOperat
 working trees, commit from a working tree, working-tree status `WorktreeStatus`, release of a branch reservation left
 by an ended process), the package-private
 `LinkedWorktrees` and the `LogRecord` holder `GitWorktreesLogMessages`; its tests run on the class path against the
-`git-testing` fixtures. Add an `exports` directive together with the first public class of a package: javac rejects
-exporting a package that contains only `package-info.java`.
+`git-testing` fixtures. `git-store` exports `de.cuioss.git.document.store` with the foundation of the store: the
+closed outcome list `StoreOutcome` and the result `StoreResult` (whose outcome is a `StoreOutcome` or a non-success
+Git outcome passed on as `StoreResult.PassedOn`), the codec interface `Codec`, the repository registry
+`RepositoryRegistry` with `StoreRepository`, the typed configuration `StoreConfiguration` (built by
+`StoreConfiguration.from` from an already-parsed nested map, over the package-private reader `ConfigurationTree`), the
+service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` with `PersonEntry` and `Membership`, the
+provider selection `StoreProviders` through `ServiceLoader`, and the `LogRecord` holder `GitStoreLogMessages`; its
+tests run on the class path against the `git-testing` fixtures. Add an `exports` directive together with the first
+public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph, and the execution `consumer-isolation` of `git-core/pom.xml` bans every compile or runtime artifact outside the
-closure a consumer of `git-core` alone receives. `DomainTermAbsenceTest` in each module asserts that no public type
-carries a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
-`META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
-reaches; `git-worktrees` ships none and relies on that of `git-core` (GDR-NFR-4).
+graph (`git-worktrees` and `git-store` each append their one edge, `git-core`), and the execution `consumer-isolation` of `git-core/pom.xml` bans every compile or runtime artifact outside the
+closure a consumer of `git-core` alone receives. `DomainTermAbsenceTest` in each module (`git-core`, `git-worktrees`,
+`git-testing` and `git-store`) asserts that no public type carries a domain term. `git-core` ships native-image
+metadata (`reflect-config.json`, `resource-config.json` under `META-INF/native-image/de.cuioss/git-core/`, checked by
+`NativeImageMetadataTest`) for the JGit translation bundle it reaches; `git-worktrees` and `git-store` ship none and
+rely on that of `git-core` (GDR-NFR-4).
 
 ## Build
 
