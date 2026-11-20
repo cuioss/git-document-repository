@@ -195,6 +195,9 @@ Signing signing, Anchor anchor, Directory directory) {
         return value == null ? tree.missing(FETCH_INTERVAL) : StoreResult.ok(new Fetch(value));
     }
 
+    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable,
+    // and a dependency on the javax annotations is not permitted (AGENTS.md: no new dependency)
+    @SuppressWarnings("java:S4449")
     private static StoreResult<Signing> readSigning(ConfigurationTree tree) {
         var keySource = tree.string(SIGNING_KEY_SOURCE);
         if (!keySource.isOk()) {
@@ -212,6 +215,8 @@ Signing signing, Anchor anchor, Directory directory) {
                 key.value(), allowedSigners.value()));
     }
 
+    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable
+    @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor> readAnchor(ConfigurationTree tree) {
         var provider = tree.string(ANCHOR_PROVIDER);
         if (!provider.isOk()) {
@@ -239,6 +244,8 @@ Signing signing, Anchor anchor, Directory directory) {
                 Objects.requireNonNull(signed.value())));
     }
 
+    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable
+    @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor.Signed> readSigned(ConfigurationTree tree) {
         var keySource = tree.string(SIGNED_KEY_SOURCE);
         if (!keySource.isOk()) {
@@ -260,6 +267,8 @@ Signing signing, Anchor anchor, Directory directory) {
                 Objects.requireNonNullElse(maxClockSkew.value(), Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)));
     }
 
+    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
+    @SuppressWarnings("java:S4449")
     private static StoreResult<Directory> readDirectory(ConfigurationTree tree) {
         var personsProvider = tree.string(PERSONS_PROVIDER);
         if (!personsProvider.isOk()) {
