@@ -95,7 +95,8 @@ Signing signing, Anchor anchor, Directory directory) {
      * {@code save.max-attempts} (an integer of at least 1), {@code drafts.expiry} (a positive ISO 8601 period) and
      * {@code fetch.interval} (a positive ISO 8601 duration) are required; every other key has the default its section
      * documents; only an omitted key takes its default, a key supplied with a {@code null} value is malformed. A
-     * missing required key, a malformed value, a refused repository of the registry and an anchor key
+     * missing required key, a malformed value (among them an {@code anchor.provider} outside {@code [a-z0-9-]+}, the
+     * alphabet of a repository alias), a refused repository of the registry and an anchor key
      * equal to the commit-signing key are refused: {@link StoreOutcome#MALFORMED}, or the passed-on
      * {@link de.cuioss.git.document.core.GitOutcome#REFUSED_BY_POLICY} of the registry. The detail names the key or
      * the alias, never the value, and every refusal is logged once as {@code GIT_STORE-100}.
@@ -223,6 +224,11 @@ Signing signing, Anchor anchor, Directory directory) {
         if (!provider.isOk()) {
             return retype(provider);
         }
+        String providerId = provider.value();
+        if (providerId != null && !RepositoryRegistry.ALIAS.matcher(providerId).matches()) {
+            // the id becomes part of the notes reference refs/notes/anchors/<id>, so it uses the alias alphabet
+            return tree.malformed(ANCHOR_PROVIDER);
+        }
         var releases = tree.bool(ANCHOR_RELEASES);
         if (!releases.isOk()) {
             return retype(releases);
@@ -239,7 +245,7 @@ Signing signing, Anchor anchor, Directory directory) {
         if (!signed.isOk()) {
             return retype(signed);
         }
-        return StoreResult.ok(new Anchor(provider.value(), Objects.requireNonNullElse(releases.value(), true),
+        return StoreResult.ok(new Anchor(providerId, Objects.requireNonNullElse(releases.value(), true),
                 Objects.requireNonNullElse(checkpointInterval.value(), Anchor.DEFAULT_CHECKPOINT_INTERVAL),
                 Objects.requireNonNullElse(retryInterval.value(), Anchor.DEFAULT_RETRY_INTERVAL),
                 Objects.requireNonNull(signed.value())));
@@ -426,8 +432,9 @@ Signing signing, Anchor anchor, Directory directory) {
     /**
      * The section {@code anchor}.
      *
-     * @param provider           the id of the active anchor provider ({@code anchor.provider}); {@code null} when
-     *                           none is active, so nothing is anchored
+     * @param provider           the id of the active anchor provider ({@code anchor.provider}), of the form
+     *                           {@code [a-z0-9-]+} when read by {@link StoreConfiguration#from(Map, RemotePolicy)};
+     *                           {@code null} when none is active, so nothing is anchored
      * @param releases           whether the commit of every release tag is anchored ({@code anchor.releases}),
      *                           default {@code true}
      * @param checkpointInterval the interval between checkpoints ({@code anchor.checkpoint-interval}), default

@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URI;
 import java.time.Duration;
@@ -221,7 +222,7 @@ class StoreConfigurationTest {
             put(tree, "signing.key", Objects.requireNonNull(signing.key()));
             put(tree, "signing.allowed-signers", Objects.requireNonNull(signing.allowedSigners()));
             var signed = new Anchor.Signed(word(), word(), word(), Duration.ofSeconds(count()));
-            var anchor = new Anchor(word(), false, Duration.ofHours(count()), Duration.ofMinutes(count()), signed);
+            var anchor = new Anchor(alias(), false, Duration.ofHours(count()), Duration.ofMinutes(count()), signed);
             put(tree, "anchor.provider", Objects.requireNonNull(anchor.provider()));
             put(tree, "anchor.releases", anchor.releases());
             put(tree, "anchor.checkpoint-interval", anchor.checkpointInterval().toString());
@@ -314,6 +315,37 @@ class StoreConfigurationTest {
         }
 
         @Test
+        @DisplayName("save.max-attempts accepts an integral BigDecimal with trailing zeros, converted exactly")
+        void integralBigDecimal() {
+            var tree = minimal();
+            put(tree, "save.max-attempts", new BigDecimal("3.00"));
+
+            assertEquals(new Save(3), configuration(StoreConfiguration.from(tree, HTTPS)).save(),
+                    "3.00 is read as 3");
+        }
+
+        @Test
+        @DisplayName("a period in weeks is read as days")
+        void periodInWeeks() {
+            var tree = minimal();
+            put(tree, "drafts.expiry", "P1W");
+
+            assertEquals(new Drafts(Period.ofDays(7)), configuration(StoreConfiguration.from(tree, HTTPS)).drafts(),
+                    "P1W is seven days");
+        }
+
+        @ParameterizedTest(name = "anchor.provider = {0}")
+        @ValueSource(strings = {"signed", "rfc3161"})
+        @DisplayName("GDR-STORE-15: an anchor provider id of the alias alphabet is accepted")
+        void anchorProviderId(String id) {
+            var tree = minimal();
+            put(tree, "anchor.provider", id);
+
+            assertEquals(id, configuration(StoreConfiguration.from(tree, HTTPS)).anchor().provider(),
+                    "the id is read");
+        }
+
+        @Test
         @DisplayName("GDR-NFR-3: the rendering of a configuration carries no key reference")
         void renderingHidesKeys() {
             var tree = minimal();
@@ -333,7 +365,8 @@ class StoreConfigurationTest {
 
     static Stream<Number> integerForms() {
         int value = Generators.integers(1, 100).next();
-        return Stream.of(value, (long) value, (short) value, (byte) value, BigInteger.valueOf(value));
+        return Stream.of(value, (long) value, (short) value, (byte) value, BigInteger.valueOf(value),
+                BigDecimal.valueOf(value));
     }
 
     @Nested
@@ -382,12 +415,17 @@ class StoreConfigurationTest {
                 Arguments.of("save.max-attempts", 2.5, "save.max-attempts"),
                 Arguments.of("save.max-attempts", Long.MAX_VALUE, "save.max-attempts"),
                 Arguments.of("save.max-attempts", BigInteger.TWO.pow(40), "save.max-attempts"),
+                Arguments.of("save.max-attempts", new BigDecimal("3.01"), "save.max-attempts"),
+                Arguments.of("save.max-attempts", new BigDecimal("3000000000"), "save.max-attempts"),
+                Arguments.of("save.max-attempts", 3.0f, "save.max-attempts"),
+                Arguments.of("save.max-attempts", 3.0d, "save.max-attempts"),
                 Arguments.of("save", "three", "save.max-attempts"),
                 Arguments.of("drafts.expiry", "PT5M", "drafts.expiry"),
                 Arguments.of("drafts.expiry", "P0D", "drafts.expiry"),
                 Arguments.of("drafts.expiry", "P-1D", "drafts.expiry"),
                 Arguments.of("drafts.expiry", "P1M-1D", "drafts.expiry"),
                 Arguments.of("drafts.expiry", 30, "drafts.expiry"),
+                Arguments.of("drafts.expiry", "P306783379W", "drafts.expiry"),
                 Arguments.of("drafts.expiry", " ", "drafts.expiry"),
                 Arguments.of("fetch.interval", "soon", "fetch.interval"),
                 Arguments.of("fetch.interval", "PT0S", "fetch.interval"),
@@ -398,6 +436,10 @@ class StoreConfigurationTest {
                 Arguments.of("signing.key", true, "signing.key"),
                 Arguments.of("signing.allowed-signers", List.of(), "signing.allowed-signers"),
                 Arguments.of("anchor.provider", 1, "anchor.provider"),
+                Arguments.of("anchor.provider", "local signed", "anchor.provider"),
+                Arguments.of("anchor.provider", "UPPER", "anchor.provider"),
+                Arguments.of("anchor.provider", "a/b", "anchor.provider"),
+                Arguments.of("anchor.provider", "a.b", "anchor.provider"),
                 Arguments.of("anchor.releases", "true", "anchor.releases"),
                 Arguments.of("anchor.checkpoint-interval", "P1Y", "anchor.checkpoint-interval"),
                 Arguments.of("anchor.retry-interval", "PT-1M", "anchor.retry-interval"),
@@ -533,6 +575,7 @@ class StoreConfigurationTest {
                 Arguments.of("confidentiality", " "),
                 Arguments.of("retention", "P0D"),
                 Arguments.of("retention", "PT1H"),
+                Arguments.of("retention", "P306783379W"),
                 Arguments.of("retention", 10));
     }
 

@@ -15,6 +15,7 @@
  */
 package de.cuioss.git.document.store;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Period;
@@ -32,16 +33,19 @@ import java.util.Objects;
  * Every lookup returns a {@link StoreResult}: a success carrying the typed value, a success without value when the key
  * is omitted, or {@link StoreOutcome#MALFORMED} with a detail naming the dotted key, never the value (GDR-NFR-3). A key
  * present with a {@code null} value is malformed, not absent.
- * Integers are {@link Number}s without fraction, booleans {@link Boolean}s, durations and periods ISO 8601 strings
- * parsed with {@link Duration#parse(CharSequence)} and {@link Period#parse(CharSequence)}, and must be positive.
+ * <p>
+ * An integer is a {@link Byte}, {@link Short}, {@link Integer}, {@link Long}, {@link BigInteger} or
+ * {@link BigDecimal} whose value is integral and fits an {@code int}, converted exactly: {@code new BigDecimal("3.00")}
+ * reads as 3, {@code new BigDecimal("3.01")} and a value beyond the range of {@code int} are malformed. A
+ * {@link Float} or {@link Double} is malformed, because binary floating point is no exact representation of an
+ * integer. Booleans are {@link Boolean}s; durations and periods are ISO 8601 strings parsed with
+ * {@link Duration#parse(CharSequence)} and {@link Period#parse(CharSequence)}, and must be positive; a text whose
+ * value overflows on parsing is malformed.
  */
 final class ConfigurationTree {
 
     /** The separator of the segments of a dotted key. */
     private static final String SEPARATOR = "\\.";
-
-    /** The bit length an {@code int} holds, without the sign bit. */
-    private static final int INT_BITS = 31;
 
     /** The root map of this tree. */
     private final Map<?, ?> root;
@@ -92,9 +96,13 @@ final class ConfigurationTree {
 
     /**
      * Reads an integer.
+     * <p>
+     * Every accepted type is converted exactly ({@link Math#toIntExact(long)}, {@link BigInteger#intValueExact()},
+     * {@link BigDecimal#intValueExact()}); a lost fraction or a value beyond the range of {@code int} is malformed.
      *
      * @param key the dotted key
-     * @return the integer, a success without value when absent, or {@link StoreOutcome#MALFORMED}
+     * @return the integer, a success without value when absent, or {@link StoreOutcome#MALFORMED} for another type, a
+     *         value with a fraction or a value beyond the range of {@code int}
      */
     StoreResult<Integer> integer(String key) {
         var raw = find(key);
@@ -102,14 +110,19 @@ final class ConfigurationTree {
             return retype(raw);
         }
         Object value = raw.value();
-        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte
-                || value instanceof BigInteger) {
-            var big = value instanceof BigInteger exact ? exact : BigInteger.valueOf(((Number) value).longValue());
-            if (big.bitLength() <= INT_BITS) {
-                return StoreResult.ok(big.intValue());
-            }
+        try {
+            return switch (value) {
+                case Integer exact -> StoreResult.ok(exact);
+                case Short exact -> StoreResult.ok(exact.intValue());
+                case Byte exact -> StoreResult.ok(exact.intValue());
+                case Long wide -> StoreResult.ok(Math.toIntExact(wide));
+                case BigInteger big -> StoreResult.ok(big.intValueExact());
+                case BigDecimal decimal -> StoreResult.ok(decimal.intValueExact());
+                default -> malformed(key);
+            };
+        } catch (ArithmeticException e) {
+            return malformed(key);
         }
-        return malformed(key);
     }
 
     /**
@@ -157,6 +170,9 @@ final class ConfigurationTree {
             var duration = Duration.parse(text.value());
             return duration.isZero() || duration.isNegative() ? malformed(key) : StoreResult.ok(duration);
         } catch (DateTimeParseException e) {
+            // Duration.parse wraps the ArithmeticException of an overflowing value into a DateTimeParseException
+            // (checked in the source of OpenJDK 25.0.3, java.time.Duration#parse and #parseNumber), so this catch
+            // covers an oversized value as well
             return malformed(key);
         }
     }
@@ -166,7 +182,7 @@ final class ConfigurationTree {
      *
      * @param key the dotted key
      * @return the period, a success without value when absent, or {@link StoreOutcome#MALFORMED} for another type, an
-     *         unparsable text, zero or a period with a negative part
+     *         unparsable text, a value that overflows on parsing, zero or a period with a negative part
      */
     StoreResult<Period> period(String key) {
         var text = string(key);
@@ -177,7 +193,10 @@ final class ConfigurationTree {
             var period = Period.parse(text.value());
             boolean negativePart = period.getYears() < 0 || period.getMonths() < 0 || period.getDays() < 0;
             return period.isZero() || negativePart ? malformed(key) : StoreResult.ok(period);
-        } catch (DateTimeParseException e) {
+        } catch (DateTimeParseException | ArithmeticException e) {
+            // Period.parse converts weeks to days with Math.multiplyExact and Math.addExact outside its own catch,
+            // so an overflow such as P306783379W leaves it as an ArithmeticException (OpenJDK 25.0.3,
+            // java.time.Period#parse)
             return malformed(key);
         }
     }
@@ -198,11 +217,13 @@ final class ConfigurationTree {
             return malformed(key);
         }
         List<ConfigurationTree> sections = new ArrayList<>(list.size());
-        for (int index = 0; index < list.size(); index++) {
-            if (!(list.get(index) instanceof Map<?, ?> section)) {
+        int index = 0;
+        for (Object element : list) {
+            if (!(element instanceof Map<?, ?> section)) {
                 return malformed(key + "[" + index + "]");
             }
             sections.add(new ConfigurationTree(section, name(key) + "[" + index + "]."));
+            index++;
         }
         return StoreResult.ok(sections);
     }

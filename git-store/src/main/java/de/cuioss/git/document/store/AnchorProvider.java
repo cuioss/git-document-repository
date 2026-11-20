@@ -39,8 +39,13 @@ public interface AnchorProvider {
     /**
      * Returns the id of the provider, the value {@code anchor.provider} names it by; it also names the notes reference
      * {@code refs/notes/anchors/<id>} of its proofs.
+     * <p>
+     * The id must match {@code [a-z0-9-]+}, the alphabet of a repository alias, to be selectable: a configured
+     * {@code anchor.provider} outside that alphabet is refused at start as {@link StoreOutcome#MALFORMED}, so no
+     * configured id can match a provider whose id lies outside it, and the start stops with the refusal that no
+     * provider has the id of {@code anchor.provider}.
      *
-     * @return the id, never blank
+     * @return the id, never blank; of the form {@code [a-z0-9-]+} to be selectable
      */
     String id();
 

@@ -21,8 +21,8 @@ package de.cuioss.git.document.store;
  * The store reads and writes a document only through a codec, which defines its file format; the store itself knows
  * no format. Every codec must keep two rules, so that a save without a change of the value changes no blob:
  * <ul>
- * <li>A round trip is byte-identical: for every value {@code v}, {@code encode(decode(encode(v)).value())} equals
- * {@code encode(v)} byte for byte.</li>
+ * <li>A round trip is byte-identical: for every value {@code v}, {@code decode(encode(v))} succeeds with a value
+ * {@code d}, and {@code encode(d)} equals {@code encode(v)} byte for byte.</li>
  * <li>Encoding is canonical: two equal values, and an unchanged value encoded again, yield byte-identical content.</li>
  * </ul>
  * A content the codec cannot read is the expected outcome {@link StoreOutcome#MALFORMED}, never an exception, and its

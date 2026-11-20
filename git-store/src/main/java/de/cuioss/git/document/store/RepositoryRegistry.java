@@ -40,8 +40,11 @@ import org.eclipse.jgit.transport.URIish;
  */
 public final class RepositoryRegistry {
 
-    /** The form of an alias: lower-case letters, digits and hyphens. */
-    private static final Pattern ALIAS = Pattern.compile("[a-z0-9-]+");
+    /**
+     * The form of an alias, and of the id of an anchor provider ({@code anchor.provider}): lower-case letters, digits
+     * and hyphens.
+     */
+    static final Pattern ALIAS = Pattern.compile("[a-z0-9-]+");
 
     /** The start of the detail of every refusal that names a repository by its alias. */
     private static final String DETAIL_PREFIX = "repository ";
