@@ -197,8 +197,10 @@ Signing signing, Anchor anchor, Directory directory) {
         return value == null ? tree.missing(FETCH_INTERVAL) : StoreResult.ok(new Fetch(value));
     }
 
-    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable,
-    // and a dependency on the javax annotations is not permitted (AGENTS.md: no new dependency)
+    // S4449 does not reliably recognise the JSpecify @Nullable on record components (a false positive reported to
+    // Sonar, see https://community.sonarsource.com/t/nullable-not-detected-for-java-records-when-parametersarenonnullbydefault-is-set-on-declaration/132442);
+    // the nullable components are marked with the JSpecify @Nullable. The rule's own suggestion, the javax
+    // annotation, would need a new dependency (AGENTS.md: no new dependency without the owner's approval)
     @SuppressWarnings("java:S4449")
     private static StoreResult<Signing> readSigning(ConfigurationTree tree) {
         var keySource = tree.string(SIGNING_KEY_SOURCE);
@@ -217,7 +219,7 @@ Signing signing, Anchor anchor, Directory directory) {
                 key.value(), allowedSigners.value()));
     }
 
-    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable
+    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning
     @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor> readAnchor(ConfigurationTree tree) {
         var provider = tree.string(ANCHOR_PROVIDER);
@@ -251,7 +253,7 @@ Signing signing, Anchor anchor, Directory directory) {
                 Objects.requireNonNull(signed.value())));
     }
 
-    // S4449 knows javax.annotation.Nullable only; the nullable components are marked with the JSpecify @Nullable
+    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning
     @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor.Signed> readSigned(ConfigurationTree tree) {
         var keySource = tree.string(SIGNED_KEY_SOURCE);
