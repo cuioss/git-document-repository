@@ -46,7 +46,7 @@ import org.jspecify.annotations.Nullable;
  * @since 0.1
  */
 public record StoreConfiguration(RepositoryRegistry repositories, Save save, Drafts drafts, Fetch fetch,
-                                 Signing signing, Anchor anchor, Directory directory) {
+Signing signing, Anchor anchor, Directory directory) {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreConfiguration.class);
 
@@ -428,7 +428,7 @@ public record StoreConfiguration(RepositoryRegistry repositories, Save save, Dra
      * @since 0.1
      */
     public record Anchor(@Nullable String provider, boolean releases, Duration checkpointInterval,
-                         Duration retryInterval, Signed signed) {
+    Duration retryInterval, Signed signed) {
 
         /** The default interval between checkpoints, {@code P1D}. */
         public static final Duration DEFAULT_CHECKPOINT_INTERVAL = Duration.ofDays(1);
@@ -468,7 +468,7 @@ public record StoreConfiguration(RepositoryRegistry repositories, Save save, Dra
          * @since 0.1
          */
         public record Signed(@Nullable String keySource, @Nullable String key, @Nullable String allowedSigners,
-                             Duration maxClockSkew) {
+        Duration maxClockSkew) {
 
             /** The default largest clock delay, {@code PT5M}. */
             public static final Duration DEFAULT_MAX_CLOCK_SKEW = Duration.ofMinutes(5);

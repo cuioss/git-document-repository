@@ -26,4 +26,8 @@ module de.cuioss.git.document.store {
     requires de.cuioss.java.tools;
     requires static lombok;
     requires static org.jspecify;
+
+    uses de.cuioss.git.document.store.SigningKeySource;
+    uses de.cuioss.git.document.store.AnchorProvider;
+    uses de.cuioss.git.document.store.PersonDirectory;
 }

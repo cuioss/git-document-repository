@@ -1,0 +1,294 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.store;
+
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.net.URI;
+import java.time.Duration;
+import java.time.Period;
+import java.util.List;
+import java.util.Objects;
+import java.util.logging.Level;
+
+
+import de.cuioss.git.document.core.RemotePolicy;
+import de.cuioss.git.document.store.StoreConfiguration.Anchor;
+import de.cuioss.git.document.store.StoreConfiguration.Directory;
+import de.cuioss.git.document.store.StoreConfiguration.Drafts;
+import de.cuioss.git.document.store.StoreConfiguration.Fetch;
+import de.cuioss.git.document.store.StoreConfiguration.Save;
+import de.cuioss.git.document.store.StoreConfiguration.Signing;
+import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
+import de.cuioss.test.generator.junit.EnableGeneratorController;
+import de.cuioss.test.juli.LogAsserts;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+/**
+ * The selection of the providers of the three service interfaces (GDR-STORE-12, GDR-STORE-15, GDR-STORE-19): exactly
+ * one signing key source and one person directory, at most one anchor provider, a missing or duplicate configured id
+ * refused as {@link StoreOutcome#MALFORMED} naming the service interface and the id and logged as
+ * {@code GIT_STORE-100}, a success logged as {@code GIT_STORE-1}, and {@link StoreProviders#load(StoreConfiguration)}
+ * finding the test providers registered under {@code META-INF/services}.
+ * <p>
+ * The provider ids are generated; the ids of the registered test providers are fixed by their registration.
+ */
+@EnableGeneratorController
+@EnableTestLogger(rootLevel = TestLogLevel.DEBUG)
+@DisplayName("StoreProviders (provider selection of git-store)")
+class StoreProvidersTest {
+
+    private static final TypedGenerator<String> IDS =
+            Generators.uniqueValues(Generators.strings("abcdefghijklmnopqrstuvwxyz-", 4, 16));
+
+    private static final RepositoryRegistry EMPTY_REGISTRY = Objects.requireNonNull(
+            RepositoryRegistry.of(List.of(), RemotePolicy.httpsOrigin(URI.create("https://git.example"))).value());
+
+    private static String id() {
+        return IDS.next();
+    }
+
+    /** A configuration naming the given provider ids. */
+    private static StoreConfiguration configuration(String signing, String persons, @Nullable String anchor) {
+        return new StoreConfiguration(EMPTY_REGISTRY, new Save(1), new Drafts(Period.ofDays(1)),
+                new Fetch(Duration.ofMinutes(1)), new Signing(signing, null, null),
+                new Anchor(anchor, true, Anchor.DEFAULT_CHECKPOINT_INTERVAL, Anchor.DEFAULT_RETRY_INTERVAL,
+                        new Anchor.Signed(null, null, null, Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)),
+                new Directory(persons));
+    }
+
+    private static StoreProviders providers(StoreResult<StoreProviders> result) {
+        assertTrue(result.isOk(), () -> "the providers are selected: " + result.detail());
+        return Objects.requireNonNull(result.value(), "a success carries the providers");
+    }
+
+    /** Asserts a {@link StoreOutcome#MALFORMED} refusal with exactly the detail, logged once as GIT_STORE-100. */
+    private static void assertRefused(String detail, StoreResult<StoreProviders> result) {
+        assertEquals(StoreResult.of(StoreOutcome.MALFORMED, detail), result, "the start is refused");
+        LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString());
+        LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, detail);
+        assertNotLogged(Level.INFO, GitStoreLogMessages.INFO.PROVIDERS_SELECTED.resolveIdentifierString());
+    }
+
+    /**
+     * Asserts that no log record of this test at the level carries the text. The level matters because the identifier
+     * {@code GIT_STORE-1} is a prefix of {@code GIT_STORE-100}.
+     */
+    private static void assertNotLogged(Level level, String text) {
+        var records = TestLoggerFactory.getTestHandler().getRecords();
+        assertTrue(records.stream()
+                        .filter(logRecord -> level.equals(logRecord.getLevel()))
+                        .noneMatch(logRecord -> String.valueOf(logRecord.getMessage()).contains(text)),
+                () -> "no log record at " + level + " carries " + text);
+    }
+
+    @Nested
+    @DisplayName("Selection over explicit candidates")
+    class Select {
+
+        @Test
+        @DisplayName("the configured providers are selected and GIT_STORE-1 names their ids")
+        void selectsConfiguredProviders() {
+            var signingId = id();
+            var personsId = id();
+            var anchorId = id();
+            var signing = new TestSigningKeySource(signingId);
+            var persons = new TestPersonDirectory(personsId);
+            var anchor = new TestAnchorProvider(anchorId);
+
+            var providers = providers(StoreProviders.select(configuration(signingId, personsId, anchorId),
+                    List.of(new TestSigningKeySource(id()), signing), List.of(anchor, new TestAnchorProvider(id())),
+                    List.of(persons)));
+
+            assertAll(
+                    () -> assertSame(signing, providers.signing(), "the configured signing key source"),
+                    () -> assertSame(persons, providers.persons(), "the configured person directory"),
+                    () -> assertSame(anchor, providers.anchor(), "the configured anchor provider"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
+                    GitStoreLogMessages.INFO.PROVIDERS_SELECTED.resolveIdentifierString());
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
+                    "signing key source " + signingId + ", person directory " + personsId + ", anchor provider "
+                            + anchorId);
+            assertNotLogged(Level.WARNING, GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("no anchor provider is selected when anchor.provider is absent")
+        void noAnchorProviderWithoutConfiguration() {
+            var signingId = id();
+            var personsId = id();
+
+            var providers = providers(StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId)), List.of(new TestAnchorProvider(id())),
+                    List.of(new TestPersonDirectory(personsId))));
+
+            assertNull(providers.anchor(), "nothing is anchored without anchor.provider");
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO, "anchor provider none");
+        }
+
+        @Test
+        @DisplayName("two providers with an id nobody configured do not stop the start")
+        void duplicateOfUnconfiguredIdIsIgnored() {
+            var signingId = id();
+            var personsId = id();
+            var unconfigured = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId), new TestSigningKeySource(unconfigured),
+                            new TestSigningKeySource(unconfigured)),
+                    List.of(new TestAnchorProvider(unconfigured), new TestAnchorProvider(unconfigured)),
+                    List.of(new TestPersonDirectory(unconfigured), new TestPersonDirectory(personsId),
+                            new TestPersonDirectory(unconfigured)));
+
+            assertTrue(result.isOk(), () -> "the start goes on: " + result.detail());
+        }
+
+        @Test
+        @DisplayName("a missing signing key source is MALFORMED naming the id")
+        void missingSigningKeySource() {
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(id())), List.of(), List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("SigningKeySource: no provider with id " + signingId, result);
+        }
+
+        @Test
+        @DisplayName("two signing key sources with the configured id are MALFORMED naming the id")
+        void duplicateSigningKeySource() {
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId), new TestSigningKeySource(signingId)), List.of(),
+                    List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("SigningKeySource: more than one provider with id " + signingId, result);
+        }
+
+        @Test
+        @DisplayName("a missing person directory is MALFORMED naming the id")
+        void missingPersonDirectory() {
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId)), List.of(), List.of());
+
+            assertRefused("PersonDirectory: no provider with id " + personsId, result);
+        }
+
+        @Test
+        @DisplayName("two person directories with the configured id are MALFORMED naming the id")
+        void duplicatePersonDirectory() {
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId)), List.of(),
+                    List.of(new TestPersonDirectory(personsId), new TestPersonDirectory(personsId)));
+
+            assertRefused("PersonDirectory: more than one provider with id " + personsId, result);
+        }
+
+        @Test
+        @DisplayName("a missing configured anchor provider is MALFORMED naming the id")
+        void missingAnchorProvider() {
+            var signingId = id();
+            var personsId = id();
+            var anchorId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, anchorId),
+                    List.of(new TestSigningKeySource(signingId)), List.of(new TestAnchorProvider(id())),
+                    List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("AnchorProvider: no provider with id " + anchorId, result);
+        }
+
+        @Test
+        @DisplayName("two anchor providers with the configured id are MALFORMED naming the id")
+        void duplicateAnchorProvider() {
+            var signingId = id();
+            var personsId = id();
+            var anchorId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, anchorId),
+                    List.of(new TestSigningKeySource(signingId)),
+                    List.of(new TestAnchorProvider(anchorId), new TestAnchorProvider(anchorId)),
+                    List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("AnchorProvider: more than one provider with id " + anchorId, result);
+        }
+
+        @Test
+        @DisplayName("the signing key source and the person directory are required components")
+        void requiresSigningAndPersons() {
+            var signing = new TestSigningKeySource();
+            var persons = new TestPersonDirectory();
+
+            assertAll(
+                    () -> assertThrows(NullPointerException.class, () -> new StoreProviders(null, persons, null)),
+                    () -> assertThrows(NullPointerException.class, () -> new StoreProviders(signing, null, null)));
+        }
+    }
+
+    @Nested
+    @DisplayName("Loading through ServiceLoader")
+    class Load {
+
+        @Test
+        @DisplayName("load finds the three test providers registered under META-INF/services")
+        void loadsRegisteredProviders() {
+            var providers = providers(StoreProviders.load(configuration(TestSigningKeySource.ID,
+                    TestPersonDirectory.ID, TestAnchorProvider.ID)));
+
+            assertAll(
+                    () -> assertEquals(TestSigningKeySource.class, providers.signing().getClass(),
+                            "the registered signing key source"),
+                    () -> assertEquals(TestPersonDirectory.class, providers.persons().getClass(),
+                            "the registered person directory"),
+                    () -> assertEquals(TestAnchorProvider.class,
+                            Objects.requireNonNull(providers.anchor()).getClass(), "the registered anchor provider"));
+            LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
+                    GitStoreLogMessages.INFO.PROVIDERS_SELECTED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("load refuses a configured id no registered provider carries")
+        void loadRefusesUnregisteredId() {
+            var personsId = id();
+
+            var result = StoreProviders.load(configuration(TestSigningKeySource.ID, personsId, null));
+
+            assertRefused("PersonDirectory: no provider with id " + personsId, result);
+        }
+    }
+}
