@@ -49,7 +49,8 @@ The document store writes through linked working trees, like clients whose agent
 
 *Rejected because* no tool of the document store works on files, and JGit can read linked working trees but has no
 command that creates one (see xref:../concepts/storage-engine.adoc#_no_working_trees[Storage Engine, No Working
-Trees]). `git-worktrees` stays available for consumers that need files.
+Trees]). The working-tree operations of `git-core` (package `de.cuioss.git.document.core.worktrees`) stay available
+for consumers that need files.
 
 === A lock per document instead of compare-and-swap
 
