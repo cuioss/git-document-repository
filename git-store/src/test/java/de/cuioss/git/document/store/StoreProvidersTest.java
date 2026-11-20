@@ -41,6 +41,7 @@ import java.util.logging.LogRecord;
 
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.store.StoreConfiguration.Anchor;
+import de.cuioss.git.document.store.StoreConfiguration.Commit;
 import de.cuioss.git.document.store.StoreConfiguration.Directory;
 import de.cuioss.git.document.store.StoreConfiguration.Drafts;
 import de.cuioss.git.document.store.StoreConfiguration.Fetch;
@@ -90,7 +91,7 @@ class StoreProvidersTest {
                 new Fetch(Duration.ofMinutes(1)), new Signing(signing, null, null),
                 new Anchor(anchor, true, Anchor.DEFAULT_CHECKPOINT_INTERVAL, Anchor.DEFAULT_RETRY_INTERVAL,
                         new Anchor.Signed(null, null, null, Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)),
-                new Directory(persons));
+                new Directory(persons), new Commit(Commit.DEFAULT_EMAIL));
     }
 
     private static StoreProviders providers(StoreResult<StoreProviders> result) {
