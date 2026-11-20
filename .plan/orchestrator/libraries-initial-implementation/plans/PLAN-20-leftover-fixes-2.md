@@ -1,4 +1,4 @@
-# PLAN-20: Collected leftover fixes (git-worktrees, git-core, git-testing, build guards)
+# PLAN-20: Collected leftover fixes (the worktrees package, git-core, git-store, git-testing, build guards)
 
 epic: libraries-initial-implementation
 workstream: WS-01
@@ -9,8 +9,8 @@ workstream: WS-01
 
 ## Objective
 
-Collect the leftovers the three-layer analyses of landed plans find — the layer-3 defects of PLAN-19 (`git-worktrees`)
-and PLAN-04 (`git-core`), the minor layer-3 defects of PLAN-07 (`git-store`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
+Collect the leftovers the three-layer analyses of landed plans find — the layer-3 defects of PLAN-19 (the worktrees code,
+since PLAN-21 the package `de.cuioss.git.document.core.worktrees` of `git-core`) and PLAN-04 (`git-core`), the minor layer-3 defects of PLAN-07 (`git-store`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
 spec — and fix them in one plan instead of one plan per landing. This is the second collection plan, after PLAN-18.
 None of the items gives a wrong result on the default path: each needs a malformed configuration, a hostile or
 unusual input, or a failure in the middle of an operation. Later analyses fold further leftovers into this spec (see
@@ -18,7 +18,7 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Deliverables
 
-1. `git-worktrees` result contract (leftovers of PLAN-19's analysis, `landings/PLAN-19.md` L3-1 to L3-3 and L3-6): each
+1. Worktrees package result contract (`git-core/src/main/java/de/cuioss/git/document/core/worktrees/`; leftovers of PLAN-19's analysis, `landings/PLAN-19.md` L3-1 to L3-3 and L3-6): each
    item is first reproduced by a test that fails at the base, then fixed. (a) `commit`, `worktreeStatus` and
    `worktreeRemove` end as a `FAILED` result with the class name only when JGit throws `IllegalArgumentException`, for
    example with `core.autocrlf = bogus` in the repository configuration; the reach is checked for every operation that
@@ -30,18 +30,22 @@ Dependencies and Sequencing) until the operator releases it.
    raise, so a stored commit is not reported as thrown.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core
    - Persona: implementer
-2. `git-worktrees` paths, names and documentation (PLAN-19 analysis L3-4, L3-5, L3-7, L3-8 and L1-2): (a) `realPath`
+2. Worktrees package paths, names and documentation (PLAN-19 analysis L3-4, L3-5, L3-7, L3-8 and L1-2; PLAN-21 analysis L2-1, L2-2): (a) `realPath`
    does not test existence and then resolve (the removal of a registered tree between the two calls ends
    `worktreeRemove` of an unrelated tree) and resolves a symlinked ancestor of a missing path, so a prunable tree
    removed through an alias is found; (b) the branch-name guard either applies git's rules for the names JGit 7.8.0
    accepts and git refuses or reads differently (`HEAD`, a leading `-`, a component ending `.lock` inside the name, `@`,
-   the full `refs/heads/x` form), or the limit is recorded in `doc/specification/git-worktrees.adoc` with its reason
+   the full `refs/heads/x` form), or the limit is recorded in `doc/specification/git-core.adoc` § Working Trees (GDR-CORE-12 to GDR-CORE-15) with its reason
    — the choice follows what git itself accepts, which is checked against `git check-ref-format` in the compatibility
    test; (c) `worktreeAdd` on a bare root, which since PLAN-19 always ends `PATH_REFUSED` ("inside the git directory")
    while `git worktree add` works there: supported with a test, or the refusal documented in the Javadoc and the
    specification with a test that pins it; (d) the two stale Javadoc sentences (`WorktreeOperations` § `worktreeAdd`
    "until the new working tree is registered" and the `path` parameter, which omits the refusals for the git directory
-   and a linked root) and the two outcome lists of the specification that are still short.
+   and a linked root) and the two outcome lists of the specification that are still short; (e) two residues of PLAN-21's
+   landing (`landings/PLAN-21.md` L2-1, L2-2), both documentation: the Tests section of `doc/specification/git-core.adoc`
+   says "`AbsenceContractsTest` asserts ..." for the core test although a second `AbsenceContractsTest` now lives in the
+   worktrees package — it names both; and the `<description>` of `git-core/pom.xml` reads awkwardly after "on JGit" — it
+   is reworded.
    - Skills: pm-dev-java:java-core, pm-dev-java:javadoc, pm-documents:ref-asciidoc
    - Persona: implementer
 3. `git-core` write path (leftovers of PLAN-04's analysis, `landings/PLAN-04.md` L3-1 to L3-7, L2-4): each item is first
@@ -59,7 +63,7 @@ Dependencies and Sequencing) until the operator releases it.
    a name conflict (`refs/heads/a/b` while `refs/heads/a` exists) from contention, running the operation once and not
    on every attempt, and a `refName` that is not a valid reference name (`refs/heads/../../../outside/x`) is refused
    before any file is touched by `compareAndSwap`, `compareAndDelete` and `compareAndSwapTree` (the notes entry points of
-   `GitNotes` already validate), with the outcome `git-worktrees` uses for an invalid name (`REFUSED_BY_POLICY`, no new
+   `GitNotes` already validate), with the outcome the worktrees package uses for an invalid name (`REFUSED_BY_POLICY`, no new
    constant), and a notes reference that name-conflicts with an existing one (`refs/notes/a/b` while `refs/notes/a`
    exists) is reported as that through `GitNotes.write`, not as a lost race; (e) edits that overlap as a file and a directory below it (`Put("a")` with `Put("a/b")`) are refused like a
    repeated path, or the loss is documented with a test; (f) `ReferenceUpdater.parseCommit` resolves with `parseAny`
@@ -119,10 +123,10 @@ Dependencies and Sequencing) until the operator releases it.
    allow-list edit or the owner's approval: a rule or check bans every direct third-party dependency of `git-core` outside
    the approved list whatever its `optional` flag (the same rule with `searchTransitive=false` has no optional filter),
    shown by a deliberately wrong optional dependency; (b) the guards are proven by negative runs that are recorded only
-   in the squash message of PR #39 (`git-testing` at scope `compile` in `git-worktrees`; `cui-test-generator` at scope
-   `compile` in `git-core`): record the runs (the edit, the command, the failure message) in `general.adoc`, or make
+   in the squash message of PR #39 (`git-testing` at scope `compile` in `git-worktrees`, a module PLAN-21 has since removed,
+   so that run is repeated in `git-store` instead; `cui-test-generator` at scope `compile` in `git-core`): record the runs (the edit, the command, the failure message) in `general.adoc`, or make
    them repeatable by a check that needs no new library (a new library goes to the owner first); (c) the trade-offs the
-   review raised and the lane accepted (the four domain terms copied into three module tests, the allowed-edge
+   review raised and the lane accepted (the four domain terms copied into the module tests of `git-core`, `git-testing` and `git-store`, the allowed-edge
    includes that mirror `module-structure.adoc` by hand, a module widening its own edges in its own POM) are recorded as
    accepted exceptions with their reasons in `general.adoc`, or derived; (d) `NativeImageMetadataTest` also asserts the
    top-level shape of each file (an array of objects for `reflect-config.json`, an object for `resource-config.json`) and
@@ -150,9 +154,9 @@ Dependencies and Sequencing) until the operator releases it.
    can fail it: either give the contract code to check (a verifying helper or a test-kit class other modules reuse) or record
    it as a documented contract test; (f) provider selection is tested on the class path only (`useModulePath=false`, the
    registrations in `META-INF/services`), so lookup in module mode (`provides`) is not exercised: add one module-path
-   test run or record the limit in `git-store.adoc`; (g) the four domain terms are now copied into four `DomainTermAbsenceTest`
-   classes (`git-core`, `git-worktrees`, `git-testing`, `git-store`): item (c) of deliverable 6 covers the three, extend it
-   to the fourth.
+   test run or record the limit in `git-store.adoc`; (g) the four domain terms are copied into the `DomainTermAbsenceTest`
+   classes of `git-core`, `git-testing` and `git-store` (PLAN-21 removed the fourth copy with `git-worktrees`): item (c) of
+   deliverable 6 names all three, so nothing remains here but that `git-store` is among them.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
    - Persona: implementer
 
@@ -195,9 +199,9 @@ Dependencies and Sequencing) until the operator releases it.
 ## Done when
 
 - `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 and of items (a), (b) and (c) of deliverable 7 has a test that
-  fails at `e43c7e915a9d0667117b72970bc156bbe73b6506` (`main` after PLAN-06, which changed no `git-core` or `git-worktrees`
-  code, so every defect below is present as at `14269fe`; the `git-worktrees` ones are present since `e2aced9`) and
-  passes at the plan's head.
+  fails at `9e3cfb04b1a02246b826266b54f6095033ec80f2` (`main` after PLAN-21, re-read at outline: the worktrees defects are
+  present since `e2aced9` and were moved by PLAN-21 without a behaviour change, the `git-core` ones are those the analyses of
+  PLAN-04 and PLAN-05 name at `14269fe`, the `git-store` ones those of `a558afd`) and passes at the plan's head.
 - Every item of deliverables 1 to 7 is either fixed and tested at the plan's head, or recorded as an accepted exception
   or an owner decision with its reason in the specification document of its module; no document lists an outcome the
   code does not return.
@@ -207,24 +211,25 @@ Dependencies and Sequencing) until the operator releases it.
 ## Claim Labels
 
 - OBSERVED: `IllegalArgumentException` is caught by `worktreeAdd` and `worktreeList` but not by `commit`, `worktreeStatus`
-  and `worktreeRemove` — read at `git-worktrees/src/main/java/de/cuioss/git/document/worktrees/JGitWorktreeOperations.java`
-  § `commit` (742), `worktreeStatus` (854), `worktreeRemove` (704) at `e2aced9` (unchanged at `c8feb0b`); JGit 7.8.0
+  and `worktreeRemove` — read at `git-core/src/main/java/de/cuioss/git/document/core/worktrees/JGitWorktreeOperations.java`
+  § `commit` (711, catch 743), `worktreeStatus` (840, catch 855), `worktreeRemove` (655, catch 705) against `worktreeAdd`
+  (catch 162) and `worktreeList` (catch 649) at `9e3cfb0` (the same code at `git-worktrees/.../worktrees/` at `e2aced9`); JGit 7.8.0
   `Config.getEnum` throws for an unmatched enum value and `WorkingTreeOptions` reads `core.autocrlf` through it.
-  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e2aced9 in the PLAN-19 analysis; git diff e2aced9 c8feb0b -- git-worktrees is empty, so unchanged at c8feb0b; JGit 7.8.0 Config.getEnum / WorkingTreeOptions chain re-read there
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-grounded at 9e3cfb0 after PLAN-21 moved the code: JGitWorktreeOperations (git-core/.../core/worktrees) worktreeAdd catch 162 and worktreeList catch 649 carry IllegalArgumentException; commit catch 743, worktreeStatus catch 855 and worktreeRemove catch 705 do not; re-read by the orchestrator
 - OBSERVED: `releaseTarget` lets an `UncheckedIOException` from `Files.list` escape and `attempt` catches `IOException`
   only, so `rollBack` stops before `deleteCreatedBranch` — read at `JGitWorktreeOperations.java` § `releaseTarget`
-  (381-382), `attempt` (457-468), `rollBack` (433-447).
-  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e2aced9 in the PLAN-19 analysis; git diff e2aced9 c8feb0b -- git-worktrees is empty, so unchanged at c8feb0b
+  (372-385, `Files.list` at 381), `attempt` (457-468), `rollBack` (433-447) at `9e3cfb0`.
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 9e3cfb0: releaseTarget 372-385 (Files.list at 381), attempt 457-468 catches IOException only, rollBack 433-447 runs releaseTarget before deleteCreatedBranch; the code moved without a behaviour change
 - OBSERVED: the success path calls `releaseReservation()` at 292, after the working tree is complete, and an
   `IOException` there reaches the add's catch, whose `rollBack` deletes the finished target — read at
-  `JGitWorktreeOperations.java` § `run` (292) and § `releaseReservation` (363-369).
-  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e2aced9 in the PLAN-19 analysis; git diff e2aced9 c8feb0b -- git-worktrees is empty, so unchanged at c8feb0b
+  `JGitWorktreeOperations.java` § `run` (292) and § `releaseReservation` (363-369) at `9e3cfb0`.
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 9e3cfb0: run calls releaseReservation() at 292 after the working tree is complete; releaseReservation 363-369; unchanged by the move
 - OBSERVED: `realPath` is `Files.exists(path) ? path.toRealPath() : path.toAbsolutePath().normalize()`, so a missing path
-  does not resolve a symlinked ancestor and the check races — read at `JGitWorktreeOperations.java` § `realPath` (943-945).
-  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e2aced9 in the PLAN-19 analysis; git diff e2aced9 c8feb0b -- git-worktrees is empty, so unchanged at c8feb0b
+  does not resolve a symlinked ancestor and the check races — read at `JGitWorktreeOperations.java` § `realPath` (944-946) at `9e3cfb0`.
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 9e3cfb0: realPath 944-946 is Files.exists(path) ? path.toRealPath() : path.toAbsolutePath().normalize()
 - OBSERVED: the reflog step of `commit` catches `IOException | IllegalArgumentException` only — read at
-  `JGitWorktreeOperations.java` § `commit` (758).
-  - verdict: corroborated | checked_at: c8feb0bb6af2baaa79f66736b8f9d5b6f591fe8c | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e2aced9 in the PLAN-19 analysis; git diff e2aced9 c8feb0b -- git-worktrees is empty, so unchanged at c8feb0b
+  `JGitWorktreeOperations.java` § `writeLinkedReflogs` (755-762, catch 759) at `9e3cfb0`, called from `commit` (711).
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 9e3cfb0: writeLinkedReflogs 755-762 catches IOException | IllegalArgumentException only (catch at 759), called from commit 711
 - HYPOTHESIS: `Repository.isValidRefName` of JGit 7.8.0 accepts `HEAD`, a leading `-`, `a.lock/b` and `@` where git
   refuses or reads them differently — confirm/refute at JGit 7.8.0 `org.eclipse.jgit/src/org/eclipse/jgit/lib/Repository.java`
   § `isValidRefName` and `git check-ref-format` (verify-at-outline).
@@ -335,8 +340,8 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Expected Surface
 
-- OBSERVED: `git-worktrees/src/main/java/de/cuioss/git/document/worktrees/`
-- OBSERVED: `git-worktrees/src/test/java/de/cuioss/git/document/worktrees/`
+- OBSERVED: `git-core/src/main/java/de/cuioss/git/document/core/worktrees/`
+- OBSERVED: `git-core/src/test/java/de/cuioss/git/document/core/worktrees/`
 - OBSERVED: `git-core/src/main/java/de/cuioss/git/document/core/`
 - OBSERVED: `git-core/src/test/java/de/cuioss/git/document/core/`
 - OBSERVED: `git-testing/src/main/java/de/cuioss/git/document/testing/`
@@ -349,29 +354,30 @@ Dependencies and Sequencing) until the operator releases it.
 - OBSERVED: `git-store/pom.xml`
 - OBSERVED: `doc/specification/git-store.adoc`
 - HYPOTHESIS: `README.adoc` (the native-image wording, if it changes)
-- OBSERVED: `doc/specification/git-worktrees.adoc`
-- OBSERVED: `doc/specification/git-core.adoc`
+- OBSERVED: `doc/specification/git-core.adoc` (§ Working Trees and the Tests section included)
 - OBSERVED: `doc/specification/git-testing.adoc`
 - HYPOTHESIS: `doc/specification/general.adoc` (GDR-GEN-3 table, if an outcome changes)
 - HYPOTHESIS: `doc/clients/pm-mcp-core.adoc` (the outcomes of the worktree operations, if one changes)
 - HYPOTHESIS: `AGENTS.md` ("Current state", if a public type or method changes)
-- HYPOTHESIS: `git-worktrees/doc/LogMessages.adoc` and `git-core/doc/LogMessages.adoc` (only if a log message is added)
+- HYPOTHESIS: `git-core/doc/LogMessages.adoc` (only if a log message is added)
 
 ## Dependencies and Sequencing
 
 - Seven deliverables, over the scope-bloat guard (about six): it proceeds unsplit because the operator asked for one collection
   plan, each deliverable is independent and touches its own module, and deliverable 7 was added at the operator's word on
-  2026-11-20 (PLAN-07's landing). The operator may split it when releasing it; the natural cut is by module (deliverables
-  1, 2 and the `git-worktrees` part of 6 move with PLAN-21; 3 and 4 `git-core`; 5 `git-testing`; 7 `git-store`).
+  2026-11-20 (PLAN-07's landing). The operator may split it when releasing it; the natural cut is by package and module
+  (deliverables 1 and 2 the worktrees package of `git-core`; 3 and 4 the rest of `git-core`; 5 `git-testing`; 6 the build
+  guards; 7 `git-store`).
 - Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further leftovers into
   this spec as new deliverables or as items of a deliverable, in the same edit as their Expected Surface; the operator
   releases the plan by naming it in a `next` round. It is queued at the end of WS-01.
-- Depends on PLAN-21 (merge of `git-worktrees` into `git-core`, staged 2026-11-20, owner's call): after it the worktrees code,
-  its tests and its specification part live in `git-core` (`git-core/src/main/java/de/cuioss/git/document/core/worktrees/`,
-  `git-core.adoc` § Working Trees), `git-worktrees/` is gone and the module-layering include and the domain-term test of
-  that module with it. The paths, module names and surface entries of deliverables 1 and 2 and of the claims that name
-  `git-worktrees/` are re-grounded by the orchestrator when PLAN-21 lands, in the same act that stamps their verdicts; do
-  not emit this plan before that.
+- Depends on PLAN-21 (merge of `git-worktrees` into `git-core`; shipped, PR #46, `9e3cfb0`, 2026-11-20): the worktrees code, its
+  tests and its specification part live in `git-core` (`git-core/src/main/java/de/cuioss/git/document/core/worktrees/`,
+  `git-core.adoc` § Working Trees, requirements GDR-CORE-12 to GDR-CORE-15, log ids GIT_CORE-2 to 4 and 102 to 104),
+  `git-worktrees/` is gone and the module-layering include and the domain-term test of that module with it. The paths,
+  names, surface entries and claims of deliverables 1, 2, 3 and 6 and of the Done-when base were re-grounded at `9e3cfb0` in
+  the act that landed PLAN-21's analysis (the five worktrees claims stamped there); the owner decisions of that plan's outline
+  (ids renumbered, ADR-0004 rewritten in place) are in force.
 - Also depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-06 (PR #39, `e43c7e9`),
   PLAN-19 (PR #31, `e2aced9`) and PLAN-18 (PR #28).
 - Overlaps with: nothing in flight. PLAN-05 and PLAN-06, which shared entries with it, have shipped. It shares the root
