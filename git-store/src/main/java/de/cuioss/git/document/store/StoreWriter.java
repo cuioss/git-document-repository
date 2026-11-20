@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 
@@ -31,15 +32,18 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 /**
- * The write path of one repository of the store: drafts per user and document (GDR-STORE-2).
+ * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
+ * with lease, conflicts and change detection (GDR-STORE-3, GDR-STORE-4, GDR-STORE-5).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
  * the technical user, and opens the clone on a {@link RefusingFS}, so no operation starts a process (GDR-CORE-1).
  * Every commit identity comes from the section {@code commit} of the configuration and the technical user.
  * <p>
- * Every expected non-success is a {@link StoreResult}; a Git outcome is passed on. Draft writes take the shared side of
- * the clone's maintenance lock. The writer holds the opened clone and releases it on {@link #close()}.
+ * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes
+ * and saves take the shared side of the clone's maintenance lock, and every save attempt its transport lock. No
+ * operation takes a credential: every fetch and push uses those of the technical user (GDR-STORE-8). The writer holds
+ * the opened clone and releases it on {@link #close()}.
  *
  * @since 0.1
  */
@@ -49,12 +53,15 @@ public final class StoreWriter implements AutoCloseable {
     private final Repository repository;
     private final RepositoryGuard guard;
     private final DraftReferences drafts;
+    private final ExplicitSave saves;
 
-    private StoreWriter(String alias, Repository repository, RepositoryGuard guard, DraftReferences drafts) {
+    private StoreWriter(String alias, Repository repository, RepositoryGuard guard, DraftReferences drafts,
+            ExplicitSave saves) {
         this.alias = alias;
         this.repository = repository;
         this.guard = guard;
         this.drafts = drafts;
+        this.saves = saves;
     }
 
     /**
@@ -100,8 +107,12 @@ public final class StoreWriter implements AutoCloseable {
         }
         var identities = new CommitIdentities(configuration.commit(), user);
         var updater = new ReferenceUpdater(new InCoreWriter());
-        var drafts = new DraftReferences(repository, updater, identities, clock, configuration.save().maxAttempts());
-        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, new RepositoryGuard(), drafts));
+        int attempts = configuration.save().maxAttempts();
+        var drafts = new DraftReferences(repository, updater, identities, clock, attempts);
+        var guard = new RepositoryGuard();
+        var saves = new ExplicitSave(new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard),
+                operations, user, identities, clock, attempts);
+        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves));
     }
 
     /**
@@ -145,6 +156,31 @@ public final class StoreWriter implements AutoCloseable {
     public StoreResult<List<Draft>> drafts(String pseudonym) {
         Objects.requireNonNull(pseudonym, "pseudonym");
         return guard.shared(() -> drafts.list(pseudonym));
+    }
+
+    /**
+     * Saves the draft of the author for the document onto its target branch (GDR-STORE-3): the draft's changes as one
+     * commit on the remote tip, pushed with lease by the technical user, re-applied onto a new tip up to
+     * {@code save.max-attempts}; then the local target branch moves and the draft is deleted by compare-and-delete.
+     * Every changed path with an expected blob id that differs on the fetched tip is a conflict (GDR-STORE-4,
+     * GDR-STORE-5); a changed path without one overwrites a concurrent change.
+     *
+     * @param author          the author, whose pseudonym names the draft reference and the commit's author
+     * @param key             the document or entry
+     * @param expectedBlobIds the full blob id the caller loaded per repository-relative path; the zero id expects the
+     *                        path to be absent; empty for no check
+     * @param message         the commit message
+     * @return {@link SaveResult.Saved} with the commit the target branch points at, {@link SaveResult.Conflicting}
+     *         with every conflicting path, or {@link SaveResult.NotSaved} with the outcome that prevented the save, for
+     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym,
+     *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing draft,
+     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt,
+     *         {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE} or
+     *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
+     * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
+     */
+    public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message) {
+        return saves.save(author, key, expectedBlobIds, message);
     }
 
     /** Releases the opened clone. */

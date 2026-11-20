@@ -12,8 +12,10 @@ WARN 100-199, ERROR 200-299). The messages are declared in
 `de.cuioss.git.document.store.GitStoreLogMessages`.
 
 No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message names a
-provider id, a configuration key, a repository alias or a path, never a configured value, a key reference, key
-material, a token, a password or the user information of a remote.
+provider id, a configuration key, a repository alias, a path, a reference, a commit id, an outcome or a number, never
+a configured value, a key reference, key material, a token, a password, the user information of a remote, a content,
+an e-mail address or a person name. The messages of a save name no path of the saved document, only the number of
+conflicting paths.
 Debug and trace messages carry no identifier and are not listed.
 
 == INFO Level (1-99)
@@ -24,6 +26,14 @@ Debug and trace messages carry no identifier and are not listed.
 |GIT_STORE-1 |GIT_STORE |Selected the providers: signing key source %s, person directory %s, anchor provider %s
 |Logged when the providers of the store were selected at start: the ids of the selected signing key source, person
 directory and anchor provider, the provider ids only.
+|GIT_STORE-2 |GIT_STORE |Saved repository %s, reference %s at commit %s
+|Logged when the remote accepted an explicit save, or a draft without changes was saved as the base itself
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]): the repository alias, the target reference and
+the full id of the commit the target branch points at.
+|GIT_STORE-3 |GIT_STORE |Did not save repository %s, reference %s: %s conflicting paths
+|Logged when an explicit save conflicted and pushed nothing
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-4[GDR-STORE-4]): the repository alias, the target reference and
+the number of conflicting paths, never a path.
 |===
 
 == WARN Level (100-199)
@@ -35,6 +45,11 @@ directory and anchor provider, the provider ids only.
 provider selection the store does not accept: the detail of the result, which names a key, an alias or a service
 interface, never a value. A refused provider selection names the service interface and the configuration key
 (`SigningKeySource: no provider with the id of signing.key-source`), never the configured id.
+|GIT_STORE-101 |GIT_STORE |Did not complete the save of repository %s, reference %s: %s |Logged when an explicit save
+ended without a commit on the remote for a reason other than a conflict
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]), for example a lease refused or a push rejected
+on every attempt, an unreachable remote or invalid credentials: the repository alias, the target reference and the
+name of the outcome, never a credential.
 |===
 
 == ERROR Level (200-299)
