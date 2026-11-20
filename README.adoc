@@ -29,10 +29,7 @@ The repository is a multi-module Maven reactor whose modules are released togeth
 
 |`git-core`
 |Hardened repositories, remote policy, identity, results, transport, reading, cache repository, in-core writing,
-compare-and-swap, in-core merge, notes.
-
-|`git-worktrees`
-|Linked working trees, commit from a working tree, working-tree status. Depends on `git-core` only.
+compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status.
 
 |`git-testing`
 |Generators and fixtures: local and in-memory repositories, a local remote.
@@ -44,9 +41,9 @@ selection. Depends on `git-core` only.
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
 repository operations and the cache repository, plus in-core writing, compare-and-swap reference updates, in-core
-merge, reading (snapshot, path history, changed paths) and notes. `git-worktrees` holds the worktree part taken over
-from the same client: adding, listing and removing linked working trees and the commit from a working tree, plus a new
-working-tree status. `git-testing` holds its credential generator and its repository fixtures (see
+merge, reading (snapshot, path history, changed paths) and notes. Its package `de.cuioss.git.document.core.worktrees`
+holds the worktree part taken over from the same client: adding, listing and removing linked working trees and the
+commit from a working tree, plus a new working-tree status. `git-testing` holds its credential generator and its repository fixtures (see
 link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
 `git-store` holds the foundation of the document store: the registry of its repositories, the typed configuration
 checked at start, the codec interface, its own outcome list and result, and the service interfaces for signing keys,
@@ -56,8 +53,7 @@ them.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
 the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
-`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-worktrees` and `git-store`
-rely on it (see
+`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-store` relies on it (see
 link:doc/specification/general.adoc[General Requirements], GDR-GEN-1 and GDR-NFR-4).
 
 === Maven Coordinates
