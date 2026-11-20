@@ -17,17 +17,26 @@ package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.net.URI;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Period;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Objects;
+import java.util.ServiceConfigurationError;
 import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 
 import de.cuioss.git.document.core.RemotePolicy;
@@ -48,13 +57,15 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The selection of the providers of the three service interfaces (GDR-STORE-12, GDR-STORE-15, GDR-STORE-19): exactly
  * one signing key source and one person directory, at most one anchor provider, a missing or duplicate configured id
- * refused as {@link StoreOutcome#MALFORMED} naming the service interface and the id and logged as
- * {@code GIT_STORE-100}, a success logged as {@code GIT_STORE-1}, and {@link StoreProviders#load(StoreConfiguration)}
- * finding the test providers registered under {@code META-INF/services}.
+ * refused as {@link StoreOutcome#MALFORMED} naming the service interface and the configuration key and logged as
+ * {@code GIT_STORE-100}, a success logged as {@code GIT_STORE-1}, {@link StoreProviders#load(StoreConfiguration)}
+ * finding the test providers registered under {@code META-INF/services}, and GDR-NFR-3: neither a configured id nor
+ * the message of a failing provider reaches a detail or a log record.
  * <p>
  * The provider ids are generated; the ids of the registered test providers are fixed by their registration.
  */
@@ -170,7 +181,7 @@ class StoreProvidersTest {
         }
 
         @Test
-        @DisplayName("a missing signing key source is MALFORMED naming the id")
+        @DisplayName("a missing signing key source is MALFORMED naming the key")
         void missingSigningKeySource() {
             var signingId = id();
             var personsId = id();
@@ -178,11 +189,11 @@ class StoreProvidersTest {
             var result = StoreProviders.select(configuration(signingId, personsId, null),
                     List.of(new TestSigningKeySource(id())), List.of(), List.of(new TestPersonDirectory(personsId)));
 
-            assertRefused("SigningKeySource: no provider with id " + signingId, result);
+            assertRefused("SigningKeySource: no provider with the id of signing.key-source", result);
         }
 
         @Test
-        @DisplayName("two signing key sources with the configured id are MALFORMED naming the id")
+        @DisplayName("two signing key sources with the configured id are MALFORMED naming the key")
         void duplicateSigningKeySource() {
             var signingId = id();
             var personsId = id();
@@ -191,11 +202,11 @@ class StoreProvidersTest {
                     List.of(new TestSigningKeySource(signingId), new TestSigningKeySource(signingId)), List.of(),
                     List.of(new TestPersonDirectory(personsId)));
 
-            assertRefused("SigningKeySource: more than one provider with id " + signingId, result);
+            assertRefused("SigningKeySource: more than one provider with the id of signing.key-source", result);
         }
 
         @Test
-        @DisplayName("a missing person directory is MALFORMED naming the id")
+        @DisplayName("a missing person directory is MALFORMED naming the key")
         void missingPersonDirectory() {
             var signingId = id();
             var personsId = id();
@@ -203,11 +214,11 @@ class StoreProvidersTest {
             var result = StoreProviders.select(configuration(signingId, personsId, null),
                     List.of(new TestSigningKeySource(signingId)), List.of(), List.of());
 
-            assertRefused("PersonDirectory: no provider with id " + personsId, result);
+            assertRefused("PersonDirectory: no provider with the id of directory.persons.provider", result);
         }
 
         @Test
-        @DisplayName("two person directories with the configured id are MALFORMED naming the id")
+        @DisplayName("two person directories with the configured id are MALFORMED naming the key")
         void duplicatePersonDirectory() {
             var signingId = id();
             var personsId = id();
@@ -216,11 +227,11 @@ class StoreProvidersTest {
                     List.of(new TestSigningKeySource(signingId)), List.of(),
                     List.of(new TestPersonDirectory(personsId), new TestPersonDirectory(personsId)));
 
-            assertRefused("PersonDirectory: more than one provider with id " + personsId, result);
+            assertRefused("PersonDirectory: more than one provider with the id of directory.persons.provider", result);
         }
 
         @Test
-        @DisplayName("a missing configured anchor provider is MALFORMED naming the id")
+        @DisplayName("a missing configured anchor provider is MALFORMED naming the key")
         void missingAnchorProvider() {
             var signingId = id();
             var personsId = id();
@@ -230,11 +241,11 @@ class StoreProvidersTest {
                     List.of(new TestSigningKeySource(signingId)), List.of(new TestAnchorProvider(id())),
                     List.of(new TestPersonDirectory(personsId)));
 
-            assertRefused("AnchorProvider: no provider with id " + anchorId, result);
+            assertRefused("AnchorProvider: no provider with the id of anchor.provider", result);
         }
 
         @Test
-        @DisplayName("two anchor providers with the configured id are MALFORMED naming the id")
+        @DisplayName("two anchor providers with the configured id are MALFORMED naming the key")
         void duplicateAnchorProvider() {
             var signingId = id();
             var personsId = id();
@@ -245,7 +256,7 @@ class StoreProvidersTest {
                     List.of(new TestAnchorProvider(anchorId), new TestAnchorProvider(anchorId)),
                     List.of(new TestPersonDirectory(personsId)));
 
-            assertRefused("AnchorProvider: more than one provider with id " + anchorId, result);
+            assertRefused("AnchorProvider: more than one provider with the id of anchor.provider", result);
         }
 
         @Test
@@ -288,7 +299,111 @@ class StoreProvidersTest {
 
             var result = StoreProviders.load(configuration(TestSigningKeySource.ID, personsId, null));
 
-            assertRefused("PersonDirectory: no provider with id " + personsId, result);
+            assertRefused("PersonDirectory: no provider with the id of directory.persons.provider", result);
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a provider failing with a credential in its message is MALFORMED, the message is not logged")
+        void loadRefusesFailingProviderWithoutItsMessage(@TempDir Path services) throws Exception {
+            var secret = secret();
+            FailingSigningKeySource.failure = "password=" + secret;
+            var resource = "META-INF/services/" + SigningKeySource.class.getName();
+            var file = Files.writeString(services.resolve("services"), FailingSigningKeySource.class.getName() + "\n");
+            var configuration = configuration(TestSigningKeySource.ID, TestPersonDirectory.ID, null);
+            var thread = Thread.currentThread();
+            var original = thread.getContextClassLoader();
+            thread.setContextClassLoader(new ServicesOverride(original, resource, file.toUri().toURL()));
+            StoreResult<StoreProviders> result;
+            try {
+                result = StoreProviders.load(configuration);
+            } finally {
+                thread.setContextClassLoader(original);
+            }
+
+            assertRefused("SigningKeySource: a provider cannot be loaded", result);
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                    SigningKeySource.class.getName() + " failed with " + ServiceConfigurationError.class.getName());
+            assertSecretAbsent(secret, result);
+        }
+    }
+
+    @Nested
+    @DisplayName("No configured id in a detail or a log record (GDR-NFR-3)")
+    class NoConfiguredId {
+
+        @Test
+        @DisplayName("GDR-NFR-3: a secret-looking configured id is neither in the detail nor logged")
+        void secretLookingIdIsAbsent() {
+            var secret = secret();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(secret, personsId, null),
+                    List.of(new TestSigningKeySource(id())), List.of(), List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("SigningKeySource: no provider with the id of signing.key-source", result);
+            assertSecretAbsent(secret, result);
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a secret-looking configured id carried twice is neither in the detail nor logged")
+        void secretLookingDuplicateIdIsAbsent() {
+            var secret = secret();
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, secret),
+                    List.of(new TestSigningKeySource(signingId)),
+                    List.of(new TestAnchorProvider(secret), new TestAnchorProvider(secret)),
+                    List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("AnchorProvider: more than one provider with the id of anchor.provider", result);
+            assertSecretAbsent(secret, result);
+        }
+    }
+
+    /** A secret-looking value: a generated token behind a recognisable prefix. */
+    private static String secret() {
+        return "ghp_" + Generators.letterStrings(24, 32).next();
+    }
+
+    /** Asserts that neither the detail nor any captured log record, its message or its throwable, carries the text. */
+    private static void assertSecretAbsent(String secret, StoreResult<?> result) {
+        var detail = Objects.requireNonNull(result.detail());
+        var records = TestLoggerFactory.getTestHandler().getRecords();
+        assertAll(
+                () -> assertFalse(detail.contains(secret), "the detail carries no secret"),
+                () -> assertFalse(records.isEmpty(), "the refusal is logged"),
+                () -> assertTrue(records.stream().noneMatch(logRecord -> carries(logRecord, secret)),
+                        "no log record carries the secret"));
+    }
+
+    private static boolean carries(LogRecord logRecord, String secret) {
+        if (String.valueOf(logRecord.getMessage()).contains(secret)) {
+            return true;
+        }
+        for (Throwable thrown = logRecord.getThrown(); thrown != null; thrown = thrown.getCause()) {
+            if (String.valueOf(thrown.getMessage()).contains(secret)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A class loader that answers one services resource with a file of the test and delegates everything else. */
+    private static final class ServicesOverride extends ClassLoader {
+
+        private final String resource;
+        private final URL file;
+
+        ServicesOverride(ClassLoader parent, String resource, URL file) {
+            super(parent);
+            this.resource = resource;
+            this.file = file;
+        }
+
+        @Override
+        public Enumeration<URL> getResources(String name) throws IOException {
+            return resource.equals(name) ? Collections.enumeration(List.of(file)) : super.getResources(name);
         }
     }
 }

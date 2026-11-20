@@ -17,13 +17,14 @@
  * Repository registry, typed configuration, codec interface, outcomes and service interfaces of the store.
  * <p>
  * The module requires {@code de.cuioss.git.document.core} transitively, because its public API exposes types of that
- * module and of JGit.
+ * module and of JGit, and {@code de.cuioss.java.tools} transitively, because the public holder
+ * {@code GitStoreLogMessages} exposes its {@code LogRecord}.
  */
 module de.cuioss.git.document.store {
     exports de.cuioss.git.document.store;
 
     requires transitive de.cuioss.git.document.core;
-    requires de.cuioss.java.tools;
+    requires transitive de.cuioss.java.tools;
     requires static lombok;
     requires static org.jspecify;
 

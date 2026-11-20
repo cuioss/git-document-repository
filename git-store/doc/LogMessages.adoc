@@ -32,8 +32,9 @@ directory and anchor provider, the provider ids only.
 |===
 |ID |Component |Message |Description
 |GIT_STORE-100 |GIT_STORE |Refused the start: %s |Logged once when the start was refused, for a configuration or a
-provider selection the store does not accept: the detail of the result, which names a key, an alias or a provider id,
-never a value.
+provider selection the store does not accept: the detail of the result, which names a key, an alias or a service
+interface, never a value. A refused provider selection names the service interface and the configuration key
+(`SigningKeySource: no provider with the id of signing.key-source`), never the configured id.
 |===
 
 == ERROR Level (200-299)

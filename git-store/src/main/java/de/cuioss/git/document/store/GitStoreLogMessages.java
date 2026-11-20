@@ -64,8 +64,8 @@ public final class GitStoreLogMessages {
     public static final class WARN {
 
         /**
-         * The start was refused: the detail of the result, which names a key, an alias or a provider id, never a
-         * value.
+         * The start was refused: the detail of the result, which names a key, an alias or a service interface, never
+         * a value.
          */
         public static final LogRecord START_REFUSED = LogRecordModel.builder()
                 .template("Refused the start: %s")

@@ -33,7 +33,8 @@ import org.jspecify.annotations.Nullable;
  * {@link PersonDirectory}, by {@code directory.persons.provider}; at most one {@link AnchorProvider} is selected, by
  * {@code anchor.provider}, and none when that key is absent, so the store anchors nothing (GDR-STORE-15). A configured
  * id that no provider carries, or that two providers carry, stops the start as {@link StoreOutcome#MALFORMED} naming
- * the service interface and the id; two providers with an id nobody configured do not stop it.
+ * the service interface and the configuration key, never the configured id (GDR-NFR-3); two providers with an id nobody
+ * configured do not stop it.
  *
  * @param signing the active signing key source
  * @param persons the active person directory
@@ -46,6 +47,15 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
 
     /** The rendering of an absent anchor provider in the log record {@code GIT_STORE-1}. */
     private static final String NO_ANCHOR_PROVIDER = "none";
+
+    /** The configuration key naming the signing key source. */
+    private static final String SIGNING_KEY_SOURCE = "signing.key-source";
+
+    /** The configuration key naming the person directory. */
+    private static final String PERSONS_PROVIDER = "directory.persons.provider";
+
+    /** The configuration key naming the anchor provider. */
+    private static final String ANCHOR_PROVIDER = "anchor.provider";
 
     /**
      * Checks that the signing key source and the person directory are present.
@@ -102,7 +112,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * @param anchors       the candidate anchor providers
      * @param persons       the candidate person directories
      * @return {@link StoreOutcome#OK} with the selected providers, or {@link StoreOutcome#MALFORMED} naming the service
-     * interface and the configured id that no candidate or more than one candidate carries
+     * interface and the configuration key whose id no candidate or more than one candidate carries
      * @throws NullPointerException if an argument or a candidate is {@code null}
      */
     public static StoreResult<StoreProviders> select(StoreConfiguration configuration,
@@ -112,20 +122,20 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(anchors, "anchors");
         Objects.requireNonNull(persons, "persons");
-        var source = unique(SigningKeySource.class, configuration.signing().keySource(), signing,
+        var source = unique(SigningKeySource.class, SIGNING_KEY_SOURCE, configuration.signing().keySource(), signing,
                 SigningKeySource::id);
         if (!source.isOk()) {
             return refuse(source.detail());
         }
-        var directory = unique(PersonDirectory.class, configuration.directory().personsProvider(), persons,
-                PersonDirectory::id);
+        var directory = unique(PersonDirectory.class, PERSONS_PROVIDER, configuration.directory().personsProvider(),
+                persons, PersonDirectory::id);
         if (!directory.isOk()) {
             return refuse(directory.detail());
         }
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
         if (anchorId != null) {
-            var provider = unique(AnchorProvider.class, anchorId, anchors, AnchorProvider::id);
+            var provider = unique(AnchorProvider.class, ANCHOR_PROVIDER, anchorId, anchors, AnchorProvider::id);
             if (!provider.isOk()) {
                 return refuse(provider.detail());
             }
@@ -140,8 +150,12 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
 
     /**
      * Picks the one candidate carrying the configured id.
+     * <p>
+     * The detail of a refusal names the service interface and the configuration key, never the configured id: the id
+     * is a configured value, and a value may be secret material (GDR-NFR-3).
      *
      * @param service    the service interface, named in the detail
+     * @param key        the configuration key the id is read from, named in the detail
      * @param id         the configured id
      * @param candidates the candidates
      * @param idOf       the id of a candidate
@@ -149,21 +163,22 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * @return {@link StoreOutcome#OK} with the candidate, or {@link StoreOutcome#MALFORMED} when no candidate or more
      * than one candidate carries the id
      */
-    private static <S> StoreResult<S> unique(Class<S> service, String id, Iterable<? extends S> candidates,
-            Function<S, String> idOf) {
+    private static <S> StoreResult<S> unique(Class<S> service, String key, String id,
+            Iterable<? extends S> candidates, Function<S, String> idOf) {
         @Nullable S found = null;
         for (S candidate : candidates) {
             Objects.requireNonNull(candidate, "candidate");
             if (id.equals(idOf.apply(candidate))) {
                 if (found != null) {
                     return StoreResult.of(StoreOutcome.MALFORMED,
-                            service.getSimpleName() + ": more than one provider with id " + id);
+                            service.getSimpleName() + ": more than one provider with the id of " + key);
                 }
                 found = candidate;
             }
         }
         if (found == null) {
-            return StoreResult.of(StoreOutcome.MALFORMED, service.getSimpleName() + ": no provider with id " + id);
+            return StoreResult.of(StoreOutcome.MALFORMED,
+                    service.getSimpleName() + ": no provider with the id of " + key);
         }
         return StoreResult.ok(found);
     }
@@ -183,7 +198,8 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
                 providers.add(provider);
             }
         } catch (ServiceConfigurationError e) {
-            LOGGER.debug(e, "Loading a provider of %s failed", service.getName());
+            // neither the error nor its message is logged: a failing provider may name a credential in either
+            LOGGER.debug("Loading a provider of %s failed with %s", service.getName(), e.getClass().getName());
             return StoreResult.of(StoreOutcome.MALFORMED, service.getSimpleName() + ": a provider cannot be loaded");
         }
         return StoreResult.ok(providers);

@@ -13,7 +13,8 @@ and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence an
 Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
 configuration (<<store-configuration>>), the outcome list with its result, and the three service interfaces below with
 the selection of their providers; the providers themselves (`file`, `signed`) and every other requirement are planned.
-Its third-party dependencies are `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`) and
+Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
+`GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
 requires transitively because its public API exposes `GitOutcome`, `GitResult`, `RemotePolicy` and JGit's `ObjectId`.
 
@@ -25,8 +26,8 @@ the outcome and the detail of the `GitResult` it passes on and refuses a success
 
 It defines three service interfaces, found through `ServiceLoader` (`uses` and `provides` in `module-info.java`), each
 provider named by configuration. For `SigningKeySource` and `PersonDirectory` exactly one provider is active; for
-`AnchorProvider` at most one, and without one the store anchors nothing (<<GDR-STORE-15>>). A named provider that is
-not found, or two providers with the same id, stop the start of the store.
+`AnchorProvider` at most one, and without one the store anchors nothing (<<GDR-STORE-15>>). A configured id that no
+provider carries, or that two providers carry, stops the start of the store.
 
 [cols="1,2,2"]
 |===
@@ -64,9 +65,12 @@ Each interface has `String id()`, the value the configuration names the provider
 `StoreProviders.select(configuration, signing, anchors, persons)`, which picks the provider whose id is
 `signing.key-source`, the one whose id is `directory.persons.provider`, and, when `anchor.provider` is present, the one
 with that id; without `anchor.provider` no anchor provider is selected. A configured id that no candidate carries, or
-that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with id <id>` or
-`<interface>: more than one provider with id <id>`; two candidates with an id nobody configured do not stop the start.
-A `ServiceConfigurationError` while loading is `MALFORMED` naming the interface. A selection is logged as
+that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with the id of <key>` or
+`<interface>: more than one provider with the id of <key>`, where `<key>` is the configuration key the id is read from;
+the detail never carries the configured id, a configured value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). Two candidates
+with an id nobody configured do not stop the start. A `ServiceConfigurationError` while loading is `MALFORMED` naming
+the interface; only the interface and the class name of the error are logged (DEBUG), never the message of the error
+or of its cause, which a failing provider may fill with a credential. A selection is logged as
 `GIT_STORE-1` with the three ids, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
 `git-store/doc/LogMessages.adoc` (xref:general.adoc#GDR-GEN-4[GDR-GEN-4]).
 
