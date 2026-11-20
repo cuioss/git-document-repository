@@ -12,9 +12,6 @@
     "doc/adr": {
       "description": "Architectural decision records."
     },
-    "doc/app": {
-      "description": "Documentation of the CISOs-Friend application (CIFR); self-contained, moves to its own repository later."
-    },
     "doc/concepts": {
       "description": "Concept documents describing the architecture; read before changing it, each ends with its open questions."
     },
@@ -24,7 +21,7 @@
   },
   "purpose": "documentation",
   "purpose_reasoning": "build_systems=documentation, only .adoc/.svg files",
-  "responsibility": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR), plus the self-contained CISOs-Friend application docs (prefix CIFR) in doc/app.",
+  "responsibility": "AsciiDoc documentation of the libraries: concepts, ADRs and per-module specifications (requirements prefix GDR). The application built on the libraries, TrailHand, documents itself in its own repository (cuioss/TrailHand).",
   "responsibility_reasoning": "source: AGENTS.md Project section and doc/ layout",
   "skills_by_profile": {
     "documentation": {
