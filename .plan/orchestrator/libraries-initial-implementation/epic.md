@@ -45,8 +45,9 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   shares `doc/specification/general.adoc` (and `GitOutcome.java` if a new outcome is needed) with PLAN-04, accepted by the
   operator. Not a prerequisite of PLAN-06 or later plans. Shipped (PR #31, `e2aced9`): the diff shares only `general.adoc`
   with PLAN-04, `GitOutcome.java` was not touched (the refused branch name reuses `REFUSED_BY_POLICY`).
-- PLAN-06 — Last foundation plan. After it lands: the operator runs `/release` for 0.1.0 (not a queue row, see
-  Decisions), then the aspect modules start.
+- PLAN-06 — Last foundation plan. Shipped (PR #39, `e43c7e9`, `landings/PLAN-06.md`): it ran alone after PLAN-05; the consumer check
+  became an Enforcer execution inside `git-core` (the owner's decision) and `git-worktrees` ships no native-image metadata. After
+  it: the operator runs `/release` for 0.1.0 (not a queue row, see Decisions), then the aspect modules start (PLAN-07 first).
 - PLAN-07..PLAN-11 — Strictly sequential: all edit `git-store/`, which the surface reader cannot see until PLAN-07
   creates it. The same holds for PLAN-12..14 (`git-forms/`), PLAN-15..16 (`git-directory/`) and PLAN-17
   (`git-timestamp/`).
@@ -68,7 +69,10 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   which it shared four declared entries, has shipped; it now shares `AGENTS.md` and `general.adoc` with PLAN-06 and the later
   plans that edit them, so the gate puts the pair to the operator when both are launched together. PLAN-05's analysis folded
   `InCoreMerger`, `GitNotes`, `JGitRepositoryOperations.log`, the guarded batch and the EasyMock question into it; all ten
-  PLAN-04 defects are still present at `14269fe`.
+  PLAN-04 defects are still present at `14269fe`. PLAN-06's analysis added deliverable 6 (the build guards' residue) and the
+  root `pom.xml`, `git-core/pom.xml`, the native-image directory and `README.adoc` to its surface; PLAN-20 now has six
+  deliverables, at the split guard, and proceeds unsplit because the operator asked for one collection plan and each
+  deliverable is independent (the operator may split it when releasing it).
 
 ## Decisions
 
@@ -246,6 +250,29 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   reference that name-conflicts is reported as a lost race, the `unresolvedUnderLock` Javadoc names the wrong discriminator),
   two minor leads and two points not shown by reading. Reported to the operator at once and folded into PLAN-20 in the same
   act (items 3 (a), (b), (d), (h), deliverable 4 (d) and (e), claims 15-18); the Done-when base of PLAN-20 is now `14269fe`.
+- 2026-11-20 — PLAN-06 recorded launched, then running, on the operator's word ("#06 is running"). It had already merged when the
+  next `analyze` ran.
+- 2026-11-20 — PLAN-06 shipped (PR #39, merge commit `e43c7e9`, `landings/PLAN-06.md`): the layering guard (`module-layering`, the
+  built-in `bannedDependencies` rule, one include per edge in each module's POM), the consumer check as an Enforcer execution
+  `consumer-isolation` inside `git-core` instead of a test consumer project (the owner confirmed the substitution during the
+  run), the domain-term test in three modules, the `git-core` native-image metadata (one class, one bundle) and no
+  `git-worktrees` metadata (the operator's decision after research: an empty `resource-config.json` is invalid GraalVM format).
+  All four spec claims corroborated; no new dependency (the plugin and its rules come from `cui-parent-pom` 1.7.7); the Sonar
+  gate reads OK, the review gate 0 unresolved threads and 3 body findings (`handled` not re-verified).
+- 2026-11-20 — Candidate lessons of PLAN-06 (14) under the operator's earlier rule: five new plan-marshall tooling lessons filed
+  with `--allow-foreign-store` (`2026-11-20-07-001` a substituted artifact without a recorded deviation, `-002` a deliverable's
+  module not matching its affected files, found in two phases and carrying four messages, `-003` an unrecorded question and an
+  unchecked external-format decision, `-004` `architecture which-module` returning null for resource paths, `-005` a dropped
+  deliverable that stays live in the outline); three existing lessons extended (`2026-11-18-13-004` the change-ledger flag, now
+  the seventh plan, `2026-11-18-07-002` `qgate list` without `--phase`, `2026-11-18-13-009` an infeasible leaf return recorded as
+  `termination_cause: error`); two folded into PLAN-20 (the recurring generated-value flake, now with a `git-testing` item, and the
+  review's accepted hand-mirrored lists with the confirmed optional-dependency hole, which became deliverable 6); one discarded
+  (the outline's false premise about DFS storage, caught by the Q-Gate and already required by CLAUDE.md).
+- 2026-11-20 — Layer-3 report of PLAN-06: no blocker and no major; four minor defects (a direct optional dependency of `git-core`
+  bypasses `consumer-isolation`, confirmed in the Enforcer 3.6.3 bytecode; the layering guard is self-policing; the domain-term
+  list is copied by hand into three tests; `NativeImageMetadataTest` checks names, not shape) and two points not shown by reading
+  (build-guard bypasses and CI skip flags, native-image completeness). Reported to the operator at once and folded into PLAN-20
+  deliverable 6 in the same act; no new plan is staged.
 
 ## Open Defects
 
@@ -270,11 +297,16 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `notWritten` branches, no reflog test, `ReferenceUpdater.parseCommit` peels a tag). PLAN-05 (PR #37) left all of them in place
   and added the same defect class to its new code (`landings/PLAN-05.md`, L3-1 to L3-8). — routed to PLAN-20 (deliverables 3 and 4)
   on the operator's word; open until PLAN-20 ships.
+- PLAN-06 layer-3 defects in the build guards (`landings/PLAN-06.md`, L3-1 to L3-4, with the layer-2 residue L2-1 to L2-3):
+  `consumer-isolation` does not see a direct optional dependency, the layering rule is self-policing, the domain-term list is
+  triplicated by hand, `NativeImageMetadataTest` checks names and not shape, the guards' negative runs live only in the squash
+  message, and the native-image wording overclaims one class. — routed to PLAN-20 (deliverable 6); open until PLAN-20 ships.
 - Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
-  `plan-05-git-core-merge-read-notes-013.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-05 misses the three review numbers and `sonar_open_new_issues` (`effort` is `medium`, self-reported); its
+  `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-06 misses the three review numbers; its `review-gate` re-read is decidable (0 unresolved threads, 3
+  review-body findings, `handled: 0`) and the Sonar gate reads OK. PLAN-05 misses the three review numbers and `sonar_open_new_issues` (`effort` is `medium`, self-reported); its
   `review-gate` re-read is undecidable (the CodeRabbit "Minor comments: 1" section), the Sonar gate reads OK, and
   `archive-plan` is `unknown` in its steps. PLAN-04 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0 unresolved
   threads, 5 review-body findings, `handled: 0`), the Sonar gate reads OK (new coverage 87.3 %), and the lane's own statement
@@ -305,6 +337,9 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - PLAN-19 and PLAN-04 both edited `doc/specification/general.adoc` and the state lists. — observed at PLAN-04's landing: its
   rebase conflicted by hand in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `general.adoc`), both sides kept; no
   re-verify signal. Recorded in Queue annotations (PLAN-04) for the next pairing. Retired.
+- PLAN-06 is the last foundation plan and the 0.1.0 release follows it (an operator act through `/release`; a Maven Central release
+  cannot be withdrawn). PLAN-20 changes the behaviour of public `git-core` and `git-worktrees` operations and adds guards. —
+  question to the operator, open: release PLAN-20 before 0.1.0, or release 0.1.0 first and carry the fixes into the next version.
 - The execution manifest of PLAN-04 carried `final_merge_without_asking=true` (PLAN-05's landing says nothing about holding its merge), which contradicts the AGENTS.md rule "do not merge
   unless the user says so"; the lane held the merge until the owner approved in chat and did not change the manifest value, and
   PLAN-19's lane was told to merge when green. Whether the value comes from `.plan/marshal.json` or from the lane's defaults is not
