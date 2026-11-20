@@ -74,6 +74,45 @@
     </dependencies>
     <build>
         <plugins>
+            <!-- GDR-GEN-1: this rule is the realised form of the consumer check of GDR-GEN-1, in place of a separate
+                 consumer project. It bans every artifact a consumer of git-core alone receives (scope compile and
+                 runtime, transitively) except the approved closure: JSpecify, JGit with its own compile closure
+                 (JavaEWAH, SLF4J API, Commons Codec) and cui-java-tools, whose 2.7.0 POM declares no compile
+                 dependency beyond JSpecify. Test and provided scope never reach a consumer and stay outside the
+                 rule. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>consumer-isolation</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>*:*:*:*:compile</exclude>
+                                        <exclude>*:*:*:*:runtime</exclude>
+                                    </excludes>
+                                    <includes>
+                                        <include>org.jspecify:jspecify</include>
+                                        <include>org.eclipse.jgit:org.eclipse.jgit</include>
+                                        <include>com.googlecode.javaewah:JavaEWAH</include>
+                                        <include>org.slf4j:slf4j-api</include>
+                                        <include>commons-codec:commons-codec</include>
+                                        <include>de.cuioss:cui-java-tools</include>
+                                    </includes>
+                                    <message>GDR-GEN-1: git-core gained a compile or runtime artifact outside the closure a consumer of git-core alone may receive. A new compile dependency of git-core needs the owner's approval before it is added to this rule.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- git-testing requires org.junit.jupiter.api transitively, so on the module path Surefire would place
                  org.junit.platform.commons in a named module while its launcher stays in the unnamed module, and the
                  launcher fails with IllegalAccessError on org.junit.platform.commons.util (the failure recorded in

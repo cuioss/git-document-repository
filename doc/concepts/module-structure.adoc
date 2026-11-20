@@ -18,8 +18,9 @@ Three forces would split a single module later, at a higher price:
   need every security fix twice.
 * *Optional dependencies.* Timestamping and form rendering bring third-party libraries. In one module
   they become mandatory for every consumer, including one that only reads a repository.
-* *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries make it checkable;
-  the build check that enforces it is planned (see xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1]).
+* *Layering.* "The store must not know the forms" is a convention in one module. Module boundaries make it checkable,
+  and the build checks it: a module that declares a dependency outside the graph below fails the build (see
+  xref:../specification/general.adoc#GDR-GEN-1[GDR-GEN-1]).
 
 The cut below removes all three at once; the alternatives are weighed in
 xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[ADR-0004].

@@ -68,6 +68,26 @@
     </dependencies>
     <build>
         <plugins>
+            <!-- GDR-GEN-1: the allowed reactor edges of git-worktrees, one include per edge of the graph in
+                 doc/concepts/module-structure.adoc, appended to the module-layering rule of the root POM. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>module-layering</id>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <includes combine.children="append">
+                                        <include>de.cuioss:git-core</include>
+                                    </includes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- git-testing requires org.junit.jupiter.api transitively, so on the module path Surefire would place
                  org.junit.platform.commons in a named module while its launcher stays in the unnamed module, and the
                  launcher fails with IllegalAccessError on org.junit.platform.commons.util (the failure recorded in

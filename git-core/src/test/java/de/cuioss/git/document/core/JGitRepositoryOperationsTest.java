@@ -1474,8 +1474,11 @@ class JGitRepositoryOperationsTest {
         @DisplayName("PLAN-02 (f), GDR-NFR-3: a refused redirect is logged REMOTE_REFUSED by its host only")
         void refusedRedirectLogged(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
             var credential = GitGenerators.credentials().next();
+            // the generator draws a user name of as few as one letter, which occurs by chance in unrelated log text;
+            // a distinctive prefix keeps the absence assertion below meaningful for every seed
+            var user = "redirect-user-" + credential.username();
             var token = new String(credential.token());
-            var redirect = new URIish("https://" + credential.username() + ":" + token + "@" + FOREIGN_HOST + "/"
+            var redirect = new URIish("https://" + user + ":" + token + "@" + FOREIGN_HOST + "/"
                     + TestCommits.name() + ".git");
             var marker = TestCommits.name();
             TestCommits.addRemote(client, ORIGIN, markerUrl(marker));
@@ -1493,7 +1496,7 @@ class JGitRepositoryOperationsTest {
                                         "redirect to " + FOREIGN_HOST + " is outside the remote policy"), result,
                                 "the redirect is refused by its host"),
                         () -> assertFalse(records.contains(token), "no log record carries the token"),
-                        () -> assertFalse(records.contains(credential.username()), "no log record carries the user"));
+                        () -> assertFalse(records.contains(user), "no log record carries the user"));
                 LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
                         GitCoreLogMessages.WARN.REMOTE_REFUSED.resolveIdentifierString());
                 LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, FOREIGN_HOST);
