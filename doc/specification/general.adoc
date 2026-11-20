@@ -137,7 +137,8 @@ the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
 |`REFUSED_BY_POLICY` |refused by policy |remote policy, refused capability (hook or process start); the detail names
 the refused remote or capability; an invalid branch name (`git-worktrees`: a new working tree or a reservation
-release) or notes reference (notes), the detail naming the field only
+release) or notes reference (notes), the detail naming the field only; `git-store`: a registered remote the policy
+does not permit, the detail naming the alias
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
 log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
 in-core merge and notes on an id that is no commit, notes on a missing notes reference or note; a branch without a
@@ -159,28 +160,37 @@ repository at the registered path
 |`PATH_REFUSED` |path refused |`git-worktrees`: a derived path outside the permitted root, or the main working tree
 |===
 
-The outcome list of `git-store`, used by `git-timestamp` for its provider and by every `PersonDirectory` provider as
-well:
+`StoreOutcome` (`git-store`) is the outcome list of `git-store`, used by `git-timestamp` for its provider and by every
+`PersonDirectory` provider as well. Its result is `StoreResult`, of the same shape as `GitResult` (outcome, value,
+detail), whose outcome is either a constant of `StoreOutcome` or a non-success Git outcome passed on as its variant
+`PassedOn`; only `OK` of `StoreOutcome` is a success. The first column names the constant, and the table
+lists exactly the constants of `StoreOutcome`:
 
-[cols="1,2"]
+[cols="2,2,4"]
 |===
-|Outcome |Raised by
+|Constant |Outcome |Raised by
 
-|incomplete |release whose tag is still missing after `main` moved
-|unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending
-|refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161 authority
-by an error response; the subject stays pending
-|no proof |anchor verification: a subject that should be anchored has no proof
-|imprint mismatch |anchor verification: the proof is about another object id
-|signature invalid |anchor and commit-signature verification: the signature does not verify against the allowed
-signers or `timestamp.trust`, or the proof cannot be read
-|chain broken |verification of the `signed` chain: a gap in the sequence numbers, a wrong predecessor or a decreasing
-time
-|not supported, managed by source |a `PersonDirectory` provider whose source the operator maintains: saving an entry,
-erasing a pseudonym
+|`OK` |success |every operation; a valid proof is success with the time it establishes
+|`INCOMPLETE` |incomplete |release whose tag is still missing after `main` moved
+|`UNAVAILABLE` |unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending; a
+signing key source that cannot be reached
+|`REFUSED` |refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161
+authority by an error response; the subject stays pending; a signing key source that refuses
+|`NO_PROOF` |no proof |anchor verification: a subject that should be anchored has no proof
+|`IMPRINT_MISMATCH` |imprint mismatch |anchor verification: the proof is about another object id
+|`SIGNATURE_INVALID` |signature invalid |anchor and commit-signature verification: the signature does not verify
+against the allowed signers or `timestamp.trust`, or the proof cannot be read
+|`CHAIN_BROKEN` |chain broken |verification of the `signed` chain: a gap in the sequence numbers, a wrong predecessor
+or a decreasing time
+|`NOT_SUPPORTED` |not supported |a `PersonDirectory` provider whose source the operator maintains: saving an entry,
+unbound entries, binding
+|`MANAGED_BY_SOURCE` |managed by source |a `PersonDirectory` provider whose source the operator maintains: erasing a
+pseudonym
+|`MALFORMED` |malformed |start: a configuration that lacks a required key, holds a malformed value, an invalid or
+duplicate alias, a remote with user information or an anchor key equal to the commit-signing key, or names a provider
+that is missing or not unique; a content a codec cannot decode; the detail names the key, alias, path or provider id,
+never the value
 |===
-
-A valid proof is success with the time it establishes.
 
 The outcome list of `git-forms`:
 
