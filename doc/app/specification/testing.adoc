@@ -1,10 +1,10 @@
-= CISOs-Friend: Testing
+= Trailhand: Testing
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 Test lanes, tools and the measurable checks behind the non-functional requirements. Reasoning:
 xref:../concepts/application-architecture.adoc#_testing[Application Architecture, Testing].
@@ -34,17 +34,17 @@ xref:../concepts/application-architecture.adoc#_testing[Application Architecture
 
 |Benchmarks
 |Profile `benchmarks` of the `integration-tests` module, in a CI job of its own
-|The fixture and measurements of <<CIFR-NFR-1>> and <<CIFR-NFR-2>>; reports, does not gate
+|The fixture and measurements of <<TRH-NFR-1>> and <<TRH-NFR-2>>; reports, does not gate
 |===
 
-[#CIFR-NFR-1]
-== CIFR-NFR-1: Index Size and Start Time
+[#TRH-NFR-1]
+== TRH-NFR-1: Index Size and Start Time
 
 * With 1,000 SAMM assessments of 90 answers each, the in-memory index must stay below 100 MB of heap, and the native
   application must become ready within 60 seconds after the repositories are present locally.
 
-[#CIFR-NFR-2]
-== CIFR-NFR-2: Save Latency
+[#TRH-NFR-2]
+== TRH-NFR-2: Save Latency
 
 * The application's share of a save (the save duration minus the measured fetch and push time) must stay within
   500 ms at the 95th percentile.
@@ -53,13 +53,13 @@ Fixture for both: a generated `samm-assessments` repository with 1,000 assessmen
 (`cui-test-generator`). Index size: heap histogram after start, attributed to the index classes. Start: time from
 process start to readiness `UP` with local repositories present. Save latency: 1,000 sequential saves against the
 Gitea of the integration stack; the save service records the time spent in fetch and push per save (timer
-`cisos_friend_save_git_seconds`).
+`trailhand_save_git_seconds`).
 
-The checks of CIFR-NFR-1 and CIFR-NFR-2 run in the `benchmarks` lane. It reports each measured value against its
+The checks of TRH-NFR-1 and TRH-NFR-2 run in the `benchmarks` lane. It reports each measured value against its
 target and does not fail the build.
 
-[#CIFR-NFR-3]
-== CIFR-NFR-3: Concurrent Workshop
+[#TRH-NFR-3]
+== TRH-NFR-3: Concurrent Workshop
 
 * Fifteen users saving the fifteen different practices of one assessment concurrently, ten saves each, must lose no
   save.
@@ -67,8 +67,8 @@ target and does not fail the build.
 Fifteen virtual users, each saving ten times to its own practice of one assessment, in parallel; afterwards all 150
 changes must be present on the working branch and every save result must be `SAVED` after the library's retries.
 
-[#CIFR-NFR-4]
-== CIFR-NFR-4: Inbound Input Security
+[#TRH-NFR-4]
+== TRH-NFR-4: Inbound Input Security
 
 * Every path segment, query parameter and header read by the REST API and the MCP endpoint must pass a
   `de.cuioss.http.security` validation pipeline before use; the adversarial attack-database tests must pass.
@@ -80,17 +80,17 @@ Tests:
   reaching a service.
 * MCP token tests: foreign audience, expired, wrong issuer, query-string token, missing scope; each with the specified
   status and `WWW-Authenticate`.
-* Credential leak scan: see xref:mcp-server.adoc#CIFR-MCP-5[MCP Server, CIFR-MCP-5].
+* Credential leak scan: see xref:mcp-server.adoc#TRH-MCP-5[MCP Server, TRH-MCP-5].
 * Web: CSRF header missing, wrong `Origin`, CSP present on every HTML response
-  (xref:web-app.adoc#CIFR-WEB-8[Web App, CIFR-WEB-8]).
+  (xref:web-app.adoc#TRH-WEB-8[Web App, TRH-WEB-8]).
 
-[#CIFR-NFR-5]
-== CIFR-NFR-5: Native Image Verification
+[#TRH-NFR-5]
+== TRH-NFR-5: Native Image Verification
 
 * The integration suite must run a fetch, a save, a release and a push against a local Git server with the native
   image before any other integration test.
 * A boot of the native image with an invalid configuration must fail
-  (xref:configuration.adoc#CIFR-CONF-1[Configuration, CIFR-CONF-1]).
+  (xref:configuration.adoc#TRH-CONF-1[Configuration, TRH-CONF-1]).
 
 The first test class, `NativeGitRoundTripIT`, runs fetch, save, release and push against Gitea and verifies tag and
 signature. It runs in its own failsafe execution `native-round-trip`, declared before the execution of the remaining

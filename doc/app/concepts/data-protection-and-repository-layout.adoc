@@ -5,12 +5,12 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 Git grants rights per repository and forgets nothing. An application that puts a CISO's risk register and a
 developer's SAMM answers into one repository has made both properties into problems: everyone who may read one may
 read the other, and the incident report that must be deleted after its retention period takes the risk register's
-history with it. CISOs-Friend therefore cuts its data into repositories by confidentiality and by retention period:
+history with it. Trailhand therefore cuts its data into repositories by confidentiality and by retention period:
 the rights of a repository then fit its readers, and a repository is deleted as a whole when its period ends.
 
 The mechanisms underneath (pseudonymous commits, the pluggable person directory with its entries in Git by default,
@@ -105,7 +105,7 @@ the person directory, which stores a pseudonym.
 
 == The Person Directory
 
-CISOs-Friend uses the library's person directory
+Trailhand uses the library's person directory
 (xref:../../concepts/data-protection.adoc#_the_person_directory[Data Protection, The Person Directory]). By default
 each person enters name, team and role at the first login, or binds an entry an administrator prefilled with the same
 team and role, and the entry is saved under its pseudonym in the
@@ -115,7 +115,7 @@ first with a matching team and role can bind an entry meant for someone else; co
 are open questions of xref:../../concepts/directory-and-catalogs.adoc#_open_questions[Directory and Catalogs]. Where
 persons and groups are maintained centrally (for example LDAP), a provider for
 that source replaces it: no name enters Git, and the organisation keeps and erases the personal data there
-(xref:../specification/directory.adoc#CIFR-DIR-1[Directory, CIFR-DIR-1]).
+(xref:../specification/directory.adoc#TRH-DIR-1[Directory, TRH-DIR-1]).
 
 == The Erasure Concept
 
@@ -123,7 +123,7 @@ With the default directory an erasure deletes the person's entry in a commit; th
 operational concept:
 
 * *On request or on leaving*: a user with the right `administer-catalogs` erases a pseudonym; the deletion is
-  effective at once (xref:../specification/data-protection.adoc#CIFR-DP-3[CIFR-DP-3]). Documents keep the pseudonym
+  effective at once (xref:../specification/data-protection.adoc#TRH-DP-3[TRH-DP-3]). Documents keep the pseudonym
   and show the team and role the person held, for example "former Security Champion, Payments", without a name;
   because responsibilities run through roles, they stay understandable.
 * *Evidence of erasure*: the erasure commit records the pseudonym and the date, never the person; the next checkpoint

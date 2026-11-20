@@ -7,10 +7,9 @@
 
 xref:../README.adoc[CISOs-Friend documentation] » Concepts
 
-Status: *proposal; the name is not decided.* This page collects what was checked and recommends a name, a mark and a
-mascot. Nothing in the application, the specifications or the configuration has been renamed: the working title
-*CISOs-Friend*, the requirement prefix `CIFR`, the file `cisos-friend.yaml` and the scopes `cisos-friend:*` stay until
-the owner decides (see <<_open_decisions>>).
+Status: *the name is decided: Trailhand* (owner's decision of 2026-11-20); the mark and the mascot are proposals. This
+page records what was checked, why the working title *CISOs-Friend* was dropped, and what the rename changed
+(<<_the_rename>>). The trademark search of <<_open_decisions>> is still to be done.
 
 == Why the Working Title Needs a Decision
 
@@ -21,7 +20,7 @@ the owner decides (see <<_open_decisions>>).
   Security, 14 January 2026]). "CISOs-Friend" and "CISO Assistant" would be confused in a search and in a
   conversation, in the same field.
 * *Narrower than the audience.* The application serves development teams that fill in assessments, incident responders
-  and AI agents as well as CISOs (xref:cisos-friend-overview.adoc#_audience[Overview, Audience]). A name built on one
+  and AI agents as well as CISOs (xref:trailhand-overview.adoc#_audience[Overview, Audience]). A name built on one
   of the roles describes the buyer, not the work.
 * *Hard to say and to type.* The possessive and the hyphen give an identifier no one can predict (`cisos-friend`,
   `CISOs-Friend`, `CISO's Friend`).
@@ -91,7 +90,7 @@ user.
 |No product of this name found by web search. GitHub: one repository, `krumIO/trailhand-ui`, no stars, no description.
 `trailhand.com`, `trailhand.io` and `trailhand.dev` resolve in DNS, so they are registered by someone (content not
 checked).
-|Recommended
+|Chosen
 
 |*Tinstar*
 |The tin star is the sheriff's badge: the family sign.
@@ -125,7 +124,7 @@ word also names the _confused deputy_ problem, which makes it a poor name for an
 |Rejected
 |===
 
-=== Recommendation
+=== Decision
 
 *Trailhand, with the descriptor "the CISO's friend"*: the application is *Trailhand*, and the sentence under the logo
 is "Security documents on the Git server you already run -- the CISO's friend". The working title lives on as the
@@ -136,11 +135,39 @@ xref:../specification/authentication.adoc[Authentication]) and _the hand_ (it do
 web app or through an agent, and never decides alone: a release stays with a human,
 xref:mcp-server.adoc[MCP Server]).
 
-*What a rename touches:* the requirement prefix `CIFR` in every specification and in the `doc/app` index, the title of
-all concept and specification pages, the configuration file `cisos-friend.yaml`, the OAuth scopes
-`cisos-friend:read`, `:write` and `:request-release`, and the future repository, artifact and image names. Scopes and
-file names are public interfaces once the first release is out, so the decision has to come before it. The rename is
-mechanical and is done in one sweep with the decision, not piecemeal.
+[#_the_rename]
+=== The Rename
+
+Done in one sweep with the decision, because scopes and file names are public interfaces once the first release is out:
+
+[cols="2,2"]
+|===
+|Was |Is
+
+|`CISOs-Friend` (name, titles)
+|`Trailhand`
+
+|Requirement prefix `CIFR-<GROUP>-<n>`
+|`TRH-<GROUP>-<n>` (numbers and groups unchanged)
+
+|`cisos-friend.yaml`, `cisos-friend.schema.json`, `cisos-friend.config.dir`
+|`trailhand.yaml`, `trailhand.schema.json`, `trailhand.config.dir`
+
+|Scopes `cisos-friend:read`, `:write`, `:request-release`
+|`trailhand:read`, `:write`, `:request-release`
+
+|Image `ghcr.io/cuioss/cisos-friend`, Maven `de.cuioss:cisos-friend-parent`, package `de.cuioss.cisosfriend`
+|`ghcr.io/cuioss/trailhand`, `de.cuioss:trailhand-parent`, `de.cuioss.trailhand`
+
+|Cookies `+__Host-cisos-friend-*+`, environment `CISOS_FRIEND_*`, example host `cisos-friend.example.org`
+|`+__Host-trailhand-*+`, `TRAILHAND_*`, `trailhand.example.org`
+
+|`concepts/cisos-friend-overview.adoc`, `resources/diagrams/cisos-friend-system-context.svg`
+|`concepts/trailhand-overview.adoc`, `resources/diagrams/trailhand-system-context.svg`
+|===
+
+Nothing outside `doc/app/` named the application except the index `doc/README.adoc` and `AGENTS.md`, both updated. The
+orchestrator ledger under `.plan/` is history and is left as it was. The libraries keep their own prefix `GDR`.
 
 == The Mark
 
@@ -191,9 +218,9 @@ anywhere in the incident-report category; the ranch-hand character appears only 
 [#_open_decisions]
 == Open Decisions
 
-. *The name.* Trailhand, Tinstar, or the working title. Before adopting any name: a trademark search at the DPMA register
-  and in https://www.tmdn.org/tmview/[TMview] (EUIPO) in the relevant classes, and a check of the domains and of the
-  GitHub and Maven group names.
+. *Clearance of the name.* Decided, but not yet cleared: a trademark search at the DPMA register and in
+  https://www.tmdn.org/tmview/[TMview] (EUIPO) in the relevant classes, and a check of the domains and of the GitHub
+  organisation names. If the search finds a conflict, the rename is repeated with the same mapping.
 . *Whether the character is a ranch hand,* or another outfit of the family.
 . *Who draws the final mark and who makes the poses,* and under which licence.
 . *The name of the local gateway* (xref:local-mcp-gateway.adoc[Local MCP Gateway]), which is a base project of its own
@@ -201,6 +228,6 @@ anywhere in the incident-report category; the ranch-hand character appears only 
 
 == Related
 
-* xref:cisos-friend-overview.adoc[Overview]
+* xref:trailhand-overview.adoc[Overview]
 * xref:web-app.adoc[Web App] -- takes its visual language from `pm-web-app`
 * xref:local-mcp-gateway.adoc[Local MCP Gateway]

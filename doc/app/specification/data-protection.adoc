@@ -1,21 +1,21 @@
-= CISOs-Friend: Data Protection
+= Trailhand: Data Protection
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 What the application configures and enforces on top of the library's pseudonyms, erasure and repository registry.
 Reasoning: xref:../concepts/data-protection-and-repository-layout.adoc[Data Protection and Repository Layout]. Library
 contract: xref:../../specification/git-directory.adoc#GDR-DIR-6[GDR-DIR-6: Erasure] and
 xref:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Registry].
 
-[#CIFR-DP-1]
-== CIFR-DP-1: Repository Cut
+[#TRH-DP-1]
+== TRH-DP-1: Repository Cut
 
 * The repository cut must be configurable; every repository declares exactly one confidentiality class and one
-  retention period (xref:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]).
+  retention period (xref:configuration.adoc#TRH-CONF-2[TRH-CONF-2]).
 * The default configuration must contain `isms-core`, `isms-register`, `isms-incidents-<year>`, `samm-assessments`,
   `threat-models` and `directory`.
 
@@ -34,12 +34,12 @@ xref:../../specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1: Repository Regi
 The incident period of `P5Y` is a default; an organisation sets its own with its data protection officer. A kind
 names its repository in the `kinds.yaml` of its category. The application creates no repository on a Git server: the
 operator creates the remote repository of each year and adds it to `repositories`
-(xref:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]) before the year's first report. How the one kind `incident`
+(xref:configuration.adoc#TRH-CONF-2[TRH-CONF-2]) before the year's first report. How the one kind `incident`
 addresses a repository per year is an open question of
 xref:../concepts/data-protection-and-repository-layout.adoc#_open_questions[Data Protection and Repository Layout].
 
-[#CIFR-DP-2]
-== CIFR-DP-2: Cross-Repository References
+[#TRH-DP-2]
+== TRH-DP-2: Cross-Repository References
 
 * A save containing a reference to another repository's entry must be rejected when the target does not exist.
 
@@ -56,8 +56,8 @@ addition `"x-catalog": "<catalog>"`, naming the catalog its target must belong t
 reference against the index and a catalog reference against the catalog; an unresolved reference is a field error
 `REFERENCE_NOT_FOUND`. A reference into a repository the user may not read is reported as not found.
 
-[#CIFR-DP-3]
-== CIFR-DP-3: Erasure
+[#TRH-DP-3]
+== TRH-DP-3: Erasure
 
 * With the default person directory, a user with the right *administer catalogs* must be able to erase a pseudonym;
   the erasure must take effect at once.
@@ -75,13 +75,13 @@ anchor provider is active. A
 provider for the organisation's own source returns managed-by-source; the application answers `409` with the problem
 type `managed-by-source` and names no person.
 
-[#CIFR-DP-4]
-== CIFR-DP-4: Retention
+[#TRH-DP-4]
+== TRH-DP-4: Retention
 
 * The application must list the repositories whose retention period has ended to users with the right *administer
   catalogs*; it must not rewrite history.
 * On a confirmed deletion the application must remove its local repository on the volume, stop serving the
-  repository and exclude it from the periodic fetch (xref:configuration.adoc#CIFR-CONF-2[CIFR-CONF-2]), also after a
+  repository and exclude it from the periodic fetch (xref:configuration.adoc#TRH-CONF-2[TRH-CONF-2]), also after a
   restart, until the operator removes it from the configuration; the remote repository and backup copies are deleted
   by the operator.
 
@@ -91,8 +91,8 @@ to `repository-deletions.yaml` in the `directory` repository; this record keeps 
 restart, and the next checkpoint anchors it when an anchor provider is active. The operator's duties (xref:../concepts/deployment.adoc#_operating_duties[Deployment, Operating Duties])
 name the deletion of the remote repository and require backup expiry to match the period.
 
-[#CIFR-DP-5]
-== CIFR-DP-5: No Personal Details in Documents
+[#TRH-DP-5]
+== TRH-DP-5: No Personal Details in Documents
 
 * A field that names a person must store a pseudonym picked from the person directory, never a name.
 * Fields marked free text in a schema must show a hint that personal details and interview notes do not belong there
@@ -102,12 +102,12 @@ A schema field with `"x-person": true` holds a pseudonym (`p-…`); validation r
 pseudonym. There is no encrypted field type. Fields with `"x-free-text": true` show the hint text
 `form.hint.no-personal-notes`.
 
-[#CIFR-DP-6]
-== CIFR-DP-6: Read-Access Events
+[#TRH-DP-6]
+== TRH-DP-6: Read-Access Events
 
 * Every read of a document in a repository of class `restricted` or `strongly-restricted` must produce a log record
   with pseudonym, repository and document id for the security information and event management system (SIEM).
 
 Every `read_document`, `GET /api/v1/documents/…` and diff on such a repository emits one `INFO` record
-`CISOS_FRIEND-<n>: {pseudonym} read {repository}/{id}`, routed to the SIEM through the log shipping of the platform.
+`TRAILHAND-<n>: {pseudonym} read {repository}/{id}`, routed to the SIEM through the log shipping of the platform.
 Index views emit one record per view, not per document.

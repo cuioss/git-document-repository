@@ -5,11 +5,11 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 Users of an ISMS or of an incident report need no account on the Git server, and the application does not require
 one: a Git account per person only to fill in a form would be one more account to manage for each of them.
-CISOs-Friend therefore authenticates people against the organisation's identity provider, pushes with a technical
+Trailhand therefore authenticates people against the organisation's identity provider, pushes with a technical
 user, and
 writes the identity of the person into every commit in a form the application signs. This page is the application
 side of that design: the login, the claims used, the first login, the rights, the Git credential and the step-up of
@@ -28,7 +28,7 @@ Token Sheriff provides authentication and the OAuth flows; this application take
   and `nonce`, issuer check, optional pushed authorization requests (PAR,
   https://www.rfc-editor.org/rfc/rfc9126[RFC 9126])). The tokens stay
   in the server; the browser holds only cookies
-  (xref:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]). This is the
+  (xref:../specification/authentication.adoc#TRH-AUTH-1[Authentication, TRH-AUTH-1]). This is the
   backend-for-frontend shape Token Sheriff's client is built for; ADR-0001 explains why no API Sheriff BFF stands in
   front of the application.
 * *MCP server*: AI agents present bearer access tokens. The server validates them with
@@ -77,12 +77,12 @@ The library flow (xref:../../concepts/directory-and-catalogs.adoc#_first_login[D
 applies unchanged; the application adds three things:
 
 * *A gate.* Until the entry is saved, no other view opens and every other request is refused
-  (xref:../specification/directory.adoc#CIFR-DIR-2[CIFR-DIR-2]).
+  (xref:../specification/directory.adoc#TRH-DIR-2[TRH-DIR-2]).
 * *The information duty* under GDPR Art. 13 (https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU)
   2016/679]): the form shows the operator's text on what the directory is for, what it holds, how long it is kept, and
   the legal basis agreed with the data protection officer.
 * *The yearly confirmation* ("Is your team still right?") through the same form
-  (xref:../specification/directory.adoc#CIFR-DIR-3[CIFR-DIR-3]).
+  (xref:../specification/directory.adoc#TRH-DIR-3[TRH-DIR-3]).
 
 [#_rights]
 == Rights

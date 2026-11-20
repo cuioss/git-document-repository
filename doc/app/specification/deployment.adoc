@@ -1,21 +1,21 @@
-= CISOs-Friend: Deployment
+= Trailhand: Deployment
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The shipped image, its ports and probes, how secrets reach it, and the compose sample. Reasoning:
 xref:../concepts/deployment.adoc[Deployment].
 
-[#CIFR-OPS-1]
-== CIFR-OPS-1: Native Image and Container
+[#TRH-OPS-1]
+== TRH-OPS-1: Native Image and Container
 
 * The application must compile with `release` 25 and ship as a Quarkus native image.
 * The image must be based on a digest-pinned distroless image, run as `nonroot`, carry OCI labels for version,
   revision, source and licence, and answer its health check through the binary.
-* The image must be published as one index for `linux/amd64` and `linux/arm64` at `ghcr.io/cuioss/cisos-friend`.
+* The image must be published as one index for `linux/amd64` and `linux/arm64` at `ghcr.io/cuioss/trailhand`.
 
 [cols="1,3"]
 |===
@@ -25,7 +25,7 @@ xref:../concepts/deployment.adoc[Deployment].
 |`quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25` (`quarkus.native.builder-image`)
 
 |Dockerfile
-|`cisos-friend/src/main/docker/Dockerfile.native`
+|`trailhand/src/main/docker/Dockerfile.native`
 
 |Base image
 |`quay.io/quarkus/quarkus-distroless-image:2.0@sha256:<digest>`; the digest is updated by a dependency bot
@@ -45,11 +45,11 @@ revision from build arguments `APP_VERSION`, `APP_REVISION`
 |`linux/amd64`, `linux/arm64`, each built natively on its own runner and joined into one index
 
 |Name
-|`ghcr.io/cuioss/cisos-friend:<version>`
+|`ghcr.io/cuioss/trailhand:<version>`
 |===
 
-[#CIFR-OPS-2]
-== CIFR-OPS-2: Ports and Readiness
+[#TRH-OPS-2]
+== TRH-OPS-2: Ports and Readiness
 
 * The application must serve HTTPS on 8443 and the management interface (readiness, liveness, metrics) on 9000.
 * Readiness must report `UP` only when every configured repository has a valid local repository (fetched in this
@@ -104,26 +104,26 @@ declares no volume.
 
 The two `allowed_signers` files hold public keys only and are no secrets; they are mounted read-only with the
 configuration directory and named by `signing.allowed-signers` and `anchor.signed-allowed-signers`
-(xref:configuration.adoc#_cisos_friend_yaml[Configuration, cisos-friend.yaml]), which also lists the reference forms
+(xref:configuration.adoc#_trailhand_yaml[Configuration, trailhand.yaml]), which also lists the reference forms
 each key accepts.
 
-[#CIFR-OPS-3]
-== CIFR-OPS-3: Compose Sample
+[#TRH-OPS-3]
+== TRH-OPS-3: Compose Sample
 
 * The deployment module must provide a compose sample that runs the published image with Keycloak and Gitea, and a
   check script that logs in, saves and releases a document.
 
-Location: `deployment/compose-sample/`. Never builds an image; the image is `${CISOS_FRIEND_IMAGE}`.
+Location: `deployment/compose-sample/`. Never builds an image; the image is `${TRAILHAND_IMAGE}`.
 
 [cols="1,3"]
 |===
 |Service |Role
 
-|`cisos-friend`
-|The application, named volume `cisos-friend-data`, configuration from `docker/cisos-friend-config/`
+|`trailhand`
+|The application, named volume `trailhand-data`, configuration from `docker/trailhand-config/`
 
 |`keycloak`
-|Realm `cisos-friend` with users of each group, a confidential client for the web login and a client for an MCP
+|Realm `trailhand` with users of each group, a confidential client for the web login and a client for an MCP
 agent
 
 |`gitea`

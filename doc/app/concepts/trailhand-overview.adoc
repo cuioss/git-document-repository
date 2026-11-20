@@ -1,15 +1,15 @@
-= CISOs-Friend: Overview
+= Trailhand: Overview
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 Where security documentation lives in four places at once, a spreadsheet for the OWASP SAMM assessment, a wiki page
 per threat model, a Confluence space for incident reports and an ISMS tool, each place has its own history, its own
-rights and its own backup, and none of them knows the others. *CISOs-Friend* is the application that puts these
+rights and its own backup, and none of them knows the others. *Trailhand* is the application that puts these
 documents into one shape, on one persistence the organisation already runs: its Git server.
 
 This page is the entry point of the application concepts. It names the four categories, the audience, the two user
@@ -23,7 +23,7 @@ already operate a maintained Git server (GitHub, GitLab, Gitea, Forgejo) with ba
 brings operating effort; reusing the existing Git server avoids it.
 
 Whether Git carries this load is answered by the libraries of `git-document-repository`; the reasoning is in
-xref:../../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]. CISOs-Friend is
+xref:../../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents]. Trailhand is
 the first application on them. It adds the categories, the user interfaces, the authentication and the operation.
 
 == Four Categories
@@ -121,7 +121,7 @@ system.
 
 == Positioning
 
-CISOs-Friend does not compete with an ISMS product such as verinice as a complete ISMS; it complements it. It ships
+Trailhand does not compete with an ISMS product such as verinice as a complete ISMS; it complements it. It ships
 neither the catalogues and methodology such a product brings nor the text of
 https://www.iso.org/standard/27001[ISO/IEC 27001:2022]; it uses only its own wording and the clause and control
 numbers.
@@ -130,14 +130,14 @@ numbers.
 . *Extension*: a lean "ISMS as code" for development organisations: policies and the risk register, with risks from
   SAMM gaps, threat models and incident reports.
 . *Reference, no delivery*: where an organisation runs an ISMS product, the product refers to a released SAMM
-  assessment by its release tag; CISOs-Friend delivers nothing into it.
+  assessment by its release tag; Trailhand delivers nothing into it.
 
 The comparison with verinice is in xref:category-isms.adoc#_comparison_with_verinice[ISMS, Comparison with verinice].
 
 [CAUTION]
 ====
 Git replaces no document management system an auditor knows as such. The process description of the control of
-documented information has to be written once per organisation. CISOs-Friend does not aim at the scope of a
+documented information has to be written once per organisation. Trailhand does not aim at the scope of a
 complete ISMS product.
 ====
 
@@ -148,6 +148,6 @@ complete ISMS product.
 
 == Related
 
-* xref:../README.adoc[CISOs-Friend documentation index] and reading order
+* xref:../README.adoc[Trailhand documentation index] and reading order
 * xref:../../concepts/git-as-document-persistence.adoc[Git as the Persistence of Versioned Documents] (library)
 * xref:service-catalog.adoc[Service Catalog]

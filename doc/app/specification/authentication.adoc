@@ -1,10 +1,10 @@
-= CISOs-Friend: Authentication
+= Trailhand: Authentication
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 Login, rights, the identity values written into commits, step-up and the Git credential. Reasoning:
 xref:../concepts/authentication-and-identity.adoc[Authentication and Identity]. The library contract for the
@@ -12,8 +12,8 @@ signature, the trailers and the step-up check is in xref:../../specification/git
 xref:../../specification/git-store.adoc#GDR-STORE-13[GDR-STORE-13] and
 xref:../../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7].
 
-[#CIFR-AUTH-1]
-== CIFR-AUTH-1: Web Login
+[#TRH-AUTH-1]
+== TRH-AUTH-1: Web Login
 
 * The web login must use the authorization code flow with PKCE `S256` as a confidential client through Token Sheriff.
 * No access, refresh or ID token may be sent to the browser.
@@ -21,7 +21,7 @@ xref:../../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7].
   both `HttpOnly` and `Secure`; the session must end after a configurable idle time (default 30 minutes) and absolute
   lifetime (default 8 hours).
 * The `return` address of the login must be accepted only as a same-origin relative path that matches a canonical
-  address (xref:web-app.adoc#CIFR-WEB-3[CIFR-WEB-3]); any other value must be replaced by `/`.
+  address (xref:web-app.adoc#TRH-WEB-3[TRH-WEB-3]); any other value must be replaced by `/`.
 * Logout must be RP-initiated and revoke the held tokens.
 
 [cols="1,3"]
@@ -39,16 +39,16 @@ xref:../../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7].
 
 |`return`
 |Starts with a single `/` (not `//`, no `\`, no scheme, no authority) and matches one of the canonical addresses of
-xref:web-app.adoc#CIFR-WEB-3[Web App, Navigation]; kept in the server-side login transaction, not in the browser
+xref:web-app.adoc#TRH-WEB-3[Web App, Navigation]; kept in the server-side login transaction, not in the browser
 
 |Transaction cookie
-|`__Host-cisos-friend-login`; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=600`; carries only an opaque
+|`__Host-trailhand-login`; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=600`; carries only an opaque
 reference to the server-side login transaction (`state`, `nonce`, PKCE verifier); deleted by the callback. `Lax`,
 because the browser does not send a `SameSite=Strict` cookie on the cross-site redirect back from the identity
 provider
 
 |Session cookie
-|`__Host-cisos-friend-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
+|`__Host-trailhand-session`; `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; set by the callback
 
 |Callback response
 |A small same-origin page that navigates to the checked `return`, not a `302`: a `302` continues the navigation that
@@ -70,8 +70,8 @@ carries the session cookie.
 |Response body names the login address; the web app follows it with the current canonical address as `return`
 |===
 
-[#CIFR-AUTH-2]
-== CIFR-AUTH-2: Rights
+[#TRH-AUTH-2]
+== TRH-AUTH-2: Rights
 
 * Rights must be derived from identity-provider groups through a configured mapping to repositories and the actions
   *read*, *edit*, *approve* and *administer catalogs*.
@@ -79,7 +79,7 @@ carries the session cookie.
 * No right may be derived from a directory role.
 
 Input: the `groups` claim (or the claim configured as group source) of the session or bearer token. Mapping:
-`cisos-friend.yaml` → `rights`.
+`trailhand.yaml` → `rights`.
 
 [cols="1,3"]
 |===
@@ -92,7 +92,7 @@ Input: the `groups` claim (or the claim configured as group source) of the sessi
 |Drafts, saves and transitions that are no release
 
 |`approve`
-|Releases, with step-up (<<CIFR-AUTH-4>>)
+|Releases, with step-up (<<TRH-AUTH-4>>)
 
 |`administer-catalogs`
 |Changes of the catalogs; erasure of persons; deletion of expired repositories
@@ -101,8 +101,8 @@ Input: the `groups` claim (or the claim configured as group source) of the sessi
 A request is permitted only if one of the user's groups maps the action on the target repository. No other source
 (directory role, token scope alone) grants a right.
 
-[#CIFR-AUTH-3]
-== CIFR-AUTH-3: Signed Commits and Identity Trailers
+[#TRH-AUTH-3]
+== TRH-AUTH-3: Signed Commits and Identity Trailers
 
 * Every commit must be signed by the application; there must be no unsigned commit and no other kind of signature.
 * Every commit of a user's save or release, an erasure included, must carry that user's pseudonym, never the `sub`,
@@ -126,8 +126,8 @@ A request is permitted only if one of the user's groups maps the action on the t
 |`acr` and `amr`, in the library's format
 |===
 
-[#CIFR-AUTH-4]
-== CIFR-AUTH-4: Step-Up
+[#TRH-AUTH-4]
+== TRH-AUTH-4: Step-Up
 
 * A transition must require step-up exactly when the workflow of its category declares it
   (xref:../../specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7]); the workflows of the shipped categories keep the
@@ -143,9 +143,9 @@ A request is permitted only if one of the user's groups maps the action on the t
   user completes it in the web app.
 
 Configuration: which transitions require step-up comes from the category's `workflow.yaml`
-(xref:architecture-and-modules.adoc#CIFR-GEN-1[CIFR-GEN-1]); what counts as MFA and its age is `cisos-friend.yaml` →
+(xref:architecture-and-modules.adoc#TRH-GEN-1[TRH-GEN-1]); what counts as MFA and its age is `trailhand.yaml` →
 `step-up` (`acr`, `amr`, `max-age`, default `PT5M`), one setting for all categories
-(xref:configuration.adoc#_cisos_friend_yaml[Configuration]).
+(xref:configuration.adoc#_trailhand_yaml[Configuration]).
 
 . The request of a transition that requires step-up checks the session's `acr` or `amr` and its `auth_time`.
 . Not met: the service result is `STEP_UP_REQUIRED`; nothing is written.
@@ -156,10 +156,10 @@ Configuration: which transitions require step-up comes from the category's `work
 
 The MCP server offers no tool that completes a release: an agent can only request one with `request_release`, which
 returns `RELEASE_REQUESTED`, and a user completes the release in the web app with step-up
-(xref:mcp-server.adoc#CIFR-MCP-6[MCP Server, CIFR-MCP-6]).
+(xref:mcp-server.adoc#TRH-MCP-6[MCP Server, TRH-MCP-6]).
 
-[#CIFR-AUTH-5]
-== CIFR-AUTH-5: Git Credential
+[#TRH-AUTH-5]
+== TRH-AUTH-5: Git Credential
 
 * The application must reach every Git server only as the technical user configured per repository.
 * The application must merge every release itself and push it as the technical user.

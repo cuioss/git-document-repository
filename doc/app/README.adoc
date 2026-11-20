@@ -1,13 +1,13 @@
-= CISOs-Friend -- Documentation Index
+= Trailhand -- Documentation Index
 :toc: left
 :toclevels: 3
 :toc-title: Table of Contents
 :sectnums:
 :source-highlighter: highlight.js
 
-CISOs-Friend is the server application in which a development organisation maintains its OWASP SAMM assessments,
-threat models, incident response reports and ISMS documents as versioned documents, on the Git server it already runs.
-It is built on the libraries of `git-document-repository` and the Token Sheriff libraries, runs as a Quarkus
+*Trailhand* -- the CISO's friend -- is the server application in which a development organisation maintains its
+OWASP SAMM assessments, threat models, incident response reports and ISMS documents as versioned documents, on the Git
+server it already runs. It is built on the libraries of `git-document-repository` and the Token Sheriff libraries, runs as a Quarkus
 native application on Java 25, and has two user interfaces: a web app for people and an MCP server for AI agents
 acting for a user.
 
@@ -19,7 +19,7 @@ self-contained: its diagrams are in `resources/diagrams/`, its decisions in `adr
 documentation only to the library concepts and requirements.
 ====
 
-New readers start with the xref:concepts/cisos-friend-overview.adoc[Overview]; operators with
+New readers start with the xref:concepts/trailhand-overview.adoc[Overview]; operators with
 xref:concepts/deployment.adoc[Deployment] and xref:specification/configuration.adoc[Configuration].
 
 [#_concepts]
@@ -27,7 +27,7 @@ xref:concepts/deployment.adoc[Deployment] and xref:specification/configuration.a
 
 In reading order:
 
-. xref:concepts/cisos-friend-overview.adoc[Overview] -- question, categories, audience, interfaces, positioning
+. xref:concepts/trailhand-overview.adoc[Overview] -- question, categories, audience, interfaces, positioning
 . xref:concepts/category-samm.adoc[OWASP SAMM Assessments] -- layout, workshop editing, release, scores, targets
 . xref:concepts/category-threat-models.adoc[Threat Models] -- tool landscape, place of a model, life cycle
 . xref:concepts/category-incident-reports.adoc[Incident Response Reports] -- handling versus report, notification
@@ -54,7 +54,7 @@ xref:../concepts/git-as-document-persistence.adoc[Git as the Persistence of Vers
 [#_specification]
 == Specification
 
-Each specification document states its requirements as numbered sections (`CIFR-<GROUP>-<n>`): first the rules that
+Each specification document states its requirements as numbered sections (`TRH-<GROUP>-<n>`): first the rules that
 must hold, then the design that realises them. The application is not built yet: the concepts and specifications
 describe its planned design, including every check and CI job they name.
 
@@ -63,55 +63,55 @@ describe its planned design, including every check and CI job they name.
 |Document |Group |Content
 
 |xref:specification/architecture-and-modules.adoc[Architecture and Modules]
-|`CIFR-GEN`
+|`TRH-GEN`
 |What the libraries own, Maven modules, categories, layers, run-time state, logging, an unreachable Git server
 
 |xref:specification/configuration.adoc[Configuration]
-|`CIFR-CONF`
-|`application.properties`, `cisos-friend.yaml`, boot validation, repositories and refresh
+|`TRH-CONF`
+|`application.properties`, `trailhand.yaml`, boot validation, repositories and refresh
 
 |xref:specification/deployment.adoc[Deployment]
-|`CIFR-OPS`
+|`TRH-OPS`
 |Image, ports and readiness, secrets, compose sample
 
 |xref:specification/authentication.adoc[Authentication]
-|`CIFR-AUTH`
+|`TRH-AUTH`
 |Web login, rights, signed commits and trailers, step-up, the Git credential
 
 |xref:specification/directory.adoc[Directory and Catalogs]
-|`CIFR-DIR`
+|`TRH-DIR`
 |Person directory, first login, catalogs, service catalog, Backstage import, former members
 
 |xref:specification/mcp-server.adoc[MCP Server]
-|`CIFR-MCP`
+|`TRH-MCP`
 |Transport, metadata, token validation, scopes, credentials, tools, audit
 
 |xref:specification/web-app.adoc[Web App]
-|`CIFR-WEB`
+|`TRH-WEB`
 |Stack, visual language, navigation, forms, editing, review, texts, page security
 
 |xref:specification/category-samm.adoc[SAMM]
-|`CIFR-SAMM`
+|`TRH-SAMM`
 |Layout, scope, editing, release, scores and comparison, targets, evidence
 
 |xref:specification/category-threat-models.adoc[Threat Models]
-|`CIFR-TM`
+|`TRH-TM`
 |Place, format, review due date, links, recipes
 
 |xref:specification/category-incident-reports.adoc[Incident Reports]
-|`CIFR-IR`
+|`TRH-IR`
 |Layout, deadlines, mandatory fields, affected services
 
 |xref:specification/category-isms.adoc[ISMS]
-|`CIFR-ISMS`
+|`TRH-ISMS`
 |Documents, risk register, reporting dates, operational data
 
 |xref:specification/data-protection.adoc[Data Protection]
-|`CIFR-DP`
+|`TRH-DP`
 |Repository cut, references, erasure, retention, personal details, read-access events
 
 |xref:specification/testing.adoc[Testing]
-|`CIFR-NFR`
+|`TRH-NFR`
 |Test lanes, index size, save latency, concurrency, security tests, native image
 |===
 

@@ -4,8 +4,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 572"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
-  <title id="title">CISOs-Friend production deployment and the systems it relies on</title>
-  <desc id="desc">Production deployment. The organisation enclosure is the trust boundary: outside it sit two unauthenticated callers, a browser running the web app with a session cookie and an AI agent as MCP client with a bearer token; inside it every request is authenticated. Both callers reach the CISOs-Friend container over HTTPS on port 8443, and both edges cross the trust boundary. The container is first-party: a Quarkus native image in a distroless image running as nonroot; it serves the static web app, the REST API with its event stream, the MCP endpoint as OAuth 2.1 resource, the application services, Token Sheriff as OIDC client and token validation, the git-document-repository libraries and JGit; management runs over HTTP on port 9000. Mounted into it are the persistent volume for the repositories, the configuration directory and the secrets. The container talks over HTTPS to the systems the organisation already runs: the identity provider, the Git server for fetch and push, and the KMS or Vault for the commit-signing key and the anchor key of the signed anchor provider. Only with the rfc3161 anchor provider does it also call a timestamp authority (dashed: optional). Security and read-access events reach the SIEM as log records through the operator's log pipeline.</desc>
+  <title id="title">Trailhand production deployment and the systems it relies on</title>
+  <desc id="desc">Production deployment. The organisation enclosure is the trust boundary: outside it sit two unauthenticated callers, a browser running the web app with a session cookie and an AI agent as MCP client with a bearer token; inside it every request is authenticated. Both callers reach the Trailhand container over HTTPS on port 8443, and both edges cross the trust boundary. The container is first-party: a Quarkus native image in a distroless image running as nonroot; it serves the static web app, the REST API with its event stream, the MCP endpoint as OAuth 2.1 resource, the application services, Token Sheriff as OIDC client and token validation, the git-document-repository libraries and JGit; management runs over HTTP on port 9000. Mounted into it are the persistent volume for the repositories, the configuration directory and the secrets. The container talks over HTTPS to the systems the organisation already runs: the identity provider, the Git server for fetch and push, and the KMS or Vault for the commit-signing key and the anchor key of the signed anchor provider. Only with the rfc3161 anchor provider does it also call a timestamp authority (dashed: optional). Security and read-access events reach the SIEM as log records through the operator's log pipeline.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
@@ -48,10 +48,10 @@
   <text x="292" y="64" class="encl">organisation</text>
   <text x="292" y="80" class="encl-sub">the application and the systems it relies on</text>
 
-  <!-- CISOs-Friend container (depth 2, first-party) -->
+  <!-- Trailhand container (depth 2, first-party) -->
   <rect class="stroke" x="304" y="112" width="360" height="380" rx="4"/>
   <line class="own-bar" x1="304" y1="120" x2="304" y2="484"/>
-  <text x="316" y="136" class="encl">cisos-friend container</text>
+  <text x="316" y="136" class="encl">trailhand container</text>
   <text x="316" y="152" class="encl-sub">Quarkus native image, distroless, nonroot</text>
   <text x="328" y="192" class="item">web app (static SPA)</text>
   <text x="328" y="220" class="item">/api/v1 + event stream</text>

@@ -1,16 +1,16 @@
-= CISOs-Friend: Category SAMM
+= Trailhand: Category SAMM
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The SAMM category as configuration (`categories/samm/`) plus the `ScoreCalculator` extension point. Reasoning:
 xref:../concepts/category-samm.adoc[SAMM]. Repository: `samm-assessments`.
 
-[#CIFR-SAMM-1]
-== CIFR-SAMM-1: Assessment Layout
+[#TRH-SAMM-1]
+== TRH-SAMM-1: Assessment Layout
 
 * Scopes and assessments must be per-document kinds in the library's layout
   (xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]): a scope at `scopes/<ulid>/document.yaml`, an
@@ -47,22 +47,22 @@ The `<ulid>` of an assessment names its directory, the working branch `refs/head
 `assessments/<ulid>/v1` and the link target `samm-assessments:assessment/<ulid>`; a practice is referenced as
 `samm-assessments:assessment/<ulid>#<practice-id>`. A readable label such as `team-a 2026 Q4` is the `title`.
 
-[#CIFR-SAMM-2]
-== CIFR-SAMM-2: Scope
+[#TRH-SAMM-2]
+== TRH-SAMM-2: Scope
 
 * A scope's `subject` must be exactly one of a `team:<id>` or `service:<id>` catalog reference or the value
   `organisation`; the organisation has no catalog entry.
 * A save whose `subject` catalog reference does not resolve in the directory, or whose assessment `scope` reference
   does not resolve, must be rejected with a validation error naming the reference.
 
-[#CIFR-SAMM-3]
-== CIFR-SAMM-3: Joint Editing
+[#TRH-SAMM-3]
+== TRH-SAMM-3: Joint Editing
 
 * Saves by different users to different practices of one assessment must all succeed without a conflict.
 * Concurrent saves to the same practice must yield a conflict for the later save that shows the differing questions
   with both values; the later user's draft must be kept.
 * Every save must be visible to the other editors of the assessment within 5 seconds
-  (xref:web-app.adoc#CIFR-WEB-5[CIFR-WEB-5]).
+  (xref:web-app.adoc#TRH-WEB-5[TRH-WEB-5]).
 
 Every save applies the draft's changes onto the tip of `refs/heads/assessments/<ulid>` as one commit (squash
 merge in core). Conflicts are detected per practice file by blob id; the draft stays unchanged. A generated
@@ -73,8 +73,8 @@ it.
 Transition `samm.submit`: `draft` → `in-review`, by a user with `edit`; it validates `required` of the schema. Saves
 stay possible in `in-review`.
 
-[#CIFR-SAMM-4]
-== CIFR-SAMM-4: Release
+[#TRH-SAMM-4]
+== TRH-SAMM-4: Release
 
 * Release must produce the tag `assessments/<ulid>/v1` on the released state and require step-up; an assessment is
   released once.
@@ -84,8 +84,8 @@ Transition `samm.release`: `in-review` → `released`, by a user with `approve`.
 tags `assessments/<ulid>/v1` and sets `state: released`; the release commit is signed and names the
 releasing user in its trailers. Saves to a released assessment return `DOCUMENT_RELEASED`.
 
-[#CIFR-SAMM-5]
-== CIFR-SAMM-5: Scores and Comparison
+[#TRH-SAMM-5]
+== TRH-SAMM-5: Scores and Comparison
 
 * Scores must be computed as the OWASP SAMM toolbox of the assessment's model version computes them: answer values
   from the model's answer sets, a stream score as the sum of its answers, a practice score as the average of its
@@ -111,8 +111,8 @@ _Interview_ and _Scorecard_, which compute the same values without rounding).
 stream: score `from`, score `to`, difference. Two assessments of different model versions are refused with
 `MODEL_VERSIONS_DIFFER`.
 
-[#CIFR-SAMM-6]
-== CIFR-SAMM-6: Targets and Gaps
+[#TRH-SAMM-6]
+== TRH-SAMM-6: Targets and Gaps
 
 * A scope must hold target maturity per practice in `targets.yaml`.
 * For a released assessment the application must list every practice whose score is below its target, and must offer
@@ -121,7 +121,7 @@ stream: score `from`, score `to`, difference. Two assessments of different model
 The scope view shows the gaps of the latest released assessment by default. "Create risk" opens a new draft in
 `isms-register` with a reference `samm-assessments:assessment/<ulid>#<practice-id>`.
 
-[#CIFR-SAMM-7]
-== CIFR-SAMM-7: Evidence as Links
+[#TRH-SAMM-7]
+== TRH-SAMM-7: Evidence as Links
 
 * Evidence must be stored as absolute HTTPS URLs with a title; file upload of evidence must not be offered.

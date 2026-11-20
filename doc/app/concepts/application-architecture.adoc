@@ -5,12 +5,12 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 An application that stores its data in the organisation's Git server owns no database: it has no schema migration, no
 database backup and no connection pool to tune, and the Git server's backup covers every saved state. Only the drafts
 are covered by the backup of the volume, which therefore needs one of its own. The consequence is that everything the
-application knows at run time is either derived from Git or lost on restart. The architecture of CISOs-Friend keeps
+application knows at run time is either derived from Git or lost on restart. The architecture of Trailhand keeps
 the first property and limits the second. Its build, runtime and test structure follow API Sheriff, so a contributor
 who knows one knows the other.
 
@@ -95,7 +95,7 @@ Every further dependency is a decision of the owner.
 == Configuration
 
 Following API Sheriff, `application.properties` carries only Quarkus and runtime settings (ports, management
-interface, logging). The policy of the application lives in its own YAML, `cisos-friend.yaml`, validated against a
+interface, logging). The policy of the application lives in its own YAML, `trailhand.yaml`, validated against a
 bundled JSON Schema:
 
 * the repositories with alias, remote, confidentiality, retention period and credential reference;
@@ -116,11 +116,11 @@ offline (`--validate-config <dir>`).
 Everything the application holds in memory is either derived from Git or deliberately volatile: the in-memory index,
 the person directory and the reminders are rebuilt from Git at start, the drafts survive only on the persistent
 volume, and the sessions of the web app are lost, so the user logs in again
-(xref:../specification/architecture-and-modules.adoc#CIFR-GEN-3[CIFR-GEN-3]).
+(xref:../specification/architecture-and-modules.adoc#TRH-GEN-3[TRH-GEN-3]).
 
 The index is refreshed after every save and by a periodic fetch. Even hundreds of SAMM assessments with about ninety
 answers each are estimated at a few megabytes, which
-xref:../specification/testing.adoc#CIFR-NFR-1[CIFR-NFR-1] measures; the index needs no database.
+xref:../specification/testing.adoc#TRH-NFR-1[TRH-NFR-1] measures; the index needs no database.
 
 == One Instance
 

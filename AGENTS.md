@@ -14,7 +14,7 @@ together with their design.
 Read the concepts before changing the architecture. Every statement about an external product, standard or law cites
 the source it was checked against; do not add unverified statements.
 
-`doc/app/` documents the application built on these libraries, CISOs-Friend (prefix `CIFR`). It moves to its own
+`doc/app/` documents the application built on these libraries, Trailhand (prefix `TRH`). It moves to its own
 repository later: keep it self-contained, and link from it into the library documentation only to concepts and
 specifications, never the other way round except from the index.
 

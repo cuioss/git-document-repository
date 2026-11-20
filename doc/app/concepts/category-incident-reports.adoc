@@ -5,7 +5,7 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 Where incident response reports are written as Confluence pages, the 72-hour notification deadline is kept outside the
 report, the template's mandatory fields are not enforced, and the question "how often did this root cause recur" is
@@ -18,7 +18,7 @@ answered by reading free text. This category replaces the report, not the handli
 * *The report on the incident* (course, cause, impact, lessons, measures, notification duties) is a document with
   structure, review and approval, the kind of document the schema-driven approach on Git is made for.
 
-Only the report moves into CISOs-Friend. Handling the live phase there would not work: Git is no real-time medium, and
+Only the report moves into Trailhand. Handling the live phase there would not work: Git is no real-time medium, and
 a commit per chat message would bury the report. The application connects to none of the systems of the live phase:
 the report refers to tickets and to measures (issues) by the ids the user or an agent enters.
 
@@ -91,7 +91,7 @@ incidents/<ulid>/
 ----
 
 A CI check fails when the committed `report.adoc` differs from a fresh generation
-(xref:../specification/category-incident-reports.adoc#CIFR-IR-1[CIFR-IR-1]); PDF for authorities or customers is
+(xref:../specification/category-incident-reports.adoc#TRH-IR-1[TRH-IR-1]); PDF for authorities or customers is
 generated from it as well. This category supplies the schema, the template and the workflow.
 
 Personal details in the narrative (a named employee who clicked a link) do not go into the report. The narrative names

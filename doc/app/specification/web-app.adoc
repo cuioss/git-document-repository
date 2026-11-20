@@ -1,10 +1,10 @@
-= CISOs-Friend: Web App
+= Trailhand: Web App
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The browser interface. Reasoning: xref:../concepts/web-app.adoc[Web App]. Reference implementation for structure and
 visuals: link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/pm-web-app[`pm-web-app`]; design rules:
@@ -12,8 +12,8 @@ link:https://github.com/plan-marshall/pm-mcp-clients/tree/main/doc/design/web-ap
 repository. `pm-web-app` has no release; the adopted state is pinned by the commit id of `pm-mcp-clients` recorded in
 the header of `src/styles/tokens.css`, and a change of the token contract is taken over deliberately.
 
-[#CIFR-WEB-1]
-== CIFR-WEB-1: Single-Page Application Served Same-Origin
+[#TRH-WEB-1]
+== TRH-WEB-1: Single-Page Application Served Same-Origin
 
 * The web app must be a Svelte single-page application served by the application on its own origin.
 * The built app must load no resource from a third-party origin.
@@ -43,8 +43,8 @@ the header of `src/styles/tokens.css`, and a change of the token contract is tak
 |Vite dev server proxies `/api` to a running application
 |===
 
-[#CIFR-WEB-2]
-== CIFR-WEB-2: Visual Language and Accessibility
+[#TRH-WEB-2]
+== TRH-WEB-2: Visual Language and Accessibility
 
 * The app must use the design-token contract of `pm-web-app` with a light and a dark theme; no raw colour literal may
   appear in a view or a component (stylelint).
@@ -62,8 +62,8 @@ Tokens, fonts and checks:
   (link:https://www.w3.org/TR/WCAG21/#contrast-minimum[WCAG 2.1, 1.4.3 Contrast (Minimum)]). axe-core runs in
   `web-e2e` on every view.
 
-[#CIFR-WEB-3]
-== CIFR-WEB-3: Navigation
+[#TRH-WEB-3]
+== TRH-WEB-3: Navigation
 
 * The app must offer the lenses Due, SAMM, Threat models, Incidents, ISMS, Catalogs, Reports and Settings.
 * Every object kind must have exactly one canonical address; reloading an address must restore the same view.
@@ -73,8 +73,8 @@ Canonical addresses: `/` (Due), `/samm/<scope>/<assessment>/<practice>`, `/threa
 `/reports/<report>`, `/settings/<section>`, `/welcome` (first login) and `/<lens path>/release`. `src/lib/routes.ts`
 holds `parseAddress` and `formatAddress`; route files are stubs rendering `AppRouter`.
 
-[#CIFR-WEB-4]
-== CIFR-WEB-4: Generated Forms
+[#TRH-WEB-4]
+== TRH-WEB-4: Generated Forms
 
 * Every document must be edited in a form generated from its category's JSON Schema; no category may have a
   hand-written view.
@@ -92,7 +92,7 @@ holds `parseAddress` and `formatAddress`; route files are stubs rendering `AppRo
 |`enum` |`Select`
 |`boolean` |`Toggle`
 |`array` of objects |`DataTable` with row editor
-|`x-catalog: <catalog>` (catalog reference, xref:data-protection.adoc#CIFR-DP-2[CIFR-DP-2]) |`CatalogPicker` over
+|`x-catalog: <catalog>` (catalog reference, xref:data-protection.adoc#TRH-DP-2[TRH-DP-2]) |`CatalogPicker` over
 that catalog
 |`x-asciidoc: true` |`AsciiDocField` with server-rendered preview
 |`x-person: true` |`PersonPicker` over the person directory; stores the pseudonym
@@ -102,8 +102,8 @@ that catalog
 Validation: the same schema runs in the browser (Ajv) and in the server; the server's field errors replace the
 browser's on save.
 
-[#CIFR-WEB-5]
-== CIFR-WEB-5: Drafts, Saving and Conflicts
+[#TRH-WEB-5]
+== TRH-WEB-5: Drafts, Saving and Conflicts
 
 * A form must save a draft no later than 5 seconds after the last change.
 * A conflict must be shown with the fields that differ, each with the own and the other value; the draft must be kept.
@@ -118,8 +118,8 @@ Requests:
 * Event stream: `GET /api/v1/events` (`text/event-stream`); event `document-saved` with repository, id, fields; the
   open form refreshes the fields not edited locally.
 
-[#CIFR-WEB-6]
-== CIFR-WEB-6: Review and Release
+[#TRH-WEB-6]
+== TRH-WEB-6: Review and Release
 
 * Release must show the diff of the structured data against the last released state.
 * Every control whose transition requires step-up, under the shipped workflows the release control, must say so and
@@ -131,11 +131,11 @@ Requests:
   view groups it by schema section.
 * Release: `POST /api/v1/releases/{repository}/{id}`; the outcomes are those of the release in
   xref:architecture-and-modules.adoc#operation-outcomes[Architecture and Modules, Operation Outcomes];
-  `STEP_UP_REQUIRED` carries the step-up address (xref:authentication.adoc#CIFR-AUTH-4[Authentication, CIFR-AUTH-4]).
+  `STEP_UP_REQUIRED` carries the step-up address (xref:authentication.adoc#TRH-AUTH-4[Authentication, TRH-AUTH-4]).
   When the release requires step-up, the button reads "Release (confirm with MFA)".
 
-[#CIFR-WEB-7]
-== CIFR-WEB-7: Texts
+[#TRH-WEB-7]
+== TRH-WEB-7: Texts
 
 * All user-facing text must come from the server's message catalogue in English and German.
 
@@ -145,8 +145,8 @@ missing `lang` returns English; any other value is answered with `400`. `src/lib
 application version. A lint rule
 fails on string literals in markup outside `src/lib/i18n`.
 
-[#CIFR-WEB-8]
-== CIFR-WEB-8: Page Security
+[#TRH-WEB-8]
+== TRH-WEB-8: Page Security
 
 * The app must be served with a Content Security Policy that allows no `unsafe-inline` script.
 * Every state-changing request must carry the anti-CSRF header; the server must refuse one without it.

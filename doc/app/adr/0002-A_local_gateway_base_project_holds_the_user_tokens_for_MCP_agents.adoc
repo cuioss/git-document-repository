@@ -8,18 +8,20 @@
 // adr-metadata
 // summary: Proposed: a separate, reusable Quarkus native base project runs the OAuth login on the user's machine, keeps the refresh token in a vault whose key is held by the operating system, and exposes tools to agents over STDIO; descendants only declare connection and tools. The application's MCP server stays a remote resource server and gains no STDIO transport.
 // tags: mcp, authentication, token-sheriff, gateway, vault
-// affects: cisos-friend, mcp-server
+// affects: trailhand, mcp-server
 // supersedes:
 // end-adr-metadata
 
 == Status
 
-Proposed. Not accepted until the questions of the stage-1 spike are answered
-(xref:../concepts/local-mcp-gateway.adoc#_stages[Local MCP Gateway, Stages]).
+Proposed. The owner approved the staged plan on 2026-11-20
+(xref:../concepts/local-mcp-gateway.adoc#_stages[Local MCP Gateway, Stages]), which starts with a spike. The decision is
+confirmed, and the status changed to Accepted, when the spike has answered its questions; until then it is a plan, not
+a commitment to build the base.
 
 == Decision
 
-The application's MCP server stays what ADR-0001 and `CIFR-MCP-1` say: a remote OAuth 2.1 resource server over
+The application's MCP server stays what ADR-0001 and `TRH-MCP-1` say: a remote OAuth 2.1 resource server over
 Streamable HTTP, without STDIO. What an agent on a user's machine needs to call it, a login and a held refresh token,
 is delegated to a *local gateway*:
 

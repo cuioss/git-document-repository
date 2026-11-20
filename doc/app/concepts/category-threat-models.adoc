@@ -5,10 +5,10 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 A threat model written once in a workshop and not maintained falls behind the architecture it describes, and without a
-review date nothing shows that it has. Threat models are the second category of CISOs-Friend, and its
+review date nothing shows that it has. Threat models are the second category of Trailhand, and its
 contribution is not the diagram but the life cycle: recipes that guide the filling in, by people or by an AI agent
 through the xref:mcp-server.adoc[MCP server], and a review that falls due when the service's protection needs say so.
 

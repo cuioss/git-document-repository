@@ -5,9 +5,9 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
-Status: *proposal* (xref:../adr/0002-A_local_gateway_base_project_holds_the_user_tokens_for_MCP_agents.adoc[ADR-0002],
+Status: *proposal; the staged plan is approved* (2026-11-20), the build decision follows the spike (xref:../adr/0002-A_local_gateway_base_project_holds_the_user_tokens_for_MCP_agents.adoc[ADR-0002],
 proposed). The MCP server of the application is a remote OAuth 2.1 resource server
 (xref:mcp-server.adoc[MCP Server]). This page is about the other end: who logs the user in, on the user's own machine,
 and keeps the credential, so that an AI agent can call that server, or any other service of the organisation, as the
@@ -15,7 +15,7 @@ user. The idea is a reusable *base project*, a small Quarkus native application 
 *descendant projects* that only say which tools exist and which routes they call.
 
 The gateway is not part of this application and not part of the `git-document-repository` libraries. It is described
-here because CISOs-Friend is its first consumer and because its design answers an open question of the MCP server
+here because Trailhand is its first consumer and because its design answers an open question of the MCP server
 concept. It is meant to move into a repository of its own, like `doc/app/`.
 
 == The Question
@@ -98,7 +98,7 @@ exhaustive.
 
 == An Honest Look at the Need
 
-For CISOs-Friend alone, a gateway is *not necessary*. Claude Code already logs in to a remote MCP server, can be
+For Trailhand alone, a gateway is *not necessary*. Claude Code already logs in to a remote MCP server, can be
 given a pre-registered client and a fixed callback port, and refreshes its own tokens; other clients with OAuth
 support do the same. The server needs nothing from a gateway.
 
@@ -156,7 +156,7 @@ The same vault serves three ways of use, from the least to the most the gateway 
   fits the `headersHelper` of clients that support one, and is the Git Credential Manager pattern: the client keeps its
   own MCP transport and OAuth stays out of it.
 . *Bridge.* A STDIO MCP server that forwards every JSON-RPC message of the client to the remote Streamable HTTP endpoint
-  with a fresh bearer. The tools live on the server. This is what CISOs-Friend needs.
+  with a fresh bearer. The tools live on the server. This is what Trailhand needs.
 . *Mapped.* The gateway is the MCP server: it lists tools that the descendant declared and turns each call into one
   request to a REST route (<<_the_mapping>>). For services with an API and no MCP endpoint.
 
@@ -246,12 +246,12 @@ A gateway that can call the server as the user is worth stealing from. The hones
 === What Changes for the Server
 
 Nothing in the server's requirements: it validates the same audience-bound token and applies the same rights
-(xref:../specification/mcp-server.adoc#CIFR-MCP-3[CIFR-MCP-3]). Two consequences follow for the documents, and they are
+(xref:../specification/mcp-server.adoc#TRH-MCP-3[TRH-MCP-3]). Two consequences follow for the documents, and they are
 visible in the changes that accompany this page:
 
 * The sentence "a local process could not prove a user" of the MCP server concept is true of a process that presents no
   credential. A gateway process proves the user by holding the user's refresh token, obtained by a login.
-  `CIFR-MCP-1` (no STDIO transport on the *server*) is unchanged: STDIO is the gateway's.
+  `TRH-MCP-1` (no STDIO transport on the *server*) is unchanged: STDIO is the gateway's.
 * *Attribution of the client.* The server records `azp` or `client_id` in the audit log to tell which agent acted
   (xref:mcp-server.adoc#_attribution_of_agent_actions[MCP Server, Attribution]). Behind a gateway every agent on every
   machine presents the gateway's client id. The audit log then shows "the gateway", not the agent. Whether the gateway
@@ -338,7 +338,7 @@ for what remains (<<_an_honest_look_at_the_need>>).
 from the rest of the family and give no route mapping. Worth testing as the reference the gateway must beat.
 
 |*A server-side gateway of the organisation*
-|Holds all users' upstream tokens centrally, which is a larger target and a service to run. The design of CISOs-Friend
+|Holds all users' upstream tokens centrally, which is a larger target and a service to run. The design of Trailhand
 avoids an additional component to operate; a local gateway keeps each user's token with the user.
 
 |*A credential helper only*
@@ -351,7 +351,7 @@ avoids an additional component to operate; a local gateway keeps each user's tok
 . *Spike*: Quarkus native STDIO server on the three platforms; dynamic tool registration; FFM access to the OS store on
   macOS; a loopback login against Keycloak with a hand-written public client. Throw it away; keep the findings.
 . *Token Sheriff*: the public-client method and the loopback rule, in Token Sheriff and with its tests.
-. *Base, credential helper and bridge*: login, vault, `gateway token`, the bridge. Descendant: CISOs-Friend, as a
+. *Base, credential helper and bridge*: login, vault, `gateway token`, the bridge. Descendant: Trailhand, as a
   configuration only. The test of the base is that this descendant needs no code.
 . *Mapped mode*, when a service without MCP is real.
 

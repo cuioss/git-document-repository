@@ -14,7 +14,7 @@ law has to cite the source it was checked against; a statement without one is a 
 
 [NOTE]
 ====
-`doc/app/` documents xref:app/README.adoc[CISOs-Friend], the application built on these libraries. It moves to its own
+`doc/app/` documents xref:app/README.adoc[Trailhand], the application built on these libraries. It moves to its own
 repository later and is not part of the library documentation.
 ====
 

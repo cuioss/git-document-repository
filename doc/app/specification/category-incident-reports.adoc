@@ -1,17 +1,17 @@
-= CISOs-Friend: Category Incident Reports
+= Trailhand: Category Incident Reports
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The incident-report category as configuration (`categories/incident-reports/`). Reasoning:
 xref:../concepts/category-incident-reports.adoc[Incident Reports]. Repository: `isms-incidents-<year>` of the year of
 awareness.
 
-[#CIFR-IR-1]
-== CIFR-IR-1: Report Layout and Generated Output
+[#TRH-IR-1]
+== TRH-IR-1: Report Layout and Generated Output
 
 * An incident report must be stored in the library's layout of a per-document kind
   (xref:../../specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]): `incidents/<ulid>/document.yaml`,
@@ -40,10 +40,10 @@ The `<ulid>` of an incident names its directory, the working branch `refs/heads/
 and the link target; a readable label is the `title`. Times: `occurred-at` when the incident began, if known
 (optional); `detected-at` when it was detected; `aware-at` when
 the organisation became aware of it, the start of the GDPR and NIS2 deadlines (GDPR Art. 33(1), NIS2 Art. 23(4);
-sources in <<CIFR-IR-2>>).
+sources in <<TRH-IR-2>>).
 
-[#CIFR-IR-2]
-== CIFR-IR-2: Notification Deadlines
+[#TRH-IR-2]
+== TRH-IR-2: Notification Deadlines
 
 * When personal data are affected, the application must compute a GDPR Art. 33 notification due time of awareness
   plus 72 hours (link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679], Art. 33(1)).
@@ -102,8 +102,8 @@ Art. 23(4); how they read and where a transposition or a trust service provider 
 xref:../concepts/category-incident-reports.adoc#_the_deadline_clock[Incident Reports, The Deadline Clock]. Other
 periods are a change of the category's `workflow.yaml`, not of code.
 
-[#CIFR-IR-3]
-== CIFR-IR-3: Mandatory Fields
+[#TRH-IR-3]
+== TRH-IR-3: Mandatory Fields
 
 * Saving must be possible with mandatory fields missing; the transitions into review and into release must be
   rejected while any mandatory field of the schema is missing, with a list of the missing fields.
@@ -113,9 +113,9 @@ States: `draft` → `in-review` → `released`; `incident.release` requires step
 (xref:../../specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]); a failure returns `MANDATORY_FIELDS_MISSING` with
 the JSON Pointers of the missing fields.
 
-[#CIFR-IR-4]
-== CIFR-IR-4: Affected Services
+[#TRH-IR-4]
+== TRH-IR-4: Affected Services
 
 * Affected services must be picked from the service catalog.
 * The application must derive the protection needs of the incident per dimension as the maximum over the effective
-  protection needs of the affected services (xref:directory.adoc#CIFR-DIR-5[CIFR-DIR-5]).
+  protection needs of the affected services (xref:directory.adoc#TRH-DIR-5[TRH-DIR-5]).

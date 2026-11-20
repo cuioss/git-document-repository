@@ -5,12 +5,12 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 The web app is where a security officer releases an assessment and where a team spends a two-hour SAMM workshop. The
 first needs to see exactly what is being approved; the second needs a form that keeps up with the discussion. The
 cuioss project already has an interface vocabulary for such pages: the `pm-web-app` of `pm-mcp-clients`.
-CISOs-Friend takes its visuals and its technical UI structure from there and changes only what the domain and the
+Trailhand takes its visuals and its technical UI structure from there and changes only what the domain and the
 authentication demand.
 
 == What Is Taken Over
@@ -54,7 +54,7 @@ CORS; served from the application's own origin, the session cookie can be `SameS
 
 image::../resources/diagrams/web-app-shell-layout.svg["The web app shell: navigation rail with the lenses, top bar with command palette, live indicator fed by the event stream and user menu, and the main area with one page template, here the TriagePage of the SAMM lens with scopes, assessments and the selected practice as ObjectPage",align=center]
 
-The rail carries the *lenses* of CISOs-Friend:
+The rail carries the *lenses* of Trailhand:
 
 [cols="1,2,2"]
 |===
@@ -99,9 +99,9 @@ The first login and the release of a document run as `WizardPage` flows.
 
 === Authentication
 
-`pm-web-app` pairs a device and sends a device secret as bearer token. CISOs-Friend does not: the browser never holds a
+`pm-web-app` pairs a device and sends a device secret as bearer token. Trailhand does not: the browser never holds a
 token. The server is the confidential client of the identity provider (Token Sheriff), keeps a server-side session and
-gives the browser only cookies (xref:../specification/authentication.adoc#CIFR-AUTH-1[Authentication, CIFR-AUTH-1]).
+gives the browser only cookies (xref:../specification/authentication.adoc#TRH-AUTH-1[Authentication, TRH-AUTH-1]).
 State-changing requests carry an anti-CSRF header the `ApiClient` adds; the server also refuses them when their
 `Origin` is another origin than its own. A `401` sends the user through the login and
 back to the same address; a step-up demand opens the identity provider's MFA prompt and returns to the release
@@ -141,7 +141,7 @@ renewed MFA login before the transition is written.
   `@sveltejs/kit` 3.2.0). A `<meta>` policy does not support `frame-ancestors`, `report-uri` and `sandbox`
   (link:https://www.w3.org/TR/CSP3/#meta-element[Content Security Policy Level 3, section 3.3]), so the Quarkus
   application also sends the full policy, `frame-ancestors` included, as a response header
-  (xref:../specification/web-app.adoc#CIFR-WEB-8[CIFR-WEB-8]).
+  (xref:../specification/web-app.adoc#TRH-WEB-8[TRH-WEB-8]).
 * No third-party origin: fonts, icons and scripts come from the application.
 * AsciiDoc previews and generated reports are rendered by the server and sanitised; the browser never renders raw
   user HTML.

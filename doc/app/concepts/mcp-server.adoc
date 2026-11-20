@@ -5,18 +5,18 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 An AI agent that fills in a threat model from a recipe or drafts an incident report from the responders' notes is useful
 exactly as long as it can be held to the same rules as the person it works for. An integration that hands the agent a
 long-lived API key with the rights of a service account leaves an audit trail that names only the service account.
-CISOs-Friend's MCP server works the other way round: every call carries an audience-bound token of a
+Trailhand's MCP server works the other way round: every call carries an audience-bound token of a
 named user and acts with no more than that user's rights, and the steps that need a human stay with the human.
 
 == The Server as a Protected Resource
 
 The MCP authorization specification makes authorization optional and says that HTTP transports which use it should
-conform to it. CISOs-Friend uses authorization and follows the MCP authorization specification for HTTP transports:
+conform to it. Trailhand uses authorization and follows the MCP authorization specification for HTTP transports:
 the MCP server is an OAuth 2.1 resource server
 (https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], an Internet-Draft). The
 normative revision is 2026-07-28 (its published pages
@@ -36,8 +36,8 @@ normative revision is 2026-07-28 (its published pages
 
 The client side of the flow (discovery, PKCE `S256`, `resource` parameter, Client ID Metadata Documents or dynamic
 registration) is the agent's and the authorization server's duty; the server's side is specified in
-xref:../specification/mcp-server.adoc#CIFR-MCP-2[MCP Server, CIFR-MCP-2] and
-xref:../specification/mcp-server.adoc#CIFR-MCP-3[CIFR-MCP-3].
+xref:../specification/mcp-server.adoc#TRH-MCP-2[MCP Server, TRH-MCP-2] and
+xref:../specification/mcp-server.adoc#TRH-MCP-3[TRH-MCP-3].
 
 image::../resources/diagrams/mcp-token-flow.svg["Sequence: the agent calls the MCP server without a token and gets 401 with the resource metadata; it reads the metadata, authorises at the identity provider with the resource parameter, calls again with the bearer token; the server validates audience and scope through Token Sheriff, runs the tool as the user and saves through the technical user with signed trailers",align=center]
 
@@ -62,13 +62,13 @@ permission of a call is the intersection: the agent never exceeds the user it ac
 |===
 |Scope |Operations
 
-|`cisos-friend:read`
+|`trailhand:read`
 |List, read and search documents, catalogs and the index; diffs; due items.
 
-|`cisos-friend:write`
+|`trailhand:write`
 |Write the user's drafts and save them to the working branch, signed by the application like every commit.
 
-|`cisos-friend:request-release`
+|`trailhand:request-release`
 |Open a release request that a human completes.
 |===
 
@@ -132,7 +132,7 @@ the token, is recorded in the audit log only (see <<_open_questions>>).
 [CAUTION]
 ====
 The design binds an agent to its user's rights; it does not make the agent's judgement better. An agent with
-`cisos-friend:write` can still save a wrong answer. That is why nothing an agent saves is released without a
+`trailhand:write` can still save a wrong answer. That is why nothing an agent saves is released without a
 human.
 ====
 
@@ -147,7 +147,7 @@ human.
 . The exact tool list per category, and whether recipes are offered as MCP prompts.
 . How a release request is stored in Git: as a field of the document on its working branch or as a document of a kind
   of its own, and in which repository
-  (xref:../specification/architecture-and-modules.adoc#CIFR-GEN-3[CIFR-GEN-3]).
+  (xref:../specification/architecture-and-modules.adoc#TRH-GEN-3[TRH-GEN-3]).
 . Deferred: the trailer `Actor-Client`. Until it comes, the history does not show whether a commit came from the user
   in the web app or from an agent acting for the user; only the audit log records the client.
 . Deferred: sender-constrained tokens (DPoP, RFC 9449).

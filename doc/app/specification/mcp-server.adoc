@@ -1,10 +1,10 @@
-= CISOs-Friend: MCP Server
+= Trailhand: MCP Server
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The MCP endpoint for AI agents as an OAuth 2.1 protected resource
 (link:https://www.ietf.org/archive/id/draft-ietf-oauth-v2-1-13.html[draft-ietf-oauth-v2-1-13], the Internet-Draft the
@@ -13,11 +13,11 @@ xref:../concepts/mcp-server.adoc[MCP Server]. Normative sources: MCP specificati
 link:https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization[Authorization] and
 link:https://modelcontextprotocol.io/specification/2026-07-28/basic/transports[Transports] (Streamable HTTP);
 link:https://www.rfc-editor.org/rfc/rfc9728[RFC 9728], link:https://www.rfc-editor.org/rfc/rfc8707[RFC 8707],
-link:https://www.rfc-editor.org/rfc/rfc6750[RFC 6750]. Authorization is optional in MCP; CISOs-Friend uses
+link:https://www.rfc-editor.org/rfc/rfc6750[RFC 6750]. Authorization is optional in MCP; Trailhand uses
 authorization and follows the MCP authorization specification for HTTP transports.
 
-[#CIFR-MCP-1]
-== CIFR-MCP-1: Transport
+[#TRH-MCP-1]
+== TRH-MCP-1: Transport
 
 * The MCP server must offer Streamable HTTP at `/mcp` in the shape of MCP revision 2026-07-28 and no STDIO transport.
 * A request with an invalid `Origin` header must be answered with `403`.
@@ -40,8 +40,8 @@ and never minted or echoed, a `Last-Event-ID` header is ignored)
 |Request `application/json`; response `application/json` or `text/event-stream`
 |===
 
-[#CIFR-MCP-2]
-== CIFR-MCP-2: Protected Resource Metadata
+[#TRH-MCP-2]
+== TRH-MCP-2: Protected Resource Metadata
 
 * The server must serve RFC 9728 metadata at `/.well-known/oauth-protected-resource/mcp` (the URL RFC 9728 derives
   from the resource identifier `<origin>/mcp`), and the same document at `/.well-known/oauth-protected-resource`, with
@@ -55,9 +55,9 @@ identifier; MCP clients try the root path when it is not found.
 [source,json]
 ----
 {
-  "resource": "https://cisos-friend.example.org/mcp",
+  "resource": "https://trailhand.example.org/mcp",
   "authorization_servers": ["https://idp.example.org/realms/main"],
-  "scopes_supported": ["cisos-friend:read", "cisos-friend:write", "cisos-friend:request-release"],
+  "scopes_supported": ["trailhand:read", "trailhand:write", "trailhand:request-release"],
   "bearer_methods_supported": ["header"]
 }
 ----
@@ -69,12 +69,12 @@ Unauthenticated request (the header is sent as one line; it is wrapped here for 
 [source,http]
 ----
 HTTP/1.1 401 Unauthorized
-WWW-Authenticate: Bearer resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource/mcp",
-                  scope="cisos-friend:read"
+WWW-Authenticate: Bearer resource_metadata="https://trailhand.example.org/.well-known/oauth-protected-resource/mcp",
+                  scope="trailhand:read"
 ----
 
-[#CIFR-MCP-3]
-== CIFR-MCP-3: Token Validation
+[#TRH-MCP-3]
+== TRH-MCP-3: Token Validation
 
 * Every request must be authenticated by a bearer token in the `Authorization` header; a token in the query string
   must be refused.
@@ -104,26 +104,26 @@ Engine: `token-sheriff-validation-quarkus`, one issuer configuration per entry o
 |Contains `mcp.canonical-uri` (`expected-audience`)
 |===
 
-[#CIFR-MCP-4]
-== CIFR-MCP-4: Scopes and Rights
+[#TRH-MCP-4]
+== TRH-MCP-4: Scopes and Rights
 
-* Each tool must require one scope of `cisos-friend:read`, `cisos-friend:write`, `cisos-friend:request-release`.
+* Each tool must require one scope of `trailhand:read`, `trailhand:write`, `trailhand:request-release`.
 * A call lacking the scope must be answered with `403`, `error="insufficient_scope"`, the required `scope` and
   `resource_metadata`.
 * The effective permission must be the intersection of the token's scopes and the user's rights
-  (xref:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]).
+  (xref:authentication.adoc#TRH-AUTH-2[TRH-AUTH-2]).
 
 [cols="1,2"]
 |===
 |Scope |Tools
 
-|`cisos-friend:read`
+|`trailhand:read`
 |`list_documents`, `read_document`, `search`, `diff`, `list_due`, `read_catalog`, `read_recipe`
 
-|`cisos-friend:write`
+|`trailhand:write`
 |`write_draft`, `discard_draft`, `save`
 
-|`cisos-friend:request-release`
+|`trailhand:request-release`
 |`request_release`
 |===
 
@@ -132,15 +132,15 @@ Missing scope (one header line, wrapped here for readability):
 [source,http]
 ----
 HTTP/1.1 403 Forbidden
-WWW-Authenticate: Bearer error="insufficient_scope", scope="cisos-friend:write",
-                  resource_metadata="https://cisos-friend.example.org/.well-known/oauth-protected-resource/mcp"
+WWW-Authenticate: Bearer error="insufficient_scope", scope="trailhand:write",
+                  resource_metadata="https://trailhand.example.org/.well-known/oauth-protected-resource/mcp"
 ----
 
 After the scope check the user's rights on the target repository are checked; a missing right is a tool error
 `FORBIDDEN`, not an HTTP error, and names no document the user may not read.
 
-[#CIFR-MCP-5]
-== CIFR-MCP-5: No Passthrough, No Credentials to the Agent
+[#TRH-MCP-5]
+== TRH-MCP-5: No Passthrough, No Credentials to the Agent
 
 * The server must never forward a received token to another service.
 * No Git or KMS credential may appear in a tool result, an error or a log record; a test must scan responses and logs
@@ -149,8 +149,8 @@ After the scope check the user's rights on the target repository are checked; a 
 Git is reached with the technical user's credential, the KMS with the application's own; tool results and errors are
 built from typed result objects that carry no credential field.
 
-[#CIFR-MCP-6]
-== CIFR-MCP-6: Human-Bound Releases
+[#TRH-MCP-6]
+== TRH-MCP-6: Human-Bound Releases
 
 * An agent must not complete a release.
 * The tool `request_release` must create a pending release that appears in the requesting user's *Due* lens.
@@ -213,11 +213,11 @@ xref:architecture-and-modules.adoc#operation-outcomes[Architecture and Modules, 
 Tool input sizes are limited to the category schema's `maxLength` and `maxItems`; a document of more than 1 MiB is
 refused.
 
-[#CIFR-MCP-7]
-== CIFR-MCP-7: Audit
+[#TRH-MCP-7]
+== TRH-MCP-7: Audit
 
 * Every tool call must produce one log record with pseudonym, client id, tool, repository and outcome; token material,
   session ids and document content must not be logged.
 
-One `INFO` record per tool call: `CISOS_FRIEND-<n>: MCP tool {tool} by {pseudonym} via {client} on {repository}:
+One `INFO` record per tool call: `TRAILHAND-<n>: MCP tool {tool} by {pseudonym} via {client} on {repository}:
 {outcome}`, where `{client}` is the token's `client_id`, else `azp`, else `-`.

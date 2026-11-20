@@ -5,12 +5,12 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
 Clause 7.5 of https://www.iso.org/standard/27001[ISO/IEC 27001:2022] asks for the control of documented
 information: versioning, review and approval, availability, protection against change, traceable changes. Read with
 a developer's eyes, that is a description of a Git server with protected branches. The ISMS category takes the hint,
-carefully: it is an extension of CISOs-Friend for development organisations, not a replacement for a complete ISMS
+carefully: it is an extension of Trailhand for development organisations, not a replacement for a complete ISMS
 product.
 
 == The ISMS on Git
@@ -67,7 +67,7 @@ ISO/IEC 27001:2022, among them A.8.25, by a reference to its tag. Both domains r
 * Queries across many repositories need an instance that may read all of them, or queries run with the user's rights
   and show only what the user may see.
 * The process description of the control of documented information has to be written once per organisation (see
-  xref:cisos-friend-overview.adoc#_positioning[Overview, Positioning]).
+  xref:trailhand-overview.adoc#_positioning[Overview, Positioning]).
 
 == Comparison with verinice
 
@@ -81,7 +81,7 @@ RabbitMQ (https://github.com/SerNet/verinice-veo[verinice-veo on GitHub]).
 
 [cols="1,2,2"]
 |===
-|Criterion |CISOs-Friend (Git) |verinice / verinice.veo
+|Criterion |Trailhand (Git) |verinice / verinice.veo
 
 |Domain content
 |Built by the project. The IT-Grundschutz-Kompendium is published by the BSI as a download
@@ -129,8 +129,8 @@ in Keycloak (https://verinice.com/en/ressources/learn/technical-background[verin
 
 === Positioning
 
-From this comparison follows the positioning: CISOs-Friend complements verinice and does not compete with it as a
-complete ISMS. Core and extension are listed in xref:cisos-friend-overview.adoc#_positioning[Overview, Positioning].
+From this comparison follows the positioning: Trailhand complements verinice and does not compete with it as a
+complete ISMS. Core and extension are listed in xref:trailhand-overview.adoc#_positioning[Overview, Positioning].
 
 == Open Questions
 

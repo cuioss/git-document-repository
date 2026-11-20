@@ -1,10 +1,10 @@
-= CISOs-Friend: Directory and Catalogs
+= Trailhand: Directory and Catalogs
 :toc: left
 :toclevels: 2
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Specification
+xref:../README.adoc[Trailhand documentation] » Specification
 
 The person directory as the application configures it, the first login, the catalogs and the service catalog the
 application adds to the library's catalogs. Reasoning:
@@ -13,8 +13,8 @@ xref:../concepts/service-catalog.adoc[Service Catalog]. Library contract:
 xref:../../specification/git-store.adoc#GDR-STORE-19[GDR-STORE-19: Person Directory Interface] and
 xref:../../specification/git-directory.adoc#GDR-DIR-2[GDR-DIR-2: Person Directory in Git].
 
-[#CIFR-DIR-1]
-== CIFR-DIR-1: Person Directory
+[#TRH-DIR-1]
+== TRH-DIR-1: Person Directory
 
 * The person directory provider must be configurable; the default must be `git`, with the person entries in the
   `directory` repository or in another configured repository.
@@ -32,18 +32,18 @@ saved on `main` and signed like every commit; first login and own-entry changes 
 |Names and memberships from that source; no first-login form; erasure in that source
 |===
 
-[#CIFR-DIR-2]
-== CIFR-DIR-2: First Login
+[#TRH-DIR-2]
+== TRH-DIR-2: First Login
 
 * With the default person directory, a user without a saved entry must be shown the first-login form before any other
   view; the restriction must hold until the entry is saved. With a person directory for the organisation's own source
   there is no first-login form.
 * The form must be prefilled with the name from the token and, where groups are delivered, with the team; team and
   role must be picked from the catalogs.
-* When prefilled entries (<<CIFR-DIR-8>>) hold one of the entered memberships, the form must show them with name and
+* When prefilled entries (<<TRH-DIR-8>>) hold one of the entered memberships, the form must show them with name and
   memberships before saving and let the user bind to one of them or create a new entry. Candidates must be offered
   only to a user whose groups map at least one right on a repository
-  (xref:authentication.adoc#CIFR-AUTH-2[CIFR-AUTH-2]); any other user creates a new entry and learns nothing about
+  (xref:authentication.adoc#TRH-AUTH-2[TRH-AUTH-2]); any other user creates a new entry and learns nothing about
   prefilled entries.
 * The form must show the configured information text (GDPR Art. 13,
   link:https://eur-lex.europa.eu/eli/reg/2016/679/oj[Regulation (EU) 2016/679]) before the save button.
@@ -65,8 +65,8 @@ Allow-list during the first login, exactly the requests the form and the shell n
 anti-CSRF token) and `GET /api/v1/messages` (the texts); `POST /api/v1/auth/logout` and the login endpoints. The MCP
 endpoint answers a tool call of such a user with the tool error `FIRST_LOGIN_REQUIRED`.
 
-[#CIFR-DIR-3]
-== CIFR-DIR-3: Keeping the Entry Current
+[#TRH-DIR-3]
+== TRH-DIR-3: Keeping the Entry Current
 
 * With the default person directory, a user must be able to change the own entry at any time.
 * The application must ask for confirmation of the entry after a configurable interval, default 12 months.
@@ -75,8 +75,8 @@ The own entry is changed with `PUT /api/v1/directory/me`. When the entry's last 
 `directory.confirmation-interval`, the next login shows the form with "Is this still right?"; confirming writes the
 confirmation date.
 
-[#CIFR-DIR-4]
-== CIFR-DIR-4: Catalogs
+[#TRH-DIR-4]
+== TRH-DIR-4: Catalogs
 
 * Besides the library's catalogs of roles and teams, the application must keep the catalogs of services
   (`service:`), systems (`system:`) and external parties (`external:`).
@@ -89,8 +89,8 @@ its file and schema: `catalog/services/<id>.yaml` (one file per entry), `catalog
 `catalog/external.yaml` (lists), all in the `directory` repository. `PUT /api/v1/catalogs/{catalog}/{id}` requires
 `administer-catalogs`; `DELETE` is not offered; retiring sets `retired: true`.
 
-[#CIFR-DIR-5]
-== CIFR-DIR-5: Service Catalog
+[#TRH-DIR-5]
+== TRH-DIR-5: Service Catalog
 
 * A service entry must support the fields `id`, `name`, `description`, `system`, `lifecycle`, `owner` (team and role),
   `repositories`, `dependsOn`, `protection-needs` and `data-classes`.
@@ -113,8 +113,8 @@ its file and schema: `catalog/services/<id>.yaml` (one file per entry), `catalog
 
 `dependsOn` keeps the spelling of Backstage, from which it is taken; the other fields are written in kebab-case.
 
-[#CIFR-DIR-6]
-== CIFR-DIR-6: Import from Backstage
+[#TRH-DIR-6]
+== TRH-DIR-6: Import from Backstage
 
 * The application must import Backstage `Component`, `System` and `Group` descriptors into the catalogs of services,
   systems and teams.
@@ -146,16 +146,16 @@ Entities]):
   kept. A new service takes `owner.role` and `protection-needs` from `directory.backstage.defaults`; without them it is
   reported and not created.
 
-[#CIFR-DIR-7]
-== CIFR-DIR-7: Former Members
+[#TRH-DIR-7]
+== TRH-DIR-7: Former Members
 
 * After the erasure of a person, or once the organisation's source no longer knows the person, documents must show the
   pseudonym as the memberships of its former-member marker, "former" followed by the names of role and team from the
   catalogs for each membership (for example "former Security Champion, Payments"), and as "former member" when the
   marker holds none.
 
-[#CIFR-DIR-8]
-== CIFR-DIR-8: Prefilled Entries
+[#TRH-DIR-8]
+== TRH-DIR-8: Prefilled Entries
 
 * With the default person directory, a user with the right `administer-catalogs` must be able to save unbound person
   entries before the persons log in
@@ -164,4 +164,4 @@ Entities]):
 
 `POST /api/v1/directory/persons` (right `administer-catalogs`) takes a list of entries with name and at least one
 membership, validates the memberships against the catalogs and saves them as unbound entries in one commit; the
-answer lists their pseudonyms. Binding happens only at the person's first login (<<CIFR-DIR-2>>).
+answer lists their pseudonyms. Binding happens only at the person's first login (<<TRH-DIR-2>>).

@@ -5,9 +5,9 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-xref:../README.adoc[CISOs-Friend documentation] » Concepts
+xref:../README.adoc[Trailhand documentation] » Concepts
 
-Most documents of CISOs-Friend hang on an application or service: its SAMM assessment, its threat model, the incidents
+Most documents of Trailhand hang on an application or service: its SAMM assessment, its threat model, the incidents
 that affected it, the risks it carries. Written as free text, "Payment API", "payments-api" and "the PSP service" end up
 in three documents that mean the same thing. The application therefore keeps a catalog of services and refers to its
 entries by stable id (`service:payment-api`), the same way the library's directory catalogs refer to roles and teams
@@ -15,7 +15,7 @@ entries by stable id (`service:payment-api`), the same way the library's directo
 
 == The Catalog Entry
 
-The library ships the catalogs of roles and teams and lets an application declare further ones. CISOs-Friend declares
+The library ships the catalogs of roles and teams and lets an application declare further ones. Trailhand declares
 three: services (one file per entry), systems (the products above the services) and external parties (suppliers,
 providers). They lie in the `directory` repository, are widely readable and hold no personal data.
 
@@ -54,7 +54,7 @@ data-classes: [personal, payment]
   that application's protection needs (see <<_open_questions>>).
 * *Retire instead of delete.* An entry gets `retired: true`; old documents keep referring to it.
 
-How the categories use the catalog is shown in xref:cisos-friend-overview.adoc#_four_categories[Overview, Four
+How the categories use the catalog is shown in xref:trailhand-overview.adoc#_four_categories[Overview, Four
 Categories].
 
 == Alignment with Backstage
@@ -82,5 +82,5 @@ of truth.
 
 == Related
 
-* xref:../specification/directory.adoc#CIFR-DIR-5[Directory, CIFR-DIR-5 and CIFR-DIR-6] -- fields and import
+* xref:../specification/directory.adoc#TRH-DIR-5[Directory, TRH-DIR-5 and TRH-DIR-6] -- fields and import
 * xref:../../concepts/directory-and-catalogs.adoc[Directory and Catalogs] (library) -- roles, teams, persons

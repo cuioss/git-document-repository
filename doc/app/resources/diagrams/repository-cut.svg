@@ -3,7 +3,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 436"
      role="img" aria-labelledby="title desc"
      font-family="ui-sans-serif, -apple-system, system-ui, 'Segoe UI', sans-serif">
-  <title id="title">The default repository cut of CISOs-Friend by confidentiality and retention</title>
+  <title id="title">The default repository cut of Trailhand by confidentiality and retention</title>
   <desc id="desc">Four columns by readership. Widely readable inside the organisation: isms-core with policies, scope, audit and management review reports, and directory, whose catalogs, person entries under pseudonyms and record of erasures are plain and readable inside the organisation. Development and security: samm-assessments with SAMM scopes, assessments and targets. Restricted to named groups: isms-register with the risk register, and threat-models with the threat models of all services. Strongly restricted: one isms-incidents repository per year, for example 2026 and 2025, each with a retention period after which the whole repository is deleted. All other repositories are kept without a retention end. References between repositories use stable ids such as isms-register:risk/R-042.</desc>
 
   <defs>

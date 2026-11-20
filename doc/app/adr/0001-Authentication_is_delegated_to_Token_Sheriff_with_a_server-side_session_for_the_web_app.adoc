@@ -8,7 +8,7 @@
 // adr-metadata
 // summary: People log in through Token Sheriff's confidential client inside the application (backend-for-frontend shape); the browser holds a short-lived login-transaction cookie during the login and afterwards only a session cookie; agents present bearer tokens validated by Token Sheriff; rights come from identity-provider groups.
 // tags: authentication, oidc, bff, session, token-sheriff
-// affects: cisos-friend, web-app
+// affects: trailhand, web-app
 // supersedes:
 // end-adr-metadata
 
