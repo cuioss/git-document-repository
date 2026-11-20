@@ -491,13 +491,14 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             return StartPoint.refused(GitOutcome.AMBIGUOUS, candidates(BRANCH, lookup));
         }
         Ref existing = lookup.resolution() == GitIdentity.Resolution.REF ? main.exactRef(branchRef) : null;
-        if (existing == null || existing.getObjectId() == null) {
+        ObjectId existingId = existing == null ? null : existing.getObjectId();
+        if (existingId == null) {
             return StartPoint.refused(GitOutcome.NOT_FOUND, BRANCH + NOT_FOUND_SUFFIX);
         }
         if (checkedOut(main, commonDir, branch)) {
             return StartPoint.refused(GitOutcome.BRANCH_CHECKED_OUT, CHECKED_OUT);
         }
-        return StartPoint.of(existing.getObjectId());
+        return StartPoint.of(existingId);
     }
 
     /**
