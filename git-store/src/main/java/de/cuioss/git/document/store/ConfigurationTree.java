@@ -30,7 +30,8 @@ import java.util.Objects;
  * {@code anchor}).
  * <p>
  * Every lookup returns a {@link StoreResult}: a success carrying the typed value, a success without value when the key
- * is absent, or {@link StoreOutcome#MALFORMED} with a detail naming the dotted key, never the value (GDR-NFR-3).
+ * is omitted, or {@link StoreOutcome#MALFORMED} with a detail naming the dotted key, never the value (GDR-NFR-3). A key
+ * present with a {@code null} value is malformed, not absent.
  * Integers are {@link Number}s without fraction, booleans {@link Boolean}s, durations and periods ISO 8601 strings
  * parsed with {@link Duration#parse(CharSequence)} and {@link Period#parse(CharSequence)}, and must be positive.
  */
@@ -208,26 +209,32 @@ final class ConfigurationTree {
 
     /**
      * Finds the raw value of a dotted key.
+     * <p>
+     * Only an omitted key is absent, so that its default applies; a key that is present with a {@code null} value, as
+     * a leaf or as a section on the way, is malformed.
      *
      * @param key the dotted key
-     * @return the raw value, a success without value when absent, or {@link StoreOutcome#MALFORMED} when a segment on
-     *         the way is no map
+     * @return the raw value, a success without value when absent, or {@link StoreOutcome#MALFORMED} naming the dotted
+     *         key when a segment on the way is no map or a present key holds {@code null}
      */
     private StoreResult<Object> find(String key) {
         String[] segments = key.split(SEPARATOR);
         Map<?, ?> current = root;
         for (int index = 0; index < segments.length - 1; index++) {
-            Object next = current.get(segments[index]);
-            if (next == null) {
+            if (!current.containsKey(segments[index])) {
                 return absent();
             }
-            if (!(next instanceof Map<?, ?> section)) {
+            if (!(current.get(segments[index]) instanceof Map<?, ?> section)) {
                 return malformed(key);
             }
             current = section;
         }
-        Object value = current.get(segments[segments.length - 1]);
-        return value == null ? absent() : StoreResult.ok(value);
+        String last = segments[segments.length - 1];
+        if (!current.containsKey(last)) {
+            return absent();
+        }
+        Object value = current.get(last);
+        return value == null ? malformed(key) : StoreResult.ok(value);
     }
 
     /** Returns the success without value of an absent key. */

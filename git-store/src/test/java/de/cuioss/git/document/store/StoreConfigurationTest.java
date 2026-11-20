@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.logging.Level;
 import java.util.stream.Stream;
 
 
@@ -45,7 +46,6 @@ import de.cuioss.git.document.store.StoreConfiguration.Signing;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
-import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
@@ -86,6 +86,15 @@ class StoreConfigurationTest {
 
     private static String alias() {
         return ALIASES.next();
+    }
+
+    /**
+     * A credential marker of a user or a password: a generated word between tildes. No key, alias, generated word,
+     * host or fixed text of a detail or a log record contains a tilde, so the marker cannot occur in the output that
+     * is allowed to survive.
+     */
+    private static String credential() {
+        return "~" + word() + "~";
     }
 
     private static int count() {
@@ -155,11 +164,20 @@ class StoreConfigurationTest {
         return messages;
     }
 
-    /** Asserts that the refusal was logged exactly once as {@code GIT_STORE-100}, carrying its detail. */
+    /**
+     * Asserts that the refusal was logged exactly once as {@code GIT_STORE-100}, and that this one WARN record carries
+     * the detail of the refusal.
+     */
     private static void assertRefusalLogged(StoreResult<?> result) {
-        LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
-                GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString());
-        LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, Objects.requireNonNull(result.detail()));
+        var identifier = GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString();
+        var detail = Objects.requireNonNull(result.detail());
+        var refusals = TestLoggerFactory.getTestHandler().getRecords().stream()
+                .filter(logRecord -> Level.WARNING.equals(logRecord.getLevel()))
+                .map(logRecord -> String.valueOf(logRecord.getMessage()))
+                .filter(message -> message.contains(identifier))
+                .toList();
+        assertEquals(1, refusals.size(), () -> "exactly one WARN record " + identifier + ": " + refusals);
+        assertTrue(refusals.getFirst().contains(detail), () -> "the record " + identifier + " carries the detail");
     }
 
     /** Asserts a logged {@link StoreOutcome#MALFORMED} refusal with exactly the given detail. */
@@ -420,6 +438,39 @@ class StoreConfigurationTest {
             assertMalformed("repositories[0]." + key + " is malformed", StoreConfiguration.from(tree, HTTPS));
         }
 
+        @ParameterizedTest(name = "{0}: null")
+        @ValueSource(strings = {"save.max-attempts", "signing.key", "anchor.releases", "anchor.signed.max-clock-skew",
+                "directory.persons.provider", "repositories"})
+        @DisplayName("a key supplied with a null leaf is malformed, not absent, naming the key")
+        void nullLeaf(String key) {
+            var tree = minimal();
+            put(tree, key, nullValue());
+
+            assertMalformed(key + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
+        @ParameterizedTest(name = "{0}: null")
+        @MethodSource("de.cuioss.git.document.store.StoreConfigurationTest#nullSections")
+        @DisplayName("a section supplied as null is malformed, not absent, naming the first key read below it")
+        void nullSection(String section, String namedKey) {
+            var tree = minimal();
+            put(tree, section, nullValue());
+
+            assertMalformed(namedKey + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
+        @ParameterizedTest(name = "{0}: null")
+        @ValueSource(strings = {"alias", "remote", "confidentiality", "retention"})
+        @DisplayName("GDR-STORE-1: a key of a repository supplied as null is malformed, naming its position")
+        void nullRepositoryKey(String key) {
+            var tree = minimal();
+            var section = repositorySection(alias());
+            section.put(key, nullValue());
+            put(tree, "repositories", List.of(section));
+
+            assertMalformed("repositories[0]." + key + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
         @Test
         @DisplayName("GDR-STORE-1: a duplicate alias of the registry is refused")
         void duplicateAlias() {
@@ -462,6 +513,16 @@ class StoreConfigurationTest {
                     () -> assertThrows(IllegalArgumentException.class, () -> new Save(0),
                             "a section with no attempt"));
         }
+    }
+
+    static Stream<Arguments> nullSections() {
+        return Stream.of(
+                Arguments.of("save", "save.max-attempts"),
+                Arguments.of("signing", "signing.key-source"),
+                Arguments.of("anchor", "anchor.provider"),
+                Arguments.of("anchor.signed", "anchor.signed.key-source"),
+                Arguments.of("directory", "directory.persons.provider"),
+                Arguments.of("directory.persons", "directory.persons.provider"));
     }
 
     static Stream<Arguments> malformedRepositoryValues() {
@@ -589,8 +650,8 @@ class StoreConfigurationTest {
         @DisplayName("GDR-NFR-3: a remote with user information is neither in the detail nor logged")
         void remoteWithUserInformation() {
             var tree = minimal();
-            var user = word();
-            var password = word();
+            var user = credential();
+            var password = credential();
             var path = word();
             var section = repositorySection(alias());
             section.put("remote", "https://" + user + ":" + password + "@git.example/" + path + ".git");

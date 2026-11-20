@@ -75,6 +75,20 @@ class RepositoryRegistryTest {
         return Generators.letterStrings(4, 16).next();
     }
 
+    /**
+     * A credential marker of a user or a password: a generated word between tildes. No alias, generated word, host or
+     * fixed text of a detail or a rendering contains a tilde, so the marker cannot occur in the output that is allowed
+     * to survive.
+     */
+    private static String credential() {
+        return "~" + word() + "~";
+    }
+
+    /** A remote under the admitted origin whose port lies beyond the range of {@code int}. */
+    private static String remoteWithPortBeyondInt() {
+        return ORIGIN + ":" + (Integer.MAX_VALUE + 1L) + "/" + word() + ".git";
+    }
+
     /** An HTTPS remote under the admitted origin. */
     private static String httpsRemote() {
         return ORIGIN + "/" + word() + "/" + word() + ".git";
@@ -148,11 +162,12 @@ class RepositoryRegistryTest {
             var other = repository(alias());
 
             input.add(other);
+            var repositories = registry.repositories();
 
             assertAll(
-                    () -> assertEquals(1, registry.repositories().size(), "a later change of the input is not seen"),
-                    () -> assertThrows(UnsupportedOperationException.class,
-                            () -> registry.repositories().add(other), "the returned list is unmodifiable"));
+                    () -> assertEquals(1, repositories.size(), "a later change of the input is not seen"),
+                    () -> assertThrows(UnsupportedOperationException.class, () -> repositories.add(other),
+                            "the returned list is unmodifiable"));
         }
     }
 
@@ -205,12 +220,28 @@ class RepositoryRegistryTest {
             assertMalformed("repository " + alias + ": malformed remote", result);
         }
 
+        /**
+         * JGit 7.8.0 {@code URIish(String)} matches the port as a run of digits and converts it with
+         * {@code Integer.parseInt}, so a port beyond the range of {@code int} throws {@code NumberFormatException}
+         * instead of {@code URISyntaxException}. The registry refuses it as malformed whichever of the two JGit throws.
+         */
+        @Test
+        @DisplayName("GDR-STORE-1, GDR-NFR-3: a remote with a port beyond the range of int is malformed")
+        void portBeyondIntRange() {
+            var alias = alias();
+            var remote = remoteWithPortBeyondInt();
+
+            var result = RepositoryRegistry.of(List.of(repository(alias, remote)), HTTPS);
+
+            assertMalformed("repository " + alias + ": malformed remote", result);
+        }
+
         @Test
         @DisplayName("GDR-STORE-1, GDR-NFR-3: a remote with user information is malformed, the detail carries neither")
         void remoteWithUserInformation() {
             var alias = alias();
-            var user = word();
-            var password = word();
+            var user = credential();
+            var password = credential();
             var withPassword = "https://" + user + ":" + password + "@git.example/" + word() + ".git";
             var withUser = "https://" + user + "@git.example/" + word() + ".git";
 
@@ -273,13 +304,14 @@ class RepositoryRegistryTest {
         void refusesNull() {
             List<StoreRepository> nullList = nullValue();
             RemotePolicy nullPolicy = nullValue();
+            List<StoreRepository> empty = List.of();
             List<StoreRepository> withNull = new ArrayList<>();
             withNull.add(nullValue());
 
             assertAll(
                     () -> assertThrows(NullPointerException.class, () -> RepositoryRegistry.of(nullList, HTTPS),
                             "a null list"),
-                    () -> assertThrows(NullPointerException.class, () -> RepositoryRegistry.of(List.of(), nullPolicy),
+                    () -> assertThrows(NullPointerException.class, () -> RepositoryRegistry.of(empty, nullPolicy),
                             "a null policy"),
                     () -> assertThrows(NullPointerException.class, () -> RepositoryRegistry.of(withNull, HTTPS),
                             "a null element"));
@@ -324,8 +356,8 @@ class RepositoryRegistryTest {
         @Test
         @DisplayName("GDR-NFR-3: a repository renders its remote without user information")
         void rendersWithoutUserInformation() {
-            var user = word();
-            var password = word();
+            var user = credential();
+            var password = credential();
             var path = word();
             var repository = repository(alias(), "https://" + user + ":" + password + "@git.example/" + path + ".git");
 
@@ -343,6 +375,16 @@ class RepositoryRegistryTest {
         void rendersMalformedRemote() {
             assertTrue(repository(alias(), "").toString().contains("remote=(malformed)"),
                     "the remote is replaced");
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a remote with a port beyond the range of int is rendered as (malformed)")
+        void rendersRemoteWithPortBeyondInt() {
+            var repository = repository(alias(), remoteWithPortBeyondInt());
+
+            var rendered = repository.toString();
+
+            assertTrue(rendered.contains("remote=(malformed)"), "the remote is replaced, the rendering does not fail");
         }
 
         @Test

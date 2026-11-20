@@ -76,7 +76,8 @@ public record StoreRepository(String alias, String remote, String confidentialit
     private static String withoutUserInformation(String remote) {
         try {
             return new URIish(remote).setUser(null).setPass(null).toString();
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException | NumberFormatException e) {
+            // JGit 7.8.0 throws NumberFormatException, not URISyntaxException, for a port beyond int
             return "(malformed)";
         }
     }

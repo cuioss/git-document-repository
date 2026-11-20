@@ -102,7 +102,8 @@ first refusal is returned:
 itself is invalid
 |alias registered twice |`MALFORMED` |`repository <alias>: duplicate alias`
 |blank confidentiality class |`MALFORMED` |`repository <alias>: blank confidentiality`
-|remote that JGit's `URIish` cannot parse |`MALFORMED` |`repository <alias>: malformed remote`
+|remote that JGit's `URIish` cannot parse, including a port beyond the range of `int`, for which JGit 7.8.0 throws
+`NumberFormatException` instead of `URISyntaxException` (observed by `RepositoryRegistryTest`) |`MALFORMED` |`repository <alias>: malformed remote`
 |remote with a user or a password |`MALFORMED` |`repository <alias>: remote carries user information`
 |remote the policy does not permit (`RemotePolicy.permits`) |`PassedOn(REFUSED_BY_POLICY)` |`repository <alias>: remote
 not permitted by the remote policy`
@@ -467,6 +468,9 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
 * `save.max-attempts`, `drafts.expiry` and `fetch.interval` are required. Every other key may be absent at start and
   then takes the default of the table; a key without a default, such as `signing.key` or the allowed-signers files that
   only a verification needs, stays absent.
+* Only an omitted key is absent. A key supplied with a null value, as a leaf (`anchor.releases:` without a value) or as
+  a section on the way (`anchor:` without a value), is malformed and named by its dotted key; it never takes the
+  default.
 * Keys outside the table are ignored, because the tree is shared with the modules above `git-store` (for example
   `timestamp.*` of xref:git-timestamp.adoc[`git-timestamp`]). An absent `repositories` is an empty registry.
 * An anchor key equal to the commit-signing key is refused (<<GDR-STORE-18>>): the start compares the effective key

@@ -50,7 +50,7 @@ Signing signing, Anchor anchor, Directory directory) {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreConfiguration.class);
 
-    private static final String REPOSITORIES = "repositories";
+    private static final String REPOSITORIES_KEY = "repositories";
     private static final String MAX_ATTEMPTS = "save.max-attempts";
     private static final String DRAFTS_EXPIRY = "drafts.expiry";
     private static final String FETCH_INTERVAL = "fetch.interval";
@@ -80,7 +80,7 @@ Signing signing, Anchor anchor, Directory directory) {
      * @throws NullPointerException if a section is {@code null}
      */
     public StoreConfiguration {
-        Objects.requireNonNull(repositories, "repositories");
+        Objects.requireNonNull(repositories, REPOSITORIES_KEY);
         Objects.requireNonNull(save, "save");
         Objects.requireNonNull(drafts, "drafts");
         Objects.requireNonNull(fetch, "fetch");
@@ -94,7 +94,8 @@ Signing signing, Anchor anchor, Directory directory) {
      * <p>
      * {@code save.max-attempts} (an integer of at least 1), {@code drafts.expiry} (a positive ISO 8601 period) and
      * {@code fetch.interval} (a positive ISO 8601 duration) are required; every other key has the default its section
-     * documents. A missing required key, a malformed value, a refused repository of the registry and an anchor key
+     * documents; only an omitted key takes its default, a key supplied with a {@code null} value is malformed. A
+     * missing required key, a malformed value, a refused repository of the registry and an anchor key
      * equal to the commit-signing key are refused: {@link StoreOutcome#MALFORMED}, or the passed-on
      * {@link de.cuioss.git.document.core.GitOutcome#REFUSED_BY_POLICY} of the registry. The detail names the key or
      * the alias, never the value, and every refusal is logged once as {@code GIT_STORE-100}.
@@ -279,7 +280,7 @@ Signing signing, Anchor anchor, Directory directory) {
     }
 
     private static StoreResult<RepositoryRegistry> readRegistry(ConfigurationTree tree, RemotePolicy policy) {
-        var sections = tree.sections(REPOSITORIES);
+        var sections = tree.sections(REPOSITORIES_KEY);
         if (!sections.isOk()) {
             return retype(sections);
         }

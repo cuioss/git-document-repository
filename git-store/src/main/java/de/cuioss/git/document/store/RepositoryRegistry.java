@@ -43,6 +43,9 @@ public final class RepositoryRegistry {
     /** The form of an alias: lower-case letters, digits and hyphens. */
     private static final Pattern ALIAS = Pattern.compile("[a-z0-9-]+");
 
+    /** The start of the detail of every refusal that names a repository by its alias. */
+    private static final String DETAIL_PREFIX = "repository ";
+
     /** The repositories by alias, in registration order. */
     private final Map<String, StoreRepository> repositories;
 
@@ -77,28 +80,33 @@ public final class RepositoryRegistry {
             }
             index++;
             if (registered.containsKey(alias)) {
-                return StoreResult.of(StoreOutcome.MALFORMED, "repository " + alias + ": duplicate alias");
+                return StoreResult.of(StoreOutcome.MALFORMED, detail(alias, "duplicate alias"));
             }
             if (repository.confidentiality().isBlank()) {
-                return StoreResult.of(StoreOutcome.MALFORMED, "repository " + alias + ": blank confidentiality");
+                return StoreResult.of(StoreOutcome.MALFORMED, detail(alias, "blank confidentiality"));
             }
             URIish remote;
             try {
                 remote = new URIish(repository.remote());
-            } catch (URISyntaxException e) {
-                return StoreResult.of(StoreOutcome.MALFORMED, "repository " + alias + ": malformed remote");
+            } catch (URISyntaxException | NumberFormatException e) {
+                // JGit 7.8.0 throws NumberFormatException, not URISyntaxException, for a port beyond int
+                return StoreResult.of(StoreOutcome.MALFORMED, detail(alias, "malformed remote"));
             }
             if (remote.getUser() != null || remote.getPass() != null) {
-                return StoreResult.of(StoreOutcome.MALFORMED,
-                        "repository " + alias + ": remote carries user information");
+                return StoreResult.of(StoreOutcome.MALFORMED, detail(alias, "remote carries user information"));
             }
             if (!policy.permits(remote)) {
                 return StoreResult.passOn(GitResult.of(GitOutcome.REFUSED_BY_POLICY,
-                        "repository " + alias + ": remote not permitted by the remote policy"));
+                        detail(alias, "remote not permitted by the remote policy")));
             }
             registered.put(alias, repository);
         }
         return StoreResult.ok(new RepositoryRegistry(registered));
+    }
+
+    /** Builds the detail of a refused repository: {@code repository <alias>: <problem>}, never naming the remote. */
+    private static String detail(String alias, String problem) {
+        return DETAIL_PREFIX + alias + ": " + problem;
     }
 
     /**
