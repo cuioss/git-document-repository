@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Optional;
 
 
-import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
 import lombok.experimental.UtilityClass;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;

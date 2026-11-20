@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,9 +33,9 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.git.document.testing.LocalRepository;
-import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
@@ -46,7 +46,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The working trees {@link JGitWorktreeOperations#worktreeAdd} creates are read by an installed git: {@code git worktree
  * list --porcelain} lists each with its path, its branch and its {@code HEAD}, a locked one {@code locked} and one
- * whose directory is gone {@code prunable}, and {@code git worktree remove} removes one (GDR-WT-1). The tests are
+ * whose directory is gone {@code prunable}, and {@code git worktree remove} removes one (GDR-CORE-12). The tests are
  * skipped through a JUnit assumption when no {@code git} binary is found. Only this test starts a process, never the
  * library. The porcelain keys ({@code worktree}, {@code HEAD}, {@code branch}, {@code detached}, {@code locked},
  * {@code prunable}) are git's own vocabulary.
@@ -62,7 +62,7 @@ class GitWorktreeListCompatibilityTest {
     Path temp;
 
     @Test
-    @DisplayName("GDR-WT-1: git worktree list --porcelain lists the added working trees with path, branch and HEAD")
+    @DisplayName("GDR-CORE-12: git worktree list --porcelain lists the added working trees with path, branch and HEAD")
     void installedGitListsAddedWorktrees(@LocalRepository Repository source) throws Exception {
         assumeTrue(gitInstalled(), "a git binary is installed");
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
@@ -89,7 +89,7 @@ class GitWorktreeListCompatibilityTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: git worktree list --porcelain lists a locked tree locked and one whose directory is gone "
+    @DisplayName("GDR-CORE-12: git worktree list --porcelain lists a locked tree locked and one whose directory is gone "
             + "prunable")
     void installedGitListsLockedAndPrunable(@LocalRepository Repository source) throws Exception {
         assumeTrue(gitInstalled(), "a git binary is installed");
@@ -114,7 +114,7 @@ class GitWorktreeListCompatibilityTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-1: git worktree remove removes a working tree the library added")
+    @DisplayName("GDR-CORE-12: git worktree remove removes a working tree the library added")
     void installedGitRemovesAddedWorktree(@LocalRepository Repository source) throws Exception {
         assumeTrue(gitInstalled(), "a git binary is installed");
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);

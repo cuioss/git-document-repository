@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import java.nio.file.Path;
 import java.util.Collections;
@@ -32,10 +32,10 @@ import lombok.Builder;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The operations on the working trees of a repository: adding, listing and removing linked working trees (GDR-WT-1),
- * the commit from a working tree (GDR-WT-2), the status of a working tree and the release of a branch reservation left
- * by an ended process (GDR-WT-4). One method per operation, typed inputs, and results carrying the closed
- * {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
+ * The operations on the working trees of a repository: adding, listing and removing linked working trees
+ * (GDR-CORE-12), the commit from a working tree (GDR-CORE-13), the status of a working tree and the release of a branch
+ * reservation left by an ended process (GDR-CORE-15). One method per operation, typed inputs, and results carrying the
+ * closed {@link GitOutcome} of {@code git-core} (GDR-GEN-3).
  * <p>
  * Every repository an implementation opens is built on {@link RefusingFS}, so no operation starts a process through
  * the repository's file system; an operation that would run a hook ends {@link GitOutcome#REFUSED_BY_POLICY} with the
@@ -130,7 +130,7 @@ public interface WorktreeOperations {
     GitResult<WorktreeStatus> worktreeStatus(Path root);
 
     /**
-     * Releases the reservation of a branch (GDR-WT-4). An addition reserves its branch, a new one like an existing one,
+     * Releases the reservation of a branch (GDR-CORE-15). An addition reserves its branch, a new one like an existing one,
      * with a reservation file in the common git directory, {@code worktree-branch-<SHA-1 of the full branch name>.lock},
      * and deletes it once the new working tree is registered or the addition ended. A process that ends between the two
      * leaves the reservation behind, and every later addition of that branch ends

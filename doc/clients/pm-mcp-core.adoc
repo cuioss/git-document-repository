@@ -5,9 +5,9 @@
 :sectnums:
 :source-highlighter: highlight.js
 
-`pm-mcp-core` is the core repository of the product PM-MCP. It is a client of the foundation modules `git-core`,
-`git-worktrees` and `git-testing`, not a part of these libraries. Its module `pm-provider-git` holds the hardened JGit
-code from which the foundation is taken, and after the switch-over it depends on `git-core` and `git-worktrees`.
+`pm-mcp-core` is the core repository of the product PM-MCP. It is a client of the foundation modules `git-core` and
+`git-testing`, not a part of these libraries. Its module `pm-provider-git` holds the hardened JGit code from which the
+foundation is taken, and after the switch-over it depends on `git-core`, including its working-tree package.
 
 This document collects everything that concerns this client: why the foundation is shared with it, the inventory of
 `pm-provider-git`, what moves where, what changes in `pm-mcp-core`, and the order of the switch-over. The library
@@ -101,29 +101,30 @@ policy, a file read at that commit.
   `GitOperations`/`JGitOperations` the repository part as `RepositoryOperations`/`JGitRepositoryOperations`: open and
   init, the log, fetch and push (with credentials and lease), and the cache repository. The list of `GitOutcome` is
   reconciled with the outcomes the requirements of the libraries name (see <<_what_git_core_took_and_changed>>).
-* *`git-worktrees`* takes `LinkedWorktrees`, adding, listing and removing working trees, and the commit from a working
-  tree, and offers the working-tree status on which `WorktreeShaDigest` builds.
+* *The package `de.cuioss.git.document.core.worktrees` of `git-core`* takes `LinkedWorktrees`, adding, listing and
+  removing working trees, and the commit from a working tree, and offers the working-tree status on which
+  `WorktreeShaDigest` builds.
 * *`git-testing`* takes the generator of the transport credential (`GitCredentialGenerator`, `GitGenerators`, which lie in
   the test artifact `pm-provider-git:tests`).
 * *`pm-provider-git` keeps* `JGitSourceRepository`, `WorktreeShaDigest` with its ported tests and fixtures (its
-  framing is a contract of PM-MCP; it then builds on the working-tree status of `git-worktrees`), and `GitOperations`
+  framing is a contract of PM-MCP; it then builds on the working-tree status of `git-core`), and `GitOperations`
   as a facade over the two new interfaces, so the assembly keeps its interface for the first step.
 
 Every class is taken over as a plain copy without history (owner's decision, 2026-11-17): the commit that brings it
 names `pm-mcp-core`, the source path and the commit it was copied from. `git-core` holds the copy of
 `pm-providers/pm-provider-git/src/main/java/de/planmarshall/provider/git/` at commit `287e1a86`, package-renamed to
-`de.cuioss.git.document.core`; `git-worktrees` holds `LinkedWorktrees` from the same path and commit,
-package-renamed to `de.cuioss.git.document.worktrees` and since changed (see
-<<_what_git_worktrees_took_and_changed>>); `git-testing` holds the copy of the generator. The taken-over
+`de.cuioss.git.document.core`; its package `de.cuioss.git.document.core.worktrees` holds `LinkedWorktrees` from
+the same path and commit, package-renamed and since changed (see
+<<_what_the_worktrees_package_took_and_changed>>); `git-testing` holds the copy of the generator. The taken-over
 code is released under the Apache License 2.0 of `git-document-repository`.
 
 The tests move with the classes they test. Test classes that cover both sides (`JGitOperationsTest`,
 `GitOperationsContractTest`, `GitOperationsRecordsTest`, `AbsenceContractsTest`) are split along the interfaces. The
 repository part of each moves to `git-core`, rewritten onto the fixtures of `git-testing`; its commits are written
 through an `ObjectInserter` (the helper `TestCommits`) instead of from a working tree. `GitOperationsContractTest`
-tests only the source's `GitCredential` record, which neither `git-core` nor `git-worktrees` takes, so no part of it
-moves. The worktree part of `JGitOperationsTest`, `GitOperationsRecordsTest` and `AbsenceContractsTest` moves to
-`git-worktrees`, likewise rewritten onto the fixtures; the main working tree of its tests is a clone of a fixture
+tests only the source's `GitCredential` record, which `git-core` does not take, so no part of it moves. The worktree
+part of `JGitOperationsTest`, `GitOperationsRecordsTest` and `AbsenceContractsTest` moves to the package
+`de.cuioss.git.document.core.worktrees` of `git-core`, likewise rewritten onto the fixtures; the main working tree of its tests is a clone of a fixture
 repository.
 
 [cols="1,2"]
@@ -137,7 +138,7 @@ secrets check), `RepositoryOperationsRecordsTest` (the repository part of `GitOp
 `AbsenceContractsTest` (its repository part); `JGitCacheRepositoryTest` and `UnservedWantTest` (both test the cache
 repository); `TransportFailuresTest` (new: the classification of a refused authentication)
 
-|`git-worktrees`
+|`git-core`, package `worktrees`
 |`LinkedWorktreesTest`; `JGitWorktreeOperationsTest` (the worktree part of `JGitOperationsTest`: add, list, remove and
 commit with every outcome, and the secrets check), `WorktreeOperationsRecordsTest` (the worktree part of
 `GitOperationsRecordsTest`), `AbsenceContractsTest` (its worktree part); `WorktreeStatusTest` (new: the working-tree
@@ -186,12 +187,12 @@ switch-over:
 |none |new: `CONFLICT`, `UNREACHABLE`, `CREDENTIALS_INVALID`, `UNSERVED`, `FAILED`
 |===
 
-[[_what_git_worktrees_took_and_changed]]
-=== What `git-worktrees` Took and Changed
+[[_what_the_worktrees_package_took_and_changed]]
+=== What the Worktrees Package Took and Changed
 
-`git-worktrees` changed the copied code where the requirements of the libraries demand it
-(xref:../specification/git-worktrees.adoc[`git-worktrees`]); the facade of `pm-provider-git` maps the differences at
-the switch-over:
+The package `de.cuioss.git.document.core.worktrees` of `git-core` changed the copied code where the requirements of
+the libraries demand it (xref:../specification/git-core.adoc#working-trees[`git-core`, Working Trees]); the facade of
+`pm-provider-git` maps the differences at the switch-over:
 
 * *Outcomes.* The worktree operations report the constants of `GitOutcome` of `git-core`, so the mapping of the table
   above applies to them as well; an unexpected failure is `FAILED` with the failure class as detail.
@@ -205,7 +206,7 @@ the switch-over:
   existing one, until the new working tree names it; a refused or failed addition removes only what it created, a
   branch it created only while the branch still points at the start. An unknown start point is not found, also for an
   existing branch. `releaseBranchReservation` is new: it releases a reservation an ended process left behind
-  (xref:../specification/git-worktrees.adoc#GDR-WT-4[GDR-WT-4]).
+  (xref:../specification/git-core.adoc#GDR-CORE-15[GDR-CORE-15]).
 * *Removal.* `worktreeRemove` ends `WORKTREE_NOT_FOUND`, no longer `IDENTITY_MISMATCH`, for a repository at the root
   that is not the registered working tree, compares the registered paths as real paths and removes a prunable working
   tree by its administration directory only.
@@ -214,7 +215,7 @@ the switch-over:
   commit in a linked working tree to that working tree's own log; a reflog entry that cannot be written keeps the
   created commit `OK`.
 * *Log messages.* The INFO messages carry no path and no administrative name; the add message names the start commit,
-  and the release of a branch reservation is logged without an argument. The WARN message `GIT_WORKTREES-101` names
+  and the release of a branch reservation is logged without an argument. The WARN message `GIT_CORE-103` names
   the commit id of a commit whose reflog entry was not written.
 * *Status.* The working-tree status `worktreeStatus` is new: the three path sets `changed`, `untracked` and `deleted`
   mapped from JGit's `Status`, whose union is the path union the source's `worktreeSha` reads; the digest itself stays
@@ -226,7 +227,7 @@ Each item is part of the work package that switches `pm-provider-git` over:
 
 . *The dependency decision* for the new artifacts, by the owner of `pm-mcp-core`; their version comes from its root
   POM's `dependencyManagement`.
-. *The Module Structure Specification* of PM-MCP: `pm-provider-git` may depend on `git-core` and `git-worktrees`.
+. *The Module Structure Specification* of PM-MCP: `pm-provider-git` may depend on `git-core`.
 . *The enforcer rules of the root POM* name the new artifacts, and `BuildGuardsIT` proves the changed rule. JGit stays
   a dependency of `pm-provider-git` through `git-core`; `pm-core` and `pm-workflow` stay without JGit.
 . *The registry.* Artifacts under `de.cuioss` from Maven Central need no change of the group filter in `.mvn/rrf`.
@@ -241,11 +242,11 @@ the size.
 
 == Order of the Switch-Over
 
-. Fill `git-core`, `git-worktrees` and `git-testing`: copy the classes and their tests into `git-core` and
-  `git-worktrees`, and the generator into `git-testing`, each as a plain copy without history whose commit names the
-  source (owner's decision, 2026-11-17); build and release a first version. `git-core`, `git-worktrees` and
-  `git-testing` are filled; the first release follows.
-. Work package in `pm-mcp-core`: switch `pm-provider-git` onto the two modules and reduce it to facade, adapter and
+. Fill `git-core` and `git-testing`: copy the classes and their tests into `git-core` (the worktree part into its
+  package `de.cuioss.git.document.core.worktrees`), and the generator into `git-testing`, each as a plain copy without
+  history whose commit names the source (owner's decision, 2026-11-17); build and release a first version. `git-core`
+  and `git-testing` are filled; the first release follows.
+. Work package in `pm-mcp-core`: switch `pm-provider-git` onto `git-core` and reduce it to facade, adapter and
   digest, with the changes listed above.
 
 The aspect modules of the document store (`git-store` and the modules above it) change nothing in `pm-mcp-core`.

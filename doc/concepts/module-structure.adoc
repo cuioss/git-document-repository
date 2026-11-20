@@ -39,14 +39,11 @@ image::../resources/diagrams/module-dependency-graph.svg["Module dependency grap
 
 |`git-core`
 |Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository,
-in-core writing, compare-and-swap, in-core merge, notes
+in-core writing, compare-and-swap, in-core merge, notes; in the package `de.cuioss.git.document.core.worktrees`
+linked working trees, commit from a working tree, working-tree status
 |implemented: hardening (with the one limit of xref:../specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1]), remote
 policy, identity, results, repository operations, cache repository, in-core writing, compare-and-swap, in-core merge,
-reading, notes
-
-|`git-worktrees`
-|Linked working trees, commit from a working tree, working-tree status
-|implemented
+reading, notes, working trees
 
 |`git-testing`
 |Generators and fixtures: local and in-memory repositories, a local remote
@@ -74,13 +71,13 @@ Stores, The Anchor])
 |planned
 |===
 
-The first three modules are the extended JGit functionality with its helper classes. The others are the aspects of
+The first two modules are the extended JGit functionality with its helper classes. The others are the aspects of
 the document store. An application with its kinds of documents and its user interface is not part of this
 repository; its kinds of documents are configuration of `git-forms`.
 
 === Dependencies and Third-Party Isolation
 
-`git-worktrees` and `git-store` build on `git-core`; `git-forms` and `git-timestamp` build on `git-store`;
+`git-store` builds on `git-core`; `git-forms` and `git-timestamp` build on `git-store`;
 `git-directory` builds on `git-forms`. `git-testing` depends on no other module of the reactor; it declares JGit
 directly, since its fixtures create JGit repositories.
 
@@ -104,8 +101,8 @@ JGit is managed in the root POM; every other one of these dependencies needs the
 
 == The Foundation Modules
 
-`git-core`, `git-worktrees` and `git-testing` form the foundation: generic Git functionality on JGit that carries no
-term of a domain, so it serves the document store and every other client that works with Git repositories.
+`git-core` and `git-testing` form the foundation: generic Git functionality on JGit that carries no term of a domain,
+so it serves the document store and every other client that works with Git repositories.
 
 * *`git-core`* holds the hardening (a file system that refuses hooks and process starts, a remote policy checked
   before every fetch and push), commit and reference identity, the result type with the closed list of Git outcomes,
@@ -113,13 +110,15 @@ term of a domain, so it serves the document store and every other client that wo
   compare-and-swap, in-core merge and `git notes` (xref:../specification/git-core.adoc[`git-core`]). Each aspect
   module defines its own closed list of outcomes in the same result shape, so adding an aspect module changes nothing
   in `git-core` (xref:../specification/general.adoc#GDR-GEN-3[GDR-GEN-3]).
-* *`git-worktrees`* holds the linked working trees (administration files in git's own layout, readable by
+* *The working-tree operations* are the package `de.cuioss.git.document.core.worktrees` of `git-core`, not a module of
+  their own (xref:../adr/0004-The_libraries_are_one_reactor_of_separately_consumed_modules_and_the_JGit_foundation_is_shared_with_its_clients.adoc[ADR-0004]).
+  The package holds the linked working trees (administration files in git's own layout, readable by
   `git worktree list` and written natively, because JGit has no command that adds or removes a linked working tree;
   see xref:storage-engine.adoc#_no_working_trees[Storage Engine, No Working Trees]): adding, listing and removing
   working trees, the commit from a working tree, and a working-tree status as a generic primitive (the path sets of
   changed, untracked and deleted files), on which a client builds its own digest
-  (xref:../specification/git-worktrees.adoc[`git-worktrees`]). The document store does not need this module; clients
-  that work on files on disk do.
+  (xref:../specification/git-core.adoc#working-trees[`git-core`, Working Trees]). The document store does not use this
+  package; clients that work on files on disk do.
 * *`git-testing`* holds a generator of transport credentials and fixtures for local and in-memory repositories and a
   local remote (xref:../specification/git-testing.adoc[`git-testing`]).
 
@@ -135,11 +134,12 @@ and the changes on the client's side are described in xref:../clients/pm-mcp-cor
 
 == Order
 
-. Fill `git-core`, `git-worktrees` and `git-testing` with the foundation code and its tests; build and release a
-  first version. The code is taken over as a plain copy without history, whose commit names the source repository,
-  the source path and the commit it was copied from (owner's decision, 2026-11-17); the taken-over code is released
-  under the Apache License 2.0. `git-core` holds the repository part of `pm-provider-git` copied this way,
-  `git-worktrees` its worktree part, and `git-testing` the generator copied this way and fixtures written new.
+. Fill `git-core` and `git-testing` with the foundation code and its tests; build and release a first version. The
+  code is taken over as a plain copy without history, whose commit names the source repository, the source path and
+  the commit it was copied from (owner's decision, 2026-11-17); the taken-over code is released under the Apache
+  License 2.0. `git-core` holds the repository part of `pm-provider-git` copied this way and, in its package
+  `de.cuioss.git.document.core.worktrees`, the worktree part; `git-testing` holds the generator copied this way and
+  fixtures written new.
 . Switch the first client over to the foundation (see xref:../clients/pm-mcp-core.adoc#_order_of_the_switch_over[Client:
   `pm-mcp-core`, Order of the Switch-Over]).
 . Add the aspect modules as the document store needs them: `git-store` first, then `git-forms`, `git-directory`

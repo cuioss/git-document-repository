@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,10 +29,10 @@ import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
-import de.cuioss.git.document.worktrees.WorktreeOperations.CommitInput;
-import de.cuioss.git.document.worktrees.WorktreeOperations.Worktree;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeStatus;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.CommitInput;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeStatus;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.junit.jupiter.api.DisplayName;
@@ -93,7 +93,7 @@ class WorktreeOperationsRecordsTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-3: statuses with the same paths are equal whatever the order or type of the input sets")
+    @DisplayName("GDR-CORE-14: statuses with the same paths are equal whatever the order or type of the input sets")
     void worktreeStatusEqualsOverPaths() {
         var paths = new HashSet<String>();
         while (paths.size() < 3) {
@@ -177,7 +177,7 @@ class WorktreeOperationsRecordsTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-3: the working-tree status refuses every missing set and every missing path")
+    @DisplayName("GDR-CORE-14: the working-tree status refuses every missing set and every missing path")
     void worktreeStatusRefusesMissingSets() {
         var paths = Set.of(text());
         var withNull = new HashSet<String>();
@@ -199,7 +199,7 @@ class WorktreeOperationsRecordsTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-3: the working-tree status keeps a sorted copy that neither the caller nor a reader changes")
+    @DisplayName("GDR-CORE-14: the working-tree status keeps a sorted copy that neither the caller nor a reader changes")
     void worktreeStatusCopiesSortedAndUnmodifiable() {
         var changed = new HashSet<String>();
         while (changed.size() < 3) {

@@ -5,13 +5,16 @@
 == Overview
 
 The log-message catalogue of `git-core`
-(xref:../../doc/specification/general.adoc#GDR-GEN-4[GDR-GEN-4]). Every message at level INFO, WARN or ERROR carries a
-stable identifier of the form `GIT_CORE-<identifier>`, rendered by `LogRecord#resolveIdentifierString()` without
-leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO 1-99,
-WARN 100-199, ERROR 200-299). The messages are declared in `de.cuioss.git.document.core.GitCoreLogMessages`.
+(xref:../../doc/specification/general.adoc#GDR-GEN-4[GDR-GEN-4]), for both its packages: the repository part in
+`de.cuioss.git.document.core` and the working-tree part in `de.cuioss.git.document.core.worktrees`. Every message at
+level INFO, WARN or ERROR carries a stable identifier of the form `GIT_CORE-<identifier>`, rendered by
+`LogRecord#resolveIdentifierString()` without leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO
+1-99, WARN 100-199, ERROR 200-299). The messages are declared in `de.cuioss.git.document.core.GitCoreLogMessages`.
 
 No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a URL is rendered
-without user information, and neither a credential nor a JGit message that may carry one is logged. Debug and trace
+without user information, and neither a credential nor a JGit message that may carry one is logged. A message of the
+working-tree part names a commit id or a refused capability, never a path, an administrative name derived from the
+caller's path, a branch name, an author or committer name, an e-mail address or a commit message. Debug and trace
 messages carry no identifier and are not listed.
 
 == INFO Level (1-99)
@@ -21,6 +24,12 @@ messages carry no identifier and are not listed.
 |ID |Component |Message |Description
 |GIT_CORE-1 |GIT_CORE |Created bare clone at %s from %s |Logged when `cloneIfMissing` created a bare clone: the git
 directory and the URL of the remote without user information.
+|GIT_CORE-2 |GIT_CORE |Added a linked working tree at commit %s |Logged when `worktreeAdd` created a linked working
+tree: the commit id it starts at.
+|GIT_CORE-3 |GIT_CORE |Removed a linked working tree |Logged when `worktreeRemove` removed a linked working tree or
+the administration files of a prunable one; the message carries no argument.
+|GIT_CORE-4 |GIT_CORE |Released a branch reservation |Logged when `releaseBranchReservation` deleted the reservation
+file of a branch; the message carries no argument, neither the branch name nor a path.
 |===
 
 == WARN Level (100-199)
@@ -33,6 +42,16 @@ before any contact because the remote policy does not admit the URL (shown witho
 `REFUSED_BY_POLICY`.
 |GIT_CORE-101 |GIT_CORE |Refused capability %s |Logged when the refusing file system refused a capability, a present
 hook (`repository_hook`) or a process start (`process_execution`); the result is `REFUSED_BY_POLICY`.
+|GIT_CORE-102 |GIT_CORE |Refused capability %s |Logged when the refusing file system refused a capability during a
+working-tree operation, a present hook (`repository_hook`) or a process start (`process_execution`); the result is
+`REFUSED_BY_POLICY`.
+|GIT_CORE-103 |GIT_CORE |Created commit %s, its reflog entry was not written |Logged when `commit` created a commit in
+a linked working tree but could not append its reflog entries: the commit id only. The commit and its branch are
+stored, so the result stays `OK` with the commit.
+|GIT_CORE-104 |GIT_CORE |The rollback of a failed working-tree addition is incomplete |Logged when the rollback of a
+refused or failed `worktreeAdd` could not undo everything the addition created, for example a created branch still at
+its start commit that could not be deleted; the message carries no argument, neither the branch name nor a path. The
+addition ends `FAILED` or with the outcome of the failure it rolled back.
 |===
 
 == ERROR Level (200-299)

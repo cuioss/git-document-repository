@@ -13,9 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
-import static de.cuioss.git.document.worktrees.JGitWorktreeOperationsTest.name;
+import static de.cuioss.git.document.core.worktrees.JGitWorktreeOperationsTest.name;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -29,9 +29,9 @@ import java.util.TreeSet;
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RepositoryOperations.Identity;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeStatus;
 import de.cuioss.git.document.testing.LocalRepository;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeStatus;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.api.Git;
@@ -48,7 +48,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * The status of a working tree mapped from JGit's {@code Status} (JGit 7.8.0, GDR-WT-3): one scenario per JGit
+ * The status of a working tree mapped from JGit's {@code Status} (JGit 7.8.0, GDR-CORE-14): one scenario per JGit
  * category on a main working tree cloned from a {@code git-testing} fixture repository, each asserting the exact
  * three sets, and the union of the three sets against the path union of the seven JGit categories the source
  * {@code worktreeSha} reads. The working trees are prepared with JGit's porcelain API in the test, never through the
@@ -185,9 +185,9 @@ class WorktreeStatusTest {
         return Objects.requireNonNull(result.value(), "the status is read: " + result.detail());
     }
 
-    @ParameterizedTest(name = "GDR-WT-3: {0}")
+    @ParameterizedTest(name = "GDR-CORE-14: {0}")
     @EnumSource(Scenario.class)
-    @DisplayName("GDR-WT-3: each JGit category lands in exactly the documented sets")
+    @DisplayName("GDR-CORE-14: each JGit category lands in exactly the documented sets")
     void mapsEachCategory(Scenario scenario, @LocalRepository Repository source) throws Exception {
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
         var path = apply(scenario, main);
@@ -200,9 +200,9 @@ class WorktreeStatusTest {
                 () -> assertEquals(expected(scenario.deleted, path), status.deleted(), "the deleted paths"));
     }
 
-    @ParameterizedTest(name = "GDR-WT-3: the union equals the JGit path union when {0}")
+    @ParameterizedTest(name = "GDR-CORE-14: the union equals the JGit path union when {0}")
     @EnumSource(Scenario.class)
-    @DisplayName("GDR-WT-3: the union of the three sets is the path union of the seven JGit categories")
+    @DisplayName("GDR-CORE-14: the union of the three sets is the path union of the seven JGit categories")
     void unionEqualsJGitUnion(Scenario scenario, @LocalRepository Repository source) throws Exception {
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
         apply(scenario, main);
@@ -230,7 +230,7 @@ class WorktreeStatusTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-3: the status of a linked working tree is its own, not the main one's")
+    @DisplayName("GDR-CORE-14: the status of a linked working tree is its own, not the main one's")
     void linkedWorktree(@LocalRepository Repository source) throws Exception {
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
         var added = operations.worktreeAdd(WorktreeAddInput.builder().root(main.root())
@@ -255,7 +255,7 @@ class WorktreeStatusTest {
      * and therefore has nothing to commit. The two operations deliberately disagree on that one path.
      */
     @Test
-    @DisplayName("GDR-WT-3: a nested linked root is untracked in the main status, but commit has nothing to commit")
+    @DisplayName("GDR-CORE-14: a nested linked root is untracked in the main status, but commit has nothing to commit")
     void nestedLinkedRootStatusAgainstCommit(@LocalRepository Repository source) throws Exception {
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
         var added = operations.worktreeAdd(WorktreeAddInput.builder().root(main.root())
@@ -285,7 +285,7 @@ class WorktreeStatusTest {
      * {@code process_execution}. The attribute and configuration keys are git's own vocabulary.
      */
     @Test
-    @DisplayName("GDR-WT-3: a clean filter in .gitattributes is run by the status and refused")
+    @DisplayName("GDR-CORE-14: a clean filter in .gitattributes is run by the status and refused")
     void cleanFilterRefused(@LocalRepository Repository source) throws Exception {
         var main = JGitWorktreeOperationsTest.mainTree(source, temp);
         var driver = name();
@@ -312,7 +312,7 @@ class WorktreeStatusTest {
     }
 
     @Test
-    @DisplayName("GDR-WT-3: a plain directory is not a repository, a repository without working tree fails")
+    @DisplayName("GDR-CORE-14: a plain directory is not a repository, a repository without working tree fails")
     void notARepositoryAndFailed(@LocalRepository Repository bare) throws Exception {
         var plain = Files.createDirectories(temp.resolve(name()));
 

@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
-import static de.cuioss.git.document.worktrees.GitWorktreesLogMessages.INFO;
-import static de.cuioss.git.document.worktrees.GitWorktreesLogMessages.WARN;
+import static de.cuioss.git.document.core.GitCoreLogMessages.INFO;
+import static de.cuioss.git.document.core.GitCoreLogMessages.WARN;
 
 import java.io.File;
 import java.io.IOException;
@@ -80,7 +80,7 @@ import org.jspecify.annotations.Nullable;
  * JGit has no command that adds or removes a linked working tree, so the administration files are read and written
  * natively in git's own layout ({@link LinkedWorktrees}). Every repository is opened with a {@link RefusingFS}, so no
  * operation starts a process through the repository's file system; an operation that would run a present hook or a
- * filter driver ends {@link GitOutcome#REFUSED_BY_POLICY} with the refused capability in the detail (GDR-WT-2). The
+ * filter driver ends {@link GitOutcome#REFUSED_BY_POLICY} with the refused capability in the detail (GDR-CORE-13). The
  * one process start outside it is JGit's process-wide {@code SystemReader}, which the operations leave untouched; it
  * is prevented only where the application installed {@link RefusingFS#systemReader} before any JGit use. Commits are
  * never signed.
@@ -491,13 +491,14 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
             return StartPoint.refused(GitOutcome.AMBIGUOUS, candidates(BRANCH, lookup));
         }
         Ref existing = lookup.resolution() == GitIdentity.Resolution.REF ? main.exactRef(branchRef) : null;
-        if (existing == null || existing.getObjectId() == null) {
+        ObjectId existingId = existing == null ? null : existing.getObjectId();
+        if (existingId == null) {
             return StartPoint.refused(GitOutcome.NOT_FOUND, BRANCH + NOT_FOUND_SUFFIX);
         }
         if (checkedOut(main, commonDir, branch)) {
             return StartPoint.refused(GitOutcome.BRANCH_CHECKED_OUT, CHECKED_OUT);
         }
-        return StartPoint.of(existing.getObjectId());
+        return StartPoint.of(existingId);
     }
 
     /**
@@ -962,7 +963,7 @@ public final class JGitWorktreeOperations implements WorktreeOperations {
     private static <V> GitResult<V> failure(Exception e) {
         for (Throwable current = e; current != null; current = current.getCause()) {
             if (current instanceof CapabilityRefusedException refusal) {
-                LOGGER.warn(WARN.CAPABILITY_REFUSED, refusal.getReason());
+                LOGGER.warn(WARN.WORKTREE_CAPABILITY_REFUSED, refusal.getReason());
                 return GitResult.of(GitOutcome.REFUSED_BY_POLICY, refusal.getReason());
             }
         }

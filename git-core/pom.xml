@@ -11,7 +11,7 @@
     <artifactId>git-core</artifactId>
     <packaging>jar</packaging>
     <name>git-core</name>
-    <description>Hardened Git repositories, remote policy, identity, results, transport, reading, cache repository and in-core writing on JGit.</description>
+    <description>Hardened Git repositories, remote policy, identity, results, transport, reading, cache repository and in-core writing on JGit, linked working trees, commit from a working tree and working-tree status.</description>
     <properties>
         <maven.jar.plugin.automatic.module.name>de.cuioss.git.document.core</maven.jar.plugin.automatic.module.name>
     </properties>

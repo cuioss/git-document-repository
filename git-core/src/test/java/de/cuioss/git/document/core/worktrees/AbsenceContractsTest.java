@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.cuioss.git.document.worktrees;
+package de.cuioss.git.document.core.worktrees;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,8 +27,8 @@ import java.util.Objects;
 
 
 import de.cuioss.git.document.core.GitOutcome;
+import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.git.document.testing.LocalRepository;
-import de.cuioss.git.document.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;

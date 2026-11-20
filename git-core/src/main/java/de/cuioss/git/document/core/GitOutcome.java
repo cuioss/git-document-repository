@@ -20,8 +20,8 @@ package de.cuioss.git.document.core;
  * <p>
  * Every operation of the foundation whose expected outcomes include a non-success reports one of these constants in
  * a {@link GitResult}; an expected non-success is never signalled by an exception. The list holds Git outcomes only
- * and carries no domain term; it includes the outcomes raised by {@code git-worktrees}. {@link #FAILED} is an I/O
- * failure outside the other outcomes.
+ * and carries no domain term; it includes the outcomes raised by the {@code worktrees} package. {@link #FAILED} is an
+ * I/O failure outside the other outcomes.
  *
  * @since 0.1
  */
@@ -95,27 +95,38 @@ public enum GitOutcome {
     /** Failed: an I/O failure outside the outcomes above. Raised by every operation. */
     FAILED,
 
-    /** Nothing to commit: a commit from a working tree with nothing staged or changed. Raised by {@code git-worktrees}. */
+    /**
+     * Nothing to commit: a commit from a working tree with nothing staged or changed. Raised by the {@code worktrees}
+     * package.
+     */
     NOTHING_TO_COMMIT,
 
-    /** Already exists: the target path or the branch of a new working tree exists. Raised by {@code git-worktrees}. */
+    /**
+     * Already exists: the target path or the branch of a new working tree exists. Raised by the {@code worktrees}
+     * package.
+     */
     ALREADY_EXISTS,
 
-    /** Branch checked out: the branch is checked out in another working tree. Raised by {@code git-worktrees}. */
+    /**
+     * Branch checked out: the branch is checked out in another working tree. Raised by the {@code worktrees} package.
+     */
     BRANCH_CHECKED_OUT,
 
-    /** Working tree not found: no linked working tree at that path. Raised by {@code git-worktrees}. */
+    /** Working tree not found: no linked working tree at that path. Raised by the {@code worktrees} package. */
     WORKTREE_NOT_FOUND,
 
-    /** Working tree dirty: the working tree has uncommitted or untracked changes. Raised by {@code git-worktrees}. */
+    /**
+     * Working tree dirty: the working tree has uncommitted or untracked changes. Raised by the {@code worktrees}
+     * package.
+     */
     WORKTREE_DIRTY,
 
-    /** Working tree locked: the working tree is locked. Raised by {@code git-worktrees}. */
+    /** Working tree locked: the working tree is locked. Raised by the {@code worktrees} package. */
     WORKTREE_LOCKED,
 
     /**
-     * Path refused: a derived path lies outside the permitted root or is the main working tree. Raised by
-     * {@code git-worktrees}.
+     * Path refused: a derived path lies outside the permitted root or is the main working tree. Raised by the
+     * {@code worktrees} package.
      */
     PATH_REFUSED
 }

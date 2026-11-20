@@ -6,9 +6,9 @@
 :source-highlighter: highlight.js
 
 // adr-metadata
-// summary: git-document-repository is a multi-module reactor released together; the generic, hardened JGit code becomes the foundation modules git-core, git-worktrees and git-testing, shared by the document store and other clients; the aspects of the document store are modules of their own, each carrying its own third-party dependencies.
+// summary: git-document-repository is a multi-module reactor released together; the generic, hardened JGit code becomes the foundation modules git-core and git-testing, shared by the document store and other clients, and the working-tree operations are a package of git-core; the aspects of the document store are modules of their own, each carrying its own third-party dependencies.
 // tags: modules, layering, dependencies, release, foundation, jgit
-// affects: git-core, git-worktrees, git-testing, git-store, git-forms, git-timestamp, git-directory
+// affects: git-core, git-testing, git-store, git-forms, git-timestamp, git-directory
 // supersedes:
 // end-adr-metadata
 
@@ -26,8 +26,11 @@ how the code is cut into artifacts, and whether the store copies the hardened co
 *The decision:* one repository, one Maven reactor, released together to Maven Central. Every module is consumed
 separately:
 
-* `git-core`, `git-worktrees`, `git-testing` -- the JGit foundation, taken over from its first client and shared by
-  every client, the document store included; what is specific to a client stays with that client;
+* `git-core`, `git-testing` -- the JGit foundation, taken over from its first client and shared by every client, the
+  document store included; what is specific to a client stays with that client. The working-tree operations (linked
+  working trees, commit from a working tree, working-tree status) are the package
+  `de.cuioss.git.document.core.worktrees` of `git-core`, not a module of their own: their only edge is `git-core`,
+  they add no third-party dependency, and they are released together with it;
 * `git-store` -- drafts, saving, signature, index, anchoring;
 * `git-forms` -- schema-driven documents;
 * `git-timestamp`, `git-directory` -- optional aspects.

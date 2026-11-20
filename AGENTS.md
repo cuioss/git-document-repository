@@ -25,8 +25,7 @@ released together and consumed separately.
 
 | Module | Purpose | Depends on |
 |---|---|---|
-| `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes | - |
-| `git-worktrees` | Linked working trees, commit from a working tree, working-tree status | `git-core` |
+| `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection | `git-core` |
 
@@ -43,12 +42,12 @@ compare-and-swap: `InCoreWriter` with `TreeEdit`, `CommitMetadata` and `CommitSi
 `TreeOperation` (compare-and-swap and compare-and-delete of a reference), and with in-core merge, reading and notes:
 `InCoreMerger` with the sealed `MergeResult` (the merged tree, or the conflicting paths as data), `RepositoryReader`
 (snapshot, path history, changed paths) and `GitNotes` (read and write a note under a caller-named notes reference,
-by compare-and-swap); its tests run on the class path against the `git-testing` fixtures. `git-worktrees` exports `de.cuioss.git.document.worktrees` with the worktree part
-taken over from `pm-provider-git`: `WorktreeOperations` with `JGitWorktreeOperations` (add, list and remove linked
-working trees, commit from a working tree, working-tree status `WorktreeStatus`, release of a branch reservation left
-by an ended process), the package-private
-`LinkedWorktrees` and the `LogRecord` holder `GitWorktreesLogMessages`; its tests run on the class path against the
-`git-testing` fixtures. `git-store` exports `de.cuioss.git.document.store` with the foundation of the store: the
+by compare-and-swap). `git-core` also exports `de.cuioss.git.document.core.worktrees` with the worktree part taken
+over from `pm-provider-git`: `WorktreeOperations` with `JGitWorktreeOperations` (add, list and remove linked working
+trees, commit from a working tree, working-tree status `WorktreeStatus`, release of a branch reservation left by an
+ended process) and the package-private `LinkedWorktrees`; its log messages are declared in `GitCoreLogMessages`, the
+single `LogRecord` holder of `git-core`. The tests of both packages run on the class path against the `git-testing`
+fixtures. `git-store` exports `de.cuioss.git.document.store` with the foundation of the store: the
 closed outcome list `StoreOutcome` and the result `StoreResult` (whose outcome is a `StoreOutcome` or a non-success
 Git outcome passed on as `StoreResult.PassedOn`), the codec interface `Codec`, the repository registry
 `RepositoryRegistry` with `StoreRepository`, the typed configuration `StoreConfiguration` (built by
@@ -60,12 +59,12 @@ public class of a package: javac rejects exporting a package that contains only 
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph (`git-worktrees` and `git-store` each append their one edge, `git-core`), and the execution `consumer-isolation` of `git-core/pom.xml` bans every compile or runtime artifact outside the
-closure a consumer of `git-core` alone receives. `DomainTermAbsenceTest` in each module (`git-core`, `git-worktrees`,
-`git-testing` and `git-store`) asserts that no public type carries a domain term. `git-core` ships native-image
-metadata (`reflect-config.json`, `resource-config.json` under `META-INF/native-image/de.cuioss/git-core/`, checked by
-`NativeImageMetadataTest`) for the JGit translation bundle it reaches; `git-worktrees` and `git-store` ship none and
-rely on that of `git-core` (GDR-NFR-4).
+graph (`git-store` is the only module that appends an edge, `git-core`), and the execution `consumer-isolation` of
+`git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
+`DomainTermAbsenceTest` in each module (`git-core`, `git-testing` and `git-store`) asserts that no public type carries
+a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
+`META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
+reaches, its worktrees package included; `git-store` ships none and relies on that of `git-core` (GDR-NFR-4).
 
 ## Build
 
@@ -98,7 +97,7 @@ These follow the conventions of the foundation code that moves into this reposit
   the dependencies of `git-store`, `git-forms` or `git-timestamp`.
 - **Never add a dependency without the owner's approval**, JGit included.
 - A new module adds its allowed reactor edges to the `module-layering` rule: one `<include>` per edge of the module
-  graph, in its own POM (see `git-worktrees/pom.xml`).
+  graph, in its own POM (see `git-store/pom.xml`).
 - A new compile dependency of `git-core` is added to the `consumer-isolation` rule of `git-core/pom.xml` only after the
   owner's approval; until then the build fails.
 - Documentation is AsciiDoc; Javadoc on every public type and method.
