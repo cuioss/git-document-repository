@@ -53,6 +53,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   (`git-timestamp/`).
 - PLAN-12 — Can start once PLAN-08 has landed, in parallel with PLAN-09..11 (multi-file overlap on `pom.xml`,
   `general.adoc`, `AGENTS.md` → the gate puts it to the operator).
+- PLAN-08 — Staged, passes the admission tests, deliberately not emitted with PLAN-21 (three shared files); emit it when PLAN-21 lands.
+  PLAN-07's analysis folded the bound of `save.max-attempts` into its deliverable 2 (no new surface).
 - PLAN-10, PLAN-12, PLAN-13, PLAN-17 — Each opens with an owner decision on a third-party library; expect a question
   early in the plan's refine phase.
 - PLAN-18 — Shipped (PR #28). It was the collection plan for the minor leftovers of PLAN-01; once started its spec is
@@ -63,6 +65,16 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `doc/specification/general.adoc`): the pairing gate had
   predicted two of them plus `general.adoc`; the root `README.adoc` was in neither spec's surface. Sibling plans keep editing the
   same state lists, so a plan that changes a module's state expects those hand merges.
+- PLAN-07 — Shipped (PR #41, `9bdc5ba`, `landings/PLAN-07.md`), the first aspect-module plan: it created `git-store` (41 paths, +5091/-58).
+  It ran alone, started on the operator's word after the caution that the modules are released together, so `git-store` is now on
+  `main` and reaches the 0.1.0 release unless that is cut first or leaves it out. The operator merged #42 (the AGENTS.md merge
+  authorisation) and #43 (a comment-only change in `StoreConfiguration.java`) after it. The spec said four deliverables, the lane
+  reported six (the outline split them, fix tasks followed).
+- PLAN-21 — Merge of `git-worktrees` into `git-core` (staged 2026-11-20 on the operator's word): four deliverables, code and tests,
+  build configuration, specifications, concepts, ADR, client, index and root documents. Its five-file overlap with PLAN-07 is gone
+  (PLAN-07 shipped), but PLAN-07 added `git-store` to the same documents and the module table, so its outline reads them at
+  `a558afd`; it runs before PLAN-20 and the 0.1.0 release. Owner decisions inside it (requirement ids, log identifiers, ADR form)
+  are put to the owner at its outline; the package is decided.
 - PLAN-20 — Second collection plan (staged 2026-11-19 on the operator's word): the layer-3 defects of PLAN-19 and PLAN-04, the
   test gaps beside them and the `git-testing` leftovers of PLAN-18, in one plan. **Held back from `next` until the operator
   releases it**; later analyses fold further leftovers into it, in the same edit as its Expected Surface. PLAN-05, with
@@ -72,7 +84,11 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   PLAN-04 defects are still present at `14269fe`. PLAN-06's analysis added deliverable 6 (the build guards' residue) and the
   root `pom.xml`, `git-core/pom.xml`, the native-image directory and `README.adoc` to its surface; PLAN-20 now has six
   deliverables, at the split guard, and proceeds unsplit because the operator asked for one collection plan and each
-  deliverable is independent (the operator may split it when releasing it).
+  deliverable is independent (the operator may split it when releasing it). PLAN-07's analysis added deliverable 7 (`git-store`: a
+  token in a remote's query, a throwing `id()`, eager anchor providers, the textual anchor-key check and three test residues) and the
+  `git-store` entries to its surface; it now has seven deliverables and proceeds unsplit on the same ground. It now depends on PLAN-21: after the merge its
+  `git-worktrees/` paths move into `git-core`, and the orchestrator re-grounds deliverables 1 and 2, the surface and the claims
+  when PLAN-21 lands.
 
 ## Decisions
 
@@ -268,11 +284,45 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `termination_cause: error`); two folded into PLAN-20 (the recurring generated-value flake, now with a `git-testing` item, and the
   review's accepted hand-mirrored lists with the confirmed optional-dependency hole, which became deliverable 6); one discarded
   (the outline's false premise about DFS storage, caught by the Q-Gate and already required by CLAUDE.md).
+- 2026-11-20 — Design question of the operator: does the separation of `git-worktrees` from `git-core` make sense, it being a core
+  git feature? Findings put to the operator: the documented reason (ADR-0001, the store does not need working trees) is an
+  audience and attack-surface argument; the usual reason for a module, separate third-party dependencies, does not apply
+  (`git-worktrees` adds none); the split is leaky (`GitOutcome` in `git-core` carries four worktree outcomes plus two more it uses,
+  and PLAN-04 and PLAN-19 collided on it); the module is about 1,700 lines against 5,000; and the "store cannot reach working-tree
+  code" guarantee is only structural, because JGit's checkout API is on the class path anyway. Recommendation given: merge it into
+  `git-core` as a package before 0.1.0, unless the audit claim is wanted. The operator asked for a plan.
+- 2026-11-20 — PLAN-21 staged (`merge-worktrees-into-core`, WS-01, 4 deliverables, below the split guard) on the operator's word ("create a
+  plan for doing the merge, adapt all documentation as part of it"); the ordinal is the next free one (the queue held PLAN-01 to
+  PLAN-20). Defaults decided in the spec and put to the owner at its outline: the package `de.cuioss.git.document.core.worktrees`
+  (kept encapsulation: `LinkedWorktrees` is package-private, and the boundary the ADR relies on; the flat form into the existing
+  package is possible, no main type name collides, only two test classes share names across the modules), the requirement ids `GDR-WT-1` to `GDR-WT-4` kept inside
+  `git-core.adoc`, the log identifiers merged under `GIT_CORE` (both prefixes collide by number), and a new ADR amending ADR-0001
+  and ADR-0004. Nine claims stamped corroborated, two hypotheses open (no reflection in the moved code, the `consumer-isolation`
+  allow-list still passing). PLAN-20 was made to depend on it. Not emitted.
+- 2026-11-20 — Owner decision for PLAN-21: the package is `de.cuioss.git.document.core.worktrees` (the operator's word, after the
+  alternatives were put to them: the flat form and a second package `de.cuioss.git.document.worktrees`). It is recorded in the
+  spec as decided and is not asked again at the outline; the remaining defaults (requirement ids, log identifiers, ADR form)
+  are still put to the owner there.
+- 2026-11-20 — PLAN-07 recorded launched, then running, on the operator's word ("#07 is running"), the same turn PLAN-21 was staged. The
+  operator started it after the caution that the modules are released together; PLAN-21 therefore follows PLAN-07 unless the
+  operator accepts the five-file overlap at the pairing prompt.
 - 2026-11-20 — Layer-3 report of PLAN-06: no blocker and no major; four minor defects (a direct optional dependency of `git-core`
   bypasses `consumer-isolation`, confirmed in the Enforcer 3.6.3 bytecode; the layering guard is self-policing; the domain-term
   list is copied by hand into three tests; `NativeImageMetadataTest` checks names, not shape) and two points not shown by reading
   (build-guard bypasses and CI skip flags, native-image completeness). Reported to the operator at once and folded into PLAN-20
   deliverable 6 in the same act; no new plan is staged.
+- 2026-11-20 — PLAN-07 landed (PR #41, `9bdc5ba`) and was analysed on three layers: no blocker, no major; five minor layer-3 defects
+  in `git-store` (an unbounded `save.max-attempts` that reaches `git-core`'s `attempt <= attempts` loop, a token in a remote's query
+  rendered by `toString`, a throwing candidate `id()` escaping `StoreProviders.select`, every `AnchorProvider` instantiated even
+  when none is configured, a textual anchor-key comparison), three layer-2 minors (the codec test uses a test-local codec, provider
+  selection is tested on the class path only, the domain-term list is copied into a fourth module) and one premise narrowed
+  (a duplicate id stops the start only for the configured id; the spec was rewritten). Reported to the operator at once; recorded as
+  an Open Defect and routed on the operator's word: L3-1 into PLAN-08, the rest into PLAN-20 as a seventh deliverable (over the
+  split guard, proceeding unsplit on the same ground as before; the operator may split it when releasing it). The ten lessons: nine
+  recurrences, two new outline lessons (`2026-11-20-14-001`, `-002`), one not promoted (no log corroborates it).
+- 2026-11-20 — Emit round after PLAN-07 (nothing in flight): PLAN-08 and PLAN-21 both pass the three admission tests, and share three files
+  (`AGENTS.md`, `doc/README.adoc`, `doc/specification/general.adoc`). The operator chose PLAN-21 only: the merge comes first (artifact
+  coordinates before 0.1.0, PLAN-20 depends on it), PLAN-08 stays staged and is emitted when PLAN-21 lands, so there is no hand merge.
 
 ## Open Defects
 
@@ -301,11 +351,22 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `consumer-isolation` does not see a direct optional dependency, the layering rule is self-policing, the domain-term list is
   triplicated by hand, `NativeImageMetadataTest` checks names and not shape, the guards' negative runs live only in the squash
   message, and the native-image wording overclaims one class. — routed to PLAN-20 (deliverable 6); open until PLAN-20 ships.
+- PLAN-07 layer-3 defects in `git-store` (`landings/PLAN-07.md`, L3-1 to L3-5, all minor, with the layer-2 residue L2-1 to L2-3):
+  `save.max-attempts` has no upper bound and `Integer.MAX_VALUE` makes `git-core`'s `ReferenceUpdater.swap` loop wrap (the PLAN-04
+  `attempts` class; latent until PLAN-08's save uses the value), `StoreRepository.toString` keeps a token in a remote's path or
+  query (GDR-NFR-3), a throwing candidate `id()` escapes `StoreProviders.select` as an exception, `StoreProviders.load` instantiates
+  every `AnchorProvider` even when none is configured (and `GIT_STORE-1` logs ids against the Javadoc's own argument), the
+  anchor-key equality is textual; the codec test uses a test-local codec, provider selection is tested on the class path only,
+  and the domain-term list is copied into a fourth module. — routed on the operator's word (2026-11-20): L3-1 into PLAN-08 (deliverable 2, a
+  bound for `save.max-attempts`, no new surface), L3-2 to L3-5 and L2-1 to L2-3 into PLAN-20 (new deliverable 7); open until those
+  plans ship.
 - Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
-  `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-06 misses the three review numbers; its `review-gate` re-read is decidable (0 unresolved threads, 3
+  `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`, PLAN-07
+  `plan-07-store-module-registry-spi-011.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-07 misses `cleanup_owed`, the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize
+  step records them; `sonar-roundtrip` records `new_code_issue_count=0` under its own name); nothing was re-read. PLAN-06 misses the three review numbers; its `review-gate` re-read is decidable (0 unresolved threads, 3
   review-body findings, `handled: 0`) and the Sonar gate reads OK. PLAN-05 misses the three review numbers and `sonar_open_new_issues` (`effort` is `medium`, self-reported); its
   `review-gate` re-read is undecidable (the CodeRabbit "Minor comments: 1" section), the Sonar gate reads OK, and
   `archive-plan` is `unknown` in its steps. PLAN-04 misses `effort` and the three review numbers; its `review-gate` re-read was decidable (0 unresolved
@@ -340,10 +401,14 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - PLAN-06 is the last foundation plan and the 0.1.0 release follows it (an operator act through `/release`; a Maven Central release
   cannot be withdrawn). PLAN-20 changes the behaviour of public `git-core` and `git-worktrees` operations and adds guards. —
   question to the operator, open: release PLAN-20 before 0.1.0, or release 0.1.0 first and carry the fixes into the next version.
-- The execution manifest of PLAN-04 carried `final_merge_without_asking=true` (PLAN-05's landing says nothing about holding its merge), which contradicts the AGENTS.md rule "do not merge
-  unless the user says so"; the lane held the merge until the owner approved in chat and did not change the manifest value, and
-  PLAN-19's lane was told to merge when green. Whether the value comes from `.plan/marshal.json` or from the lane's defaults is not
-  established. — re-check at the next landing whether a lane held its merge, and raise it with the operator when one did not.
+  PLAN-07 has landed: `git-store` is on `main` and in the reactor, so 0.1.0 would publish it unless the release is cut first or
+  `git-store` is left out of the cut; PLAN-21 (the merge) should land before the release too, because artifact coordinates are
+  cheapest to change before it.
+- The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicted the AGENTS.md rule "do not merge
+  unless the user says so". — resolved by the operator's #42 (`3c609a7`): AGENTS.md on `main` now authorises a plan-marshall run
+  to merge its own pull request once the checks are green and every review comment is handled (never a PR that changes
+  `release.current-version`); PLAN-07's lane merged #41 through the merge queue under it. The ledger worktree's copy of AGENTS.md
+  is still the old text until the next land resyncs it. Retired.
 - The store's draft references may embed a person-bound identifier; `compareAndSwap` and `compareAndDelete` put the reference
   name in result details and DEBUG logs (`ReferenceUpdater` 127, 205, `landings/PLAN-04.md` L3-12), while GDR-NFR-3 forbids a
   person name or `sub` there. — re-check at PLAN-08's outline (draft reference names) before the first caller exists.
@@ -357,7 +422,7 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - New-module surfaces are unresolved until the module exists (`git-store/`, `git-forms/`, `git-directory/`,
   `git-timestamp/` are reported in `corpus surfaces` `unresolved[]`). Once PLAN-07 / PLAN-12 / PLAN-15 / PLAN-17 land
   the directory, the same entries resolve and the gate sees the in-module overlaps by itself. — re-check
-  `corpus surfaces` at each module-creating landing.
+  `corpus surfaces` at each module-creating landing. PLAN-07 has landed: `git-store/` resolves from `a558afd` on.
 - Plans after PLAN-08 assume `git-store`'s save exposes a per-attempt hook (regenerating output, PLAN-13; first-login
   checks, PLAN-16). If PLAN-08 lands without one, that is a store gap to stage, not to absorb in a forms or directory
   plan. — re-check at the PLAN-08 landing.

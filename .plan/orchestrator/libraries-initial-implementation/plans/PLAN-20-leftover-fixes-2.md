@@ -10,7 +10,7 @@ workstream: WS-01
 ## Objective
 
 Collect the leftovers the three-layer analyses of landed plans find — the layer-3 defects of PLAN-19 (`git-worktrees`)
-and PLAN-04 (`git-core`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
+and PLAN-04 (`git-core`), the minor layer-3 defects of PLAN-07 (`git-store`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
 spec — and fix them in one plan instead of one plan per landing. This is the second collection plan, after PLAN-18.
 None of the items gives a wrong result on the default path: each needs a malformed configuration, a hostile or
 unusual input, or a failure in the middle of an operation. Later analyses fold further leftovers into this spec (see
@@ -132,6 +132,30 @@ Dependencies and Sequencing) until the operator releases it.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:manage-maven-profiles
    - Persona: implementer
 
+7. `git-store` leftovers of PLAN-07's landing (`landings/PLAN-07.md` L3-2 to L3-5, L2-1 to L2-3; L3-1, the bound of
+   `save.max-attempts`, is folded into PLAN-08), each first re-read at the plan's head: (a) `StoreRepository.toString`
+   (and so `RepositoryRegistry.toString` and `StoreConfiguration.toString`) removes user and password only, so a token in a
+   remote's path or query (`https://host/repo.git?token=x`) is rendered, against GDR-NFR-3: render the remote without its
+   query and credential-bearing parts, or refuse such a remote at the registry, tested with a JUL capture and a rendering
+   check; (b) `StoreProviders.select` calls `idOf.apply(candidate)` unguarded, so a candidate whose `id()` throws escapes as
+   an exception instead of a `StoreResult` (GDR-GEN-3): return `MALFORMED` naming the interface, tested with a throwing
+   provider, and decide whether a `LinkageError` from loading is treated alike; (c) `StoreProviders.load` instantiates every
+   `AnchorProvider` on the class path even when `anchor.provider` is absent, so a broken anchor jar stops a start that does
+   not use it, and `GIT_STORE-1` logs the selected ids while the Javadoc argues a refusal omits the id because a configured
+   value may be secret: instantiate the anchor providers only when `anchor.provider` is set, and decide, with the owner when
+   it changes a documented behaviour, whether the selected ids may be logged; (d) `StoreConfiguration.anchorKeyIsSigningKey`
+   compares the two key strings, so the same key under another spelling (`/k`, `/./k`) passes GDR-STORE-18: normalise a
+   path-like key before comparing, or record the limit and its owner (the `signed` provider) as an accepted exception in
+   `git-store.adoc`; (e) `CodecTest` proves byte identity only for a codec that lives in the test, so no `git-store` change
+   can fail it: either give the contract code to check (a verifying helper or a test-kit class other modules reuse) or record
+   it as a documented contract test; (f) provider selection is tested on the class path only (`useModulePath=false`, the
+   registrations in `META-INF/services`), so lookup in module mode (`provides`) is not exercised: add one module-path
+   test run or record the limit in `git-store.adoc`; (g) the four domain terms are now copied into four `DomainTermAbsenceTest`
+   classes (`git-core`, `git-worktrees`, `git-testing`, `git-store`): item (c) of deliverable 6 covers the three, extend it
+   to the fourth.
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
+   - Persona: implementer
+
 ## Standing Constraints
 
 - Conventions of `AGENTS.md`: JPMS, `@NullMarked` packages with `@Nullable` where needed, results instead of exceptions
@@ -170,11 +194,11 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Done when
 
-- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 has a test that
+- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 and of items (a), (b) and (c) of deliverable 7 has a test that
   fails at `e43c7e915a9d0667117b72970bc156bbe73b6506` (`main` after PLAN-06, which changed no `git-core` or `git-worktrees`
   code, so every defect below is present as at `14269fe`; the `git-worktrees` ones are present since `e2aced9`) and
   passes at the plan's head.
-- Every item of deliverables 1 to 6 is either fixed and tested at the plan's head, or recorded as an accepted exception
+- Every item of deliverables 1 to 7 is either fixed and tested at the plan's head, or recorded as an accepted exception
   or an owner decision with its reason in the specification document of its module; no document lists an outcome the
   code does not return.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
@@ -287,12 +311,27 @@ Dependencies and Sequencing) until the operator releases it.
   hand (PLAN-04 and PLAN-06 each fixed one flake that way) — confirm/refute at
   `git-testing/src/main/java/de/cuioss/git/document/testing/GitGenerators.java` and the tests of `git-core` that assert a
   generated value is absent from a log record or a rendering (verify-at-outline).
+- OBSERVED: `StoreRepository.toString` renders a remote through `new URIish(remote).setUser(null).setPass(null).toString()`, which keeps
+  the path and the query, so a token in either is printed — read at `git-store/src/main/java/de/cuioss/git/document/store/StoreRepository.java`
+  70-84 at `a558afd`.
+- OBSERVED: `StoreProviders.unique` calls `idOf.apply(candidate)` without a guard, and `StoreProviders.load` instantiates every
+  `AnchorProvider` through `loadAll` before it reads `anchor.provider` — read at
+  `git-store/src/main/java/de/cuioss/git/document/store/StoreProviders.java` 78-90, 158-175 at `a558afd`.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreRepository.java 70-84 re-read at a558afd: withoutUserInformation returns new URIish(remote).setUser(null).setPass(null).toString(), which keeps path and query; read by the three-layer leaf and re-read by the orchestrator
+- OBSERVED: `StoreConfiguration.anchorKeyIsSigningKey` compares `signed.key()` and `signing.key()` with `String.equals` — read at
+  `git-store/src/main/java/de/cuioss/git/document/store/StoreConfiguration.java` 164-168 at `a558afd`.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreProviders.java 78-90 (load instantiates AnchorProvider via loadAll before anchor.provider is read) and 158-175 (unique calls idOf.apply(candidate) unguarded) re-read at a558afd
+- OBSERVED: `CodecTest` holds the only `Codec` implementation of the module's tests (`KeyValueCodec`, a private nested class) and
+  Surefire runs with `useModulePath=false` — read at `git-store/src/test/java/de/cuioss/git/document/store/CodecTest.java` 125-130
+  and `git-store/pom.xml` 100 at `a558afd`.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreConfiguration.java 164-168 re-read at a558afd: anchorKey.equals(signing.key()) && anchorKeySource.equals(signing.keySource())
 - Verify-first clause: the three-layer analyses of PLAN-04, PLAN-05 and PLAN-19 read the code only (no build, no test run);
   the `git-core` line references above are those of `c8feb0b`, and PLAN-05 moved them (`landings/PLAN-05.md` names where each
   defect P1 to P10 sits at `14269fe`, all still present); every
   OBSERVED claim above is re-read at the plan's own HEAD at outline, and a refuted one is dropped from the deliverable
   that names it. Item (b) of deliverable 3 and item (b) of deliverable 4 each end in an owner decision: put the
   question before the work, not after it.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: CodecTest.java 125-130 re-read at a558afd: KeyValueCodec is a private nested class of the test and the only Codec implementation; git-store/pom.xml 100 sets useModulePath=false
 
 ## Expected Surface
 
@@ -305,6 +344,10 @@ Dependencies and Sequencing) until the operator releases it.
 - OBSERVED: `pom.xml`
 - OBSERVED: `git-core/pom.xml`
 - HYPOTHESIS: `git-core/src/main/resources/META-INF/native-image/`
+- OBSERVED: `git-store/src/main/java/de/cuioss/git/document/store/`
+- OBSERVED: `git-store/src/test/java/de/cuioss/git/document/store/`
+- OBSERVED: `git-store/pom.xml`
+- OBSERVED: `doc/specification/git-store.adoc`
 - HYPOTHESIS: `README.adoc` (the native-image wording, if it changes)
 - OBSERVED: `doc/specification/git-worktrees.adoc`
 - OBSERVED: `doc/specification/git-core.adoc`
@@ -316,14 +359,26 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Dependencies and Sequencing
 
+- Seven deliverables, over the scope-bloat guard (about six): it proceeds unsplit because the operator asked for one collection
+  plan, each deliverable is independent and touches its own module, and deliverable 7 was added at the operator's word on
+  2026-11-20 (PLAN-07's landing). The operator may split it when releasing it; the natural cut is by module (deliverables
+  1, 2 and the `git-worktrees` part of 6 move with PLAN-21; 3 and 4 `git-core`; 5 `git-testing`; 7 `git-store`).
 - Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further leftovers into
   this spec as new deliverables or as items of a deliverable, in the same edit as their Expected Surface; the operator
   releases the plan by naming it in a `next` round. It is queued at the end of WS-01.
-- Depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-06 (PR #39, `e43c7e9`),
+- Depends on PLAN-21 (merge of `git-worktrees` into `git-core`, staged 2026-11-20, owner's call): after it the worktrees code,
+  its tests and its specification part live in `git-core` (`git-core/src/main/java/de/cuioss/git/document/core/worktrees/`,
+  `git-core.adoc` § Working Trees), `git-worktrees/` is gone and the module-layering include and the domain-term test of
+  that module with it. The paths, module names and surface entries of deliverables 1 and 2 and of the claims that name
+  `git-worktrees/` are re-grounded by the orchestrator when PLAN-21 lands, in the same act that stamps their verdicts; do
+  not emit this plan before that.
+- Also depends on: PLAN-04 (landed as PR #35, merge commit `c8feb0b`), PLAN-05 (PR #37, `14269fe`), PLAN-06 (PR #39, `e43c7e9`),
   PLAN-19 (PR #31, `e2aced9`) and PLAN-18 (PR #28).
 - Overlaps with: nothing in flight. PLAN-05 and PLAN-06, which shared entries with it, have shipped. It shares the root
   `pom.xml`, `AGENTS.md` and `doc/specification/general.adoc` with the later module-creating plans (PLAN-07 adds a module line
   and an allowed-edge block), so the pairing gate puts the pair to the operator when both are launched at once.
+- Deliverable 7 edits `git-store/`, which PLAN-08..11 also edit: strictly sequential with them, queue order decides, and the
+  gate reads `git-store/` from `a558afd` on. PLAN-08 takes L3-1 of PLAN-07 (the bound of `save.max-attempts`) itself.
 - Adjacent to: nothing in `git-store/` yet — PLAN-08 and PLAN-09 are the first consumers of `compareAndSwap` and
   `compareAndDelete`, so the items of deliverable 3 are cheaper to fix before them.
 

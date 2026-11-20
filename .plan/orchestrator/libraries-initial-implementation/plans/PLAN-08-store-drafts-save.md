@@ -27,7 +27,14 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
    only parent → push with lease → move local branch, compare-and-delete the draft), `expectedBlobId` per edit,
    conflict naming every path with nothing pushed and draft/branch unchanged, unreachable changing nothing, a missing
    target branch starting at `main`, saving onto `main` for content without release; results saved / conflict /
-   rejected / unreachable / credentials expired or invalid.
+   rejected / unreachable / credentials expired or invalid. The value of `save.max-attempts` that this save consumes is
+   bounded first (a leftover of PLAN-07's landing analysis, `landings/PLAN-07.md` L3-1): `StoreConfiguration.readSave`
+   refuses only a value below 1, so `Integer.MAX_VALUE` is accepted and, handed to `git-core`'s
+   `ReferenceUpdater.swap` (`for (int attempt = 1; attempt <= attempts; attempt++)`), `attempt++` wraps and the loop never
+   ends when every try loses its race. Add an upper bound to the configuration, state it in `git-store.adoc`
+   § Configuration, refuse a value above it as `MALFORMED` naming `save.max-attempts` (never the value), and test the
+   bound, the value just above it and `Integer.MAX_VALUE`; the loop condition itself in `git-core` is PLAN-20's
+   deliverable 3, so this plan relies on the bound and does not edit `git-core`.
    - Skills: pm-dev-java:java-core, pm-dev-java-cui:cui-logging
    - Persona: implementer
 3. Author, committer, credentials (GDR-STORE-8): pseudonym as author with empty e-mail, technical user as committer,
@@ -97,6 +104,10 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
 - HYPOTHESIS: garbage collection of unreachable draft objects works in process with JGit's `GC` on a
   `FileRepository` without starting a process — confirm/refute at JGit 7.8.0
   `org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/GC.java` § `gc` (verify-at-outline).
+- OBSERVED: `save.max-attempts` has no upper bound in `StoreConfiguration.readSave` (`git-store/src/main/java/de/cuioss/git/document/store/StoreConfiguration.java`
+  171-179: only `attempts < 1` is refused) and `ReferenceUpdater.swap` loops `attempt <= attempts` over an `int`
+  (`git-core/src/main/java/de/cuioss/git/document/core/ReferenceUpdater.java` 199) — read at `a558afd`.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreConfiguration.java 171-179 refuses only attempts < 1; ReferenceUpdater.java 199 loops attempt <= attempts over an int; both re-read at a558afd
 
 ## Expected Surface
 
@@ -109,7 +120,10 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-07 (module, registry, configuration, `PersonDirectory` interface for the author pseudonym).
+- Depends on: PLAN-07 (module, registry, configuration, `PersonDirectory` interface for the author pseudonym; shipped, PR #41).
+- Runs after PLAN-21 (merge of `git-worktrees` into `git-core`; the operator's choice on 2026-11-20): the two share `AGENTS.md`,
+  `doc/README.adoc` and `doc/specification/general.adoc`, and the merge rewrites the module table and the state lists this plan
+  extends. Emit it when PLAN-21 has landed.
 - Overlaps with: every WS-02 plan — strictly sequential.
 - Adjacent to: GDR-STORE-12/13 (signature, trailers) — commits are written unsigned and without trailers here; PLAN-10
   adds both on the same commit path.
