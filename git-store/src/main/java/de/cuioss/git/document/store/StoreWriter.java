@@ -18,6 +18,7 @@ package de.cuioss.git.document.store;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -33,7 +34,8 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
- * with lease, conflicts and change detection (GDR-STORE-3, GDR-STORE-4, GDR-STORE-5).
+ * with lease, conflicts and change detection (GDR-STORE-3, GDR-STORE-4, GDR-STORE-5), and the expiry of drafts
+ * (GDR-STORE-7).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
@@ -41,7 +43,8 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
  * Every commit identity comes from the section {@code commit} of the configuration and the technical user.
  * <p>
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes
- * and saves take the shared side of the clone's maintenance lock, and every save attempt its transport lock. No
+ * and saves take the shared side of the clone's maintenance lock, and every save attempt its transport lock; the
+ * garbage collection of the expiry takes the exclusive side. No
  * operation takes a credential: every fetch and push uses those of the technical user (GDR-STORE-8). The writer holds
  * the opened clone and releases it on {@link #close()}.
  *
@@ -54,14 +57,16 @@ public final class StoreWriter implements AutoCloseable {
     private final RepositoryGuard guard;
     private final DraftReferences drafts;
     private final ExplicitSave saves;
+    private final DraftExpiry expiry;
 
     private StoreWriter(String alias, Repository repository, RepositoryGuard guard, DraftReferences drafts,
-            ExplicitSave saves) {
+            ExplicitSave saves, DraftExpiry expiry) {
         this.alias = alias;
         this.repository = repository;
         this.guard = guard;
         this.drafts = drafts;
         this.saves = saves;
+        this.expiry = expiry;
     }
 
     /**
@@ -112,7 +117,9 @@ public final class StoreWriter implements AutoCloseable {
         var guard = new RepositoryGuard();
         var saves = new ExplicitSave(new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard),
                 operations, user, identities, clock, attempts);
-        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves));
+        var expiry = new DraftExpiry(storeRepository.alias(), repository, guard, updater,
+                configuration.drafts().expiry(), attempts);
+        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves, expiry));
     }
 
     /**
@@ -181,6 +188,22 @@ public final class StoreWriter implements AutoCloseable {
      */
     public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message) {
         return saves.save(author, key, expectedBlobIds, message);
+    }
+
+    /**
+     * Deletes every draft unchanged for {@code drafts.expiry} and removes the objects reachable only from deleted
+     * references (GDR-STORE-7): a draft whose tip has a committer time at or before {@code now} minus
+     * {@code drafts.expiry} (UTC) is deleted by compare-and-delete expecting that tip, so a draft changed meanwhile is
+     * kept; then a garbage collection runs under the exclusive side of the clone's maintenance lock.
+     *
+     * @param now the current time
+     * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none; or
+     *         the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} of a failed read, delete or garbage
+     *         collection
+     * @throws NullPointerException if {@code now} is {@code null}
+     */
+    public StoreResult<List<String>> expireDrafts(Instant now) {
+        return expiry.expire(now);
     }
 
     /** Releases the opened clone. */

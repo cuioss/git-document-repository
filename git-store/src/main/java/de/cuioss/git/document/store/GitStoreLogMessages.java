@@ -71,6 +71,13 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(3)
                 .build();
+
+        /** The expired drafts were deleted and the garbage collected: the repository alias and the number deleted. */
+        public static final LogRecord DRAFTS_EXPIRED = LogRecordModel.builder()
+                .template("Expired the drafts of repository %s: %s deleted")
+                .prefix(PREFIX)
+                .identifier(4)
+                .build();
     }
 
     /**
@@ -99,6 +106,16 @@ public final class GitStoreLogMessages {
                 .template("Did not complete the save of repository %s, reference %s: %s")
                 .prefix(PREFIX)
                 .identifier(101)
+                .build();
+
+        /**
+         * The garbage collection after the draft expiry failed: the repository alias and the class of the exception,
+         * never its message.
+         */
+        public static final LogRecord GARBAGE_COLLECTION_FAILED = LogRecordModel.builder()
+                .template("The garbage collection of repository %s failed: %s")
+                .prefix(PREFIX)
+                .identifier(102)
                 .build();
     }
 }

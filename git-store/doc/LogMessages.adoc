@@ -34,6 +34,10 @@ the full id of the commit the target branch points at.
 |Logged when an explicit save conflicted and pushed nothing
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-4[GDR-STORE-4]): the repository alias, the target reference and
 the number of conflicting paths, never a path.
+|GIT_STORE-4 |GIT_STORE |Expired the drafts of repository %s: %s deleted
+|Logged when the draft expiry deleted the drafts unchanged for `drafts.expiry` and collected the garbage
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository alias and the number of deleted
+drafts, never a draft reference, which names a pseudonym.
 |===
 
 == WARN Level (100-199)
@@ -50,6 +54,9 @@ ended without a commit on the remote for a reason other than a conflict
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]), for example a lease refused or a push rejected
 on every attempt, an unreachable remote or invalid credentials: the repository alias, the target reference and the
 name of the outcome, never a credential.
+|GIT_STORE-102 |GIT_STORE |The garbage collection of repository %s failed: %s |Logged when the garbage collection
+after the draft expiry failed (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository
+alias and the simple class name of the exception, never its message, which may carry a path.
 |===
 
 == ERROR Level (200-299)
