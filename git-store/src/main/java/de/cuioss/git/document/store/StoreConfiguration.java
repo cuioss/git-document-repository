@@ -54,10 +54,10 @@ Signing signing, Anchor anchor, Directory directory) {
     private static final String MAX_ATTEMPTS = "save.max-attempts";
     private static final String DRAFTS_EXPIRY = "drafts.expiry";
     private static final String FETCH_INTERVAL = "fetch.interval";
-    private static final String SIGNING_KEY_SOURCE = "signing.key-source";
+    static final String SIGNING_KEY_SOURCE = "signing.key-source";
     private static final String SIGNING_KEY = "signing.key";
     private static final String SIGNING_ALLOWED_SIGNERS = "signing.allowed-signers";
-    private static final String ANCHOR_PROVIDER = "anchor.provider";
+    static final String ANCHOR_PROVIDER = "anchor.provider";
     private static final String ANCHOR_RELEASES = "anchor.releases";
     private static final String ANCHOR_CHECKPOINT_INTERVAL = "anchor.checkpoint-interval";
     private static final String ANCHOR_RETRY_INTERVAL = "anchor.retry-interval";
@@ -65,7 +65,7 @@ Signing signing, Anchor anchor, Directory directory) {
     private static final String SIGNED_KEY = "anchor.signed.key";
     private static final String SIGNED_ALLOWED_SIGNERS = "anchor.signed.allowed-signers";
     private static final String SIGNED_MAX_CLOCK_SKEW = "anchor.signed.max-clock-skew";
-    private static final String PERSONS_PROVIDER = "directory.persons.provider";
+    static final String PERSONS_PROVIDER = "directory.persons.provider";
 
     /**
      * Checks that every section is present.

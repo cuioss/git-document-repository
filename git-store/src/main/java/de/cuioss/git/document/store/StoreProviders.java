@@ -48,15 +48,6 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
     /** The rendering of an absent anchor provider in the log record {@code GIT_STORE-1}. */
     private static final String NO_ANCHOR_PROVIDER = "none";
 
-    /** The configuration key naming the signing key source. */
-    private static final String SIGNING_KEY_SOURCE = "signing.key-source";
-
-    /** The configuration key naming the person directory. */
-    private static final String PERSONS_PROVIDER = "directory.persons.provider";
-
-    /** The configuration key naming the anchor provider. */
-    private static final String ANCHOR_PROVIDER = "anchor.provider";
-
     /**
      * Checks that the signing key source and the person directory are present.
      *
@@ -122,20 +113,21 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(anchors, "anchors");
         Objects.requireNonNull(persons, "persons");
-        var source = unique(SigningKeySource.class, SIGNING_KEY_SOURCE, configuration.signing().keySource(), signing,
-                SigningKeySource::id);
+        var source = unique(SigningKeySource.class, StoreConfiguration.SIGNING_KEY_SOURCE,
+                configuration.signing().keySource(), signing, SigningKeySource::id);
         if (!source.isOk()) {
             return refuse(source.detail());
         }
-        var directory = unique(PersonDirectory.class, PERSONS_PROVIDER, configuration.directory().personsProvider(),
-                persons, PersonDirectory::id);
+        var directory = unique(PersonDirectory.class, StoreConfiguration.PERSONS_PROVIDER,
+                configuration.directory().personsProvider(), persons, PersonDirectory::id);
         if (!directory.isOk()) {
             return refuse(directory.detail());
         }
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
         if (anchorId != null) {
-            var provider = unique(AnchorProvider.class, ANCHOR_PROVIDER, anchorId, anchors, AnchorProvider::id);
+            var provider = unique(AnchorProvider.class, StoreConfiguration.ANCHOR_PROVIDER, anchorId, anchors,
+                    AnchorProvider::id);
             if (!provider.isOk()) {
                 return refuse(provider.detail());
             }
