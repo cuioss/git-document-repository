@@ -1,0 +1,118 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.store;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Pattern;
+
+/**
+ * The reference layout of a repository of the store (GDR-STORE-2): the released state, the working and collection
+ * branches, the drafts and the push reference specifications.
+ * <p>
+ * Every reference name is built from segments that contain no character git-check-ref-format(1) forbids, no dot and no
+ * slash: the collection name ({@code [a-z0-9-]+}, {@link DocumentCollection}), the id ({@link DocumentKey}) and the
+ * pseudonym ({@code [A-Za-z0-9-]+}). A collection is either per-document or numbered, never both, because JGit refuses a
+ * reference nested below an existing one and one that would contain an existing one ({@code RefDatabase
+ * .isNameConflicting}, JGit 7.8.0), so {@code refs/heads/<collection>} and {@code refs/heads/<collection>/<id>} cannot
+ * exist side by side; {@link #collections(List)} refuses a name declared twice.
+ *
+ * @since 0.1
+ */
+public final class StoreReferences {
+
+    /** The branch of the released state, {@code refs/heads/main}. */
+    public static final String MAIN = "refs/heads/main";
+
+    /** The prefix of every draft reference, {@code refs/drafts/}; never pushed (ADR-0003). */
+    public static final String DRAFTS = "refs/drafts/";
+
+    /**
+     * The push reference specifications of the bare clone: the branches, the tags and the notes, each to the same name
+     * on the remote. They never carry {@code refs/drafts/*}, so no draft reaches the remote (ADR-0003).
+     */
+    public static final List<String> PUSH_REF_SPECS =
+            List.of("refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*", "refs/notes/*:refs/notes/*");
+
+    /** The prefix of every branch. */
+    private static final String HEADS = "refs/heads/";
+
+    /** The form of a pseudonym. */
+    private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
+
+    private StoreReferences() {
+    }
+
+    /**
+     * Returns the branch a save of the document or entry targets.
+     *
+     * @param key the key of the document or entry
+     * @return {@code refs/heads/<collection>/<id>} for a per-document collection, {@code refs/heads/<collection>} for a
+     *         numbered collection, and {@value #MAIN} for content without release
+     * @throws NullPointerException if {@code key} is {@code null}
+     */
+    public static String target(DocumentKey key) {
+        Objects.requireNonNull(key, "key");
+        var collection = key.collection();
+        return switch (collection.kind()) {
+            case PER_DOCUMENT -> HEADS + collection.name() + "/" + key.id();
+            case NUMBERED -> HEADS + collection.name();
+            case MAIN -> MAIN;
+        };
+    }
+
+    /**
+     * Returns the draft reference of a user for a document or entry.
+     *
+     * @param pseudonym the pseudonym of the user
+     * @param key       the key of the document or entry
+     * @return {@link StoreOutcome#OK} with {@code refs/drafts/<pseudonym>/<collection>/<id>}, or
+     *         {@link StoreOutcome#MALFORMED} with the detail {@code pseudonym: invalid} for a pseudonym outside
+     *         {@code [A-Za-z0-9-]+}; the detail never carries the pseudonym
+     * @throws NullPointerException if {@code pseudonym} or {@code key} is {@code null}
+     */
+    public static StoreResult<String> draft(String pseudonym, DocumentKey key) {
+        Objects.requireNonNull(pseudonym, "pseudonym");
+        Objects.requireNonNull(key, "key");
+        if (!PSEUDONYM.matcher(pseudonym).matches()) {
+            return StoreResult.of(StoreOutcome.MALFORMED, "pseudonym: invalid");
+        }
+        return StoreResult.ok(DRAFTS + pseudonym + "/" + key.collection().name() + "/" + key.id());
+    }
+
+    /**
+     * Checks the declared collections of a repository.
+     *
+     * @param collections the declared collections, in declaration order
+     * @return {@link StoreOutcome#OK} with an unmodifiable copy of the collections, or {@link StoreOutcome#MALFORMED}
+     *         with the detail {@code collection <name>: declared twice} for the first name declared more than once,
+     *         whatever the kinds, since a name cannot be both per-document and numbered
+     * @throws NullPointerException if {@code collections} or one of its elements is {@code null}
+     */
+    public static StoreResult<List<DocumentCollection>> collections(List<DocumentCollection> collections) {
+        Objects.requireNonNull(collections, "collections");
+        Set<String> names = new HashSet<>();
+        for (DocumentCollection collection : collections) {
+            Objects.requireNonNull(collection, "collection");
+            if (!names.add(collection.name())) {
+                return StoreResult.of(StoreOutcome.MALFORMED, "collection " + collection.name() + ": declared twice");
+            }
+        }
+        return StoreResult.ok(List.copyOf(collections));
+    }
+}
