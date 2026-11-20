@@ -108,7 +108,9 @@ These follow the conventions of the foundation code that moves into this reposit
    - Disagree or out of scope: reply with the reason, resolve.
    - Not 100% sure: ask the user first.
    - Every comment gets a reply and is resolved.
-6. Do not enable auto-merge and do not merge unless the user says so.
+6. Do not enable auto-merge. A plan-marshall run is authorised to merge its own pull request as part of landing it
+   (the `branch-cleanup` finalize step), once the checks are green and every review comment is handled. Outside a
+   plan-marshall run, do not merge unless the user says so.
 7. Afterwards: `git checkout main && git pull`.
 
 ## Releases
