@@ -55,6 +55,9 @@ public final class StoreReferences {
     /** The form of a pseudonym. */
     private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
 
+    /** The detail of a refused pseudonym; it never carries the pseudonym. */
+    static final String INVALID_PSEUDONYM = "pseudonym: invalid";
+
     private StoreReferences() {
     }
 
@@ -89,10 +92,30 @@ public final class StoreReferences {
     public static StoreResult<String> draft(String pseudonym, DocumentKey key) {
         Objects.requireNonNull(pseudonym, "pseudonym");
         Objects.requireNonNull(key, "key");
-        if (!PSEUDONYM.matcher(pseudonym).matches()) {
-            return StoreResult.of(StoreOutcome.MALFORMED, "pseudonym: invalid");
+        if (!isPseudonym(pseudonym)) {
+            return StoreResult.of(StoreOutcome.MALFORMED, INVALID_PSEUDONYM);
         }
-        return StoreResult.ok(DRAFTS + pseudonym + "/" + key.collection().name() + "/" + key.id());
+        return StoreResult.ok(drafts(pseudonym) + key.collection().name() + "/" + key.id());
+    }
+
+    /**
+     * Returns the prefix of every draft reference of a user, {@code refs/drafts/<pseudonym>/}.
+     *
+     * @param pseudonym the pseudonym, already checked by {@link #isPseudonym(String)}
+     * @return the prefix, ending in {@code /}
+     */
+    static String drafts(String pseudonym) {
+        return DRAFTS + pseudonym + "/";
+    }
+
+    /**
+     * Tells whether a text is a valid pseudonym segment, {@code [A-Za-z0-9-]+}.
+     *
+     * @param pseudonym the text
+     * @return whether it is a valid pseudonym
+     */
+    static boolean isPseudonym(String pseudonym) {
+        return PSEUDONYM.matcher(pseudonym).matches();
     }
 
     /**
