@@ -90,6 +90,7 @@ duplicate provider id stops the start).
 - HYPOTHESIS: the configuration can be modelled without a third-party dependency in `git-store` (parsing stays with
   the caller) — confirm/refute against `doc/specification/git-store.adoc` § Configuration and
   `doc/concepts/storage-engine.adoc` at outline (verify-at-outline); refuted → the owner decides a library.
+  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: git-store/pom.xml declares no YAML or other new third-party dependency (jspecify, cui-java-tools, lombok provided, git-core, test scope only otherwise); ConfigurationTree and StoreConfiguration.from read an already-parsed Map (git-store.adoc § Configuration states git-forms supplies the YAML codec). Read by the three-layer leaf and re-read by the orchestrator at git-store/pom.xml:21-66.
 
 ## Expected Surface
 
