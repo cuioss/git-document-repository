@@ -107,7 +107,7 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
 - OBSERVED: `save.max-attempts` has no upper bound in `StoreConfiguration.readSave` (`git-store/src/main/java/de/cuioss/git/document/store/StoreConfiguration.java`
   171-179: only `attempts < 1` is refused) and `ReferenceUpdater.swap` loops `attempt <= attempts` over an `int`
   (`git-core/src/main/java/de/cuioss/git/document/core/ReferenceUpdater.java` 199) — read at `a558afd`.
-  - verdict: corroborated | checked_at: a558afd517fda67e394ac4f249a5259a0007a305 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreConfiguration.java 171-179 refuses only attempts < 1; ReferenceUpdater.java 199 loops attempt <= attempts over an int; both re-read at a558afd
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 9e3cfb0: StoreConfiguration.java 171-179 refuses only attempts < 1; ReferenceUpdater.java 199 loops attempt <= attempts over an int; neither file changed since a558afd (git diff a558afd 9e3cfb0 is empty for git-store and ReferenceUpdater.java)
 
 ## Expected Surface
 
@@ -123,7 +123,8 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
 - Depends on: PLAN-07 (module, registry, configuration, `PersonDirectory` interface for the author pseudonym; shipped, PR #41).
 - Runs after PLAN-21 (merge of `git-worktrees` into `git-core`; the operator's choice on 2026-11-20): the two share `AGENTS.md`,
   `doc/README.adoc` and `doc/specification/general.adoc`, and the merge rewrites the module table and the state lists this plan
-  extends. Emit it when PLAN-21 has landed.
+  extends. PLAN-21 has shipped (PR #46, `9e3cfb0`, 2026-11-20): the module table, the state lists and `general.adoc` already
+  describe the merged `git-core`, so PLAN-08 extends those texts and no `git-worktrees` module remains anywhere.
 - Overlaps with: every WS-02 plan — strictly sequential.
 - Adjacent to: GDR-STORE-12/13 (signature, trailers) — commits are written unsigned and without trailers here; PLAN-10
   adds both on the same commit path.

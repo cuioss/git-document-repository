@@ -175,8 +175,10 @@ package or its specification is adapted in the same plan.
   native-image metadata covers the merged package — confirm/refute by a search of the moved package for `Class.forName`,
   `getResource`, `ServiceLoader` and `ResourceBundle` (verify-at-outline; the PLAN-06 analysis searched the main sources
   of both modules and found none).
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: three-layer leaf grep of git-core/.../core/worktrees/ at 9e3cfb0 finds no Class.forName, getResource, ServiceLoader, ResourceBundle, reflection, MethodHandle, Proxy or getClassLoader; the JGit side (a translation bundle beyond JGitText reached through CommitCommand, DirCacheCheckout, Status, hooks) is not shown by reading and NativeImageMetadataTest was not run by the reading
 - HYPOTHESIS: the merged `git-core` still satisfies the `consumer-isolation` allow-list, because the moved code needs no
   artifact `git-core` does not already declare — confirm/refute by the `verify` run of the reactor (verify-at-outline).
+  - verdict: corroborated | checked_at: 9e3cfb04b1a02246b826266b54f6095033ec80f2 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: git-core/pom.xml dependency set unchanged and consumer-isolation allow-list lines 77-115 untouched at 9e3cfb0 (leaf reading, re-read by the orchestrator); PR #46 merged through the merge queue under the required check build / conclusion
 - Verify-first clause: the numbers above are those of `ed2abde`; every OBSERVED claim is re-read at the plan's own HEAD at
   outline, and a refuted one is dropped from the deliverable that names it. The set of documents that name the module is
   derived again by a content search at the plan's HEAD, not taken from this list.

@@ -53,8 +53,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   (`git-timestamp/`).
 - PLAN-12 — Can start once PLAN-08 has landed, in parallel with PLAN-09..11 (multi-file overlap on `pom.xml`,
   `general.adoc`, `AGENTS.md` → the gate puts it to the operator).
-- PLAN-08 — Staged, passes the admission tests, deliberately not emitted with PLAN-21 (three shared files); emit it when PLAN-21 lands.
-  PLAN-07's analysis folded the bound of `save.max-attempts` into its deliverable 2 (no new surface).
+- PLAN-08 — Staged, passes the admission tests; it was deliberately not emitted with PLAN-21 (three shared files), and PLAN-21 has
+  landed (PR #46, `9e3cfb0`), so it is emittable. PLAN-07's analysis folded the bound of `save.max-attempts` into its deliverable 2 (no new surface).
 - PLAN-10, PLAN-12, PLAN-13, PLAN-17 — Each opens with an owner decision on a third-party library; expect a question
   early in the plan's refine phase.
 - PLAN-18 — Shipped (PR #28). It was the collection plan for the minor leftovers of PLAN-01; once started its spec is
@@ -70,11 +70,12 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `main` and reaches the 0.1.0 release unless that is cut first or leaves it out. The operator merged #42 (the AGENTS.md merge
   authorisation) and #43 (a comment-only change in `StoreConfiguration.java`) after it. The spec said four deliverables, the lane
   reported six (the outline split them, fix tasks followed).
-- PLAN-21 — Merge of `git-worktrees` into `git-core` (staged 2026-11-20 on the operator's word): four deliverables, code and tests,
-  build configuration, specifications, concepts, ADR, client, index and root documents. Its five-file overlap with PLAN-07 is gone
-  (PLAN-07 shipped), but PLAN-07 added `git-store` to the same documents and the module table, so its outline reads them at
-  `a558afd`; it runs before PLAN-20 and the 0.1.0 release. Owner decisions inside it (requirement ids, log identifiers, ADR form)
-  are put to the owner at its outline; the package is decided.
+- PLAN-21 — Shipped (PR #46, `9e3cfb0`, `landings/PLAN-21.md`): `git-worktrees` is merged into `git-core` as the package
+  `de.cuioss.git.document.core.worktrees` (33 paths, +660/-935), the reactor has three modules (`git-core`, `git-store`,
+  `git-testing`). It ran alone after PLAN-07, emitted alone because it shared three files with PLAN-08. The owner decisions put at its
+  outline differ from the spec's defaults: the requirement ids were renumbered (`GDR-WT-1..4` became `GDR-CORE-12..15`), the log ids
+  became INFO 2-4 and WARN 102-104 (the worktrees refusal stays the separate record `WORKTREE_CAPABILITY_REFUSED`), and ADR-0004 was
+  rewritten in place with no new ADR. The names `GDR-WT-n` and `GIT_WORKTREES` in older landing reports and decisions are superseded.
 - PLAN-20 — Second collection plan (staged 2026-11-19 on the operator's word): the layer-3 defects of PLAN-19 and PLAN-04, the
   test gaps beside them and the `git-testing` leftovers of PLAN-18, in one plan. **Held back from `next` until the operator
   releases it**; later analyses fold further leftovers into it, in the same edit as its Expected Surface. PLAN-05, with
@@ -86,9 +87,11 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   deliverables, at the split guard, and proceeds unsplit because the operator asked for one collection plan and each
   deliverable is independent (the operator may split it when releasing it). PLAN-07's analysis added deliverable 7 (`git-store`: a
   token in a remote's query, a throwing `id()`, eager anchor providers, the textual anchor-key check and three test residues) and the
-  `git-store` entries to its surface; it now has seven deliverables and proceeds unsplit on the same ground. It now depends on PLAN-21: after the merge its
-  `git-worktrees/` paths move into `git-core`, and the orchestrator re-grounds deliverables 1 and 2, the surface and the claims
-  when PLAN-21 lands.
+  `git-store` entries to its surface; it now has seven deliverables and proceeds unsplit on the same ground. PLAN-21 has landed and PLAN-20
+  was re-grounded in the same act (2026-11-20): its worktrees paths, the spec references (`git-core.adoc` § Working Trees), the Expected
+  Surface and the Done-when base (`9e3cfb0`) moved into `git-core`, the five worktrees claims were re-stamped at `9e3cfb0`, deliverable 2
+  gained item (e) (two documentation residues of PLAN-21's analysis) and item (g) of deliverable 7 collapsed (the fourth domain-term copy
+  went with the module). It is still held back until the operator names it in a `next` round.
 
 ## Decisions
 
@@ -323,6 +326,21 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - 2026-11-20 — Emit round after PLAN-07 (nothing in flight): PLAN-08 and PLAN-21 both pass the three admission tests, and share three files
   (`AGENTS.md`, `doc/README.adoc`, `doc/specification/general.adoc`). The operator chose PLAN-21 only: the merge comes first (artifact
   coordinates before 0.1.0, PLAN-20 depends on it), PLAN-08 stays staged and is emitted when PLAN-21 lands, so there is no hand merge.
+- 2026-11-20 — PLAN-21 recorded launched, then running, on the operator's word ("#21 is running"); `auto_emit=false`, so `launched` was
+  not recorded before the operator confirmed. The outline's three owner questions were answered by the operator (renumber the
+  requirement ids, merge the log ids under `GIT_CORE` with the worktrees refusal as its own record, rewrite ADR-0004 in place with no new
+  ADR), which differ from the defaults the spec proposed; the outline then re-froze the success criteria on its own authority and the
+  operator approved that afterwards through the question tool (the lesson `2026-11-20-07-001`, extended).
+- 2026-11-20 — PLAN-21 landed (PR #46, `9e3cfb0`) and was analysed on three layers: no blocker, no major, no layer-3 defect (the move is
+  behaviour-neutral; the one source change, the S4449 null-check, is neutral); layer 2: one deliberate minor (the worktrees refusal
+  and `CAPABILITY_REFUSED` carry the same template under ids 102 and 101), one minor residue (the committed
+  `.plan/project-architecture/` inventory still names the removed module, see Watches) and two documentation infos folded into PLAN-20
+  deliverable 2 (e). Layer 1: the spec's own text (the `GDR-WT-n` display names, no new ADR, "root pom lists `git-core` and `git-testing`
+  only") differs from the owner decisions and the base, info. Not shown by reading: the build, the 883 to 882 test count, the Sonar read
+  (undecidable on a merged PR), and whether JGit commands the package drives reach a translation bundle beyond `JGitText` (GDR-NFR-4).
+  PLAN-20 was re-grounded in the same act. The seven candidate lessons: six recurrences, one new (`2026-11-20-17-001`, the realized
+  footprint drops rename sources), plus one new from the landing residue (`2026-11-20-18-001`, the merge-queue squash message carries
+  the PR body with the review bot's release-notes block).
 
 ## Open Defects
 
@@ -364,8 +382,12 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
   `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`, PLAN-07
-  `plan-07-store-module-registry-spi-011.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-07 misses `cleanup_owed`, the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize
+  `plan-07-store-module-registry-spi-011.md`, PLAN-21 `plan-21-merge-worktrees-into-core-008.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-21 misses `effort` and the three review numbers (all `unknown`; `cleanup_owed=false` and
+  `sonar_open_new_issues=0` were supplied); its `review-gate` re-read shows 0 unresolved threads and 1 review-body finding with no
+  disposition (the lane's own account says four findings, three CodeRabbit and one Sourcery, were all handled; the handled count is not
+  re-verified), and the Sonar read is undecidable (`head_revision_unavailable` on a merged PR), so `sonar_open_new_issues=0` is not
+  re-verified either. PLAN-07 misses `cleanup_owed`, the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize
   step records them; `sonar-roundtrip` records `new_code_issue_count=0` under its own name); nothing was re-read. PLAN-06 misses the three review numbers; its `review-gate` re-read is decidable (0 unresolved threads, 3
   review-body findings, `handled: 0`) and the Sonar gate reads OK. PLAN-05 misses the three review numbers and `sonar_open_new_issues` (`effort` is `medium`, self-reported); its
   `review-gate` re-read is undecidable (the CodeRabbit "Minor comments: 1" section), the Sonar gate reads OK, and
@@ -402,8 +424,13 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   cannot be withdrawn). PLAN-20 changes the behaviour of public `git-core` and `git-worktrees` operations and adds guards. —
   question to the operator, open: release PLAN-20 before 0.1.0, or release 0.1.0 first and carry the fixes into the next version.
   PLAN-07 has landed: `git-store` is on `main` and in the reactor, so 0.1.0 would publish it unless the release is cut first or
-  `git-store` is left out of the cut; PLAN-21 (the merge) should land before the release too, because artifact coordinates are
-  cheapest to change before it.
+  `git-store` is left out of the cut. PLAN-21 (the merge) has landed (PR #46), so the artifact `git-worktrees` no longer exists and the
+  coordinates are settled before 0.1.0; PLAN-20 and the remaining `git-store` plans are what is still open against the cut.
+- The committed architecture inventory `.plan/project-architecture/` still names the removed module `git-worktrees` (`_project.json`,
+  `git-document-repository/enriched.json` and a whole `git-worktrees/enriched.json`) after PLAN-21 (`landings/PLAN-21.md` L2-4). It is
+  derived data of the steward, not repository source, and `.plan/` was outside the plan's content search, so no Done-when is broken. —
+  regenerate it with the plan-marshall architecture refresh (an operator or steward act, not a queue row); open until then. It can
+  mislead module resolution (`manage-architecture which-module`) for paths of the merged package.
 - The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicted the AGENTS.md rule "do not merge
   unless the user says so". — resolved by the operator's #42 (`3c609a7`): AGENTS.md on `main` now authorises a plan-marshall run
   to merge its own pull request once the checks are green and every review comment is handled (never a PR that changes
