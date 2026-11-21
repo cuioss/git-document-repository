@@ -47,6 +47,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.TreeFilter;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -62,12 +63,17 @@ import org.jspecify.annotations.Nullable;
  * ({@link StoreReferences#releaseTags}); the message of the release commit is always {@code Release <collection>/<id>
  * v<n>}, composed by the store.
  * <p>
- * A commit on the first-parent chain of {@code main}, after the commit of {@code v<n-1>}, that carries that message is a
- * release {@code v<n>} whose tag is missing: the attempt creates and pushes only the tag on that commit and never merges
- * again. Otherwise it merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
+ * A commit on the first-parent chain of {@code main}, after the commit of {@code v<n-1>}, that carries that message and
+ * has the shape of a release of the document is a release {@code v<n>} whose tag is missing: the attempt creates and
+ * pushes only the tag on that commit and never merges again. The shape tells a release from an ordinary save that uses
+ * the message: a per-document release has the tip of the working branch at its time as its second parent (or, onto an
+ * absent {@code main}, as its only parent with the same tree), reachable from the working branch now; a numbered release
+ * has at most one parent and changes no path outside the entry. Otherwise the attempt merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
  * {@code main}, and the release commit has the tip of {@code main} and the tip of the working branch as its parents and
  * the edits from the tree of {@code main} to the merged tree; for a numbered collection only the paths of the entry
- * ({@link DocumentPaths}) are taken from the collection branch onto {@code main}, the only parent. A conflicting merge
+ * ({@link DocumentPaths}) are taken from the collection branch onto {@code main}, the only parent. Every changed file
+ * keeps its mode, so an executable file or a symbolic link of the source stays one ({@link TreeEdit.Mode}). A
+ * conflicting merge
  * ends the release with the passed-on {@link GitOutcome#CONFLICT} naming the number of conflicting paths. The commit is
  * written by {@link InCoreWriter}, unsigned and without trailers, with the author and committer of
  * {@link CommitIdentities}; {@link #metadata} is the one place that builds its metadata.
@@ -203,7 +209,7 @@ final class DocumentRelease {
             String tag = StoreReferences.releaseTag(request.key(), version);
             String message = message(request.key(), version);
             @Nullable ObjectId merged = main == null ? null
-                    : mergedRelease(repository, main, versions.previous(), message);
+                    : mergedRelease(repository, main, versions.previous(), message, request.key(), source);
             if (merged != null) {
                 LOGGER.debug("The release %s is on %s without its tag; pushing the tag only", tag,
                         StoreReferences.MAIN);
@@ -328,7 +334,7 @@ final class DocumentRelease {
                 } else {
                     byte[] content = repository.open(walk.getObjectId(1), Constants.OBJ_BLOB)
                             .getBytes(Integer.MAX_VALUE);
-                    edits.add(new TreeEdit.Put(path, content));
+                    edits.add(new TreeEdit.Put(path, content, mode(walk.getRawMode(1))));
                 }
             }
         }
@@ -336,22 +342,90 @@ final class DocumentRelease {
     }
 
     /**
+     * The mode of the put of a source entry, so the release keeps an executable file and a symbolic link as the source
+     * tree holds them; every other blob is a regular file.
+     */
+    private static TreeEdit.Mode mode(int rawMode) {
+        if (FileMode.EXECUTABLE_FILE.equals(rawMode)) {
+            return TreeEdit.Mode.EXECUTABLE_FILE;
+        }
+        if (FileMode.SYMLINK.equals(rawMode)) {
+            return TreeEdit.Mode.SYMLINK;
+        }
+        return TreeEdit.Mode.REGULAR_FILE;
+    }
+
+    /**
      * The commit of a merged release {@code v<n>} whose tag is missing: the first commit on the first-parent chain of
-     * {@code main}, after the commit of {@code v<n-1>}, that carries the store-composed message of {@code v<n>}.
+     * {@code main}, after the commit of {@code v<n-1>}, that carries the store-composed message of {@code v<n>} and has
+     * the shape of a release of the document ({@link #releaseShaped}), so a commit of an ordinary save that merely
+     * uses the message is never taken for it.
      */
     private static @Nullable ObjectId mergedRelease(Repository repository, ObjectId main, @Nullable ObjectId previous,
-            String message) throws IOException {
+            String message, DocumentKey key, ObjectId source) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
             RevCommit commit = walk.parseCommit(main);
             while (commit != null && !commit.equals(previous)) {
                 walk.parseBody(commit);
-                if (message.equals(commit.getFullMessage().strip())) {
+                if (message.equals(commit.getFullMessage().strip())
+                        && releaseShaped(repository, commit, key, source)) {
                     return commit.copy();
                 }
                 commit = commit.getParentCount() == 0 ? null : walk.parseCommit(commit.getParent(0));
             }
             return null;
         }
+    }
+
+    /**
+     * Whether a commit has the shape a release of the document writes. For a per-document collection: two parents,
+     * the second reachable from the working branch, or the one parent of a release onto an absent {@code main}, reachable
+     * from the working branch and with the same tree. For a numbered collection: at most one parent, every changed path
+     * belonging to the entry ({@link DocumentPaths#belongs}).
+     */
+    private static boolean releaseShaped(Repository repository, RevCommit commit, DocumentKey key, ObjectId source)
+            throws IOException {
+        int parents = commit.getParentCount();
+        if (key.collection().kind() == DocumentCollection.Kind.NUMBERED) {
+            return parents <= 1 && onlyEntryChanged(repository,
+                    parents == 0 ? null : commitTree(repository, commit.getParent(0)), commit.getTree(), key);
+        }
+        if (parents == 2) {
+            return reachable(repository, commit.getParent(1), source);
+        }
+        return parents == 1 && commitTree(repository, commit.getParent(0)).equals(commit.getTree())
+                && reachable(repository, commit.getParent(0), source);
+    }
+
+    /** Whether the commit is the tip or an ancestor of it. */
+    private static boolean reachable(Repository repository, AnyObjectId commit, ObjectId tip) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            return walk.isMergedInto(walk.parseCommit(commit), walk.parseCommit(tip));
+        }
+    }
+
+    /**
+     * Whether every path that changed from one tree to the other belongs to the entry. A release of an unchanged entry
+     * changes no path; a save, which writes no commit without changes, always changes one.
+     */
+    private static boolean onlyEntryChanged(Repository repository, @Nullable ObjectId from, ObjectId to,
+            DocumentKey key) throws IOException {
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            if (from == null) {
+                walk.addTree(new EmptyTreeIterator());
+            } else {
+                walk.addTree(from);
+            }
+            walk.addTree(to);
+            walk.setRecursive(true);
+            walk.setFilter(TreeFilter.ANY_DIFF);
+            while (walk.next()) {
+                if (!DocumentPaths.belongs(key, walk.getPathString())) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**

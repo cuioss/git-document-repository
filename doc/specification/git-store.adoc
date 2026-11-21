@@ -418,9 +418,17 @@ release tags of the document once. A missing working or collection branch is the
   (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); no tag on the remote is ever moved or deleted.
 * *Incomplete and its recovery.* When the remote accepted `main` and the push of the tag failed, the release is
   `INCOMPLETE` with the detail `<tag>: not pushed (<outcome>)`. A repeated release finds the release commit by its
-  message: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, that carries the message of
-  `v<n>`, is a release whose tag is missing; the release then writes and pushes only the tag on that commit and merges
-  nothing.
+  message and its shape: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, that carries the
+  message of `v<n>` and has the shape of a release of the document, is a release whose tag is missing; the release then
+  writes and pushes only the tag on that commit and merges nothing. The shape tells the release commit from a commit
+  of an ordinary save to a `MAIN` collection that uses the same message: for a per-document collection the commit has
+  two parents, the second reachable from the working branch, or, written onto an absent `main`, one parent reachable
+  from the working branch and the same tree as that parent; for a numbered collection it has at most one parent and
+  changes no path outside the entry. A commit with the message but without the shape is ordinary history, and the
+  release merges as usual.
+* *File modes.* Every put of a release keeps the mode the source tree gives the file (`TreeEdit.Mode` of
+  xref:git-core.adoc#GDR-CORE-4[GDR-CORE-4]): an executable file stays `100755`, a symbolic link `120000`, a mode change
+  alone is an edit, and every other file is a regular file.
 * *Rejected.* A lease refusal of the push of `main` starts the next attempt from the fetch, up to `save.max-attempts`;
   after the last the release is the passed-on `REJECTED` with the detail
   `refs/heads/main: lease refused on every attempt (<n>)`. A rejection of `main` by the remote, such as a protected

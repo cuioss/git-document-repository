@@ -232,7 +232,8 @@ built from the first parent's tree in an in-core `DirCache` (`DirCache.read(Obje
 `DirCache.newInCore()` for a root commit, and `DirCache.writeTree(ObjectInserter)`;
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCache.java[JGit
 7.8.0 `DirCache`]), and blobs, tree and commit are inserted through one `ObjectInserter`, flushed once after the
-commit. A `TreeEdit` is either `TreeEdit.Put`, which sets a path to content as a regular file (mode `100644`), or
+commit. A `TreeEdit` is either `TreeEdit.Put`, which sets a path to content with a `TreeEdit.Mode` (a regular file,
+mode `100644`, unless the caller names an executable file, `100755`, or a symbolic link, `120000`), or
 `TreeEdit.Delete`, which removes it. Every path is checked with the check JGit's `DirCacheEntry` applies before
 anything is written, and two edits of the same path are refused. `CommitMetadata` carries author, committer, message
 and an optional `CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.

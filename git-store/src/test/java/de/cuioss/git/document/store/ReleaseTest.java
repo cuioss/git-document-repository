@@ -160,12 +160,21 @@ class ReleaseTest {
     /** Writes a commit holding exactly the files, nested paths included, onto a reference, forcing the reference. */
     private static ObjectId commit(Repository repository, String ref, Map<String, String> files,
             ObjectId... parents) {
+        return commit(repository, ref, files, Map.of(), word(), parents);
+    }
+
+    /**
+     * Writes a commit holding exactly the files, each a regular file unless the modes name another mode, with the
+     * message, onto a reference, forcing the reference.
+     */
+    private static ObjectId commit(Repository repository, String ref, Map<String, String> files,
+            Map<String, FileMode> modes, String message, ObjectId... parents) {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
             DirCache index = DirCache.newInCore();
             DirCacheBuilder builder = index.builder();
             for (Map.Entry<String, String> file : files.entrySet()) {
                 var entry = new DirCacheEntry(file.getKey());
-                entry.setFileMode(FileMode.REGULAR_FILE);
+                entry.setFileMode(modes.getOrDefault(file.getKey(), FileMode.REGULAR_FILE));
                 entry.setObjectId(
                         inserter.insert(Constants.OBJ_BLOB, file.getValue().getBytes(StandardCharsets.UTF_8)));
                 builder.add(entry);
@@ -177,7 +186,7 @@ class ReleaseTest {
             commit.setParentIds(parents);
             commit.setAuthor(ident);
             commit.setCommitter(ident);
-            commit.setMessage(word());
+            commit.setMessage(message);
             var id = inserter.insert(commit);
             inserter.flush();
             setRef(repository, ref, id);
@@ -231,6 +240,19 @@ class ReleaseTest {
             }
         }
         return files;
+    }
+
+    /** The modes of the files of a commit, path to mode. */
+    private static Map<String, FileMode> modes(Repository repository, ObjectId id) throws IOException {
+        Map<String, FileMode> modes = new TreeMap<>();
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.addTree(parse(repository, id).getTree());
+            walk.setRecursive(true);
+            while (walk.next()) {
+                modes.put(walk.getPathString(), walk.getFileMode(0));
+            }
+        }
+        return modes;
     }
 
     /** Every text a captured log record carries: message, parameters and the chain of its throwable. */
@@ -455,6 +477,90 @@ class ReleaseTest {
                         () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"),
                         () -> assertNothingLeaks(result.detail(),
                                 List.of(path, base.get(path), mine, theirs, author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a release keeps the mode of an executable file the working branch adds or changes")
+        void releaseKeepsFileModes(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var prefix = key.collection().name() + "/" + key.id();
+            var changed = prefix + ".sh";
+            var added = prefix + "/" + word();
+            var base = files(word(), changed);
+            var start = commit(remote.repository(), StoreReferences.MAIN, base);
+            var working = merged(base, files(added));
+            var executable = Map.of(changed, FileMode.EXECUTABLE_FILE, added, FileMode.EXECUTABLE_FILE);
+            commit(remote.repository(), StoreReferences.target(key), working, executable, word(), start);
+            var mainFiles = merged(base, files(word() + "m"));
+            commit(remote.repository(), StoreReferences.MAIN, mainFiles, start);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                Map<String, FileMode> expected = new TreeMap<>();
+                merged(mainFiles, working).keySet().forEach(path -> expected.put(path, FileMode.REGULAR_FILE));
+                expected.putAll(executable);
+                assertAll(
+                        () -> assertEquals(merged(mainFiles, working), tree(remote.repository(), commit),
+                                "the merged bytes"),
+                        () -> assertEquals(expected, modes(remote.repository(), commit),
+                                "the added and the changed file stay executable, the others regular"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a save on main with the message of a missing release is no release; the release merges")
+        void saveWithReleaseMessageIsNoRelease(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var saved = commit(remote.repository(), StoreReferences.MAIN,
+                    merged(tree(remote.repository(), forked.main()), files("m" + word() + "/" + word())), Map.of(),
+                    message(key, 1), forked.main());
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertNotEquals(saved, commit, "the save is not taken as the release"),
+                        () -> assertEquals(StoreReferences.releaseTag(key, 1), release.tag(), "v1"),
+                        () -> assertEquals(List.of(saved, forked.working()), parents(remote.repository(), commit),
+                                "merged onto the save"),
+                        () -> assertEquals(commit, tip(remote.repository(), StoreReferences.MAIN), "main moved"),
+                        () -> assertEquals(commit, tip(remote.repository(), release.tag()),
+                                "the tag on the release commit, not on the save"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a save outside the entry with the message of its missing release is no release")
+        void numberedSaveWithReleaseMessageIsNoRelease(@Remote LocalRemote remote) throws Exception {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var base = files(word());
+            var mainTip = commit(remote.repository(), StoreReferences.MAIN, base);
+            var entryFiles = files(collection.name() + "/" + key.id() + ".json");
+            commit(remote.repository(), StoreReferences.target(key), merged(base, entryFiles), mainTip);
+            var savedFiles = merged(base, files("m" + word() + "/" + word()));
+            var saved = commit(remote.repository(), StoreReferences.MAIN, savedFiles, Map.of(), message(key, 1),
+                    mainTip);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertNotEquals(saved, commit, "the save is not taken as the release"),
+                        () -> assertEquals(List.of(saved), parents(remote.repository(), commit), "onto the save"),
+                        () -> assertEquals(merged(savedFiles, entryFiles), tree(remote.repository(), commit),
+                                "the entry merged"),
+                        () -> assertEquals(commit, tip(remote.repository(), release.tag()),
+                                "the tag on the release commit, not on the save"));
             }
         }
     }

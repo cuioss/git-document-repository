@@ -53,8 +53,9 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The new tree is built from the first parent's tree, read into an in-core {@link DirCache} through
  * {@code DirCache.read(ObjectReader, AnyObjectId)} (an empty {@code DirCache.newInCore()} for a root commit). The edits
- * are applied through a {@link DirCacheEditor}: a {@link TreeEdit.Put} as a {@link PathEdit} that sets a regular file
- * (mode {@code 100644}), a {@link TreeEdit.Delete} as a {@link DeletePath}. Blobs, the tree
+ * are applied through a {@link DirCacheEditor}: a {@link TreeEdit.Put} as a {@link PathEdit} that sets a file of its
+ * {@link TreeEdit.Mode} (mode {@code 100644}, {@code 100755} or {@code 120000}), a {@link TreeEdit.Delete} as a
+ * {@link DeletePath}. Blobs, the tree
  * ({@code DirCache.writeTree(ObjectInserter)}) and the commit go through one {@link ObjectInserter}, which is flushed
  * once, after the commit was inserted. With a {@link CommitSigning}, the commit is signed through JGit's
  * {@code Signer.signObject(Repository, GpgConfig, ObjectBuilder, PersonIdent, String, CredentialsProvider)} before it
@@ -221,12 +222,13 @@ public final class InCoreWriter {
         DirCacheEditor editor = tree.editor();
         for (TreeEdit edit : edits) {
             switch (edit) {
-                case TreeEdit.Put(String path, byte[] content) -> {
+                case TreeEdit.Put(String path, byte[] content, TreeEdit.Mode mode) -> {
                     ObjectId blob = inserter.insert(Constants.OBJ_BLOB, content);
+                    FileMode fileMode = fileMode(mode);
                     editor.add(new PathEdit(path) {
                         @Override
                         public void apply(DirCacheEntry entry) {
-                            entry.setFileMode(FileMode.REGULAR_FILE);
+                            entry.setFileMode(fileMode);
                             entry.setObjectId(blob);
                             entry.setLength(content.length);
                         }
@@ -236,6 +238,15 @@ public final class InCoreWriter {
             }
         }
         editor.finish();
+    }
+
+    /** The JGit mode of a tree entry a {@link TreeEdit.Put} writes. */
+    private static FileMode fileMode(TreeEdit.Mode mode) {
+        return switch (mode) {
+            case REGULAR_FILE -> FileMode.REGULAR_FILE;
+            case EXECUTABLE_FILE -> FileMode.EXECUTABLE_FILE;
+            case SYMLINK -> FileMode.SYMLINK;
+        };
     }
 
     private static void sign(Repository repository, CommitMetadata metadata, CommitBuilder commit)
