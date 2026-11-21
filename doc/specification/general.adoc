@@ -186,7 +186,8 @@ lists exactly the constants of `StoreOutcome`:
 |`UNAVAILABLE` |unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending; a
 signing key source that cannot be reached
 |`REFUSED` |refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161
-authority by an error response; the subject stays pending; a signing key source that refuses
+authority by an error response; the subject stays pending; a signing key source that refuses; a save whose
+per-attempt step refused, nothing being pushed (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3])
 |`NO_PROOF` |no proof |anchor verification: a subject that should be anchored has no proof
 |`IMPRINT_MISMATCH` |imprint mismatch |anchor verification: the proof is about another object id
 |`SIGNATURE_INVALID` |signature invalid |anchor and commit-signature verification: the signature does not verify

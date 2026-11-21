@@ -39,8 +39,8 @@ import org.eclipse.jgit.transport.URIish;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
- * with lease, conflicts and change detection (GDR-STORE-3, GDR-STORE-4, GDR-STORE-5), and the expiry of drafts
- * (GDR-STORE-7).
+ * with lease, conflicts and change detection and an optional per-attempt step (GDR-STORE-3, GDR-STORE-4,
+ * GDR-STORE-5), and the expiry of drafts (GDR-STORE-7).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
@@ -227,7 +227,34 @@ public final class StoreWriter implements AutoCloseable {
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
     public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message) {
-        return saves.save(author, key, expectedBlobIds, message);
+        return saves.save(author, key, expectedBlobIds, message, null);
+    }
+
+    /**
+     * Saves the draft of the author for the document onto its target branch like
+     * {@link #save(Author, DocumentKey, Map, String)}, with a per-attempt step (GDR-STORE-3). The step runs on every
+     * attempt, the first and each re-application onto a new tip, after the conflict check; it sees the tip and the tree
+     * the draft's changes produce on it through a read-only {@link SaveStep.Attempt}. Its {@link SaveStep.Edits} are
+     * written into the same single save commit, whose only parent stays the tip, an edit on a path the draft also
+     * changed replacing the draft's edit. A draft without changes writes no commit and calls no step.
+     *
+     * @param author          the author, whose pseudonym names the draft reference and the commit's author
+     * @param key             the document or entry
+     * @param expectedBlobIds the full blob id the caller loaded per repository-relative path; the zero id expects the
+     *                        path to be absent; empty for no check
+     * @param message         the commit message
+     * @param step            the per-attempt step
+     * @return the results of {@link #save(Author, DocumentKey, Map, String)}, and {@link SaveResult.NotSaved} with
+     *         {@link StoreOutcome#REFUSED} and the detail {@code <target>: step: refused} for a {@link SaveStep.Refusal},
+     *         or with the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} and the detail
+     *         {@code <target>: step: <simple class name of the exception>} for a step that threw a
+     *         {@link RuntimeException}, without a further attempt; in both cases nothing is pushed, and draft and target
+     *         branch stay unchanged
+     * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
+     */
+    public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
+            SaveStep step) {
+        return saves.save(author, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
     }
 
     /**

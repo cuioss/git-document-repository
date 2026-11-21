@@ -220,6 +220,10 @@ tip as the time of the last intermediate save).
   commit may become reachable from a pushed reference.
 * The save must push with lease; when the lease is refused or the push rejected, it must fetch and re-apply its
   operation onto the new tip, up to `save.max-attempts`.
+* A save may carry a per-attempt step of the caller. The store must call it on every attempt, after the conflict
+  check, with a read-only view of the tip and of the tree the draft's changes produce on it; the edits it returns must
+  become part of the one save commit, and a refusal or a failure of the step must end the save with nothing pushed and
+  the draft and the working branch unchanged.
 * When the remote cannot be reached, the save must report unreachable and change nothing; the draft keeps the work.
 * After a successful save the draft reference must be deleted only if it still points to the draft commit that was
   applied; a newer draft commit must be kept for the next save.
@@ -229,7 +233,8 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 
 . Fetch the working branch; its tip is the base.
 . Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
-  Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>).
+  Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>). Then call the per-attempt step, if any: its
+  edits join the commit, and its refusal or failure ends the save before anything is written or pushed.
 . Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
 . After the accepted push, move the local working branch to the new commit and delete the draft reference by
   compare-and-delete (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]); a draft reference that moved meanwhile is kept.
@@ -281,6 +286,28 @@ error only, and the next fetch mirrors the remote branch. The draft is then dele
 the applied draft commit. Every Git outcome is passed on as
 `StoreResult.PassedOn`. A save is logged as `GIT_STORE-2`, a save that ended without a commit for another reason than
 a conflict as `GIT_STORE-101`, naming the outcome, never a credential (`git-store/doc/LogMessages.adoc`).
+
+`StoreWriter.save(author, key, expectedBlobIds, message, step)` saves the same way with a `SaveStep`, a functional
+interface of the caller; the four-argument `save` is that save without a step. The attempt loop of `ExplicitSave`
+calls the step on every attempt, the first and each re-application onto a new tip, after the conflict check and
+before the save commit is written, so a step that derives its edits from the tip, such as a counter, sees the tip the
+commit is written on. The step receives a read-only `SaveStep.Attempt`: the full id of that tip (`null` for a root
+commit), the content of a path on the tip, the content of a path in the tree the draft's edits produce on the tip, and
+the paths of the files below a directory of that produced tree. The view is the tip's tree overlaid with the draft's
+edits and read on demand: it writes no object, and the step gets no `Repository`, no credential and nothing the caller
+did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two variants:
+
+* `Edits` with a list of `TreeEdit`, possibly empty: they are added to the draft's edits of the one save commit, whose
+  only parent stays the tip; a step edit on a path the draft also changed replaces the draft's edit of that path.
+* `Refusal`, which carries no text of the caller: the save ends as `NotSaved` with `StoreOutcome.REFUSED` and the
+  fixed detail `<target>: step: refused`.
+
+A step that throws a `RuntimeException` ends the save as `NotSaved` with the passed-on `FAILED` and the detail
+`<target>: step: <simple class name of the exception>`, without a further attempt; no log record attaches the
+exception, and neither names its message (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A failure to read the view reaches
+the step as an `UncheckedIOException` and ends the save the same way. After a refusal or a failure nothing is written
+or pushed, and the draft and the target branch are unchanged; the save is logged as `GIT_STORE-101` with its outcome.
+A draft without changes writes no commit and calls no step.
 
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes

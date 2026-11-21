@@ -16,16 +16,19 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 
 import de.cuioss.git.document.core.CommitMetadata;
@@ -84,6 +87,13 @@ import org.jspecify.annotations.Nullable;
  * {@link InCoreWriter}, unsigned, without trailers, with the author and committer of {@link CommitIdentities}, and
  * pushed to the target with the lease of the base.
  * <p>
+ * An optional {@link SaveStep} runs on every attempt, after the conflict check and before the commit is written, with
+ * a read-only view of the base and of the tree the draft's edits produce on it. The edits it returns are added to the
+ * draft's edits of the same commit, an edit on a path the draft also changed replacing the draft's edit; its refusal
+ * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} it throws with the passed-on
+ * {@link GitOutcome#FAILED} naming the class of the exception only, without a further attempt. In both cases nothing is
+ * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step.
+ * <p>
  * The save is a cooperative compare-and-swap against the remote: a lease refusal or a rejection starts the next
  * attempt from the fetch, up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; an unreachable
  * remote or invalid credentials end the save at once with nothing changed. Only after the remote accepted the commit
@@ -112,6 +122,12 @@ final class ExplicitSave {
 
     /** The detail of a draft without changes in a repository without its target branch. */
     private static final String NOTHING_TO_SAVE = "draft: no changes and no target branch";
+
+    /** The detail of a save whose per-attempt step refused, after the target. */
+    private static final String STEP_REFUSED = ": step: refused";
+
+    /** The detail of a save whose per-attempt step threw, after the target and before the class of the exception. */
+    private static final String STEP_FAILED = ": step: ";
 
     private final Clone clone;
     private final RepositoryOperations operations;
@@ -182,15 +198,18 @@ final class ExplicitSave {
      * @param key             the document or entry
      * @param expectedBlobIds the blob id the caller loaded per path; the zero id expects the path to be absent
      * @param message         the commit message
+     * @param step            the per-attempt step; {@code null} for none
      * @return {@link SaveResult.Saved} with the commit the target branch points at; {@link SaveResult.Conflicting}
      *         with every path whose blob on the fetched tip differs from its expected id; {@link SaveResult.NotSaved}
-     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym, {@link GitOutcome#NOT_FOUND} for a missing
-     *         draft or an expected blob id that is no full object id, {@link GitOutcome#REJECTED} after every attempt
-     *         lost its lease or was rejected, or the passed-on outcome that ended the save, for example
+     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym, {@link StoreOutcome#REFUSED} for a refusal
+     *         of the step, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
+     *         object id, {@link GitOutcome#FAILED} for a step that threw, {@link GitOutcome#REJECTED} after every
+     *         attempt lost its lease or was rejected, or the passed-on outcome that ended the save, for example
      *         {@link GitOutcome#UNREACHABLE} or {@link GitOutcome#CREDENTIALS_INVALID}
-     * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
+     * @throws NullPointerException if an argument but {@code step}, a path or an expected blob id is {@code null}
      */
-    SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message) {
+    SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
+            @Nullable SaveStep step) {
         Objects.requireNonNull(author, "author");
         Objects.requireNonNull(key, "key");
         Map<String, String> expectations = Map.copyOf(Objects.requireNonNull(expectedBlobIds, "expectedBlobIds"));
@@ -207,7 +226,7 @@ final class ExplicitSave {
         if (!draftRef.isOk()) {
             return report(target, SaveResult.NotSaved.of(draftRef));
         }
-        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message);
+        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message, step);
         RepositoryGuard guard = clone.guard();
         return report(target, guard.shared(() -> guard.draft(request.draft(), () -> saveDraft(request))));
     }
@@ -277,11 +296,55 @@ final class ExplicitSave {
                 if (!conflicts.isEmpty()) {
                     return Optional.of(new SaveResult.Conflicting(conflicts));
                 }
-                return apply(request, drafted.draft(), base, edits(repository, changed, draftCommit.getTree()));
+                List<TreeEdit> edits = edits(repository, changed, draftCommit.getTree());
+                @Nullable SaveStep step = request.step();
+                if (step == null) {
+                    return apply(request, drafted.draft(), base, edits);
+                }
+                var stepped = step(request, step, new AttemptView(repository, baseCommit, edits));
+                SaveResult.@Nullable NotSaved ended = stepped.ended();
+                if (ended != null) {
+                    return Optional.of(ended);
+                }
+                return apply(request, drafted.draft(), base, merge(edits, Objects.requireNonNull(stepped.edits())));
             }
         } catch (IOException e) {
             return Optional.of(failed(request, e));
         }
+    }
+
+    /**
+     * Calls the per-attempt step. A refusal ends the save with {@link StoreOutcome#REFUSED}; a
+     * {@link RuntimeException} with the passed-on {@link GitOutcome#FAILED}, naming its class only and attaching no
+     * throwable to a log record.
+     */
+    private static Stepped step(Request request, SaveStep step, AttemptView view) {
+        SaveStep.Outcome outcome;
+        try {
+            outcome = Objects.requireNonNull(step.apply(view), "the step returned no outcome");
+        }
+        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        catch (RuntimeException e) {
+            String type = e.getClass().getSimpleName();
+            LOGGER.debug("The save step of the save onto %s threw %s", request.target(), type);
+            return new Stepped(null, notSaved(GitOutcome.FAILED, request.target() + STEP_FAILED + type));
+        }
+        return switch (outcome) {
+            case SaveStep.Edits(List<TreeEdit> edits) -> new Stepped(edits, null);
+            case SaveStep.Refusal refusal -> new Stepped(null,
+                    new SaveResult.NotSaved(StoreOutcome.REFUSED, request.target() + STEP_REFUSED));
+        };
+    }
+
+    /**
+     * The edits of the save commit: the draft's edits, each replaced by the step's edit of the same path, followed by
+     * the step's edits of every other path.
+     */
+    private static List<TreeEdit> merge(List<TreeEdit> draftEdits, List<TreeEdit> stepEdits) {
+        Map<String, TreeEdit> merged = new LinkedHashMap<>();
+        draftEdits.forEach(edit -> merged.put(edit.path(), edit));
+        stepEdits.forEach(edit -> merged.put(edit.path(), edit));
+        return List.copyOf(merged.values());
     }
 
     /** The failure of an I/O error: the target and the class of the error, never its message. */
@@ -588,9 +651,123 @@ final class ExplicitSave {
      * @param draft    the draft reference
      * @param expected the expected blob id per path
      * @param message  the commit message
+     * @param step     the per-attempt step; {@code null} for none
      */
     private record Request(Author author, String target, String draft, Map<String, ObjectId> expected,
-    String message) {
+    String message, @Nullable SaveStep step) {
+    }
+
+    /**
+     * What the per-attempt step decided: the edits to add, or the result that ends the save.
+     *
+     * @param edits the step's edits; {@code null} when the save ended
+     * @param ended the result that ends the save; {@code null} when the step returned edits
+     */
+    private record Stepped(@Nullable List<TreeEdit> edits, SaveResult.@Nullable NotSaved ended) {
+    }
+
+    /**
+     * The read-only view of one attempt given to the per-attempt step: the base tree overlaid with the draft's edits,
+     * read on demand, writing no object. A read failure surfaces as an {@link UncheckedIOException}, which ends the
+     * save like any exception of the step.
+     */
+    private static final class AttemptView implements SaveStep.Attempt {
+
+        private final Repository repository;
+        private final @Nullable RevCommit base;
+        private final Map<String, TreeEdit> edits = new HashMap<>();
+
+        AttemptView(Repository repository, @Nullable RevCommit base, List<TreeEdit> draftEdits) {
+            this.repository = repository;
+            this.base = base;
+            draftEdits.forEach(edit -> edits.put(edit.path(), edit));
+        }
+
+        @Override
+        public @Nullable String tip() {
+            return base == null ? null : base.name();
+        }
+
+        @Override
+        public Optional<byte[]> tipContent(String path) {
+            Objects.requireNonNull(path, "path");
+            try {
+                return baseContent(path);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        @Override
+        public Optional<byte[]> content(String path) {
+            Objects.requireNonNull(path, "path");
+            TreeEdit edit = edits.get(path);
+            if (edit instanceof TreeEdit.Put put) {
+                return Optional.of(put.content());
+            }
+            if (edit != null || replaced(path) || becameDirectory(path)) {
+                return Optional.empty();
+            }
+            return tipContent(path);
+        }
+
+        @Override
+        public List<String> paths(String directory) {
+            Objects.requireNonNull(directory, "directory");
+            String prefix = directory.isEmpty() ? "" : directory + "/";
+            Set<String> paths = new TreeSet<>();
+            if (base != null) {
+                try (TreeWalk walk = new TreeWalk(repository)) {
+                    walk.addTree(base.getTree());
+                    walk.setRecursive(true);
+                    if (!directory.isEmpty()) {
+                        walk.setFilter(PathFilter.create(directory));
+                    }
+                    while (walk.next()) {
+                        String path = walk.getPathString();
+                        if (path.startsWith(prefix) && !edits.containsKey(path) && !replaced(path)
+                                && !becameDirectory(path)) {
+                            paths.add(path);
+                        }
+                    }
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            edits.values().stream().filter(TreeEdit.Put.class::isInstance).map(TreeEdit::path)
+                    .filter(path -> path.startsWith(prefix)).forEach(paths::add);
+            return List.copyOf(paths);
+        }
+
+        /** Whether a put of the draft at one of the path's parents replaced the directory holding the path. */
+        private boolean replaced(String path) {
+            for (int slash = path.indexOf('/'); slash > 0; slash = path.indexOf('/', slash + 1)) {
+                if (edits.get(path.substring(0, slash)) instanceof TreeEdit.Put) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Whether a put of the draft below the path turned a file of the base at the path into a directory. */
+        private boolean becameDirectory(String path) {
+            String prefix = path + "/";
+            return edits.values().stream()
+                    .anyMatch(edit -> edit instanceof TreeEdit.Put && edit.path().startsWith(prefix));
+        }
+
+        private Optional<byte[]> baseContent(String path) throws IOException {
+            if (base == null || path.isEmpty()) {
+                return Optional.empty();
+            }
+            try (TreeWalk found = TreeWalk.forPath(repository, path, base.getTree())) {
+                if (found == null || FileMode.TREE.equals(found.getRawMode(0))) {
+                    return Optional.empty();
+                }
+                return Optional.of(repository.open(found.getObjectId(0), Constants.OBJ_BLOB)
+                        .getBytes(Integer.MAX_VALUE));
+            }
+        }
     }
 
     /**
