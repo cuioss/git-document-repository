@@ -29,13 +29,15 @@ import java.util.function.Supplier;
  * The in-process coordination of one bare clone: one guard per clone and JVM ({@link #of(Path)}), shared by every
  * {@link StoreWriter} that opens the clone.
  * <p>
- * Draft writes and saves take the shared side of the maintenance lock, the expiry of drafts, its deletes and its garbage
- * collection, the exclusive side, so no write runs while the expiry deletes references and objects. One lock per draft
- * reference serialises the saves of that draft, from the read of the draft and its applied-draft reference to the
- * settlement, so a save reads both only after every earlier save of the draft has settled. One transport lock
- * serialises the fetch, apply and push of a save attempt, so two saves of the clone never interleave their transport.
- * The order is fixed: the shared side of the maintenance lock, then the draft lock, then the transport lock per
- * attempt; the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
+ * Draft writes, saves and releases take the shared side of the maintenance lock, the expiry of drafts, its deletes and
+ * its garbage collection, the exclusive side, so no write runs while the expiry deletes references and objects. One
+ * lock per draft reference serialises the saves of that draft, from the read of the draft and its applied-draft
+ * reference to the settlement, so a save reads both only after every earlier save of the draft has settled. One
+ * transport lock serialises the fetch, apply and push of a save attempt and the fetch, merge, local tag and the two
+ * pushes of a release attempt (GDR-STORE-6), so two operations of the clone never interleave their transport and no
+ * pruning fetch deletes the local tag of a release before its push. The order is fixed: the shared side of the
+ * maintenance lock, then, for a save, the draft lock, then the transport lock per attempt; a release takes no draft
+ * lock, and the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
  * <p>
  * The guard does not close the check-then-act window between reading a draft reference and moving it: that window is
  * closed by the lock-held expected-id comparison of {@link de.cuioss.git.document.core.ReferenceUpdater}, which also
@@ -78,7 +80,7 @@ final class RepositoryGuard {
     }
 
     /**
-     * Runs an action under the shared side of the maintenance lock: a draft write or a save.
+     * Runs an action under the shared side of the maintenance lock: a draft write, a save or a release.
      *
      * @param action the action
      * @param <T>    the result type
@@ -115,7 +117,8 @@ final class RepositoryGuard {
     }
 
     /**
-     * Runs an action under the transport lock: the fetch, apply and push of one save attempt.
+     * Runs an action under the transport lock: the fetch, apply and push of one save attempt, or the fetch, merge,
+     * local tag and pushes of one release attempt.
      *
      * @param action the action
      * @param <T>    the result type

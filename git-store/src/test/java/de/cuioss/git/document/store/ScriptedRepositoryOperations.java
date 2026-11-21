@@ -19,7 +19,9 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -34,8 +36,8 @@ import org.jspecify.annotations.Nullable;
  * A hand-written test double of {@link RepositoryOperations}: it delegates to {@link JGitRepositoryOperations} under
  * the local-only policy, records the inputs of every clone, fetch and push, and can script the next results of fetch
  * and push, for example {@link GitOutcome#CREDENTIALS_INVALID}, {@link GitOutcome#UNREACHABLE} or
- * {@link GitOutcome#LEASE_REFUSED}, or run an action right before the next push, such as a concurrent writer moving
- * the remote branch.
+ * {@link GitOutcome#LEASE_REFUSED}, also for the push of one named remote reference only, or run an action right before
+ * the next push, such as a concurrent writer moving the remote branch.
  * <p>
  * A scripted result is returned instead of calling the delegate, so nothing is sent. The double is safe for use by
  * several threads.
@@ -49,6 +51,7 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
     private final Deque<GitOutcome> fetchScript = new ArrayDeque<>();
     private final Deque<GitOutcome> pushScript = new ArrayDeque<>();
     private final Deque<Runnable> beforePush = new ArrayDeque<>();
+    private final Map<String, Deque<GitOutcome>> pushScriptByRef = new HashMap<>();
     private final List<CloneInput> clones = new ArrayList<>();
     private final List<FetchInput> fetches = new ArrayList<>();
     private final List<PushInput> pushes = new ArrayList<>();
@@ -72,6 +75,19 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
      */
     synchronized ScriptedRepositoryOperations failPush(GitOutcome... outcomes) {
         pushScript.addAll(List.of(outcomes));
+        return this;
+    }
+
+    /**
+     * Scripts the result of the next pushes to one remote reference, one per outcome, in order; such a scripted result
+     * is taken before one of {@link #failPush(GitOutcome...)}, and the push of every other reference is unaffected.
+     *
+     * @param remoteRef the full name of the remote reference, for example {@code refs/heads/main} or a tag
+     * @param outcomes  the outcomes, each a non-success
+     * @return this double
+     */
+    synchronized ScriptedRepositoryOperations failPushTo(String remoteRef, GitOutcome... outcomes) {
+        pushScriptByRef.computeIfAbsent(remoteRef, ref -> new ArrayDeque<>()).addAll(List.of(outcomes));
         return this;
     }
 
@@ -144,7 +160,8 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
         Runnable action;
         synchronized (this) {
             pushes.add(input);
-            scripted = pushScript.poll();
+            Deque<GitOutcome> byRef = pushScriptByRef.get(input.remoteRef());
+            scripted = byRef == null || byRef.isEmpty() ? pushScript.poll() : byRef.poll();
             action = scripted == null ? beforePush.poll() : null;
         }
         if (scripted != null) {

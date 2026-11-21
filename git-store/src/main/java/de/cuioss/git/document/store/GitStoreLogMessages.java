@@ -78,6 +78,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(4)
                 .build();
+
+        /**
+         * A release completed, {@code main} and the release tag both on the remote: the repository alias, the release
+         * tag and the release commit id.
+         */
+        public static final LogRecord RELEASED = LogRecordModel.builder()
+                .template("Released repository %s, tag %s at commit %s")
+                .prefix(PREFIX)
+                .identifier(5)
+                .build();
     }
 
     /**
@@ -136,6 +146,26 @@ public final class GitStoreLogMessages {
                 .template("Skipped the garbage collection of repository %s: another collection holds gc.pid")
                 .prefix(PREFIX)
                 .identifier(104)
+                .build();
+
+        /**
+         * A release moved {@code main} on the remote, but its tag is missing there: the repository alias, the missing
+         * release tag and the release commit id; a repeated release creates the tag on that commit.
+         */
+        public static final LogRecord RELEASE_INCOMPLETE = LogRecordModel.builder()
+                .template("Released repository %s onto main, but the tag %s is missing for commit %s")
+                .prefix(PREFIX)
+                .identifier(105)
+                .build();
+
+        /**
+         * A release did not complete, nothing of it on the remote: the repository alias, the branch of the document or
+         * entry and the outcome.
+         */
+        public static final LogRecord RELEASE_NOT_COMPLETED = LogRecordModel.builder()
+                .template("Did not complete the release of repository %s, reference %s: %s")
+                .prefix(PREFIX)
+                .identifier(106)
                 .build();
     }
 }

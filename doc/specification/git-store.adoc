@@ -189,6 +189,17 @@ per-document collection, otherwise an id of the form `[A-Za-z0-9-]+`; `Ulid.next
 `SecureRandom`, without the optional monotonic mode of the specification. A pseudonym is a reference segment of the
 form `[A-Za-z0-9-]+`; any other is refused as `MALFORMED` with the detail `pseudonym: invalid`, which never names it.
 Every refusal of a name or id is `MALFORMED`, and its detail names the field, never the value.
+`StoreReferences` also builds the release tags of <<GDR-STORE-6>>: `releaseTags(key)` is the prefix
+`refs/tags/<collection>/<id>/`, `releaseTag(key, n)` the tag `v<n>` below it, and `releaseVersion(key, ref)` parses
+`n` back.
+
+The paths of a document follow one convention, `DocumentPaths`: a path belongs to the document or entry
+`<collection>/<id>` when it is the file `<collection>/<id>`, a file at any depth below the directory
+`<collection>/<id>/`, or the file `<collection>/<id>.<suffix>` with a non-empty suffix, which may hold further dots but
+no slash (the convention of xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]). An id holds no dot, so the first dot after
+it starts the suffix. A path whose segment after the collection starts with a dot, such as the counter file
+`<collection>/.counter` of a numbered collection, belongs to no document. The release of a numbered entry
+(<<GDR-STORE-6>>) takes exactly the paths that belong to it.
 
 `StoreWriter.open(repository, gitDir, user, configuration, operations, clock)` clones the remote into a bare clone if
 none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user. An existing clone is reused only
@@ -371,6 +382,50 @@ the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the det
 The store merges every release itself. `main` is protected on the Git server so that only the technical user may
 push to it and nobody may force-push; a refused push of `main` returns rejected. The release commit carries the
 identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the approver.
+
+`StoreWriter.release(author, key)` returns a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
+full id of the release commit and the version `n`. Content without release (a key of a `MAIN` collection) is
+`MALFORMED` with the detail `key: content without release`. A release runs under the shared side of the clone's
+maintenance lock and takes no draft lock; each attempt runs under the transport lock (<<GDR-STORE-3>>), from its fetch
+to the push of its tag. An attempt fetches with `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS` and the credentials
+of the technical user, pruning what the remote deleted, and then reads `main`, the working or collection branch and the
+release tags of the document once. A missing working or collection branch is the passed-on `NOT_FOUND` with the detail
+`<branch>: not found`.
+
+* *Version and message.* `n` is one more than the highest `v<k>` below `refs/tags/<collection>/<id>/` (a `k` without
+  leading zero, at most 999999999), so the first release is `v1`. The message of the release commit is always
+  `Release <collection>/<id> v<n>`, composed by the store; a release takes no message of the caller.
+* *Release commit.* For a per-document collection, `InCoreMerger` of `git-core` merges the working branch into `main`
+  at path level (xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]), and the release commit has the tip of `main` and the tip of
+  the working branch as its parents and the edits from the tree of `main` to the merged tree; a conflicting merge ends
+  the release with the passed-on `CONFLICT` and the detail `<branch>: <n> conflicting paths`, which names no path. For a
+  numbered collection only the paths of the entry are taken from the collection branch onto `main`, the only parent:
+  every file of the entry that differs or is new is put, every file of the entry the collection branch lacks is
+  deleted, and the files of other entries and the counter file stay as `main` has them. Without `main` the release
+  commit of a per-document collection has the working branch as its only parent and its tree, and that of a numbered
+  collection is a root commit holding the entry's files. The commit is written by `InCoreWriter`, unsigned and without
+  trailers, with the author and committer of <<GDR-STORE-8>>; one method of `DocumentRelease` builds its metadata, the
+  seam <<GDR-STORE-13>> extends with the identity trailers.
+* *Push order.* The local tag is written by a reference update that expects it absent and writes no reflog. Then `main`
+  is pushed with the lease of the fetched tip (the zero id when `main` is absent), and only after the remote accepted it
+  the local `main` moves and the tag is pushed against the zero-id lease. `RepositoryOperations.push` of `git-core`
+  pushes one reference per call, so the two pushes are not atomic; the transport lock keeps every other fetch of the
+  process out of the gap, so no pruning fetch deletes the local tag before its push. A local tag whose push never
+  happened, because the push of `main` was refused, is pruned by the next fetch, since the remote lacks it
+  (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); no tag on the remote is ever moved or deleted.
+* *Incomplete and its recovery.* When the remote accepted `main` and the push of the tag failed, the release is
+  `INCOMPLETE` with the detail `<tag>: not pushed (<outcome>)`. A repeated release finds the release commit by its
+  message: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, that carries the message of
+  `v<n>`, is a release whose tag is missing; the release then writes and pushes only the tag on that commit and merges
+  nothing.
+* *Rejected.* A lease refusal of the push of `main` starts the next attempt from the fetch, up to `save.max-attempts`;
+  after the last the release is the passed-on `REJECTED` with the detail
+  `refs/heads/main: lease refused on every attempt (<n>)`. A rejection of `main` by the remote, such as a protected
+  branch, is the passed-on `REJECTED` at once. Every other Git outcome, for example `UNREACHABLE`, is passed on.
+
+A completed release is logged as `GIT_STORE-5` with the tag and the commit, an incomplete one as `GIT_STORE-105`, and a
+release that put nothing on the remote as `GIT_STORE-106` with its outcome (`git-store/doc/LogMessages.adoc`). Every
+detail names a reference or a field, never a path, a content or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-7]
 == GDR-STORE-7: Draft Expiry

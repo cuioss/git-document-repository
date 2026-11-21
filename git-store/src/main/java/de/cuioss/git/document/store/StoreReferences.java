@@ -18,12 +18,13 @@ package de.cuioss.git.document.store;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
  * The reference layout of a repository of the store (GDR-STORE-2): the released state, the working and collection
- * branches, the drafts, the applied drafts and the push reference specifications.
+ * branches, the release tags (GDR-STORE-6), the drafts, the applied drafts and the push reference specifications.
  * <p>
  * Every reference name is built from segments that contain no character git-check-ref-format(1) forbids, no dot and no
  * slash: the collection name ({@code [a-z0-9-]+}, {@link DocumentCollection}), the id ({@link DocumentKey}) and the
@@ -57,11 +58,17 @@ public final class StoreReferences {
     public static final List<String> PUSH_REF_SPECS =
             List.of("refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*", "refs/notes/*:refs/notes/*");
 
+    /** The prefix of every tag, {@code refs/tags/}. */
+    public static final String TAGS = "refs/tags/";
+
     /** The prefix of every branch. */
     private static final String HEADS = "refs/heads/";
 
     /** The form of a pseudonym. */
     private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
+
+    /** The last segment of a release tag, {@code v<n>} with {@code n} from 1 to 999999999 without leading zeros. */
+    private static final Pattern RELEASE_VERSION = Pattern.compile("v([1-9][0-9]{0,8})");
 
     /** The detail of a refused pseudonym; it never carries the pseudonym. */
     static final String INVALID_PSEUDONYM = "pseudonym: invalid";
@@ -85,6 +92,53 @@ public final class StoreReferences {
             case NUMBERED -> HEADS + collection.name();
             case MAIN -> MAIN;
         };
+    }
+
+    /**
+     * Returns the prefix of every release tag of a document or entry (GDR-STORE-6).
+     *
+     * @param key the key of the document or entry
+     * @return {@code refs/tags/<collection>/<id>/}, ending in {@code /}
+     * @throws NullPointerException if {@code key} is {@code null}
+     */
+    public static String releaseTags(DocumentKey key) {
+        Objects.requireNonNull(key, "key");
+        return TAGS + key.collection().name() + "/" + key.id() + "/";
+    }
+
+    /**
+     * Returns the release tag of one version of a document or entry (GDR-STORE-6).
+     *
+     * @param key     the key of the document or entry
+     * @param version the version {@code n}, counted from 1
+     * @return {@code refs/tags/<collection>/<id>/v<n>}
+     * @throws NullPointerException     if {@code key} is {@code null}
+     * @throws IllegalArgumentException if {@code version} is less than 1
+     */
+    public static String releaseTag(DocumentKey key, int version) {
+        if (version < 1) {
+            throw new IllegalArgumentException("version: less than 1");
+        }
+        return releaseTags(key) + "v" + version;
+    }
+
+    /**
+     * Parses the version of a release tag of a document or entry (GDR-STORE-6).
+     *
+     * @param key the key of the document or entry
+     * @param ref the full name of a reference
+     * @return the version {@code n} of {@code refs/tags/<collection>/<id>/v<n>}, or empty for any other reference,
+     *         a version with a leading zero or one above 999999999 included
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public static OptionalInt releaseVersion(DocumentKey key, String ref) {
+        Objects.requireNonNull(ref, "ref");
+        String prefix = releaseTags(key);
+        if (!ref.startsWith(prefix)) {
+            return OptionalInt.empty();
+        }
+        var version = RELEASE_VERSION.matcher(ref.substring(prefix.length()));
+        return version.matches() ? OptionalInt.of(Integer.parseInt(version.group(1))) : OptionalInt.empty();
     }
 
     /**

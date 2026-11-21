@@ -40,7 +40,8 @@ import org.eclipse.jgit.transport.URIish;
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
  * with lease, conflicts and change detection and an optional per-attempt step (GDR-STORE-3, GDR-STORE-4,
- * GDR-STORE-5), and the expiry of drafts (GDR-STORE-7).
+ * GDR-STORE-5), the release of a document onto {@code main} with its version tag (GDR-STORE-6), and the expiry of
+ * drafts (GDR-STORE-7).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
@@ -53,9 +54,10 @@ import org.eclipse.jgit.transport.URIish;
  * a clone of another repository at the path is refused. Every commit identity comes from the section {@code commit}
  * of the configuration and the technical user.
  * <p>
- * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes
- * and saves take the shared side of the clone's maintenance lock, every save the lock of its draft, so the saves of one
- * draft run one after the other, and every save attempt the transport lock; the expiry, its deletes and its garbage
+ * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes,
+ * saves and releases take the shared side of the clone's maintenance lock, every save the lock of its draft, so the
+ * saves of one draft run one after the other, and every save or release attempt the transport lock; the expiry, its
+ * deletes and its garbage
  * collection, takes the exclusive side. The locks belong to the clone, not to the
  * writer: every writer of the JVM that opens the same git directory (by its real path) shares them, so the garbage
  * collection of one writer never runs while another writer of the clone holds objects not yet referenced. No
@@ -74,15 +76,17 @@ public final class StoreWriter implements AutoCloseable {
     private final RepositoryGuard guard;
     private final DraftReferences drafts;
     private final ExplicitSave saves;
+    private final DocumentRelease releases;
     private final DraftExpiry expiry;
 
     private StoreWriter(String alias, Repository repository, RepositoryGuard guard, DraftReferences drafts,
-            ExplicitSave saves, DraftExpiry expiry) {
+            ExplicitSave saves, DocumentRelease releases, DraftExpiry expiry) {
         this.alias = alias;
         this.repository = repository;
         this.guard = guard;
         this.drafts = drafts;
         this.saves = saves;
+        this.releases = releases;
         this.expiry = expiry;
     }
 
@@ -137,11 +141,13 @@ public final class StoreWriter implements AutoCloseable {
         int attempts = configuration.save().maxAttempts();
         var drafts = new DraftReferences(repository, updater, identities, clock, attempts);
         var guard = RepositoryGuard.of(clone);
-        var saves = new ExplicitSave(new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard),
-                operations, user, identities, clock, attempts);
+        var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard);
+        var saves = new ExplicitSave(bareClone, operations, user, identities, clock, attempts);
+        var releases = new DocumentRelease(bareClone, operations, user, identities, clock, attempts);
         var expiry = new DraftExpiry(storeRepository.alias(), repository, guard, updater,
                 configuration.drafts().expiry(), attempts);
-        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves, expiry));
+        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves, releases,
+                expiry));
     }
 
     /**
@@ -255,6 +261,36 @@ public final class StoreWriter implements AutoCloseable {
     public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
             SaveStep step) {
         return saves.save(author, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
+    }
+
+    /**
+     * Releases a document or numbered entry (GDR-STORE-6): merges its saved state into {@code main} as one release
+     * commit, tags that commit {@code refs/tags/<collection>/<id>/v<n>}, {@code n} counting the releases of the
+     * document from 1, and pushes {@code main} with lease and then the tag. For a per-document collection the release
+     * commit merges the working branch into {@code main}, with both tips as its parents; for a numbered collection it
+     * takes only the entry's paths from the collection branch onto {@code main}, its only parent. Its message is
+     * {@code Release <collection>/<id> v<n>}, composed by the store; its author is the user who releases.
+     * <p>
+     * The release runs under the shared side of the clone's maintenance lock, each attempt, from the fetch to the push
+     * of the tag, under its transport lock. When {@code main} moved on the remote and the tag is missing there, a
+     * repeated release creates and pushes the missing tag on the release commit instead of merging again. A release
+     * tag on the remote is never moved or deleted.
+     *
+     * @param author the user who releases, author of the release commit
+     * @param key    the document or numbered entry
+     * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} with the detail
+     *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed;
+     *         {@link StoreOutcome#MALFORMED} for content without release; the passed-on
+     *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing working or collection branch,
+     *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} with the number of conflicting paths for a
+     *         conflicting merge, {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
+     *         {@code main} or after every attempt lost its lease, or the passed-on outcome that ended the release, for
+     *         example {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE}; no detail names a path, a content or
+     *         a pseudonym
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public StoreResult<Release> release(Author author, DocumentKey key) {
+        return releases.release(author, key);
     }
 
     /**
