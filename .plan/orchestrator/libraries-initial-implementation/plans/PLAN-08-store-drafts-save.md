@@ -98,12 +98,15 @@ credential rules (GDR-STORE-8), with the concurrent-writers requirement GDR-NFR-
 
 - OBSERVED: the save sequence, the reference table and the ULID rule are specified in
   `doc/specification/git-store.adoc` § GDR-STORE-2 / GDR-STORE-3 and `doc/resources/diagrams/save-sequence.svg`.
+  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at c1e02fc: doc/resources/diagrams/save-sequence.svg exists; git-store.adoc holds GDR-STORE-2/3 (save sequence at 216-228, ULID rule at 173 and 188); Ulid.java 41-60 and StoreReferences implement the reference table; read by the three-layer leaf and re-read by the orchestrator
 - HYPOTHESIS: a ULID generator is needed and no approved dependency provides one, so it is written in `git-store` (26
   Crockford base32 characters, 48-bit time + 80 random bits) — confirm/refute at the approved dependency set
   (`cui-java-tools` jar § any ULID / base32 type) at outline (verify-at-outline).
+  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at c1e02fc: Ulid.java 41-99 is written in git-store: 26 Crockford base32 characters (ALPHABET 47, LENGTH 44), 48-bit time (MAX_TIME 65) plus 80 bits of a SecureRandom (74, next 84); the module's dependencies add no ULID type (git-store/pom.xml has none); the cui-java-tools jar was not opened
 - HYPOTHESIS: garbage collection of unreachable draft objects works in process with JGit's `GC` on a
   `FileRepository` without starting a process — confirm/refute at JGit 7.8.0
   `org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/GC.java` § `gc` (verify-at-outline).
+  - verdict: unverifiable | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: at c1e02fc DraftExpiry.java 224-226 runs Git.wrap(repository).gc() with a ProgressMonitor in process (Javadoc 55-67 cites JGit 7.8.0 GarbageCollectCommand.call and GC.gc); the JGit 7.8.0 sources were not opened by the reading, so the in-process and no-process half is not shown here
 - OBSERVED: `save.max-attempts` has no upper bound in `StoreConfiguration.readSave` (`git-store/src/main/java/de/cuioss/git/document/store/StoreConfiguration.java`
   171-179: only `attempts < 1` is refused) and `ReferenceUpdater.swap` loops `attempt <= attempts` over an `int`
   (`git-core/src/main/java/de/cuioss/git/document/core/ReferenceUpdater.java` 199) — read at `a558afd`.

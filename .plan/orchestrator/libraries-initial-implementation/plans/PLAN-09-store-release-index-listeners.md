@@ -1,4 +1,4 @@
-# PLAN-09: git-store — release, in-memory index, post-commit listeners
+# PLAN-09: git-store — release, in-memory index, post-commit listeners, per-attempt save step
 
 epic: libraries-initial-implementation
 workstream: WS-02
@@ -12,7 +12,9 @@ workstream: WS-02
 Implement the read and publish side of the store: release by merging a working branch into `main` with a never-moved
 tag `refs/tags/<collection>/<id>/v<n>` and the incomplete/repair path (GDR-STORE-6), the in-memory index fed by
 consumer-registered contributors with periodic fetch and reporting-date snapshots (GDR-STORE-9) meeting the footprint
-limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10).
+limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10). It also closes a gap in the write path PLAN-08 shipped: the save has no
+per-attempt step, which the later plans of `git-forms` and `git-directory` need (deliverable 5, the operator's decision of
+2026-11-21 on the landing analysis of PLAN-08).
 
 ## Deliverables
 
@@ -36,6 +38,24 @@ limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10).
    first, and the decision replaces "is open".
    - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
+5. Per-attempt save step (GDR-STORE-3 amended; consumed by GDR-FORMS-4 in PLAN-13 and GDR-DIR-3 in PLAN-16; the gap is
+   recorded in `landings/PLAN-08.md`): `StoreWriter.save(Author, DocumentKey, Map, String)` (`StoreWriter.java` 229) takes
+   no callback, and `ExplicitSave` re-applies only the draft's own edits on each attempt (232-239), while GDR-FORMS-4 needs
+   generated output regenerated from the data of the commit the save creates, after every re-application onto a new tip,
+   and GDR-DIR-3 needs a check against the tip it commits on in every attempt. Add an optional caller-supplied step to the
+   save: it runs on every attempt, the first and each re-application, with read access to the tip the attempt commits on
+   and to the tree the draft's edits produce, and returns either further edits, which become part of the same save commit
+   (one commit, the tip as its only parent), or a refusal that ends the save with nothing pushed and draft and branch
+   unchanged; a step that throws ends the save as a failed one (class name only, no lost-lease retry); it is given no
+   credential and nothing the caller did not pass. Specify it in `doc/specification/git-store.adoc` § GDR-STORE-3 (the
+   requirement is amended in place; requirement numbers stay without gap) and in the save sequence text; an outcome the
+   refusal needs that no `SaveResult` or `StoreOutcome` constant covers is put to the owner through the question tool
+   BEFORE a constant is added, as for any new outcome. Tests naming GDR-STORE-3: the step runs again against the new tip
+   after a lease refusal, its edits land in the one commit whose only parent is the tip, a refusal pushes nothing and
+   leaves draft and branch unchanged, a throwing step is a failed save, and GDR-NFR-3 holds for what the step receives and
+   for its failure detail.
+   - Skills: pm-dev-java:java-core, pm-dev-java:javadoc, pm-dev-java-cui:cui-logging
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -69,11 +89,32 @@ limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10).
   an `undecidable` read blocks.
 - The release commit carries the releasing user's identity trailers once PLAN-10 lands; this plan leaves the hook
   point for them and does not invent a trailer format.
+- `git-core` stays read-only. PLAN-08 edited it against its outline (`FetchInput.prune`, the public
+  `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, `git-core.adoc`); this plan reports a `git-core` gap in its PR and its
+  inbox message instead of absorbing it.
+- The save's fetch prunes (`FetchInput.prune` with `MIRROR_FETCH_REF_SPECS`, PLAN-08): it deletes every local reference
+  below `refs/heads`, `refs/tags` and `refs/notes` whose source the remote does not advertise (JGit 7.8.0
+  `FetchProcess.deleteStaleTrackingRefs`; `git-core.adoc` § fetch). A local tag created by a release is therefore lost to a
+  pruning fetch that runs before its push: create and push it under the one transport lock of the clone
+  (`RepositoryGuard`), or keep it out of the pruned set, and test the interleaving with a pause between the tag and its
+  push.
+- Review lessons of PLAN-08 (`landings/PLAN-08.md`): a green local build was followed by 18 valid bot findings and 33
+  Sonar findings, mostly races. For every reference operation that reads and then writes or deletes, name the locks and
+  the readers that sit between the check and the compare-and-swap and test each with a pause point; capture identifiers
+  once and re-apply them on a retry; do not read a result code with several causes (`LOCK_FAILURE`) as one cause; derive
+  remote state from the fetch result, never from mirror references; give a destructive option (prune) an explicit scope;
+  after an irreversible remote effect report a later failure without contradicting it; detect a skipped operation from
+  evidence that it ran, not from a pre-check (a TOCTOU guard is not a mechanism); a lock covers the reads its decision
+  depends on; never attach a throwable to a log record on a path promised sanitised (DEBUG included, GDR-NFR-3); a test
+  asserts content, takes fixture values that differ by construction, and ends a concurrent scenario with one deadline,
+  cancellation and `shutdownNow` with `awaitTermination` (never `ExecutorService.close()` in try-with-resources); one
+  throwing call per `assertThrows` lambda, no unused `throws`, and JGit returns (`getRef`, `resolve`, `getObjectId`)
+  treated as `@Nullable` (Sonar S5778, S1130, S4449). Plan for a second review pass.
 
 ## Done when
 
-- `verify` passes at the plan's head with GDR-STORE-6/9/10 and GDR-NFR-1 each covered by a test naming the
-  requirement id.
+- `verify` passes at the plan's head with GDR-STORE-3 (the per-attempt step), GDR-STORE-6/9/10 and GDR-NFR-1 each covered
+  by a test naming the requirement id.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
   open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
 
@@ -85,6 +126,10 @@ limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10).
   alone (a heap-walk tool such as JOL would be a new dependency) — confirm/refute at
   `doc/specification/general.adoc` § GDR-NFR-1 ("the measuring tool is open") and the approved list in the epic's
   Decisions at outline (verify-at-outline); confirmed → owner decision on a tool before the test is written.
+- OBSERVED: the shipped save has no per-attempt step — `StoreWriter.save(Author, DocumentKey, Map<String, String>, String)`
+  takes no callback (`git-store/src/main/java/de/cuioss/git/document/store/StoreWriter.java` 229) and `ExplicitSave` loops
+  `attempt <= attempts` over the draft captured once (232-239) — read at `c1e02fc`.
+  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at c1e02fc: StoreWriter.java 229 save(Author, DocumentKey, Map<String,String>, String) has no callback parameter; ExplicitSave.java 232-239 loops attempt <= attempts over the draft captured once
 
 ## Expected Surface
 
@@ -97,8 +142,15 @@ limit GDR-NFR-1, and in-process post-commit listeners (GDR-STORE-10).
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-08 (save, working branches, fetch).
-- Overlaps with: every WS-02 plan — strictly sequential.
+- Depends on: PLAN-08 (save, working branches, fetch; shipped, PR #48, `c1e02fc`, 2026-11-21: `StoreWriter` with `draft`,
+  `drafts`, `save`, `expireDrafts`; `ExplicitSave`, `DraftExpiry`, `DraftReferences`, `RepositoryGuard` per clone path,
+  `SaveResult`, `Author`, `TechnicalUser`, `Ulid`; `save.max-attempts` bounded at 100; `commit.email`).
+- Five deliverables, under the scope-bloat guard (about six): deliverable 5 was folded in at the operator's word on
+  2026-11-21 because the three later plans of `git-forms` and `git-directory` rest on it; the Expected Surface already
+  declares `git-store/` and `git-store.adoc`, so it is unchanged. PLAN-13 and PLAN-16 wait for it.
+- Overlaps with: every WS-02 plan — strictly sequential. With PLAN-12 (run side by side at the operator's word on
+  2026-11-21) it shares `doc/specification/general.adoc`, `AGENTS.md` and `doc/README.adoc`: rebase onto whichever of the two
+  merged first and keep both texts.
 - Adjacent to: anchoring of release tags (GDR-STORE-16) — PLAN-11.
 
 ## Hand-Off Command
