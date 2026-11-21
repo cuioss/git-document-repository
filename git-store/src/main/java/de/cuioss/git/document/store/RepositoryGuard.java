@@ -30,8 +30,12 @@ import java.util.function.Supplier;
  * {@link StoreWriter} that opens the clone.
  * <p>
  * Draft writes and saves take the shared side of the maintenance lock, the expiry of drafts, its deletes and its garbage
- * collection, the exclusive side, so no write runs while the expiry deletes references and objects. One transport lock
+ * collection, the exclusive side, so no write runs while the expiry deletes references and objects. One lock per draft
+ * reference serialises the saves of that draft, from the read of the draft and its applied-draft reference to the
+ * settlement, so a save reads both only after every earlier save of the draft has settled. One transport lock
  * serialises the fetch, apply and push of a save attempt, so two saves of the clone never interleave their transport.
+ * The order is fixed: the shared side of the maintenance lock, then the draft lock, then the transport lock per
+ * attempt; the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
  * <p>
  * The guard does not close the check-then-act window between reading a draft reference and moving it: that window is
  * closed by the lock-held expected-id comparison of {@link de.cuioss.git.document.core.ReferenceUpdater}, which also
@@ -44,6 +48,12 @@ final class RepositoryGuard {
 
     private final ReentrantReadWriteLock maintenance = new ReentrantReadWriteLock();
     private final ReentrantLock transport = new ReentrantLock();
+
+    /**
+     * The lock of every draft reference saved through the clone, by its full name; never removed, so two saves of one
+     * draft always meet the same lock.
+     */
+    private final ConcurrentMap<String, ReentrantLock> drafts = new ConcurrentHashMap<>();
 
     /**
      * Returns the one guard of a clone, shared by every {@link StoreWriter} of the JVM that opens it, so the garbage
@@ -88,6 +98,20 @@ final class RepositoryGuard {
      */
     <T> T exclusive(Supplier<T> action) {
         return locked(maintenance.writeLock(), action);
+    }
+
+    /**
+     * Runs an action under the lock of one draft reference: one save of that draft, from its read to its settlement.
+     *
+     * @param draftRef the full name of the draft reference
+     * @param action   the action
+     * @param <T>      the result type
+     * @return the result of the action
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    <T> T draft(String draftRef, Supplier<T> action) {
+        Objects.requireNonNull(draftRef, "draftRef");
+        return locked(drafts.computeIfAbsent(draftRef, name -> new ReentrantLock()), action);
     }
 
     /**

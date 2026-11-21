@@ -172,7 +172,12 @@ The operation is `cloneIfMissing`. An existing bare repository at the git direct
 remote; a directory that holds anything else is `NOT_A_REPOSITORY`. Otherwise the URL is checked against the remote
 policy (`REFUSED_BY_POLICY` without contact), a bare repository is initialised, and its remote `origin` is configured
 and fetched. The fetch refspecs mirror the remote's branches, tags and notes into the clone:
-`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`.
+`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`. They are public as the
+unmodifiable list `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, the one source of that set: a caller that prunes a
+clone passes it to `fetch` explicitly, so the prune of <<GDR-CORE-7>> deletes only references below the mirrored
+namespaces, whatever fetch refspecs the clone's configuration holds (JGit 7.8.0 `Transport.fetch` falls back to the
+configured fetch refspecs only for an empty list, and `FetchProcess.deleteStaleTrackingRefs` deletes only references
+matching the destination of a fetched refspec).
 
 The stored origin carries no user information: the URL is configured without user name and password
 (`URIish.setUser(null).setPass(null)`), so no credential reaches the persistent configuration of the clone; the

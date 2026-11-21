@@ -17,6 +17,7 @@ package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -39,10 +40,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RemotePolicy;
+import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
 import de.cuioss.git.document.testing.LocalRemote;
@@ -70,10 +74,11 @@ import org.junit.jupiter.api.io.TempDir;
  * Concurrent writers of GDR-NFR-2 against one {@code git-testing} local remote with {@code save.max-attempts} 10: ten
  * writers with their own bare clones save different files of one working branch at the same time and all succeed, two
  * writers that change the same file from the same loaded blob end in exactly one save and one conflict naming that
- * file, and ten threads sharing one writer all succeed as well.
+ * file, and ten threads sharing one writer all succeed as well. A second save of one draft, started while the first is
+ * about to push, waits for it and finds the draft settled instead of replaying its changes.
  * <p>
- * Names, ids, pseudonyms, paths and contents are generated; the number of writers and the attempts are the specified
- * scenario and kept as literals.
+ * Names, ids, pseudonyms, paths and contents are generated; the number of writers, the attempts and the details are
+ * the specified scenario and kept as literals.
  */
 @EnableGeneratorController
 @DisplayName("Concurrent writers (GDR-NFR-2)")
@@ -176,9 +181,23 @@ class ConcurrentWritersTest {
     }
 
     private StoreWriter open(StoreRepository storeRepository) {
+        return open(storeRepository, new JGitRepositoryOperations(RemotePolicy.localOnly()));
+    }
+
+    private StoreWriter open(StoreRepository storeRepository, RepositoryOperations operations) {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(),
-                new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(Instant.now(), ZoneOffset.UTC)));
+                operations, Clock.fixed(Instant.now(), ZoneOffset.UTC)));
+    }
+
+    /** Waits until the thread parks on a lock or ends, from a callback that may not throw a checked exception. */
+    private static void awaitParked(Thread thread) {
+        try {
+            ThreadStates.awaitParkedOrEnded(thread, TIMEOUT_SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("the wait for the parked thread is interrupted", e);
+        }
     }
 
     /**
@@ -280,6 +299,39 @@ class ConcurrentWritersTest {
                     () -> assertEquals(List.of(path), conflicting.getFirst().paths(), "the conflict names the file"),
                     () -> assertEquals(contents.get(results.indexOf(saved.getFirst())),
                             files(remote.repository(), target).get(path), "the branch holds the content of the save"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-2: a second save of one draft waits for the first and finds the draft settled, not replayed")
+    void secondSaveOfOneDraftWaitsForTheFirst(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        commit(remote.repository(), target, Map.of(word() + "-base", text()));
+        var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+        var operations = new ScriptedRepositoryOperations();
+        var author = Author.of(pseudonym());
+        AtomicReference<SaveResult> second = new AtomicReference<>();
+
+        try (var writer = open(storeRepository, operations)) {
+            value(writer.draft(author, key, put(word(), text()), word()));
+            var secondSave = new Thread(() -> second.set(writer.save(author, key, Map.of(), word())));
+            operations.beforeNextPush(() -> {
+                secondSave.start();
+                awaitParked(secondSave);
+            });
+
+            var first = writer.save(author, key, Map.of(), word());
+            secondSave.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+
+            var tip = Objects.requireNonNull(remote.repository().exactRef(target), "the branch exists").getObjectId();
+            assertAll(
+                    () -> assertFalse(secondSave.isAlive(), "the second save ends"),
+                    () -> assertEquals(new SaveResult.Saved(tip.name()), first,
+                            "the first save pushes the only commit of the branch"),
+                    () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.NOT_FOUND),
+                            "draft: not found"), second.get(), "the second save finds the draft settled"),
+                    () -> assertEquals(1, operations.pushes().size(), "the draft's changes are pushed once"));
         }
     }
 

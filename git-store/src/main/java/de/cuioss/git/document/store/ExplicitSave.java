@@ -32,6 +32,7 @@ import de.cuioss.git.document.core.CommitMetadata;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.GitResult;
 import de.cuioss.git.document.core.InCoreWriter;
+import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
@@ -59,12 +60,18 @@ import org.jspecify.annotations.Nullable;
  * The explicit save of one bare clone (GDR-STORE-3, GDR-STORE-4, GDR-STORE-5, GDR-STORE-8): the draft's changes
  * applied onto the remote tip of the target branch as one commit, pushed with lease.
  * <p>
- * A save runs under the shared side of the clone's maintenance lock, and each of its attempts under the clone's
- * transport lock ({@link RepositoryGuard}). The save reads the draft tip once, and every attempt applies that draft
- * commit, so a draft written during the save is not published with the expectations and the message of this save. An
- * attempt fetches with the configured mirror reference specifications and the credentials of the technical user,
- * pruning every mirrored reference the remote deleted (never a draft), and takes the local tip of the target branch
- * as the base; a target branch that does not exist (any more) starts at the local tip of {@code main} (else at
+ * A save runs under the shared side of the clone's maintenance lock and under the lock of its draft reference, and
+ * each of its attempts under the clone's transport lock ({@link RepositoryGuard}). The draft lock serialises the saves
+ * of one draft within the process: a save reads the draft tip and its applied-draft reference only after every
+ * earlier save of that draft has settled, so it never applies again the changes an earlier save applied; a failed
+ * write of the applied-draft reference for a kept draft is outside that guarantee (see {@code setApplied}). The save
+ * reads the draft tip once, and every attempt applies that draft commit, so a draft written during the save is not
+ * published with the expectations and the message of this save. An attempt fetches with the mirror reference
+ * specifications {@link JGitRepositoryOperations#MIRROR_FETCH_REF_SPECS}, passed explicitly, and the credentials of
+ * the technical user, pruning every reference below {@code refs/heads/}, {@code refs/tags/} and {@code refs/notes/}
+ * the remote deleted: JGit 7.8.0 prunes only the destinations of the given reference specifications, so a draft or an
+ * applied-draft reference is never pruned, whatever fetch reference specifications the clone's configuration holds.
+ * It takes the local tip of the target branch as the base; a target branch that does not exist (any more) starts at the local tip of {@code main} (else at
  * nothing, so the commit is a root commit) and is pushed against the zero-id lease, which expects the remote branch to
  * be absent. The changes of the draft are the paths changed since the draft commit a former save applied
  * ({@link StoreReferences#APPLIED}), when the draft descends from it; otherwise between the merge base of draft tip
@@ -201,12 +208,14 @@ final class ExplicitSave {
             return report(target, SaveResult.NotSaved.of(draftRef));
         }
         var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message);
-        return report(target, clone.guard().shared(() -> saveDraft(request)));
+        RepositoryGuard guard = clone.guard();
+        return report(target, guard.shared(() -> guard.draft(request.draft(), () -> saveDraft(request))));
     }
 
     /**
      * Reads the draft once and runs the attempts on that draft commit, all under the shared side of the maintenance
-     * lock, so no expiry deletes or collects the draft between two attempts.
+     * lock, so no expiry deletes or collects the draft between two attempts, and under the lock of the draft, so the
+     * draft and its applied-draft reference are read after every earlier save of the draft has settled.
      */
     private SaveResult saveDraft(Request request) {
         Repository repository = clone.repository();
@@ -246,7 +255,8 @@ final class ExplicitSave {
         Repository repository = clone.repository();
         try {
             var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
-                    .refSpecs(List.of()).credentials(user.credentials()).prune(true).build());
+                    .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
+                    .prune(true).build());
             if (!fetched.isOk()) {
                 return Optional.of(passedOn(fetched));
             }
@@ -504,8 +514,9 @@ final class ExplicitSave {
 
     /**
      * Points the applied-draft reference at the commit, or deletes it for {@code null}; without a reflog. Only a save
-     * under the transport lock and the expiry under the exclusive lock write it, so the update is forced. A failure is
-     * logged by the class of the error only: the next save then applies the draft's changes since its merge base.
+     * under the draft and transport locks and the expiry under the exclusive lock write it, so the update is forced. A
+     * failure is logged by the class of the error only: the next save then applies the draft's changes since its merge
+     * base.
      */
     private void setApplied(String appliedRef, @Nullable ObjectId commit) {
         Repository repository = clone.repository();

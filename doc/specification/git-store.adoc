@@ -249,10 +249,17 @@ caller branches on with a pattern-matching `switch`: `Saved` with the commit the
 `Conflicting` with the conflicting paths (<<GDR-STORE-4>>), and `NotSaved` with any other outcome and its detail;
 `toResult()` gives the plain `StoreResult` shape. The save reads the draft tip once, and every attempt re-applies that
 draft commit, so a draft written during the save is kept for the next save and not published with the expected blob
-ids and the message of this one. An attempt fetches with the configured mirror reference specifications and the
-credentials of the technical user, pruning every mirrored reference the remote no longer has
-(xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]; a draft lies outside every mirrored namespace and is never pruned), and
-takes the local tip of the target branch as the base, so a target branch the remote deleted starts at `main` again.
+ids and the message of this one. An attempt fetches with the mirror reference specifications of `git-core`
+(`JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, xref:git-core.adoc#GDR-CORE-3[GDR-CORE-3]), passed explicitly,
+and the credentials of the technical user, so it fetches and prunes `refs/heads/`, `refs/tags/` and `refs/notes/`
+only: it prunes every reference there the remote no longer has (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). JGit
+7.8.0 `Transport.fetch` uses the fetch reference specifications of the clone's configuration only for an empty list,
+and `FetchProcess.deleteStaleTrackingRefs` deletes only the references matching the destination of a fetched
+reference specification
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
+7.8.0 `FetchProcess`], checked in the sources jar of `org.eclipse.jgit` 7.8.0.202609011348-r), so a draft and a
+`refs/applied/` reference are never pruned, also in a reused clone whose stored fetch reference specifications reach
+further. The attempt takes the local tip of the target branch as the base, so a target branch the remote deleted starts at `main` again.
 The changes of the draft are the paths changed between the merge base of draft tip and base (JGit's
 `RevFilter.MERGE_BASE`) and the draft tip, read with `RepositoryReader.changes` of `git-core`; without a merge base
 every file of the draft is a change. A draft kept by a save because it moved during that save is replayed only with
@@ -278,7 +285,13 @@ a conflict as `GIT_STORE-101`, naming the outcome, never a credential (`git-stor
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes
 and saves take the shared side of a maintenance lock, the deletes and the garbage collection of <<GDR-STORE-7>> its
-exclusive side, and one transport lock serialises the fetch, apply and push of a save attempt. The guard does not close the window
+exclusive side, one lock per draft reference serialises the saves of that draft, and one transport lock serialises the
+fetch, apply and push of a save attempt. A save takes the shared side of the maintenance lock, then the lock of its
+draft, then the transport lock per attempt; the expiry takes only the exclusive side, so no cycle arises. Under the
+draft lock a save reads the draft and its `refs/applied/` reference only after every earlier save of that draft in the
+process has settled, so it does not apply again the changes an earlier save applied. The draft lock is in-process only,
+and a failed write of the `refs/applied/` reference for a kept draft is outside it: the next save then applies the
+draft's changes since its merge base. The guard does not close the window
 between reading a reference and moving it; the expected-id comparison under the reference's lock
 (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]) closes it, also against a writer outside the process.
 

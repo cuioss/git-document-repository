@@ -54,8 +54,9 @@ import org.eclipse.jgit.transport.URIish;
  * of the configuration and the technical user.
  * <p>
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes
- * and saves take the shared side of the clone's maintenance lock, and every save attempt its transport lock; the
- * expiry, its deletes and its garbage collection, takes the exclusive side. The locks belong to the clone, not to the
+ * and saves take the shared side of the clone's maintenance lock, every save the lock of its draft, so the saves of one
+ * draft run one after the other, and every save attempt the transport lock; the expiry, its deletes and its garbage
+ * collection, takes the exclusive side. The locks belong to the clone, not to the
  * writer: every writer of the JVM that opens the same git directory (by its real path) shares them, so the garbage
  * collection of one writer never runs while another writer of the clone holds objects not yet referenced. No
  * operation takes a credential: every fetch and push uses those of the technical user (GDR-STORE-8). The writer holds

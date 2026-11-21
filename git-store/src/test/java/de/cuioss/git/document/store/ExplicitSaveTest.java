@@ -43,6 +43,7 @@ import java.util.TreeMap;
 
 
 import de.cuioss.git.document.core.GitOutcome;
+import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
@@ -57,6 +58,7 @@ import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
 import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
@@ -83,7 +85,8 @@ import org.junit.jupiter.params.provider.EnumSource;
  * and re-applied after a lost lease (GDR-STORE-3), conflicts that change nothing (GDR-STORE-4), the expected blob ids
  * (GDR-STORE-5), and author, committer and credentials (GDR-STORE-8). {@link ScriptedRepositoryOperations} records the
  * transport inputs, scripts unreachable remotes, invalid credentials and refused leases, and moves the remote between
- * fetch and push as a concurrent writer would.
+ * fetch and push as a concurrent writer would. The pruning fetch of a save keeps the drafts of a clone whose stored
+ * fetch refspec reaches beyond the mirrored namespaces.
  * <p>
  * Names, ids, pseudonyms, paths, contents, addresses and times are generated; the reference prefixes, the outcomes and
  * the details are the specified vocabulary and kept as literals.
@@ -393,6 +396,43 @@ class ExplicitSaveTest {
                                 fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
                                 "the newer draft is kept"),
                         () -> assertFalse(remoteTree.containsKey(later), "the newer change is not saved"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: the pruning fetch of a save keeps every draft of a clone with a broader fetch refspec")
+        void pruningFetchKeepsDraftsOfABroaderClone(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            commit(remote.repository(), StoreReferences.target(key), files(word()));
+            var author = Author.of(pseudonym());
+            var otherAuthor = Author.of(pseudonym());
+            var otherKey = key(Kind.NUMBERED);
+            var keptRef = value(StoreReferences.draft(otherAuthor.pseudonym(), otherKey));
+            var keptApplied = StoreReferences.applied(keptRef);
+
+            try (var fixture = open(remote)) {
+                var kept = ObjectId.fromString(fixture.draft(otherAuthor, otherKey, puts(files(word()))));
+                fixture.draft(author, key, puts(files(word() + "x")));
+                try (Repository clone = fixture.openClone()) {
+                    RefUpdate applied = clone.updateRef(keptApplied);
+                    applied.setNewObjectId(kept);
+                    applied.disableRefLog();
+                    assertEquals(RefUpdate.Result.NEW, applied.update(), "the applied-draft reference is written");
+                    var config = clone.getConfig();
+                    config.setStringList(ConfigConstants.CONFIG_REMOTE_SECTION, Constants.DEFAULT_REMOTE_NAME,
+                            ConfigConstants.CONFIG_FETCH_SECTION, List.of("+refs/*:refs/*"));
+                    config.save();
+                }
+
+                assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                assertAll(
+                        () -> assertEquals(kept, fixture.localTip(keptRef), "the unsaved draft is kept"),
+                        () -> assertEquals(kept, fixture.localTip(keptApplied),
+                                "its applied-draft reference is kept"),
+                        () -> assertEquals(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS,
+                                fixture.operations().fetches().getLast().refSpecs(),
+                                "the save fetches the mirrored namespaces only"));
             }
         }
 
