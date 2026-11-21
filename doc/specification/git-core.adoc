@@ -172,7 +172,12 @@ The operation is `cloneIfMissing`. An existing bare repository at the git direct
 remote; a directory that holds anything else is `NOT_A_REPOSITORY`. Otherwise the URL is checked against the remote
 policy (`REFUSED_BY_POLICY` without contact), a bare repository is initialised, and its remote `origin` is configured
 and fetched. The fetch refspecs mirror the remote's branches, tags and notes into the clone:
-`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`.
+`+refs/heads/*:refs/heads/*`, `+refs/tags/*:refs/tags/*` and `+refs/notes/*:refs/notes/*`. They are public as the
+unmodifiable list `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, the one source of that set: a caller that prunes a
+clone passes it to `fetch` explicitly, so the prune of <<GDR-CORE-7>> deletes only references below the mirrored
+namespaces, whatever fetch refspecs the clone's configuration holds (JGit 7.8.0 `Transport.fetch` falls back to the
+configured fetch refspecs only for an empty list, and `FetchProcess.deleteStaleTrackingRefs` deletes only references
+matching the destination of a fetched refspec).
 
 The stored origin carries no user information: the URL is configured without user name and password
 (`URIish.setUser(null).setPass(null)`), so no credential reaches the persistent configuration of the clone; the
@@ -418,6 +423,14 @@ an update was not written
 `REJECTED`, `REJECTED_CURRENT_BRANCH`, `REJECTED_MISSING_OBJECT` and `REJECTED_OTHER_REASON` end the fetch `REJECTED`;
 `LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`. The detail names the local reference and the
 result.
+
+A fetch with `FetchInput.prune` set (`false` by default) also deletes every local reference that lies in the
+destination of one of its reference specifications and whose source the remote no longer advertises, through
+`FetchCommand.setRemoveDeletedRefs`; JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs` considers only the local
+references that match a destination of the fetch's reference specifications, so a reference outside every
+destination, such as a draft below `refs/drafts/` of `git-store`, is never deleted
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
+7.8.0 `FetchProcess`]).
 
 Every transport of a clone, a fetch and a push runs with a compiled timeout of 60 seconds
 (`JGitRepositoryOperations.TRANSPORT_TIMEOUT_SECONDS`, set through `TransportCommand.setTimeout`;

@@ -27,7 +27,7 @@ released together and consumed separately.
 |---|---|---|
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
-| `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection | `git-core` |
+| `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease, conflicts and change detection, draft expiry | `git-core` |
 
 Planned but not yet created: `git-forms`, `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
@@ -51,10 +51,15 @@ fixtures. `git-store` exports `de.cuioss.git.document.store` with the foundation
 closed outcome list `StoreOutcome` and the result `StoreResult` (whose outcome is a `StoreOutcome` or a non-success
 Git outcome passed on as `StoreResult.PassedOn`), the codec interface `Codec`, the repository registry
 `RepositoryRegistry` with `StoreRepository`, the typed configuration `StoreConfiguration` (built by
-`StoreConfiguration.from` from an already-parsed nested map, over the package-private reader `ConfigurationTree`), the
+`StoreConfiguration.from` from an already-parsed nested map, over the package-private reader `ConfigurationTree`; its
+sections include `commit`, the record `Commit` with `commit.email`), the
 service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` with `PersonEntry` and `Membership`, the
-provider selection `StoreProviders` through `ServiceLoader`, and the `LogRecord` holder `GitStoreLogMessages`; its
-tests run on the class path against the `git-testing` fixtures. Add an `exports` directive together with the first
+provider selection `StoreProviders` through `ServiceLoader`, and the `LogRecord` holder `GitStoreLogMessages`; and the
+write path: `StoreWriter` (drafts, listing, explicit save with lease, draft expiry with garbage collection) with
+`StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
+over the package-private `DraftReferences`, `ExplicitSave`, `DraftExpiry`, `CommitIdentities` and `RepositoryGuard`;
+the commits it writes are unsigned and carry no trailers until GDR-STORE-12/13. Its tests run on the class path against
+the `git-testing` fixtures. Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`

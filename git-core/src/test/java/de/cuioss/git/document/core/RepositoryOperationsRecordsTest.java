@@ -208,7 +208,7 @@ class RepositoryOperationsRecordsTest {
     }
 
     @Test
-    @DisplayName("the fetch input builder builds the constructor value")
+    @DisplayName("the fetch input builder builds the constructor value, without pruning unless asked")
     void fetchInput() {
         var root = path();
         var remote = text();
@@ -216,8 +216,15 @@ class RepositoryOperationsRecordsTest {
         var credentials = credentials();
 
         var built = FetchInput.builder().root(root).remote(remote).refSpecs(refSpecs).credentials(credentials).build();
+        var pruning = FetchInput.builder().root(root).remote(remote).refSpecs(refSpecs).credentials(credentials)
+                .prune(true).build();
 
-        assertEquals(new FetchInput(root, remote, refSpecs, credentials), built, "the builder builds the same input");
+        assertAll(
+                () -> assertEquals(new FetchInput(root, remote, refSpecs, credentials, false), built,
+                        "the builder builds the same input"),
+                () -> assertFalse(built.prune(), "no pruning by default"),
+                () -> assertEquals(new FetchInput(root, remote, refSpecs, credentials, true), pruning,
+                        "the builder sets the pruning"));
     }
 
     @Test

@@ -11,12 +11,15 @@ its requirements (xref:git-testing.adoc#GDR-TEST-1[GDR-TEST-1], xref:git-testing
 operations, cache repository, in-core writing, compare-and-swap, in-core merge, reading and notes; the hardening with
 the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states; and the working-tree operations of its package
 `de.cuioss.git.document.core.worktrees`, xref:git-core.adoc#working-trees[`git-core`, Working Trees]), and
-`git-store` is created: it implements
-xref:git-store.adoc#GDR-STORE-1[GDR-STORE-1] and xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11] and its configuration,
-and defines its three service interfaces, whose providers are planned (xref:git-store.adoc[`git-store`]). Of the
-requirements below, <<GDR-GEN-1>> is implemented, and for <<GDR-NFR-4>> `git-core` ships its native-image metadata,
-which this repository does not verify yet; every other requirement of the libraries is planned, and the other modules
-are not yet created.
+`git-store` implements xref:git-store.adoc#GDR-STORE-1[GDR-STORE-1], xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]
+and its configuration, and its write path: xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2],
+xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-store.adoc#GDR-STORE-4[GDR-STORE-4],
+xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5], xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7] and
+xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]; it defines its three service interfaces, whose providers are planned
+(xref:git-store.adoc[`git-store`]). Of the requirements below, <<GDR-GEN-1>> is implemented; <<GDR-NFR-2>> and the
+write-path part of <<GDR-NFR-3>> are covered by tests of `git-store` (`ConcurrentWritersTest`,
+`WritePathSecretsTest`); and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does
+not verify yet. Every other requirement of the libraries is planned, and the other modules are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -261,7 +264,10 @@ The test is to run the writers as threads against a local remote of `git-testing
 
 * No token, password, private or secret key material, session id, `sub`, e-mail address or person name may appear in
   a result detail, an exception message, a log message or the metadata of a commit (author, committer, message,
-  trailers); the person entry of the `git` directory is the one file that holds a name.
+  trailers); the person entry of the `git` directory is the one file that holds a name. The one exception: the e-mail
+  fields of author and committer may carry an address only when the operator sets `commit.email` to `true`
+  (xref:git-store.adoc#store-configuration[`git-store`, Configuration]); by default they stay empty, and an address
+  never appears in a result detail, an exception message, a log message, a commit message or a trailer.
 * Public keys (commit-signing and anchor keys) are no secrets and may be stored.
 
 [cols="1,2"]
@@ -272,7 +278,9 @@ The test is to run the writers as threads against a local remote of `git-testing
 read from the application's configuration for the call; never stored, logged, committed or put into a detail
 |signing and anchor keys |held by the key source or in memory; never written in clear text
 |`sub`, e-mail address, person name |`sub` only as the subject hash of the person entry; the name only in the person
-entry; never in the metadata of a commit (author, committer, message, trailers), a document or a log
+entry; never in the metadata of a commit (author, committer, message, trailers), a document or a log, except an
+address in the e-mail fields of author and committer when the operator sets `commit.email` to `true`
+(xref:git-store.adoc#store-configuration[`git-store`, Configuration]); by default those fields stay empty
 |===
 
 Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`

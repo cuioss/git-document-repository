@@ -11,8 +11,12 @@ Rationale: xref:../concepts/storage-engine.adoc[Storage Engine], xref:../concept
 and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence and Companion Stores].
 
 Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
-configuration (<<store-configuration>>), the outcome list with its result, and the three service interfaces below with
-the selection of their providers; the providers themselves (`file`, `signed`) and every other requirement are planned.
+configuration (<<store-configuration>>), the outcome list with its result, the three service interfaces below with
+the selection of their providers, and the write path of `StoreWriter`: drafts (<<GDR-STORE-2>>), the explicit save
+(<<GDR-STORE-3>>) with its conflicts (<<GDR-STORE-4>>) and change detection (<<GDR-STORE-5>>), the draft expiry
+(<<GDR-STORE-7>>), and author, committer and credentials (<<GDR-STORE-8>>). Until <<GDR-STORE-12>> and
+<<GDR-STORE-13>> are implemented, the commits the write path writes are unsigned and carry no trailers. The providers
+themselves (`file`, `signed`) and every other requirement are planned.
 Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
 `GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
@@ -157,6 +161,8 @@ No detail carries the remote. `repositories()` returns the repositories in regis
 |`refs/tags/checkpoints/<n>` |checkpoint `n` (<<GDR-STORE-16>>), never moved |yes
 |`refs/notes/anchors/<provider>` |anchor proofs (<<GDR-STORE-17>>) |yes
 |`refs/drafts/<pseudonym>/<collection>/<id>` |intermediate saves of one user for one document or entry |*never*
+|`refs/applied/<pseudonym>/<collection>/<id>` |the draft commit a save last applied while a newer draft was kept
+(<<GDR-STORE-3>>) |*never*
 |===
 
 * A collection is either per-document or numbered, never both: JGit refuses a reference nested below an existing one
@@ -171,6 +177,40 @@ No detail carries the remote. `repositories()` returns the repositories in regis
   (xref:git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9]).
 * The drafts live only in the store's bare clone; the remote never secures them, and they are lost with the clone
   unless the operator backs up its storage.
+
+`StoreReferences` builds the layout: `MAIN`, the prefix `DRAFTS`, `target(key)` and `draft(pseudonym, key)`, and the
+push reference specifications `PUSH_REF_SPECS` (`refs/heads/*`, `refs/tags/*` and `refs/notes/*`, each to the same
+name on the remote), which never carry `refs/drafts/*`
+(xref:../adr/0003-Drafts_are_per-user_references_that_are_never_pushed.adoc[ADR-0003]). A
+`DocumentCollection` has a name of the form `[a-z0-9-]+`, neither `main` nor `checkpoints`, and a kind:
+`PER_DOCUMENT` (one working branch per document), `NUMBERED` (one collection branch) or `MAIN` (content without
+release, saved onto `main` itself). A `DocumentKey` is the collection with an id: the document's ULID for a
+per-document collection, otherwise an id of the form `[A-Za-z0-9-]+`; `Ulid.next()` creates a ULID from a
+`SecureRandom`, without the optional monotonic mode of the specification. A pseudonym is a reference segment of the
+form `[A-Za-z0-9-]+`; any other is refused as `MALFORMED` with the detail `pseudonym: invalid`, which never names it.
+Every refusal of a name or id is `MALFORMED`, and its detail names the field, never the value.
+
+`StoreWriter.open(repository, gitDir, user, configuration, operations, clock)` clones the remote into a bare clone if
+none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user. An existing clone is reused only
+when its `origin` has exactly one fetch URL and every push URL (the fetch URL when none is configured) equal to the
+registered remote, read through JGit 7.8.0 `RemoteConfig`, which applies `insteadOf` and `pushInsteadOf`; a clone of
+another repository at the path is the passed-on `NOT_A_REPOSITORY` with the detail
+`<alias>: clone: remote does not match the registry`, which names no URL, credential or path.
+`draft(author, key, edits, message)`
+writes the next commit of the draft reference by compare-and-swap (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]), its
+edits applied onto the draft's current tree. The first commit of a draft that does not exist yet has the tip of the
+local target branch as its parent, else the tip of `main`, else none, so it holds the state the user started from;
+it is written in core first, and only then is the draft reference published by an update that expects it absent and
+writes no reflog, so a refused first write, for example two edits of one path, leaves no draft to be listed. That
+update's `LOCK_FAILURE` means that another writer published the draft first or that its lock could not be acquired,
+which JGit 7.8.0 reports alike; the next attempt reads the draft again and writes on top of the published one, or
+publishes again. A draft that existed when it was read but is absent when the compare-and-swap reads it, deleted
+meanwhile by a save or by another process, is never replaced by a root commit holding only the new edits: no commit
+is written and the next attempt writes the first commit of the draft anew. A root commit is written only when neither
+branch exists. When every one of `save.max-attempts` attempts lost its draft or its publication, the write ends in the
+passed-on `CONFLICT`, which may be retried. `drafts(pseudonym)` lists the drafts
+of one user, sorted by reference name, each as a `Draft` (collection, id, tip commit id, and the committer time of the
+tip as the time of the last intermediate save).
 
 [#GDR-STORE-3]
 == GDR-STORE-3: Explicit Save
@@ -204,6 +244,57 @@ then expects the branch to be absent on the remote. Content that has no release 
 (xref:git-directory.adoc#GDR-DIR-3[GDR-DIR-3], xref:git-directory.adoc#GDR-DIR-6[GDR-DIR-6],
 xref:git-directory.adoc#GDR-DIR-7[GDR-DIR-7]).
 
+`StoreWriter.save(author, key, expectedBlobIds, message)` returns a `SaveResult`, a sealed type of three variants a
+caller branches on with a pattern-matching `switch`: `Saved` with the commit the target branch points at,
+`Conflicting` with the conflicting paths (<<GDR-STORE-4>>), and `NotSaved` with any other outcome and its detail;
+`toResult()` gives the plain `StoreResult` shape. The save reads the draft tip once, and every attempt re-applies that
+draft commit, so a draft written during the save is kept for the next save and not published with the expected blob
+ids and the message of this one. An attempt fetches with the mirror reference specifications of `git-core`
+(`JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, xref:git-core.adoc#GDR-CORE-3[GDR-CORE-3]), passed explicitly,
+and the credentials of the technical user, so it fetches and prunes `refs/heads/`, `refs/tags/` and `refs/notes/`
+only: it prunes every reference there the remote no longer has (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). JGit
+7.8.0 `Transport.fetch` uses the fetch reference specifications of the clone's configuration only for an empty list,
+and `FetchProcess.deleteStaleTrackingRefs` deletes only the references matching the destination of a fetched
+reference specification
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
+7.8.0 `FetchProcess`], checked in the sources jar of `org.eclipse.jgit` 7.8.0.202609011348-r), so a draft and a
+`refs/applied/` reference are never pruned, also in a reused clone whose stored fetch reference specifications reach
+further. The attempt takes the local tip of the target branch as the base, so a target branch the remote deleted starts at `main` again.
+The changes of the draft are the paths changed between the merge base of draft tip and base (JGit's
+`RevFilter.MERGE_BASE`) and the draft tip, read with `RepositoryReader.changes` of `git-core`; without a merge base
+every file of the draft is a change. A draft kept by a save because it moved during that save is replayed only with
+what it changed since: the save records the draft commit it applied in `refs/applied/<pseudonym>/<collection>/<id>`,
+and the next save of a draft that descends from that commit takes the paths changed since it, so it does not
+overwrite a later change of another writer to a path it saved already. The reference is deleted together with the
+draft, and lives in the clone only. One commit with the base as its only parent and the changes as its edits is
+written in core by `InCoreWriter` of `git-core` and pushed to the target with the lease of the base; a
+target branch that does not exist yet is pushed against the zero-id lease, which expects the remote branch to be
+absent. A lease refusal or a rejection starts the next attempt from the fetch; after the last of `save.max-attempts`
+the save is `NotSaved` with the passed-on `REJECTED`. An unreachable remote and invalid credentials end the save at once
+as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing changed. A save without a draft is the passed-on
+`NOT_FOUND`. A draft without changes is `Saved` with the tip of its existing target branch, with no commit and no push;
+when the target branch does not exist, the save is `NotSaved` with the passed-on `NOT_FOUND` and the detail
+`draft: no changes and no target branch`, and the draft is kept. After the accepted
+push the local target branch moves by a reference update that expects the base and writes no reflog; an I/O failure
+of that local move does not undo the save, which stays `Saved` and is logged as `GIT_STORE-103` with the class of the
+error only, and the next fetch mirrors the remote branch. The draft is then deleted by compare-and-delete expecting
+the applied draft commit. Every Git outcome is passed on as
+`StoreResult.PassedOn`. A save is logged as `GIT_STORE-2`, a save that ended without a commit for another reason than
+a conflict as `GIT_STORE-101`, naming the outcome, never a credential (`git-store/doc/LogMessages.adoc`).
+
+Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
+shared by every writer that opens the same git directory (keyed by its real path): draft writes
+and saves take the shared side of a maintenance lock, the deletes and the garbage collection of <<GDR-STORE-7>> its
+exclusive side, one lock per draft reference serialises the saves of that draft, and one transport lock serialises the
+fetch, apply and push of a save attempt. A save takes the shared side of the maintenance lock, then the lock of its
+draft, then the transport lock per attempt; the expiry takes only the exclusive side, so no cycle arises. Under the
+draft lock a save reads the draft and its `refs/applied/` reference only after every earlier save of that draft in the
+process has settled, so it does not apply again the changes an earlier save applied. The draft lock is in-process only,
+and a failed write of the `refs/applied/` reference for a kept draft is outside it: the next save then applies the
+draft's changes since its merge base. The guard does not close the window
+between reading a reference and moving it; the expected-id comparison under the reference's lock
+(xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]) closes it, also against a writer outside the process.
+
 [#GDR-STORE-4]
 == GDR-STORE-4: Conflict Handling
 
@@ -212,6 +303,13 @@ xref:git-directory.adoc#GDR-DIR-7[GDR-DIR-7]).
 
 The user resolves a conflict in the draft and saves again.
 
+A conflict is `SaveResult.Conflicting`, whose outcome is the passed-on `CONFLICT`: its paths are repository-relative,
+sorted and distinct, and travel as data only; its detail names their number (`<n> conflicting paths`), never a path,
+and the conflict is logged as `GIT_STORE-3` with that number. Nothing is pushed, the remote branch is unchanged, and
+the draft reference is not modified. The fetch that preceded the conflict check may have updated the local branches of
+the clone to the remote's tips, and pruned the ones the remote deleted (<<GDR-STORE-3>>); the conflict itself writes
+no reference.
+
 [#GDR-STORE-5]
 == GDR-STORE-5: Concurrent Change Detection
 
@@ -219,6 +317,17 @@ The user resolves a conflict in the draft and saves again.
 * When the file's blob id on the fetched tip differs, the save of that file must report a conflict instead of
   overwriting it.
 * A save of a file without an expected blob id must overwrite a concurrent change to that file.
+
+`expectedBlobIds` maps a repository-relative path to the full blob id the caller loaded; the zero id
+(`0000000000000000000000000000000000000000`) expects the path to be absent, and an empty map checks nothing. Every
+changed path of the draft that has an expected blob id is compared with its blob on the fetched base, and every path
+that differs is a conflict (<<GDR-STORE-4>>). A written path also conflicts when it overlaps the fetched base as a
+file and a directory in a way the draft did not resolve: when a parent of the path is a file on the base that the
+draft does not delete (the edit would turn it into a directory), or when the path is a directory on the base holding
+a file the draft does not change (the edit would replace it); this holds with and without an expected blob id, and an
+addition below an existing directory is no overlap. An expected blob id that is no full object id is `NotSaved` with
+the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the detail
+`expectedBlobIds: not a full object id`, which names no path.
 
 [#GDR-STORE-6]
 == GDR-STORE-6: Release
@@ -243,14 +352,55 @@ identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the a
   (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]), so that a draft changed meanwhile is kept.
 * A garbage collection must remove objects reachable only from deleted drafts.
 
+`StoreWriter.expireDrafts(now)` deletes every draft below `refs/drafts/` whose tip has a committer time at or before
+`now` minus `drafts.expiry`, computed in UTC, by compare-and-delete expecting the tip that was read as stale; a draft
+changed meanwhile ends that delete in `CONFLICT` and is kept. The result is `OK` with the full names of the deleted
+draft references, sorted, possibly none, and the run is logged as `GIT_STORE-4` with their number. The deletes run
+under the exclusive side of the clone's maintenance lock (<<GDR-STORE-3>>), so no draft write or save of the process
+runs meanwhile: a draft write that found its draft present cannot lose it before its compare-and-swap. Every
+`refs/applied/` reference (<<GDR-STORE-3>>) whose draft no longer exists is deleted the same way, so it keeps no
+draft commit from the garbage collection.
+
+Then, still under the exclusive side of that lock, so that no in-process write holds objects not yet referenced, the
+garbage collection runs: `Git.wrap(repository).gc()`, JGit's `GarbageCollectCommand`, with `gc.pruneExpire` and
+`gc.prunePackExpire` set to `now` in the clone's configuration in memory. JGit 7.8.0 `GarbageCollectCommand.call`
+creates a `GC` for a `FileRepository` and waits for `GC.gc()` to complete (`gc.gc().get()`), so the collection is
+synchronous; it packs the references, repacks the reachable objects into a new pack, deletes the old packs older
+than the pack expiry and prunes the unreferenced loose objects older than the expiry, both read from that configuration
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/GarbageCollectCommand.java[JGit
+7.8.0 `GarbageCollectCommand`],
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/GC.java[JGit
+7.8.0 `GC`], checked in the sources jar of `org.eclipse.jgit` 7.8.0.202609011348-r). It runs no hook and starts no
+process. Every reference update of the store disables the reflog, so no reflog keeps an object of a deleted draft
+alive. A failed collection is the passed-on `FAILED` with the detail `gc: <exception class>`, logged as
+`GIT_STORE-102` and at DEBUG with the exception class only; no log record attaches the exception, and neither names
+its message or its causes, which may carry a path (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). JGit 7.8.0 `GC.doGc`
+returns without collecting and without an error while another collection holds the clone's `gc.pid`, which
+`GC.PidLock` takes for a running collection when it was modified less than 12 hours ago, and calls the command's
+progress monitor (`GarbageCollectCommand.setProgressMonitor`, passed on to `GC.setProgressMonitor`) with `start` only
+after it took `gc.pid`. The expiry gives the command a progress monitor; when that monitor was never started, the
+collection was skipped, however late the other collection took `gc.pid`, and the expiry logs `GIT_STORE-104` and ends
+in the passed-on `CONFLICT` with the detail `gc: skipped, another collection holds gc.pid`, which may be retried, so a
+skipped collection is never reported as a successful expiry; the drafts it deleted stay deleted.
+
 [#GDR-STORE-8]
 == GDR-STORE-8: Author, Committer and Credentials
 
-* Every commit of a save must carry the caller's pseudonym as author (e-mail field empty) and the technical user as
-  committer.
+* Every commit of a save must carry the caller's pseudonym as author and the technical user as committer, both with
+  an empty e-mail field unless `commit.email` is `true`; then they carry the address the application supplies for the
+  author and for the technical user, or an empty field when none is supplied.
 * Every fetch and push must use the credential of the technical user configured for the repository; the store must
   offer no other credentials.
 * Commits the store writes without a user's save (checkpoints, notes) must not be combined with the commits of a save.
+
+The caller passes the author as `Author` (pseudonym and an optional address) and the technical user as
+`TechnicalUser` (committer name, an optional address and the `CredentialsProvider` of every fetch and push of the
+repository); no operation of `StoreWriter` takes another credential. The author and committer of every commit the
+write path writes, draft commits included, follow `commit.email` (<<store-configuration>>), and the commit time comes
+from the writer's clock. An address that is blank or contains `<`, `>`, a carriage return, a line feed or a NUL
+character is refused when the record is created, and the message names the component, never its value. The
+`toString()` of `Author` renders the pseudonym only, that of `TechnicalUser` the name only, never an address or the
+credentials (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). The save commit is the only commit a save pushes.
 
 [#GDR-STORE-9]
 == GDR-STORE-9: In-Memory Index
@@ -472,8 +622,10 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 |Key |Semantics
 
 |`repositories` |the registry (<<GDR-STORE-1>>)
-|`save.max-attempts` |required; attempts of a save or of a push of notes
+|`save.max-attempts` |required; 1 to 100; attempts of a save or of a push of notes
 |`drafts.expiry` |required; ISO 8601 period
+|`commit.email` |boolean, default `false`: whether author and committer of every commit `git-store` writes carry an
+e-mail address (xref:general.adoc#GDR-NFR-3[GDR-NFR-3], <<GDR-STORE-8>>)
 |`fetch.interval` |required; ISO 8601 duration of the periodic fetch
 |`signing.key-source`, `signing.key` |the commit-signing key; source default `file`
 |`signing.allowed-signers` |required for verification; public commit-signing keys with validity periods
@@ -489,8 +641,8 @@ nothing is anchored
 |===
 
 `StoreConfiguration.from(tree, policy)` reads the configuration at start and returns a `StoreResult` of the typed
-record `StoreConfiguration`, whose nested records mirror the sections: `Save`, `Drafts`, `Fetch`, `Signing`, `Anchor`
-with `Anchor.Signed`, and `Directory`, plus the `RepositoryRegistry` (<<GDR-STORE-1>>) checked against the one
+record `StoreConfiguration`, whose nested records mirror the sections: `Save`, `Drafts`, `Fetch`, `Commit`, `Signing`,
+`Anchor` with `Anchor.Signed`, and `Directory`, plus the `RepositoryRegistry` (<<GDR-STORE-1>>) checked against the one
 `RemotePolicy` the caller passes. The input is an already-parsed tree of nested maps as a YAML or JSON parser delivers
 it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map `signed` of the map `anchor`), so
 `git-store` needs no parser library:
@@ -501,7 +653,9 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
   integer. Booleans are `Boolean`, and other values non-blank strings. Durations and periods are ISO 8601 strings
   parsed with `java.time.Duration` and `java.time.Period` (`drafts.expiry` and `retention` are periods); every
   duration and period must be positive, and a text whose value overflows on parsing, such as the period `P306783379W`
-  whose weeks exceed `int` as days, is malformed. `save.max-attempts` must be at least 1.
+  whose weeks exceed `int` as days, is malformed. `save.max-attempts` must lie between 1 and 100. `commit.email` must
+  be a boolean; any other value is refused as `MALFORMED` with the detail `commit.email is malformed`, which names the
+  key, never the value.
 * `anchor.provider`, when present, must match `[a-z0-9-]+`, because the id names the notes reference
   `refs/notes/anchors/<id>` (<<GDR-STORE-15>>); `signing.key-source` and `directory.persons.provider` only have to be
   non-blank.

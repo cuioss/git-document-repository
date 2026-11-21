@@ -39,6 +39,7 @@ import java.util.stream.Stream;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.store.StoreConfiguration.Anchor;
+import de.cuioss.git.document.store.StoreConfiguration.Commit;
 import de.cuioss.git.document.store.StoreConfiguration.Directory;
 import de.cuioss.git.document.store.StoreConfiguration.Drafts;
 import de.cuioss.git.document.store.StoreConfiguration.Fetch;
@@ -233,6 +234,8 @@ class StoreConfigurationTest {
             put(tree, "anchor.signed.max-clock-skew", signed.maxClockSkew().toString());
             var directory = new Directory(word());
             put(tree, "directory.persons.provider", directory.personsProvider());
+            var commit = new Commit(true);
+            put(tree, "commit.email", commit.email());
 
             var configuration = configuration(StoreConfiguration.from(tree, HTTPS));
 
@@ -245,7 +248,8 @@ class StoreConfigurationTest {
                     () -> assertEquals(new Fetch(interval), configuration.fetch(), "fetch"),
                     () -> assertEquals(signing, configuration.signing(), "signing"),
                     () -> assertEquals(anchor, configuration.anchor(), "anchor"),
-                    () -> assertEquals(directory, configuration.directory(), "directory"));
+                    () -> assertEquals(directory, configuration.directory(), "directory"),
+                    () -> assertEquals(commit, configuration.commit(), "commit"));
         }
 
         @Test
@@ -267,7 +271,8 @@ class StoreConfigurationTest {
                     () -> assertEquals(new Anchor.Signed(null, null, null, Duration.parse("PT5M")),
                             configuration.anchor().signed(), "anchor.signed: no key, max-clock-skew PT5M"),
                     () -> assertEquals(new Directory("git"), configuration.directory(),
-                            "directory.persons.provider: git"));
+                            "directory.persons.provider: git"),
+                    () -> assertFalse(configuration.commit().email(), "commit.email: false"));
         }
 
         @Test
@@ -300,7 +305,8 @@ class StoreConfigurationTest {
                             "the repository is read"),
                     () -> assertEquals(expected.signing(), configuration.signing(), "signing unchanged"),
                     () -> assertEquals(expected.anchor(), configuration.anchor(), "anchor unchanged"),
-                    () -> assertEquals(expected.directory(), configuration.directory(), "directory unchanged"));
+                    () -> assertEquals(expected.directory(), configuration.directory(), "directory unchanged"),
+                    () -> assertEquals(expected.commit(), configuration.commit(), "commit unchanged"));
         }
 
         @ParameterizedTest(name = "max-attempts as {0}")
@@ -322,6 +328,37 @@ class StoreConfigurationTest {
 
             assertEquals(new Save(3), configuration(StoreConfiguration.from(tree, HTTPS)).save(),
                     "3.00 is read as 3");
+        }
+
+        @Test
+        @DisplayName("save.max-attempts accepts exactly its upper bound")
+        void maxAttemptsUpperBound() {
+            var tree = minimal();
+            put(tree, "save.max-attempts", Save.MAX_ATTEMPTS);
+
+            assertEquals(new Save(100), configuration(StoreConfiguration.from(tree, HTTPS)).save(),
+                    "the upper bound 100 is read");
+        }
+
+        @ParameterizedTest(name = "commit.email = {0}")
+        @ValueSource(booleans = {true, false})
+        @DisplayName("GDR-NFR-3: commit.email is read as given")
+        void commitEmail(boolean email) {
+            var tree = minimal();
+            put(tree, "commit.email", email);
+
+            assertEquals(new Commit(email), configuration(StoreConfiguration.from(tree, HTTPS)).commit(),
+                    "the boolean is read");
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an omitted commit.email takes the default false")
+        void commitEmailDefault() {
+            var configuration = configuration(StoreConfiguration.from(minimal(), HTTPS));
+
+            assertAll(
+                    () -> assertFalse(configuration.commit().email(), "no e-mail address by default"),
+                    () -> assertFalse(Commit.DEFAULT_EMAIL, "the documented default is false"));
         }
 
         @Test
@@ -412,6 +449,8 @@ class StoreConfigurationTest {
                 Arguments.of("save.max-attempts", "3", "save.max-attempts"),
                 Arguments.of("save.max-attempts", 0, "save.max-attempts"),
                 Arguments.of("save.max-attempts", -1, "save.max-attempts"),
+                Arguments.of("save.max-attempts", 101, "save.max-attempts"),
+                Arguments.of("save.max-attempts", Integer.MAX_VALUE, "save.max-attempts"),
                 Arguments.of("save.max-attempts", 2.5, "save.max-attempts"),
                 Arguments.of("save.max-attempts", Long.MAX_VALUE, "save.max-attempts"),
                 Arguments.of("save.max-attempts", BigInteger.TWO.pow(40), "save.max-attempts"),
@@ -450,6 +489,9 @@ class StoreConfigurationTest {
                 Arguments.of("anchor.signed", "signed", "anchor.signed.key-source"),
                 Arguments.of("directory.persons.provider", 5, "directory.persons.provider"),
                 Arguments.of("directory.persons", "ldap", "directory.persons.provider"),
+                Arguments.of("commit.email", "true", "commit.email"),
+                Arguments.of("commit.email", 1, "commit.email"),
+                Arguments.of("commit", "email", "commit.email"),
                 Arguments.of("repositories", "register", "repositories"),
                 Arguments.of("repositories", List.of("register"), "repositories[0]"));
     }
@@ -482,7 +524,7 @@ class StoreConfigurationTest {
 
         @ParameterizedTest(name = "{0}: null")
         @ValueSource(strings = {"save.max-attempts", "signing.key", "anchor.releases", "anchor.signed.max-clock-skew",
-                "directory.persons.provider", "repositories"})
+                "directory.persons.provider", "commit.email", "repositories"})
         @DisplayName("a key supplied with a null leaf is malformed, not absent, naming the key")
         void nullLeaf(String key) {
             var tree = minimal();
@@ -555,6 +597,14 @@ class StoreConfigurationTest {
                     () -> assertThrows(IllegalArgumentException.class, () -> new Save(0),
                             "a section with no attempt"));
         }
+
+        @Test
+        @DisplayName("a section with more attempts than the upper bound is refused")
+        void saveAboveUpperBound() {
+            int aboveBound = Save.MAX_ATTEMPTS + 1;
+
+            assertThrows(IllegalArgumentException.class, () -> new Save(aboveBound), "101 attempts");
+        }
     }
 
     static Stream<Arguments> nullSections() {
@@ -564,7 +614,16 @@ class StoreConfigurationTest {
                 Arguments.of("anchor", "anchor.provider"),
                 Arguments.of("anchor.signed", "anchor.signed.key-source"),
                 Arguments.of("directory", "directory.persons.provider"),
-                Arguments.of("directory.persons", "directory.persons.provider"));
+                Arguments.of("directory.persons", "directory.persons.provider"),
+                Arguments.of("commit", "commit.email"));
+    }
+
+    /**
+     * Malformed values of {@code commit.email}: the text {@code true} and an integer, each wrapped in tildes or
+     * generated so that no fixed text of a detail or a log record can contain it.
+     */
+    static Stream<Object> malformedEmails() {
+        return Stream.of("~true~", Generators.integers(1_000_000, 9_999_999).next());
     }
 
     static Stream<Arguments> malformedRepositoryValues() {
@@ -676,7 +735,8 @@ class StoreConfigurationTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"save.max-attempts", "drafts.expiry", "fetch.interval", "anchor.signed.max-clock-skew"})
+        @ValueSource(strings = {"save.max-attempts", "drafts.expiry", "fetch.interval", "anchor.signed.max-clock-skew",
+                "commit.email"})
         @DisplayName("GDR-NFR-3: a malformed value is neither in the detail nor logged")
         void malformedValue(String key) {
             var tree = minimal();
@@ -687,6 +747,32 @@ class StoreConfigurationTest {
 
             assertRefusalLogged(result);
             assertNoneCarried(result, value);
+        }
+
+        @ParameterizedTest(name = "save.max-attempts = {0}")
+        @ValueSource(ints = {101, Integer.MAX_VALUE})
+        @DisplayName("GDR-NFR-3: a save.max-attempts above the upper bound is neither in the detail nor logged")
+        void maxAttemptsAboveBound(int attempts) {
+            var tree = minimal();
+            put(tree, "save.max-attempts", attempts);
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            assertMalformed("save.max-attempts is malformed", result);
+            assertNoneCarried(result, String.valueOf(attempts));
+        }
+
+        @ParameterizedTest(name = "commit.email = {0}")
+        @MethodSource("de.cuioss.git.document.store.StoreConfigurationTest#malformedEmails")
+        @DisplayName("GDR-NFR-3: a malformed commit.email is neither in the detail nor logged")
+        void malformedCommitEmail(Object email) {
+            var tree = minimal();
+            put(tree, "commit.email", email);
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            assertMalformed("commit.email is malformed", result);
+            assertNoneCarried(result, String.valueOf(email));
         }
 
         @Test

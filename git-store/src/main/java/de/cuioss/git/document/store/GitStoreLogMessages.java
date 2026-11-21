@@ -25,8 +25,9 @@ import lombok.experimental.UtilityClass;
  * {@code git-store/doc/LogMessages.adoc}.
  * <p>
  * No message carries anything GDR-NFR-3 forbids: a message names a provider id, a configuration key, a repository
- * alias or a path, never a configured value, a key reference, key material, a token, a password or the user
- * information of a remote.
+ * alias, a path, a reference, a commit id, an outcome or a number, never a configured value, a key reference, key
+ * material, a token, a password, the user information of a remote, a content, an e-mail address or a person name. The
+ * messages of a save name no path of the saved document, only the number of conflicting paths.
  *
  * @since 0.1
  */
@@ -53,6 +54,30 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(1)
                 .build();
+
+        /** A save was accepted by the remote: the repository alias, the target reference and the commit id. */
+        public static final LogRecord SAVED = LogRecordModel.builder()
+                .template("Saved repository %s, reference %s at commit %s")
+                .prefix(PREFIX)
+                .identifier(2)
+                .build();
+
+        /**
+         * A save conflicted and pushed nothing: the repository alias, the target reference and the number of
+         * conflicting paths, never a path.
+         */
+        public static final LogRecord SAVE_CONFLICT = LogRecordModel.builder()
+                .template("Did not save repository %s, reference %s: %s conflicting paths")
+                .prefix(PREFIX)
+                .identifier(3)
+                .build();
+
+        /** The expired drafts were deleted and the garbage collected: the repository alias and the number deleted. */
+        public static final LogRecord DRAFTS_EXPIRED = LogRecordModel.builder()
+                .template("Expired the drafts of repository %s: %s deleted")
+                .prefix(PREFIX)
+                .identifier(4)
+                .build();
     }
 
     /**
@@ -71,6 +96,46 @@ public final class GitStoreLogMessages {
                 .template("Refused the start: %s")
                 .prefix(PREFIX)
                 .identifier(100)
+                .build();
+
+        /**
+         * A save did not complete, for a reason other than a conflict: the repository alias, the target reference and
+         * the outcome.
+         */
+        public static final LogRecord SAVE_NOT_COMPLETED = LogRecordModel.builder()
+                .template("Did not complete the save of repository %s, reference %s: %s")
+                .prefix(PREFIX)
+                .identifier(101)
+                .build();
+
+        /**
+         * The garbage collection after the draft expiry failed: the repository alias and the class of the exception,
+         * never its message.
+         */
+        public static final LogRecord GARBAGE_COLLECTION_FAILED = LogRecordModel.builder()
+                .template("The garbage collection of repository %s failed: %s")
+                .prefix(PREFIX)
+                .identifier(102)
+                .build();
+
+        /**
+         * The remote accepted a save, but the local target branch could not be moved: the repository alias, the
+         * target reference and the class of the exception, never its message; the next fetch mirrors the remote branch.
+         */
+        public static final LogRecord LOCAL_BRANCH_NOT_MOVED = LogRecordModel.builder()
+                .template("Did not move the local branch of repository %s, reference %s after the accepted save: %s")
+                .prefix(PREFIX)
+                .identifier(103)
+                .build();
+
+        /**
+         * The garbage collection after the draft expiry was not run because another collection holds the clone's
+         * {@code gc.pid}: the repository alias.
+         */
+        public static final LogRecord GARBAGE_COLLECTION_SKIPPED = LogRecordModel.builder()
+                .template("Skipped the garbage collection of repository %s: another collection holds gc.pid")
+                .prefix(PREFIX)
+                .identifier(104)
                 .build();
     }
 }

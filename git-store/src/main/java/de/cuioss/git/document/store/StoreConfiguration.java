@@ -43,15 +43,17 @@ import org.jspecify.annotations.Nullable;
  * @param signing      the section {@code signing}
  * @param anchor       the section {@code anchor}
  * @param directory    the section {@code directory}
+ * @param commit       the section {@code commit}
  * @since 0.1
  */
 public record StoreConfiguration(RepositoryRegistry repositories, Save save, Drafts drafts, Fetch fetch,
-Signing signing, Anchor anchor, Directory directory) {
+Signing signing, Anchor anchor, Directory directory, Commit commit) {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreConfiguration.class);
 
     private static final String REPOSITORIES_KEY = "repositories";
-    private static final String MAX_ATTEMPTS = "save.max-attempts";
+    private static final String SAVE_MAX_ATTEMPTS = "save.max-attempts";
+    private static final String COMMIT_EMAIL = "commit.email";
     private static final String DRAFTS_EXPIRY = "drafts.expiry";
     private static final String FETCH_INTERVAL = "fetch.interval";
     static final String SIGNING_KEY_SOURCE = "signing.key-source";
@@ -77,6 +79,7 @@ Signing signing, Anchor anchor, Directory directory) {
      * @param signing      the section {@code signing}
      * @param anchor       the section {@code anchor}
      * @param directory    the section {@code directory}
+     * @param commit       the section {@code commit}
      * @throws NullPointerException if a section is {@code null}
      */
     public StoreConfiguration {
@@ -87,14 +90,17 @@ Signing signing, Anchor anchor, Directory directory) {
         Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(anchor, "anchor");
         Objects.requireNonNull(directory, "directory");
+        Objects.requireNonNull(commit, "commit");
     }
 
     /**
      * Reads and checks the configuration of the store at start.
      * <p>
-     * {@code save.max-attempts} (an integer of at least 1), {@code drafts.expiry} (a positive ISO 8601 period) and
-     * {@code fetch.interval} (a positive ISO 8601 duration) are required; every other key has the default its section
-     * documents; only an omitted key takes its default, a key supplied with a {@code null} value is malformed. A
+     * {@code save.max-attempts} (an integer from 1 to {@value Save#MAX_ATTEMPTS}), {@code drafts.expiry} (a positive
+     * ISO 8601 period) and {@code fetch.interval} (a positive ISO 8601 duration) are required; every other key has the
+     * default its section documents, among them {@code commit.email} (a boolean, default
+     * {@value Commit#DEFAULT_EMAIL}); only an omitted key takes its default, a key supplied with a {@code null} value
+     * is malformed. A
      * missing required key, a malformed value (among them an {@code anchor.provider} outside {@code [a-z0-9-]+}, the
      * alphabet of a repository alias), a refused repository of the registry and an anchor key
      * equal to the commit-signing key are refused: {@link StoreOutcome#MALFORMED}, or the passed-on
@@ -146,6 +152,10 @@ Signing signing, Anchor anchor, Directory directory) {
         if (!directory.isOk()) {
             return retype(directory);
         }
+        var commit = readCommit(tree);
+        if (!commit.isOk()) {
+            return retype(commit);
+        }
         var registry = readRegistry(tree, policy);
         if (!registry.isOk()) {
             return retype(registry);
@@ -158,7 +168,7 @@ Signing signing, Anchor anchor, Directory directory) {
         return StoreResult.ok(new StoreConfiguration(Objects.requireNonNull(registry.value()),
                 Objects.requireNonNull(save.value()), Objects.requireNonNull(drafts.value()),
                 Objects.requireNonNull(fetch.value()), signingSection, anchorSection,
-                Objects.requireNonNull(directory.value())));
+                Objects.requireNonNull(directory.value()), Objects.requireNonNull(commit.value())));
     }
 
     private static boolean anchorKeyIsSigningKey(Signing signing, Anchor.Signed signed) {
@@ -168,15 +178,26 @@ Signing signing, Anchor anchor, Directory directory) {
     }
 
     private static StoreResult<Save> readSave(ConfigurationTree tree) {
-        var maxAttempts = tree.integer(MAX_ATTEMPTS);
+        var maxAttempts = tree.integer(SAVE_MAX_ATTEMPTS);
         if (!maxAttempts.isOk()) {
             return retype(maxAttempts);
         }
         Integer attempts = maxAttempts.value();
         if (attempts == null) {
-            return tree.missing(MAX_ATTEMPTS);
+            return tree.missing(SAVE_MAX_ATTEMPTS);
         }
-        return attempts < 1 ? tree.malformed(MAX_ATTEMPTS) : StoreResult.ok(new Save(attempts));
+        return attempts < 1 || attempts > Save.MAX_ATTEMPTS ? tree.malformed(SAVE_MAX_ATTEMPTS)
+                : StoreResult.ok(new Save(attempts));
+    }
+
+    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
+    @SuppressWarnings("java:S4449")
+    private static StoreResult<Commit> readCommit(ConfigurationTree tree) {
+        var email = tree.bool(COMMIT_EMAIL);
+        if (!email.isOk()) {
+            return retype(email);
+        }
+        return StoreResult.ok(new Commit(Objects.requireNonNullElse(email.value(), Commit.DEFAULT_EMAIL)));
     }
 
     private static StoreResult<Drafts> readDrafts(ConfigurationTree tree) {
@@ -336,20 +357,31 @@ Signing signing, Anchor anchor, Directory directory) {
     /**
      * The section {@code save}.
      *
-     * @param maxAttempts the attempts of a save or of a push of notes ({@code save.max-attempts}), at least 1
+     * @param maxAttempts the attempts of a save or of a push of notes ({@code save.max-attempts}), from 1 to
+     *                    {@value #MAX_ATTEMPTS}
      * @since 0.1
      */
     public record Save(int maxAttempts) {
 
         /**
+         * The largest number of attempts, {@value}: the upper bound of {@code save.max-attempts}, well above the 10
+         * attempts GDR-NFR-2 needs, so that a misconfigured value cannot keep a save retrying without end.
+         */
+        public static final int MAX_ATTEMPTS = 100;
+
+        /**
          * Checks the number of attempts.
          *
          * @param maxAttempts the attempts
-         * @throws IllegalArgumentException if {@code maxAttempts} is less than 1
+         * @throws IllegalArgumentException if {@code maxAttempts} is less than 1 or greater than
+         *                                  {@value #MAX_ATTEMPTS}
          */
         public Save {
             if (maxAttempts < 1) {
                 throw new IllegalArgumentException("at least one attempt is required");
+            }
+            if (maxAttempts > MAX_ATTEMPTS) {
+                throw new IllegalArgumentException("at most " + MAX_ATTEMPTS + " attempts are allowed");
             }
         }
     }
@@ -539,5 +571,19 @@ Signing signing, Anchor anchor, Directory directory) {
         public Directory {
             Objects.requireNonNull(personsProvider, "personsProvider");
         }
+    }
+
+    /**
+     * The section {@code commit}: the identity fields of the commits {@code git-store} writes.
+     *
+     * @param email whether author and committer of every commit {@code git-store} writes carry an e-mail address
+     *              ({@code commit.email}), default {@value #DEFAULT_EMAIL}; {@code false} keeps both e-mail fields
+     *              empty, so that no address reaches the history (GDR-NFR-3)
+     * @since 0.1
+     */
+    public record Commit(boolean email) {
+
+        /** The default of {@code commit.email}: no e-mail address in a commit. */
+        public static final boolean DEFAULT_EMAIL = false;
     }
 }

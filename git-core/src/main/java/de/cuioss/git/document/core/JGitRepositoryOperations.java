@@ -115,8 +115,17 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The remote a clone is created with. */
     static final String ORIGIN = Constants.DEFAULT_REMOTE_NAME;
 
-    /** The fetch reference specifications of a clone: branches, tags and notes are mirrored. */
-    static final List<String> MIRROR_FETCH_REF_SPECS =
+    /**
+     * The fetch reference specifications of a clone, unmodifiable: branches, tags and notes are mirrored. A caller that
+     * prunes a clone passes them to {@link #fetch(FetchInput)} explicitly, so that the prune deletes only references
+     * below the mirrored namespaces whatever fetch reference specifications the clone's configuration holds: JGit
+     * 7.8.0 {@code Transport.fetch} falls back to the configured ones only for an empty list, and
+     * {@code FetchProcess.deleteStaleTrackingRefs} deletes only references matching the destination of a fetched
+     * reference specification.
+     *
+     * @since 0.1
+     */
+    public static final List<String> MIRROR_FETCH_REF_SPECS =
             List.of("+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/notes/*:refs/notes/*");
 
     /**
@@ -497,6 +506,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             FetchResult result = git.fetch()
                     .setRemote(input.remote())
                     .setRefSpecs(input.refSpecs().stream().map(RefSpec::new).toList())
+                    .setRemoveDeletedRefs(input.prune())
                     // JGit 7.8.0 FetchCommand fetches submodules of a working tree on demand, each from its own
                     // remote that the policy check above never saw
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)
