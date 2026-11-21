@@ -50,7 +50,8 @@ import org.eclipse.jgit.transport.URIish;
  * with lease, conflicts and change detection and an optional per-attempt step (GDR-STORE-3, GDR-STORE-4,
  * GDR-STORE-5), the release of a document onto {@code main} with its version tag (GDR-STORE-6), the expiry of
  * drafts (GDR-STORE-7), and the fetch of the remote, on demand or on the caller's schedule, that keeps the clone and
- * every {@link StoreIndex} over the writer current (GDR-STORE-9).
+ * every {@link StoreIndex} over the writer current (GDR-STORE-9), and the subscription of in-process
+ * {@link CommitListener}s to the new commits of a branch (GDR-STORE-10).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
@@ -66,7 +67,8 @@ import org.eclipse.jgit.transport.URIish;
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes,
  * saves and releases take the shared side of the clone's maintenance lock, every save the lock of its draft, so the
  * saves of one draft run one after the other, and every save or release attempt and every fetch the transport lock;
- * the moved references of a save, a release or a fetch reach the index only after every lock was released; the expiry, its
+ * the moved references of a save, a release or a fetch reach the index and then the listeners only after every lock
+ * was released; the expiry, its
  * deletes and its garbage
  * collection, takes the exclusive side. The locks belong to the clone, not to the
  * writer: every writer of the JVM that opens the same git directory (by its real path) shares them, so the garbage
@@ -86,23 +88,28 @@ public final class StoreWriter implements AutoCloseable {
     /** The remote of every bare clone of the store. */
     private static final String ORIGIN = "origin";
 
+    /** The prefix of every branch. */
+    private static final String HEADS = "refs/heads/";
+
     private final ExplicitSave.Clone clone;
     private final RepositoryOperations operations;
     private final TechnicalUser user;
     private final Duration fetchInterval;
     private final StoreEvents events;
+    private final ListenerDispatch listeners;
     private final DraftReferences drafts;
     private final ExplicitSave saves;
     private final DocumentRelease releases;
     private final DraftExpiry expiry;
 
-    private StoreWriter(Transport transport, StoreEvents events, DraftReferences drafts, ExplicitSave saves,
+    private StoreWriter(Transport transport, Notification notification, DraftReferences drafts, ExplicitSave saves,
             DocumentRelease releases, DraftExpiry expiry) {
         this.clone = transport.bareClone();
         this.operations = transport.operations();
         this.user = transport.user();
         this.fetchInterval = transport.fetchInterval();
-        this.events = events;
+        this.events = notification.events();
+        this.listeners = notification.listeners();
         this.drafts = drafts;
         this.saves = saves;
         this.releases = releases;
@@ -119,6 +126,15 @@ public final class StoreWriter implements AutoCloseable {
      */
     private record Transport(ExplicitSave.Clone bareClone, RepositoryOperations operations, TechnicalUser user,
     Duration fetchInterval) {
+    }
+
+    /**
+     * What the writer notifies.
+     *
+     * @param events    the notification seam of the writer
+     * @param listeners the listener dispatch, the last observer of the events
+     */
+    private record Notification(StoreEvents events, ListenerDispatch listeners) {
     }
 
     /**
@@ -173,13 +189,15 @@ public final class StoreWriter implements AutoCloseable {
         var drafts = new DraftReferences(repository, updater, identities, clock, attempts);
         var guard = RepositoryGuard.of(clone);
         var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard);
-        var events = new StoreEvents();
+        var listeners = new ListenerDispatch(storeRepository.alias(), repository);
+        var events = new StoreEvents(listeners);
         var saves = new ExplicitSave(bareClone, operations, user, identities, clock, attempts, events);
         var releases = new DocumentRelease(bareClone, operations, user, identities, clock, attempts, events);
         var expiry = new DraftExpiry(storeRepository.alias(), repository, guard, updater,
                 configuration.drafts().expiry(), attempts);
         var transport = new Transport(bareClone, operations, user, configuration.fetch().interval());
-        return StoreResult.ok(new StoreWriter(transport, events, drafts, saves, releases, expiry));
+        return StoreResult.ok(new StoreWriter(transport, new Notification(events, listeners), drafts, saves, releases,
+                expiry));
     }
 
     /**
@@ -415,6 +433,28 @@ public final class StoreWriter implements AutoCloseable {
             case StoreOutcome store -> store.name();
             case StoreResult.PassedOn(GitOutcome git) -> git.name();
         };
+    }
+
+    /**
+     * Subscribes an in-process listener to the new commits of a branch (GDR-STORE-10). The listener is called with each
+     * new commit of the branch, oldest first, after every save or release this writer pushed onto it and after every
+     * fetch of this writer that moved it, on the thread of that operation, once it released every lock of the store
+     * and the indexes over this writer were refreshed. The subscription starts at the tip the branch has in the clone
+     * now; its cursor is kept in memory only, so nothing is delivered twice within the subscription and nothing older
+     * than the subscription is delivered, also not by a new writer over the same clone. A listener that throws a
+     * {@link RuntimeException} is logged ({@code GIT_STORE-109}) with the alias, the branch and the class of the
+     * exception and never fails the save, release or fetch.
+     *
+     * @param branch   the branch, by its full name ({@code refs/heads/main}) or its name below {@code refs/heads/}
+     * @param listener the listener
+     * @return the subscription; closing it unsubscribes the listener
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public CommitListener.Subscription subscribe(String branch, CommitListener listener) {
+        Objects.requireNonNull(branch, "branch");
+        Objects.requireNonNull(listener, "listener");
+        String full = branch.startsWith(HEADS) ? branch : HEADS + branch;
+        return listeners.subscribe(full, listener);
     }
 
     /**

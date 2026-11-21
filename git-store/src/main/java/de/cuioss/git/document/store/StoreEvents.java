@@ -33,9 +33,10 @@ import org.jspecify.annotations.Nullable;
  * its tag, and the reference updates of every fetch, each as the full reference name with its old and new id. An
  * operation collects its updates while it runs and emits them once, on its own thread, after it released every lock of
  * the store ({@link RepositoryGuard}), so an observer that calls the store again cannot deadlock it and never runs
- * while the transport lock is held. An operation that moved nothing emits nothing. The observers are called in the
- * order of their registration; a {@link RuntimeException} of one is logged by its class only and never fails the
- * operation or keeps the next observer from its call.
+ * while the transport lock is held. An operation that moved nothing emits nothing. The registered observers, the
+ * indexes ({@link StoreIndex}), are called first, in the order of their registration, and the listener dispatch
+ * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A {@link RuntimeException}
+ * of one observer is logged by its class only and never fails the operation or keeps the next observer from its call.
  * <p>
  * An update names a reference and object ids only, never a path, a content or a pseudonym (GDR-NFR-3).
  */
@@ -44,6 +45,17 @@ final class StoreEvents {
     private static final CuiLogger LOGGER = new CuiLogger(StoreEvents.class);
 
     private final List<Observer> observers = new CopyOnWriteArrayList<>();
+    private final Observer listeners;
+
+    /**
+     * Creates the events of a writer.
+     *
+     * @param listeners the observer called after every registered one: the listener dispatch of the writer
+     * @throws NullPointerException if {@code listeners} is {@code null}
+     */
+    StoreEvents(Observer listeners) {
+        this.listeners = Objects.requireNonNull(listeners, "listeners");
+    }
 
     /**
      * An observer of the references the operations of a writer moved.
@@ -139,14 +151,17 @@ final class StoreEvents {
             return;
         }
         List<Update> moved = List.copyOf(updates);
-        for (Observer observer : observers) {
-            try {
-                observer.moved(moved);
-            }
-            /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
-            catch (RuntimeException e) {
-                LOGGER.debug("An observer of the store events threw %s", e.getClass().getSimpleName());
-            }
+        observers.forEach(observer -> call(observer, moved));
+        call(listeners, moved);
+    }
+
+    private static void call(Observer observer, List<Update> moved) {
+        try {
+            observer.moved(moved);
+        }
+        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        catch (RuntimeException e) {
+            LOGGER.debug("An observer of the store events threw %s", e.getClass().getSimpleName());
         }
     }
 }

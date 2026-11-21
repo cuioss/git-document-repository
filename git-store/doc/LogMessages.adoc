@@ -91,6 +91,11 @@ next run fetches again.
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias, the name of the
 collection and the simple class name of the exception, never its message, the id, a path or a content. The document is
 left out of the index, and the refresh goes on with the next document.
+|GIT_STORE-109 |GIT_STORE |A commit listener of repository %s, branch %s threw %s
+|Logged when a commit listener threw while it was called with a new commit of its branch
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10]): the repository alias, the full name of the
+branch and the simple class name of the exception, never its message; no throwable is attached. The save, release or
+fetch that triggered the call is unaffected, and the commit counts as delivered.
 |===
 
 == ERROR Level (200-299)

@@ -187,5 +187,15 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(108)
                 .build();
+
+        /**
+         * A commit listener threw, the save, release or fetch that triggered it is unaffected: the repository alias, the
+         * branch and the class of the exception, never its message.
+         */
+        public static final LogRecord LISTENER_FAILED = LogRecordModel.builder()
+                .template("A commit listener of repository %s, branch %s threw %s")
+                .prefix(PREFIX)
+                .identifier(109)
+                .build();
     }
 }

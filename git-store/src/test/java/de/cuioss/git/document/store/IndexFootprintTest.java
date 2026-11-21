@@ -127,7 +127,9 @@ class IndexFootprintTest {
         Map<DocumentCollection, IndexContributor<Map<String, String>>> contributors = new LinkedHashMap<>();
         contributors.put(collection, FIELD_MAP);
 
-        var opened = StoreIndex.open("footprint", repository, new StoreEvents(), contributors);
+        var opened = StoreIndex.open("footprint", repository, new StoreEvents(updates -> {
+            // no listener: the measured index is opened without a writer
+        }), contributors);
         assertTrue(opened.isOk(), () -> "the index is built: " + opened.detail());
         try (var index = Objects.requireNonNull(opened.value())) {
             var entries = index.entries(StoreReferences.MAIN, collection);

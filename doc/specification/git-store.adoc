@@ -552,6 +552,33 @@ message names a path, a content, an id or a pseudonym (xref:general.adoc#GDR-NFR
 
 image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source of truth: listeners feed the derived and assuring stores; complementary systems are referenced by id",align=center]
 
+* *Subscription.* `StoreWriter.subscribe(branch, listener)` subscribes a `CommitListener` to one branch, by its full
+  name or its name below `refs/heads/`, and returns a `CommitListener.Subscription`, an `AutoCloseable` whose `close`
+  unsubscribes and throws nothing; no call starts after `close` returned. The listener is called with the full name of
+  the branch and the full id of each new commit.
+* *Triggers.* The listener dispatch is the last observer of the `StoreEvents` of the writer (<<GDR-STORE-9>>): after a
+  save that pushed onto the branch, after a release that pushed `main`, and after a fetch that moved the branch, it is
+  called on the thread of that operation once the operation released every lock of the store and every index over the
+  writer was refreshed. A listener may therefore call the store, a save included, without a deadlock.
+* *Oldest first.* The dispatch walks the commits reachable from the new tip and not from the subscription's cursor,
+  oldest first (JGit 7.8.0 `RevWalk` with `RevSort.TOPO` and `RevSort.REVERSE`), so a fetch that moved the branch by
+  several commits delivers each of them in order. Without a cursor the boundary is the old id of the update, else the
+  tips of every other branch, so a branch the operation created delivers its own commits and not the history it forked
+  from.
+* *In-memory cursor.* Every subscription keeps the last commit it delivered, starting at the tip the branch has in the
+  clone when it is subscribed. The cursor is never written anywhere: it only keeps one subscription from delivering a
+  commit twice, and a new writer over the same clone starts its subscriptions at the current tips and delivers nothing
+  older. That is no kept progress: work that must not be lost is derived from the Git state at start. The delivery of
+  one subscription is serialised by its lock, so concurrent triggers deliver every commit once and in order; a listener
+  that re-enters the store gets its own new commits after it returned.
+* *Failure isolation.* A `RuntimeException` of a listener is caught and logged with the class of the exception only, no
+  throwable attached; the commit counts as delivered, and the save, release or fetch that triggered the call keeps its
+  result.
+
+A failing listener is logged as `GIT_STORE-109` with the alias, the branch and the class of the exception
+(`git-store/doc/LogMessages.adoc`); no message names a path, a content or a pseudonym
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
 [#GDR-STORE-11]
 == GDR-STORE-11: Deterministic Content through Codecs
 
