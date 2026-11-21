@@ -19,7 +19,9 @@ xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]; it defines its three service inter
 (xref:git-store.adoc[`git-store`]). Of the requirements below, <<GDR-GEN-1>> is implemented; <<GDR-NFR-2>> and the
 write-path part of <<GDR-NFR-3>> are covered by tests of `git-store` (`ConcurrentWritersTest`,
 `WritePathSecretsTest`); and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does
-not verify yet. Every other requirement of the libraries is planned, and the other modules are not yet created.
+not verify yet. `git-forms` exists with its outcome list and result (<<GDR-GEN-3>>); its own requirements are
+planned. Every other requirement of the libraries is planned, and `git-timestamp` and `git-directory` are not yet
+created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -45,8 +47,8 @@ dependency. Three checks realise the requirement:
 * The execution `module-layering` of the root POM (phase `validate`, declared dependencies only) bans every
   dependency on an artifact `de.cuioss:git-*` except `git-testing` in scope `test`, against which every module may
   test. Each module lists its allowed edges in its own POM, one `<include>` per edge, appended to the rule with
-  `combine.children="append"` in an execution of the same id: `git-store` lists `git-core`; `git-core` and
-  `git-testing` list none. A new module adds exactly the edges the graph names.
+  `combine.children="append"` in an execution of the same id: `git-store` lists `git-core`, `git-forms` lists
+  `git-store`; `git-core` and `git-testing` list none. A new module adds exactly the edges the graph names.
 * The execution `consumer-isolation` of `git-core` (phase `validate`, transitive) bans every artifact in scope
   `compile` or `runtime` outside the closure a consumer of `git-core` alone receives: `org.jspecify:jspecify`, JGit
   with the compile dependencies its 7.8.0 POM declares (`com.googlecode.javaewah:JavaEWAH`, `org.slf4j:slf4j-api`,
@@ -59,7 +61,7 @@ dependency. Three checks realise the requirement:
   runtime closure a consumer of `git-core` alone resolves, publishes nothing extra, and needs no new plugin or
   dependency, where a consumer project would be a new module of the reactor that needs a test harness or a parser of
   its dependency tree. A new compile dependency of `git-core` is added to the rule only after the owner's approval.
-* `DomainTermAbsenceTest` of `git-core`, `git-testing` and `git-store` loads the classes of the module's main output
+* `DomainTermAbsenceTest` of `git-core`, `git-testing`, `git-store` and `git-forms` loads the classes of the module's main output
   and fails when the simple name or the package name of a public type contains `assessment`, `threat`, `incident` or
   `risk`, compared case-insensitively, or when the scan finds no public type. The test of `git-core` also reads the
   exported packages from the compiled `module-info.class` of its main output and fails when an exported package holds
@@ -71,7 +73,8 @@ The third-party dependencies declared are
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
 `cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
 `cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator` and
-`cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+`cui-test-juli-logger` in its test scope; and `cui-java-tools` and Lombok in `git-forms`, with `git-testing`, JUnit 5,
+`cui-test-generator` and `cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
 `cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17, and
 `de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
 end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
@@ -95,8 +98,9 @@ redirect test, `cui-test-generator` and JUnit 5 (each declared)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); possibly JGit's
 `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
-|`git-forms` |`org.snakeyaml:snakeyaml-engine` and `dev.harrel:json-schema` (each declared, decided); a template
-engine (open)
+|`git-forms` |`git-store`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope `git-testing`,
+`cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); `org.snakeyaml:snakeyaml-engine` and
+`dev.harrel:json-schema` (each declared, decided); a template engine (open)
 |`git-timestamp` |an RFC 3161 client library (open)
 |`git-directory` |none beyond those of `git-forms`
 |===
@@ -207,16 +211,22 @@ that is missing or not unique; a content a codec cannot decode; the detail names
 never the value
 |===
 
-The outcome list of `git-forms`:
+`FormsOutcome` (`git-forms`) is the outcome list of `git-forms`. Its result is `FormsResult`, of the same shape as
+`StoreResult` (outcome, value, detail), whose outcome is either a constant of `FormsOutcome` or a non-success outcome of
+a `StoreResult` passed on as its variant `PassedOn`; only `OK` of `FormsOutcome` is a success. The first column names
+the constant, and the table lists exactly the constants of `FormsOutcome`:
 
-[cols="1,2"]
+[cols="2,2,4"]
 |===
-|Outcome |Raised by
+|Constant |Outcome |Raised by
 
-|invalid |schema validation, typed links, a person field without a known pseudonym
-|mandatory fields missing |a transition that checks `required` (xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2])
-|mismatch |check of the generated output
-|transition refused, step-up required |workflow
+|`OK` |success |every operation
+|`INVALID` |invalid |schema validation, typed links, a person field without a known pseudonym
+|`MANDATORY_FIELDS_MISSING` |mandatory fields missing |a transition that checks `required`
+(xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2])
+|`MISMATCH` |mismatch |check of the generated output
+|`TRANSITION_REFUSED` |transition refused |workflow
+|`STEP_UP_REQUIRED` |step-up required |workflow
 |===
 
 The outcome list of `git-directory`:

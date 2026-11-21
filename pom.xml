@@ -49,6 +49,7 @@
     </dependencyManagement>
     <modules>
         <module>git-core</module>
+        <module>git-forms</module>
         <module>git-store</module>
         <module>git-testing</module>
     </modules>

@@ -28,8 +28,9 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease, conflicts and change detection, draft expiry | `git-core` |
+| `git-forms` | Schema-driven documents: outcome list and result, log messages | `git-store` |
 
-Planned but not yet created: `git-forms`, `git-timestamp`, `git-directory` (see
+Planned but not yet created: `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
@@ -59,14 +60,17 @@ write path: `StoreWriter` (drafts, listing, explicit save with lease, draft expi
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 over the package-private `DraftReferences`, `ExplicitSave`, `DraftExpiry`, `CommitIdentities` and `RepositoryGuard`;
 the commits it writes are unsigned and carry no trailers until GDR-STORE-12/13. Its tests run on the class path against
-the `git-testing` fixtures. Add an `exports` directive together with the first
+the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
+`FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as
+`FormsResult.PassedOn`) and the `LogRecord` holder `GitFormsLogMessages`; its tests run on the class path as well.
+Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph (`git-store` is the only module that appends an edge, `git-core`), and the execution `consumer-isolation` of
+graph (`git-store` appends the edge `git-core`, `git-forms` the edge `git-store`), and the execution `consumer-isolation` of
 `git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
-`DomainTermAbsenceTest` in each module (`git-core`, `git-testing` and `git-store`) asserts that no public type carries
+`DomainTermAbsenceTest` in each module (`git-core`, `git-testing`, `git-store` and `git-forms`) asserts that no public type carries
 a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
 `META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
 reaches, its worktrees package included; `git-store` ships none and relies on that of `git-core` (GDR-NFR-4).

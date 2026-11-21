@@ -37,6 +37,9 @@ compare-and-swap, in-core merge, notes; linked working trees, commit from a work
 |`git-store`
 |Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider
 selection. Depends on `git-core` only.
+
+|`git-forms`
+|Schema-driven documents: outcome list and result, log messages. Depends on `git-store` only.
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
@@ -48,8 +51,9 @@ link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/p
 `git-store` holds the foundation of the document store: the registry of its repositories, the typed configuration
 checked at start, the codec interface, its own outcome list and result, and the service interfaces for signing keys,
 anchor proofs and the person directory with the selection of their providers; drafts, saving, release and anchoring
-follow. The other aspect modules (`git-forms`, `git-timestamp`, `git-directory`) follow as the document store needs
-them.
+follow. `git-forms` holds the layer of schema-driven documents on top of the store; so far its own outcome list,
+its result and its log messages. The other aspect modules (`git-timestamp`, `git-directory`) follow as the document
+store needs them.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
 the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives.

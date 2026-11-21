@@ -4,8 +4,10 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-forms` (module `de.cuioss.git.document.forms`, not yet created) is the layer of schema-driven documents on top of
-`git-store`. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+`git-forms` (module `de.cuioss.git.document.forms`, one package of the same name) is the layer of schema-driven
+documents on top of `git-store`, on which alone it depends. It holds so far its closed outcome list `FormsOutcome`, its
+result `FormsResult` and its log messages (xref:general.adoc#GDR-GEN-3[GDR-GEN-3],
+xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); the requirements below are planned. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:
 
