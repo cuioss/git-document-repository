@@ -59,6 +59,7 @@ public final class FormSchema {
 
     private static final String PROPERTIES = "properties";
     private static final String ITEMS = "items";
+    private static final String PREFIX_ITEMS = "prefixItems";
     private static final String REQUIRED = "required";
 
     /** The keywords whose value maps names to sub-schemas. */
@@ -71,7 +72,7 @@ public final class FormSchema {
             "contentSchema");
 
     /** The keywords whose value is a list of sub-schemas. */
-    private static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", "prefixItems");
+    private static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
 
     /** The keywords that reference a schema; within one file only. */
     private static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
@@ -308,7 +309,10 @@ public final class FormSchema {
         return withoutRequired;
     }
 
-    /** The declaration order of the properties, nested objects and array items by their sub-schema. */
+    /**
+     * The declaration order of the properties, nested objects and array items by their sub-schema: {@code prefixItems}
+     * for the leading items, {@code items} for the others.
+     */
     Shape shape() {
         return shape;
     }
@@ -316,14 +320,15 @@ public final class FormSchema {
     /**
      * The declaration order of the properties of an object schema.
      *
-     * @param order      the names of the {@code properties}, in declaration order
-     * @param properties the shapes of the properties whose schema is an object
-     * @param items      the shape of the items of an array, from {@code items}, or {@code null}
+     * @param order       the names of the {@code properties}, in declaration order
+     * @param properties  the shapes of the properties whose schema is an object
+     * @param prefixItems the shapes of the leading items of an array by position, from {@code prefixItems}
+     * @param items       the shape of the further items of an array, from {@code items}, or {@code null}
      */
-    record Shape(List<String> order, Map<String, Shape> properties, @Nullable Shape items) {
+    record Shape(List<String> order, Map<String, Shape> properties, List<Shape> prefixItems, @Nullable Shape items) {
 
         /** The shape of a schema that declares nothing. */
-        static final Shape EMPTY = new Shape(List.of(), Map.of(), null);
+        static final Shape EMPTY = new Shape(List.of(), Map.of(), List.of(), null);
 
         /** Derives the shape of a schema; the shape of anything that is no object schema is empty. */
         static Shape of(@Nullable Object schema) {
@@ -339,8 +344,10 @@ public final class FormSchema {
                     nested.put(name, of(entry.getValue()));
                 }
             }
+            List<Shape> prefix = map.get(PREFIX_ITEMS) instanceof List<?> prefixSchemas
+                    ? prefixSchemas.stream().map(Shape::of).toList() : List.of();
             @Nullable Shape items = map.get(ITEMS) instanceof Map<?, ?> itemSchema ? of(itemSchema) : null;
-            return new Shape(List.copyOf(order), Map.copyOf(nested), items);
+            return new Shape(List.copyOf(order), Map.copyOf(nested), prefix, items);
         }
 
         /** The shape of a property, empty for a property the schema does not declare. */
@@ -348,8 +355,14 @@ public final class FormSchema {
             return properties.getOrDefault(name, EMPTY);
         }
 
-        /** The shape of the items of an array, empty when the schema declares none. */
-        Shape item() {
+        /**
+         * The shape of the item of an array at a position: from {@code prefixItems} for a leading item, otherwise from
+         * {@code items}; empty when the schema declares neither.
+         */
+        Shape item(int index) {
+            if (index < prefixItems.size()) {
+                return prefixItems.get(index);
+            }
             return items == null ? EMPTY : items;
         }
     }

@@ -36,7 +36,8 @@ import org.snakeyaml.engine.v2.resolver.ScalarResolver;
  * The form is fixed: block style with an indentation of two spaces; a sequence item starts with {@code - } at the
  * indentation of its parent key plus two, a mapping inside it on the same line; an empty mapping is {@code {}}, an empty
  * sequence {@code []}; line feed line ends and one trailing line feed. A mapping is written in the order of its
- * entries, which the caller decides. A string is plain when it starts with a letter, a digit, {@code _}, {@code /} or
+ * entries, which the caller decides; a key whose written form is longer than 1024 code points, which no reader takes as
+ * an implicit key, is written explicitly as {@code ? <key>} with its value after {@code :} on the next line. A string is plain when it starts with a letter, a digit, {@code _}, {@code /} or
  * {@code (}, holds only letters, digits, spaces and {@code _./()+-,;=~@$%&'!?}, does not end in a space and reads back
  * as a string under the YAML 1.2 core schema; every other string is double-quoted, with {@code \\}, {@code "}, line
  * breaks, tabs and every character outside the printable set of YAML escaped. {@code null}, booleans and numbers are
@@ -52,6 +53,10 @@ final class YamlWriter {
 
     private static final String INDENT = "  ";
     private static final String ITEM = "- ";
+    private static final String EXPLICIT_KEY = "? ";
+
+    /** The longest implicit key, in code points, that a reader must accept under YAML 1.2. */
+    private static final int MAX_IMPLICIT_KEY = 1024;
 
     /**
      * Writes a value of the JSON data model.
@@ -63,31 +68,39 @@ final class YamlWriter {
      */
     String write(@Nullable Object value) {
         var text = new StringBuilder();
-        if (value instanceof Map<?, ?> map && !map.isEmpty()) {
-            mapping(text, map, 0);
-        } else if (value instanceof List<?> list && !list.isEmpty()) {
-            sequence(text, list, 0);
-        } else {
-            text.append(inline(value)).append('\n');
+        switch (value) {
+            case Map<?, ?> map when !map.isEmpty() -> mapping(text, map, 0);
+            case List<?> list when !list.isEmpty() -> sequence(text, list, 0);
+            case null, default -> text.append(inline(value)).append('\n');
         }
         return text.toString();
     }
 
     private static void mapping(StringBuilder text, Map<?, ?> map, int indent) {
+        String indentation = INDENT.repeat(indent);
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             if (!(entry.getKey() instanceof String key)) {
                 throw new IllegalArgumentException("not of the JSON data model: a key that is not a string");
             }
-            text.append(INDENT.repeat(indent)).append(scalar(key)).append(':');
-            Object value = entry.getValue();
-            if (value instanceof Map<?, ?> nested && !nested.isEmpty()) {
-                text.append('\n');
-                mapping(text, nested, indent + 1);
-            } else if (value instanceof List<?> list && !list.isEmpty()) {
-                text.append('\n');
-                sequence(text, list, indent + 1);
+            String rendered = scalar(key);
+            if (rendered.codePointCount(0, rendered.length()) > MAX_IMPLICIT_KEY) {
+                // a reader takes no implicit key longer than 1024 characters: the key is written explicitly
+                text.append(indentation).append(EXPLICIT_KEY).append(rendered).append('\n').append(indentation)
+                        .append(':');
             } else {
-                text.append(' ').append(inline(value)).append('\n');
+                text.append(indentation).append(rendered).append(':');
+            }
+            Object value = entry.getValue();
+            switch (value) {
+                case Map<?, ?> nested when !nested.isEmpty() -> {
+                    text.append('\n');
+                    mapping(text, nested, indent + 1);
+                }
+                case List<?> list when !list.isEmpty() -> {
+                    text.append('\n');
+                    sequence(text, list, indent + 1);
+                }
+                case null, default -> text.append(' ').append(inline(value)).append('\n');
             }
         }
     }
@@ -95,12 +108,12 @@ final class YamlWriter {
     private static void sequence(StringBuilder text, List<?> list, int indent) {
         String prefix = INDENT.repeat(indent) + ITEM;
         for (Object item : list) {
-            if (item instanceof Map<?, ?> map && !map.isEmpty()) {
-                text.append(sameLine(prefix, nested -> mapping(nested, map, indent + 1)));
-            } else if (item instanceof List<?> items && !items.isEmpty()) {
-                text.append(sameLine(prefix, nested -> sequence(nested, items, indent + 1)));
-            } else {
-                text.append(prefix).append(inline(item)).append('\n');
+            switch (item) {
+                case Map<?, ?> map when !map.isEmpty() ->
+                    text.append(sameLine(prefix, nested -> mapping(nested, map, indent + 1)));
+                case List<?> items when !items.isEmpty() ->
+                    text.append(sameLine(prefix, nested -> sequence(nested, items, indent + 1)));
+                case null, default -> text.append(prefix).append(inline(item)).append('\n');
             }
         }
     }
@@ -134,39 +147,35 @@ final class YamlWriter {
             return text;
         }
         var quoted = new StringBuilder(text.length() + 2).append('"');
-        for (int index = 0; index < text.length(); index++) {
-            char character = text.charAt(index);
-            if (Character.isHighSurrogate(character) && index + 1 < text.length()
-                    && Character.isLowSurrogate(text.charAt(index + 1))) {
-                quoted.append(character).append(text.charAt(++index));
-            } else if (Character.isSurrogate(character)) {
-                throw new IllegalArgumentException("not of the JSON data model: a string that is not valid Unicode");
-            } else {
-                appendEscaped(quoted, character);
-            }
-        }
+        // a lone surrogate is a code point of its own here, refused by appendEscaped
+        text.codePoints().forEach(codePoint -> appendEscaped(quoted, codePoint));
         return quoted.append('"').toString();
     }
 
-    private static void appendEscaped(StringBuilder quoted, char character) {
-        switch (character) {
+    private static void appendEscaped(StringBuilder quoted, int codePoint) {
+        switch (codePoint) {
             case '\\' -> quoted.append("\\\\");
             case '"' -> quoted.append("\\\"");
             case '\n' -> quoted.append("\\n");
             case '\t' -> quoted.append("\\t");
             case '\r' -> quoted.append("\\r");
             default -> {
-                if (isPrintable(character)) {
-                    quoted.append(character);
+                if (Character.isSupplementaryCodePoint(codePoint)) {
+                    quoted.appendCodePoint(codePoint);
+                } else if (codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE) {
+                    throw new IllegalArgumentException(
+                            "not of the JSON data model: a string that is not valid Unicode");
+                } else if (isPrintable(codePoint)) {
+                    quoted.appendCodePoint(codePoint);
                 } else {
-                    quoted.append(String.format(Locale.ROOT, "\\u%04X", (int) character));
+                    quoted.append(String.format(Locale.ROOT, "\\u%04X", codePoint));
                 }
             }
         }
     }
 
     /** The printable characters of YAML 1.2 below the supplementary planes, without the line separators. */
-    private static boolean isPrintable(char character) {
+    private static boolean isPrintable(int character) {
         return character >= 0x20 && character <= 0x7E
                 || character >= 0xA0 && character <= 0xD7FF && character != 0x2028 && character != 0x2029
                 || character >= 0xE000 && character <= 0xFFFD && character != 0xFEFF;

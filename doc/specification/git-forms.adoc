@@ -169,15 +169,20 @@ the layout yet.
 
 `YamlDocumentCodec` is the `Codec` of `git-store` (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]) for
 `document.yaml`, an entry file and, through `part(property)`, a split part. It writes the keys of every object in the
-declaration order of the `properties` of its schema, nested objects and array items by their sub-schema, and the keys
-the schema does not declare after them in lexicographic order. The formatting is fixed by the package-private
-`YamlWriter`: block style, an indentation of two spaces, `{}` and `[]` for an empty mapping and sequence, line feed line
-ends and one trailing line feed; a string is plain only when it is made of letters, digits and a few punctuation marks
-and reads back as a string under the YAML 1.2 core schema, otherwise it is double-quoted with escapes. Equal data
-therefore yields byte-identical content, and `encode(decode(encode(v)))` equals `encode(v)` byte for byte. Decoding
-reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an anchor, an alias, an explicit tag, a
-key that is not a string, a duplicate key, an infinite number) is `MALFORMED` with its line and column, never the
-content.
+declaration order of the `properties` of its schema, nested objects and array items by their sub-schema (the leading
+items by `prefixItems`, position by position, the others by `items`), and the keys the schema does not declare after
+them in lexicographic order. The formatting is fixed by the package-private `YamlWriter`: block style, an indentation
+of two spaces, `{}` and `[]` for an empty mapping and sequence, line feed line ends and one trailing line feed; a string
+is plain only when it is made of letters, digits and a few punctuation marks and reads back as a string under the YAML
+1.2 core schema, otherwise it is double-quoted with escapes; a key whose written form is longer than 1024 code points,
+which a reader does not take as an implicit key, is written explicitly (`? <key>`, then `: <value>`). Equal data
+therefore yields byte-identical content. `encode` refuses with an `IllegalArgumentException` a value whose YAML would
+be longer than the 3,145,728 code points (3 Mi) that `YamlReader` sets as the code point limit of snakeyaml-engine
+and decoding therefore reads, so for every value `encode` accepts, `decode(encode(v))` succeeds and `encode(decode(encode(v)))` equals
+`encode(v)` byte for byte. Decoding reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an
+anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite number, a number whose
+exponent leaves the range of `int`, a double-quoted string whose escape yields a lone surrogate) is `MALFORMED` with
+its line and column, never the content.
 
 The counter file `<collection>/.counter` holds the last running number given, as one decimal integer without sign and
 without leading zero followed by one line feed (`42\n`; `0\n` before the first number). `CounterCodec` writes and reads

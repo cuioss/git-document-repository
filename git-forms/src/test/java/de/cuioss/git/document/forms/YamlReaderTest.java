@@ -52,8 +52,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * scalars resolved by the YAML 1.2 core schema while quoted scalars stay strings; and every refusal as the passed-on
  * {@link StoreOutcome#MALFORMED} with a detail that names the position (line and column, counted from 1) and the
  * problem, never the content (GDR-NFR-3): an anchor, an alias, an explicit tag, a key that is not a string, a duplicate
- * key, an infinite number or not-a-number, more than one document, a document without a value, and text that is not
- * well-formed YAML.
+ * key, an infinite number or not-a-number, an exponent beyond the range of {@code int}, a lone surrogate from an
+ * escape, more than one document, a document without a value, and text that is not well-formed YAML.
  * <p>
  * Keys, anchor and tag names are generated from lower-case letters, at least twelve long, so that a plain key always
  * resolves to a string and no generated text can occur in the fixed text of a detail; values are generated between
@@ -216,6 +216,10 @@ class YamlReaderTest {
                             "line 1, column " + column + ": a number outside the JSON data model"),
                     Arguments.of("not-a-number", key + ": .nan",
                             "line 1, column " + column + ": a number outside the JSON data model"),
+                    Arguments.of("an exponent beyond the range of int", key + ": 1e-2147483648",
+                            "line 1, column " + column + ": a number outside the range of the reader"),
+                    Arguments.of("a lone surrogate from an escape", key + ": \"\\uD800\"",
+                            "line 1, column " + column + ": a string that is not valid Unicode"),
                     Arguments.of("more than one document", key + ": 1\n---\n" + other + ": 2",
                             "line 2, column 1: more than one document"),
                     Arguments.of("an empty text", "", "line 1, column 1: a document without a value"),

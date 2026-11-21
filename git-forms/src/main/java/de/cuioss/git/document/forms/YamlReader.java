@@ -65,8 +65,9 @@ import org.snakeyaml.engine.v2.scanner.StreamReader;
  * resolves a plain scalar with its {@code CoreScalarResolver}, the YAML 1.2 core schema; a quoted or block scalar is a
  * string. It refuses, as {@link StoreOutcome#MALFORMED} passed on in a {@link FormsResult}, everything outside the
  * JSON data model: an anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite
- * number or not-a-number, more than one document, and a document without a value. Text that is not well-formed YAML is
- * refused the same way.
+ * number or not-a-number, a number whose exponent leaves the range of {@code int}, a quoted string that is not valid
+ * Unicode (a lone surrogate from an escape), more than one document, and a document without a value. Text that is not
+ * well-formed YAML, or longer than {@link #CODE_POINT_LIMIT} code points, is refused the same way.
  * <p>
  * A detail names the position (line and column, counted from 1) and the problem, never the content (GDR-NFR-3). The
  * reader holds no state; one instance may serve every thread.
@@ -85,8 +86,15 @@ final class YamlReader {
     /** The detail of a refusal whose position is unknown. */
     private static final String UNKNOWN_POSITION = "unknown position";
 
-    /** The load settings: comments not parsed, marks kept for the details. */
-    private final LoadSettings settings = LoadSettings.builder().setUseMarks(true).build();
+    /**
+     * The most code points a text may hold, set as the code point limit of snakeyaml-engine, so that a writer can
+     * refuse what this reader would refuse.
+     */
+    static final int CODE_POINT_LIMIT = 3 * 1024 * 1024;
+
+    /** The load settings: comments not parsed, marks kept for the details, the limit of the text. */
+    private final LoadSettings settings = LoadSettings.builder().setUseMarks(true)
+            .setCodePointLimit(CODE_POINT_LIMIT).build();
 
     /**
      * Reads one YAML document.
@@ -134,32 +142,39 @@ final class YamlReader {
         List<@Nullable Object> roots = new ArrayList<>(1);
         int documents = 0;
         while (events.hasNext()) {
-            Event event = events.next();
-            if (event instanceof DocumentStartEvent) {
-                documents++;
-                if (documents > 1) {
-                    throw new Refusal(event, "more than one document");
+            switch (events.next()) {
+                case DocumentStartEvent start -> {
+                    documents++;
+                    if (documents > 1) {
+                        throw new Refusal(start, "more than one document");
+                    }
                 }
-            } else if (event instanceof AliasEvent) {
-                throw new Refusal(event, "an alias");
-            } else if (event instanceof NodeEvent node) {
-                checkNode(node);
-                if (event instanceof ScalarEvent scalar) {
-                    add(open, roots, scalar(scalar), scalar);
-                } else {
-                    expectNoKey(open, event);
-                    open.push(event instanceof MappingStartEvent ? new MappingContainer(event)
-                            : new SequenceContainer(event));
+                case AliasEvent alias -> throw new Refusal(alias, "an alias");
+                case NodeEvent node -> node(open, roots, node);
+                case CollectionEndEvent end -> {
+                    Container closed = open.pop();
+                    add(open, roots, closed.value(), closed.start());
                 }
-            } else if (event instanceof CollectionEndEvent) {
-                Container closed = open.pop();
-                add(open, roots, closed.value(), closed.start());
+                default -> {
+                    // the start and end of the stream and the end of a document carry no value
+                }
             }
         }
         if (roots.isEmpty() || roots.getFirst() == null) {
             return malformed("line 1, column 1: a document without a value");
         }
         return FormsResult.ok(Objects.requireNonNull(roots.getFirst()));
+    }
+
+    /** Reads a scalar into the innermost container, or opens a mapping or a sequence. */
+    private static void node(Deque<Container> open, List<@Nullable Object> roots, NodeEvent node) {
+        checkNode(node);
+        if (node instanceof ScalarEvent scalar) {
+            add(open, roots, scalar(scalar), scalar);
+        } else {
+            expectNoKey(open, node);
+            open.push(node instanceof MappingStartEvent ? new MappingContainer(node) : new SequenceContainer(node));
+        }
     }
 
     /** Refuses an anchor and an explicit tag on a node. */
@@ -196,6 +211,10 @@ final class YamlReader {
     private static @Nullable Object scalar(ScalarEvent event) {
         String text = event.getValue();
         if (!event.isPlain()) {
+            if (!isValidUnicode(text)) {
+                // an escape of a double-quoted scalar can produce a lone surrogate, which no writer can encode
+                throw new Refusal(event, "a string that is not valid Unicode");
+            }
             return text;
         }
         Tag tag = RESOLVER.resolve(text, Boolean.TRUE);
@@ -209,12 +228,29 @@ final class YamlReader {
             return integer(text);
         }
         if (Tag.FLOAT.equals(tag)) {
-            if (text.toLowerCase(Locale.ROOT).contains("inf") || text.toLowerCase(Locale.ROOT).contains("nan")) {
-                throw new Refusal(event, "a number outside the JSON data model");
-            }
-            return new BigDecimal(text);
+            return decimal(text, event);
         }
         return text;
+    }
+
+    /** Converts a float of the core schema; an infinity, not-a-number and an exponent beyond int are refused. */
+    private static BigDecimal decimal(String text, ScalarEvent event) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        if (lower.contains("inf") || lower.contains("nan")) {
+            throw new Refusal(event, "a number outside the JSON data model");
+        }
+        try {
+            return new BigDecimal(text);
+        } catch (NumberFormatException e) {
+            // the exponent leaves the range of int, for example 1e-2147483648
+            throw new Refusal(event, "a number outside the range of the reader");
+        }
+    }
+
+    /** Whether a text holds no lone surrogate. */
+    private static boolean isValidUnicode(String text) {
+        return text.codePoints().noneMatch(codePoint -> codePoint >= Character.MIN_SURROGATE
+                && codePoint <= Character.MAX_SURROGATE);
     }
 
     /** Converts an integer of the core schema: decimal, octal with {@code 0o} or hexadecimal with {@code 0x}. */

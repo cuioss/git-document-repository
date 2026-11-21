@@ -256,8 +256,9 @@ class YamlDocumentCodecTest {
         static Stream<Arguments> refusedContents() {
             var key = WORDS.next();
             var value = "~" + WORDS.next() + "~";
+            var alias = WORDS.next();
             return Stream.of(
-                    Arguments.of("an alias", key + ": *" + value.replace("~", ""), key, value),
+                    Arguments.of("an alias", key + ": *" + alias, key, alias),
                     Arguments.of("an explicit tag", key + ": !!str " + value, key, value),
                     Arguments.of("a key that is not a string", "42: \"" + value + "\"", key, value),
                     Arguments.of("a duplicate key", key + ": 1\n" + key + ": \"" + value + "\"", key, value),
@@ -296,15 +297,82 @@ class YamlDocumentCodecTest {
         @DisplayName("GDR-FORMS-3: data outside the JSON data model is refused on encode")
         void outsideDataModel() {
             var unpaired = String.valueOf('\ud800');
+            var aDouble = map("a", 1.5d);
+            var aLoneSurrogate = map("a", unpaired);
+            var aNumberKey = map("a", Map.of(1L, "x"));
+            Map<String, @Nullable Object> nullData = nullValue();
+            byte[] nullContent = nullValue();
+            FormSchema nullSchema = nullValue();
 
             assertAll(
-                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(map("a", 1.5d))),
-                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(map("a", unpaired))),
-                    () -> assertThrows(IllegalArgumentException.class,
-                            () -> codec.encode(map("a", Map.of(1L, "x")))),
-                    () -> assertThrows(NullPointerException.class, () -> codec.encode(nullValue())),
-                    () -> assertThrows(NullPointerException.class, () -> codec.decode(nullValue())),
-                    () -> assertThrows(NullPointerException.class, () -> new YamlDocumentCodec(nullValue())));
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(aDouble)),
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(aLoneSurrogate)),
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(aNumberKey)),
+                    () -> assertThrows(NullPointerException.class, () -> codec.encode(nullData)),
+                    () -> assertThrows(NullPointerException.class, () -> codec.decode(nullContent)),
+                    () -> assertThrows(NullPointerException.class, () -> new YamlDocumentCodec(nullSchema)));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: encode refuses YAML longer than decode reads, and accepts it up to the limit")
+        void sizeLimit() {
+            // "a: " + the text + a line feed: four code points beside the text, every letter plain
+            var atLimit = map("a", "x".repeat(YamlReader.CODE_POINT_LIMIT - 4));
+            var beyondLimit = map("a", "x".repeat(YamlReader.CODE_POINT_LIMIT - 3));
+
+            var encoded = codec.encode(atLimit);
+
+            assertAll(
+                    () -> assertEquals(atLimit, decoded(codec.decode(encoded)), "the largest value reads back"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(beyondLimit),
+                            "a value beyond the limit is refused"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Arrays and keys")
+    class ArraysAndKeys {
+
+        @Test
+        @DisplayName("GDR-FORMS-3: the leading items of an array are ordered by prefixItems, the others by items")
+        void prefixItems() {
+            var prefixCodec = new YamlDocumentCodec(SchemaValidatorTest.schema("""
+                    {
+                      "type": "object",
+                      "properties": {
+                        "pair": {
+                          "type": "array",
+                          "prefixItems": [ { "type": "object", "properties": { "z": {}, "a": {} } } ],
+                          "items": { "type": "object", "properties": { "m": {}, "b": {} } }
+                        }
+                      }
+                    }
+                    """));
+            var data = map("pair", List.of(map("a", 1L, "z", 2L), map("b", 3L, "m", 4L)));
+
+            assertEquals("""
+                    pair:
+                      - z: 2
+                        a: 1
+                      - m: 4
+                        b: 3
+                    """, text(prefixCodec.encode(data)), "prefixItems first, items for the rest");
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-11: a key longer than 1024 characters is written explicitly and reads back")
+        void longKey() {
+            var longKey = "k".repeat(2000);
+            var quotedKey = "\"" + "x\n".repeat(400) + "\"";
+            var data = map(longKey, word(), "tags", List.of(map(longKey, map(quotedKey, 1L))));
+
+            var encoded = codec.encode(data);
+
+            assertAll(
+                    () -> assertTrue(text(encoded).contains("? " + longKey + "\n: "), "the explicit key syntax"),
+                    () -> assertEquals(data, decoded(codec.decode(encoded)), "the data reads back"),
+                    () -> assertArrayEquals(encoded, codec.encode(decoded(codec.decode(encoded))),
+                            "the round trip is byte-identical"));
         }
     }
 

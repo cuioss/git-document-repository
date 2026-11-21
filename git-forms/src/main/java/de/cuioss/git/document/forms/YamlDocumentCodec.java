@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.stream.IntStream;
 
 
 import de.cuioss.git.document.forms.FormSchema.Shape;
@@ -34,9 +35,11 @@ import org.jspecify.annotations.Nullable;
  * its kind.
  * <p>
  * The keys of an object are written in the declaration order of the {@code properties} of its schema, a nested object
- * and the items of an array by their sub-schema; the keys the schema does not declare follow in lexicographic order.
- * The text is the canonical form of {@link YamlWriter}, so equal data yields byte-identical content and
- * {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte. Decoding reads YAML within the JSON data
+ * and the items of an array by their sub-schema ({@code prefixItems} by position for the leading items, {@code items}
+ * for the others); the keys the schema does not declare follow in lexicographic order. The text is the canonical form
+ * of {@link YamlWriter}, so equal data yields byte-identical content, and for every value {@code encode} accepts,
+ * {@code decode(encode(v))} succeeds and {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte;
+ * {@code encode} refuses a value whose YAML would be longer than the reader takes. Decoding reads YAML within the JSON data
  * model of ADR-0008 through {@link YamlReader}: content that is not UTF-8, not YAML of that data model (an anchor, an
  * alias, an explicit tag, a key that is not a string, a duplicate key, ...) or whose root is not a mapping is
  * {@link StoreOutcome#MALFORMED}, its detail naming the position, never the content. A codec is immutable and may
@@ -89,12 +92,18 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
      * @param value the data, a value of the JSON data model
      * @return the canonical UTF-8 content
      * @throws NullPointerException     if {@code value} is {@code null}
-     * @throws IllegalArgumentException if the data holds a value outside the JSON data model
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model, or its YAML would be
+     *                                  longer than {@link #decode(byte[])} reads: 3,145,728 code points
      */
     @Override
     public byte[] encode(Map<String, @Nullable Object> value) {
         Objects.requireNonNull(value, "value");
-        return WRITER.write(ordered(value, shape)).getBytes(StandardCharsets.UTF_8);
+        String yaml = WRITER.write(ordered(value, shape));
+        if (yaml.codePointCount(0, yaml.length()) > YamlReader.CODE_POINT_LIMIT) {
+            throw new IllegalArgumentException("value: the YAML would be longer than " + YamlReader.CODE_POINT_LIMIT
+                    + " code points, which decode refuses");
+        }
+        return yaml.getBytes(StandardCharsets.UTF_8);
     }
 
     /**
@@ -145,7 +154,8 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
             return sorted;
         }
         if (value instanceof List<?> list) {
-            return list.stream().map(item -> ordered(item, shape.item())).toList();
+            return IntStream.range(0, list.size()).mapToObj(index -> ordered(list.get(index), shape.item(index)))
+                    .toList();
         }
         return value;
     }
