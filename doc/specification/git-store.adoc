@@ -363,10 +363,12 @@ alive. A failed collection is the passed-on `FAILED` with the detail `gc: <excep
 `GIT_STORE-102` and at DEBUG with the exception class only; no log record attaches the exception, and neither names
 its message or its causes, which may carry a path (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). JGit 7.8.0 `GC.doGc`
 returns without collecting and without an error while another collection holds the clone's `gc.pid`, which
-`GC.PidLock` takes for a running collection when it was modified less than 12 hours ago; the expiry then does not run
-the collection at all, logs `GIT_STORE-104` and ends in the passed-on `CONFLICT` with the detail
-`gc: skipped, another collection holds gc.pid`, which may be retried, so a skipped collection is never reported as a
-successful expiry; the drafts it deleted stay deleted.
+`GC.PidLock` takes for a running collection when it was modified less than 12 hours ago, and calls the command's
+progress monitor (`GarbageCollectCommand.setProgressMonitor`, passed on to `GC.setProgressMonitor`) with `start` only
+after it took `gc.pid`. The expiry gives the command a progress monitor; when that monitor was never started, the
+collection was skipped, however late the other collection took `gc.pid`, and the expiry logs `GIT_STORE-104` and ends
+in the passed-on `CONFLICT` with the detail `gc: skipped, another collection holds gc.pid`, which may be retried, so a
+skipped collection is never reported as a successful expiry; the drafts it deleted stay deleted.
 
 [#GDR-STORE-8]
 == GDR-STORE-8: Author, Committer and Credentials

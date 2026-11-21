@@ -16,12 +16,9 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -37,6 +34,7 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
 import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
@@ -64,9 +62,12 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * ({@code GC.deleteOldPacks}), so nothing unreachable survives in a fresh loose object. It runs no hook and starts no
  * process: the repository's {@code FS} is asked for file times only. Every reference update of the store disables the
  * reflog, so no reflog keeps an object of a deleted draft alive. JGit 7.8.0 {@code GC.doGc} returns without collecting
- * and without an error while another collection holds {@code gc.pid} ({@code GC.PidLock}); such a collection is not
- * started at all and the expiry ends in {@link GitOutcome#CONFLICT}, which may be retried, so a skipped collection is
- * never reported as a successful expiry. The drafts it deleted stay deleted.
+ * and without an error while another collection holds {@code gc.pid} ({@code GC.PidLock}), and calls
+ * {@code ProgressMonitor.start} only after it took that file; the expiry gives the command a progress monitor
+ * ({@code GarbageCollectCommand.setProgressMonitor}, passed on to {@code GC.setProgressMonitor}) and, when that monitor
+ * was never started, ends in {@link GitOutcome#CONFLICT}, which may be retried, so a skipped collection is never
+ * reported as a successful expiry, however late the other collection took {@code gc.pid}. The drafts it deleted stay
+ * deleted.
  * <p>
  * A failure detail and the debug log name the exception class only, never its message, which may carry a path
  * (GDR-NFR-3).
@@ -80,9 +81,6 @@ final class DraftExpiry {
 
     /** The file a running JGit garbage collection holds in the git directory (JGit 7.8.0 {@code GC.PidLock}). */
     static final String GC_PID = "gc.pid";
-
-    /** The age below which JGit 7.8.0 {@code GC.PidLock} takes a {@value #GC_PID} for a running collection. */
-    private static final int GC_PID_HOURS = 12;
 
     /** The detail of a skipped garbage collection. */
     static final String GC_SKIPPED = "gc: skipped, another collection holds " + GC_PID;
@@ -215,45 +213,70 @@ final class DraftExpiry {
     }
 
     /**
-     * Collects the garbage with both expiries {@value #NOW}; the value of a success is unused. A collection JGit would
-     * skip because another one holds {@value #GC_PID} is not run and is passed on as {@link GitOutcome#CONFLICT}, which
-     * may be retried.
+     * Collects the garbage with both expiries {@value #NOW}; the value of a success is unused. A collection JGit skips
+     * because another one holds {@value #GC_PID}, which its progress monitor shows by never being started, is passed on
+     * as {@link GitOutcome#CONFLICT}, which may be retried.
      */
     private StoreResult<List<String>> collectGarbage() {
-        if (collectionRunningElsewhere()) {
-            LOGGER.warn(GitStoreLogMessages.WARN.GARBAGE_COLLECTION_SKIPPED, alias);
-            return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.CONFLICT), null, GC_SKIPPED);
-        }
         StoredConfig config = repository.getConfig();
         config.setString(ConfigConstants.CONFIG_GC_SECTION, null, ConfigConstants.CONFIG_KEY_PRUNEEXPIRE, NOW);
         config.setString(ConfigConstants.CONFIG_GC_SECTION, null, ConfigConstants.CONFIG_KEY_PRUNEPACKEXPIRE, NOW);
+        var started = new StartRecordingMonitor();
         try (Git git = Git.wrap(repository)) {
-            git.gc().call();
-            return StoreResult.ok(List.of());
+            git.gc().setProgressMonitor(started).call();
         } catch (GitAPIException | JGitInternalException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("The garbage collection of %s failed: %s", alias, type);
             LOGGER.warn(GitStoreLogMessages.WARN.GARBAGE_COLLECTION_FAILED, alias, type);
             return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null, "gc: " + type);
         }
+        if (!started.started()) {
+            LOGGER.warn(GitStoreLogMessages.WARN.GARBAGE_COLLECTION_SKIPPED, alias);
+            return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.CONFLICT), null, GC_SKIPPED);
+        }
+        return StoreResult.ok(List.of());
     }
 
     /**
-     * Whether another garbage collection holds the clone's {@value #GC_PID}: JGit 7.8.0 {@code GC.PidLock.lock} treats
-     * a {@value #GC_PID} modified less than {@value #GC_PID_HOURS} hours ago as a running collection, and
-     * {@code GC.doGc} then returns without collecting and without an error. An unreadable file time counts as held.
+     * A progress monitor that records whether the collection started: JGit 7.8.0 {@code GC.doGc} calls
+     * {@link #start(int)} only after it took {@value #GC_PID}, so a monitor never started marks a skipped collection.
      */
-    private boolean collectionRunningElsewhere() {
-        Path pid = repository.getDirectory().toPath().resolve(GC_PID);
-        if (!Files.exists(pid)) {
+    private static final class StartRecordingMonitor implements ProgressMonitor {
+
+        private boolean started;
+
+        boolean started() {
+            return started;
+        }
+
+        @Override
+        public void start(int totalTasks) {
+            started = true;
+        }
+
+        @Override
+        public void beginTask(String title, int totalWork) {
+            // the progress of a running collection is not reported
+        }
+
+        @Override
+        public void update(int completed) {
+            // the progress of a running collection is not reported
+        }
+
+        @Override
+        public void endTask() {
+            // the progress of a running collection is not reported
+        }
+
+        @Override
+        public boolean isCancelled() {
             return false;
         }
-        try {
-            Instant modified = Files.getLastModifiedTime(pid).toInstant();
-            return modified.isAfter(Instant.now().minus(GC_PID_HOURS, ChronoUnit.HOURS));
-        } catch (IOException e) {
-            LOGGER.debug("The time of %s is unreadable: %s", GC_PID, e.getClass().getSimpleName());
-            return true;
+
+        @Override
+        public void showDuration(boolean enabled) {
+            // the progress of a running collection is not reported
         }
     }
 }

@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +69,7 @@ import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.api.errors.JGitInternalException;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
@@ -81,6 +83,7 @@ import org.eclipse.jgit.revwalk.ObjectWalk;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevObject;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.jspecify.annotations.Nullable;
@@ -94,8 +97,10 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code drafts.expiry} is deleted, a younger one kept, and a draft changed between the read and the delete kept; after
  * the run the objects reachable only from deleted drafts are gone from the object database, while every object
  * reachable from {@code main}, the working branches and the kept drafts is still there. A stale draft whose update is
- * paused between its existence check and its compare-and-swap is not deleted beneath it. A failed garbage collection
- * is passed on as {@link GitOutcome#FAILED} naming the exception class only.
+ * paused between its existence check and its compare-and-swap is not deleted beneath it. A garbage collection JGit
+ * skips because another process holds {@code gc.pid}, whether taken before the expiry or while it runs, is a
+ * {@link GitOutcome#CONFLICT}, and a failed one is passed on as {@link GitOutcome#FAILED} naming the exception class
+ * only.
  * <p>
  * Names, ids, pseudonyms, paths, contents, periods and times are generated; the reference prefixes and the details are
  * the specified vocabulary and kept as literals.
@@ -255,6 +260,40 @@ class DraftExpiryTest {
 
         ObjectId movedTo() {
             return Objects.requireNonNull(movedTo, "the reference was moved");
+        }
+    }
+
+    /**
+     * A repository in which another process takes {@value DraftExpiry#GC_PID} after the expiry has written its
+     * {@code gc.pruneExpire} into the configuration and before JGit takes that file: JGit 7.8.0
+     * {@code GarbageCollectCommand} reads the configuration in its constructor, before {@code GC.doGc} takes its
+     * {@code GC.PidLock}.
+     */
+    private static final class PidTakingRepository extends FileRepository {
+
+        private boolean taken;
+
+        PidTakingRepository(File gitDir) throws IOException {
+            super(gitDir);
+        }
+
+        @Override
+        public FileBasedConfig getConfig() {
+            FileBasedConfig config = super.getConfig();
+            if (!taken && config.getString(ConfigConstants.CONFIG_GC_SECTION, null,
+                    ConfigConstants.CONFIG_KEY_PRUNEEXPIRE) != null) {
+                taken = true;
+                try {
+                    Files.writeString(getDirectory().toPath().resolve(DraftExpiry.GC_PID), word() + " " + word());
+                } catch (IOException e) {
+                    throw new UncheckedIOException("the fixture gc.pid is written", e);
+                }
+            }
+            return config;
+        }
+
+        boolean taken() {
+            return taken;
         }
     }
 
@@ -563,6 +602,32 @@ class DraftExpiryTest {
             }
 
             assertAll(
+                    () -> assertEquals(new StoreResult<List<String>>(new StoreResult.PassedOn(GitOutcome.CONFLICT),
+                            null, DraftExpiry.GC_SKIPPED), result, "the skipped collection is a conflict"),
+                    () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.GARBAGE_COLLECTION_SKIPPED.resolveIdentifierString()));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-7: a garbage collection skipped for a gc.pid taken after the expiry began is a CONFLICT")
+        void collectionSkippedForPidTakenMeanwhileIsNoSuccess() throws Exception {
+            var gitDir = bareRepository();
+            var now = time();
+            var draftRef = value(StoreReferences.draft(pseudonym(), key(Kind.MAIN)));
+            try (Repository writer = openRepository(gitDir)) {
+                commit(writer, draftRef, content(), now);
+            }
+
+            StoreResult<List<String>> result;
+            boolean taken;
+            try (var repository = new PidTakingRepository(gitDir.toFile())) {
+                result = new DraftExpiry(word(), repository, new RepositoryGuard(),
+                        new ReferenceUpdater(new InCoreWriter()), expiry(), ATTEMPTS).expire(now);
+                taken = repository.taken();
+            }
+
+            assertAll(
+                    () -> assertTrue(taken, "the other process takes gc.pid before JGit does"),
                     () -> assertEquals(new StoreResult<List<String>>(new StoreResult.PassedOn(GitOutcome.CONFLICT),
                             null, DraftExpiry.GC_SKIPPED), result, "the skipped collection is a conflict"),
                     () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
