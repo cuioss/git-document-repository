@@ -76,13 +76,13 @@ final class DraftExpiry {
     private static final CuiLogger LOGGER = new CuiLogger(DraftExpiry.class);
 
     /** The expiry of the garbage collection: every unreferenced object and old pack, git's own word. */
-    static final String NOW = "now";
+    private static final String NOW = "now";
 
     /** The file a running JGit garbage collection holds in the git directory (JGit 7.8.0 {@code GC.PidLock}). */
     static final String GC_PID = "gc.pid";
 
     /** The age below which JGit 7.8.0 {@code GC.PidLock} takes a {@value #GC_PID} for a running collection. */
-    static final int GC_PID_HOURS = 12;
+    private static final int GC_PID_HOURS = 12;
 
     /** The detail of a skipped garbage collection. */
     static final String GC_SKIPPED = "gc: skipped, another collection holds " + GC_PID;
