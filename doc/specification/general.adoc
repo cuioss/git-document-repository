@@ -76,8 +76,11 @@ JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with 
 `de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
 end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
 `mockwebserver3` and `okhttp-tls` with it, in that test scope as well. The version of JGit is managed in the root POM,
-the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
-approval before it is added:
+the versions of the others by `cui-java-parent`. On 2026-11-21 the owner approved the YAML library
+`org.snakeyaml:snakeyaml-engine` and the JSON Schema validator `dev.harrel:json-schema` for `git-forms`; both add no
+further artifact to the compile or runtime closure (versions and sources checked:
+xref:git-forms.adoc[`git-forms`]). Every other dependency below is open and needs the owner's approval before it is
+added:
 
 [cols="1,3"]
 |===
@@ -92,7 +95,8 @@ redirect test, `cui-test-generator` and JUnit 5 (each declared)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); possibly JGit's
 `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
-|`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
+|`git-forms` |`org.snakeyaml:snakeyaml-engine` and `dev.harrel:json-schema` (each declared, decided); a template
+engine (open)
 |`git-timestamp` |an RFC 3161 client library (open)
 |`git-directory` |none beyond those of `git-forms`
 |===

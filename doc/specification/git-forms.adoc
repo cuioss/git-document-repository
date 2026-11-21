@@ -5,8 +5,34 @@
 :source-highlighter: highlight.js
 
 `git-forms` (module `de.cuioss.git.document.forms`, not yet created) is the layer of schema-driven documents on top of
-`git-store`. Its third-party dependencies (a YAML library, a JSON Schema validator, a template engine) are open and
-need the owner's approval. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+`git-store`. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+
+Its two libraries are decided; the owner approved both on 2026-11-21:
+
+* The YAML library is `org.snakeyaml:snakeyaml-engine`, checked at version 3.2. Its POM declares test-scope
+  dependencies only, so it adds nothing to the compile or runtime closure
+  (link:https://repo1.maven.org/maven2/org/snakeyaml/snakeyaml-engine/3.2/snakeyaml-engine-3.2.pom[snakeyaml-engine 3.2
+  POM]). Its jar holds a `module-info.class` of the module `org.snakeyaml.engine`, which requires `java.base` only, and
+  no `META-INF/native-image/` entry
+  (link:https://repo1.maven.org/maven2/org/snakeyaml/snakeyaml-engine/3.2/snakeyaml-engine-3.2.jar[snakeyaml-engine 3.2
+  jar]).
+* The JSON Schema validator is `dev.harrel:json-schema`, checked at version 1.9.1. Its POM declares no compile
+  dependency. Every runtime dependency it declares (the JSON providers Jackson, Gson, `org.json`, kotlinx
+  serialization, Jakarta JSON, Jettison, json-smart and SnakeYAML, and `jmail` for the format `email`) is `optional`,
+  and Maven does not pass an optional dependency on to a consumer
+  (link:https://repo1.maven.org/maven2/dev/harrel/json-schema/1.9.1/json-schema-1.9.1.pom[json-schema 1.9.1 POM];
+  link:https://maven.apache.org/guides/introduction/introduction-to-optional-and-excludes-dependencies.html[Maven,
+  Optional Dependencies]). The JSON data reaches the validator through its public interfaces `JsonNodeFactory` and
+  `JsonNode`, which a caller can implement over its own data model
+  (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/JsonNodeFactory.java[json-schema
+  1.9.1, `JsonNodeFactory`]), so no further artifact is needed. Its jar has no `module-info.class`; its manifest
+  names the automatic module `dev.harrel.jsonschema`
+  (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/build.gradle[json-schema 1.9.1, `lib/build.gradle`]).
+  The jar holds no `META-INF/native-image/` entry, but it does hold resources: its message bundle
+  `dev/harrel/jsonschema/messages.properties` and its bundled meta-schemas
+  (link:https://repo1.maven.org/maven2/dev/harrel/json-schema/1.9.1/json-schema-1.9.1.jar[json-schema 1.9.1 jar]).
+
+The template engine is still open and needs the owner's approval.
 
 [#GDR-FORMS-1]
 == GDR-FORMS-1: Kinds of Documents as Configuration
@@ -49,7 +75,8 @@ chosen by the application.
 * The schema file must be plain JSON Schema, usable unchanged by a validator outside the library that supports its
   dialect; link targets (<<GDR-FORMS-8>>) only the library checks.
 
-The dialect is open. Apart from the person entries of the `git` person directory
+The dialect is JSON Schema Draft 2020-12 with the `$schema` URI `https://json-schema.org/draft/2020-12/schema`
+(link:https://json-schema.org/draft/2020-12[JSON Schema, Draft 2020-12]). Apart from the person entries of the `git` person directory
 (xref:git-directory.adoc#GDR-DIR-2[GDR-DIR-2]), the one kind that holds a name
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), documents hold no personal data beyond pseudonyms and have no encrypted
 field type: a field that names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory`
