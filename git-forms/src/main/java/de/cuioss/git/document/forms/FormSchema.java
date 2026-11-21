@@ -15,10 +15,6 @@
  */
 package de.cuioss.git.document.forms;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -105,14 +101,8 @@ public final class FormSchema {
     public static FormsResult<FormSchema> parse(String path, byte[] content) {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(content, "content");
-        String text;
-        try {
-            text = StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(content))
-                    .toString();
-        } catch (CharacterCodingException e) {
+        String text = YamlReader.decodeUtf8(content);
+        if (text == null) {
             return malformed(path, "not UTF-8");
         }
         FormsResult<Object> read = YAML.read(text);

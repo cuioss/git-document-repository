@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 
 import dev.harrel.jsonschema.Error;
@@ -71,13 +70,11 @@ public final class SchemaValidator {
         if (result.isValid()) {
             return new ValidationResult.Valid();
         }
-        Set<Violation> violations = result.getErrors().stream()
+        List<Violation> violations = result.getErrors().stream()
                 .map(error -> violation(schema, error))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        if (violations.isEmpty()) {
-            violations.add(new Violation("", "does not match the schema"));
-        }
-        return new ValidationResult.Invalid(List.copyOf(violations));
+                .toList();
+        return new ValidationResult.Invalid(
+                violations.isEmpty() ? List.of(new Violation("", "does not match the schema")) : violations);
     }
 
     /**
