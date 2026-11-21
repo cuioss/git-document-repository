@@ -16,6 +16,7 @@
 package de.cuioss.git.document.forms;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,7 @@ import org.jspecify.annotations.Nullable;
  * file and the problem, never content of the schema (GDR-NFR-3): text that is not UTF-8 or not JSON within the JSON
  * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
  * {@code $dynamicRef} that points outside the schema file, {@value #SPLIT} that is not a boolean or not on a top-level
- * property of type {@code object}, and a schema the validator {@code dev.harrel:json-schema} refuses, for example one
+ * property of type {@code object}, {@code required} that is not an array of unique strings, and a schema the validator {@code dev.harrel:json-schema} refuses, for example one
  * that does not conform to the meta-schema of the dialect. A schema is immutable and may serve every thread.
  *
  * @since 0.1
@@ -66,7 +67,8 @@ public final class FormSchema {
 
     /** The keywords whose value is one sub-schema. */
     private static final Set<String> SCHEMA_VALUES = Set.of(ITEMS, "additionalProperties", "not", "if", "then", "else",
-            "contains", "propertyNames", "unevaluatedItems", "unevaluatedProperties", "additionalItems");
+            "contains", "propertyNames", "unevaluatedItems", "unevaluatedProperties", "additionalItems",
+            "contentSchema");
 
     /** The keywords whose value is a list of sub-schemas. */
     private static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", "prefixItems");
@@ -130,35 +132,75 @@ public final class FormSchema {
 
     /**
      * Checks a schema and its sub-schemas: references within the file only, {@value #SPLIT} only as a boolean on a
-     * top-level property of type {@code object}.
+     * top-level property of type {@code object}, {@code required} only as an array of unique strings.
      *
      * @return the problem, or {@code null} when there is none
      */
     private static @Nullable String checkSubSchemas(Map<?, ?> schema, boolean topLevelProperty, boolean root) {
-        for (String reference : REFERENCES) {
-            if (schema.get(reference) instanceof String target && !target.startsWith("#")) {
-                return reference + ": a reference outside the schema file";
-            }
-        }
-        if (schema.containsKey(SPLIT)) {
-            if (!(schema.get(SPLIT) instanceof Boolean split)) {
-                return SPLIT + ": not a boolean";
-            }
-            if (split && !(topLevelProperty && "object".equals(schema.get("type")))) {
-                return SPLIT + ": only on a top-level property of type object";
-            }
+        @Nullable String problem = checkKeywords(schema, topLevelProperty);
+        if (problem != null) {
+            return problem;
         }
         for (Map.Entry<?, ?> entry : schema.entrySet()) {
             Object keyword = entry.getKey();
             for (Map<?, ?> subSchema : subSchemas(keyword, entry.getValue())) {
-                boolean property = root && PROPERTIES.equals(keyword);
-                @Nullable String problem = checkSubSchemas(subSchema, property, false);
+                problem = checkSubSchemas(subSchema, root && PROPERTIES.equals(keyword), false);
                 if (problem != null) {
                     return problem;
                 }
             }
         }
         return null;
+    }
+
+    /** Checks the keywords of one schema, not its sub-schemas; the problem, or {@code null}. */
+    private static @Nullable String checkKeywords(Map<?, ?> schema, boolean topLevelProperty) {
+        @Nullable String problem = checkReferences(schema);
+        if (problem == null) {
+            problem = checkSplit(schema, topLevelProperty);
+        }
+        if (problem == null) {
+            problem = checkRequired(schema);
+        }
+        return problem;
+    }
+
+    private static @Nullable String checkReferences(Map<?, ?> schema) {
+        for (String reference : REFERENCES) {
+            if (schema.get(reference) instanceof String target && !target.startsWith("#")) {
+                return reference + ": a reference outside the schema file";
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable String checkSplit(Map<?, ?> schema, boolean topLevelProperty) {
+        if (!schema.containsKey(SPLIT)) {
+            return null;
+        }
+        @Nullable Object split = schema.get(SPLIT);
+        if (!(split instanceof Boolean)) {
+            return SPLIT + ": not a boolean";
+        }
+        if (Boolean.TRUE.equals(split) && !(topLevelProperty && "object".equals(schema.get("type")))) {
+            return SPLIT + ": only on a top-level property of type object";
+        }
+        return null;
+    }
+
+    /**
+     * Checks the keyword {@code required}, which the validator never sees, because validation evaluates the schema
+     * without it: it must be an array of unique strings. The reason quotes nothing of the schema.
+     */
+    private static @Nullable String checkRequired(Map<?, ?> schema) {
+        if (!schema.containsKey(REQUIRED)) {
+            return null;
+        }
+        if (schema.get(REQUIRED) instanceof List<?> names && names.stream().allMatch(String.class::isInstance)
+                && new HashSet<>(names).size() == names.size()) {
+            return null;
+        }
+        return REQUIRED + ": not an array of unique strings";
     }
 
     /** The sub-schemas that are objects in the value of a keyword; empty for a keyword that holds no schema. */

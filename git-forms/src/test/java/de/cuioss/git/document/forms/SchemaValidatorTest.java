@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -35,6 +37,7 @@ import java.util.stream.Stream;
 import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import dev.harrel.jsonschema.SimpleType;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -243,7 +246,19 @@ class SchemaValidatorTest {
                             "{ \"properties\": { \"a\": { \"type\": \"string\", \"gdr-split\": true } } }",
                             "gdr-split: only on a top-level property of type object"),
                     Arguments.of("a schema against the meta-schema", "{ \"type\": 5 }",
-                            "not a JSON Schema the validator accepts"));
+                            "not a JSON Schema the validator accepts"),
+                    Arguments.of("required that is a boolean", "{ \"required\": true }",
+                            "required: not an array of unique strings"),
+                    Arguments.of("required with an item that is not a string", "{ \"required\": [\"a\", 1] }",
+                            "required: not an array of unique strings"),
+                    Arguments.of("required with a duplicate name", "{ \"required\": [\"a\", \"a\"] }",
+                            "required: not an array of unique strings"),
+                    Arguments.of("required that is not an array in a sub-schema",
+                            "{ \"properties\": { \"a\": { \"type\": \"object\", \"required\": \"b\" } } }",
+                            "required: not an array of unique strings"),
+                    Arguments.of("a reference outside the file in contentSchema",
+                            "{ \"contentSchema\": { \"$ref\": \"other.schema.json\" } }",
+                            "$ref: a reference outside the schema file"));
         }
 
         @ParameterizedTest(name = "GDR-FORMS-2: {0} is MALFORMED, naming the schema file")
@@ -269,14 +284,64 @@ class SchemaValidatorTest {
         void nullArguments() {
             byte[] content = SCHEMA.getBytes(StandardCharsets.UTF_8);
             var schema = schema(SCHEMA);
+            Map<String, @Nullable Object> data = Map.of();
+            String nullPath = nullValue();
+            byte[] nullContent = nullValue();
+            FormSchema nullSchema = nullValue();
+            Map<String, @Nullable Object> nullData = nullValue();
 
             assertAll(
-                    () -> assertThrows(NullPointerException.class, () -> FormSchema.parse(nullValue(), content)),
-                    () -> assertThrows(NullPointerException.class, () -> FormSchema.parse(PATH, nullValue())),
-                    () -> assertThrows(NullPointerException.class, () -> validator.validate(nullValue(), Map.of())),
-                    () -> assertThrows(NullPointerException.class, () -> validator.validate(schema, nullValue())),
-                    () -> assertThrows(NullPointerException.class, () -> validator.required(nullValue(), Map.of())),
-                    () -> assertThrows(NullPointerException.class, () -> validator.required(schema, nullValue())));
+                    () -> assertThrows(NullPointerException.class, () -> FormSchema.parse(nullPath, content)),
+                    () -> assertThrows(NullPointerException.class, () -> FormSchema.parse(PATH, nullContent)),
+                    () -> assertThrows(NullPointerException.class, () -> validator.validate(nullSchema, data)),
+                    () -> assertThrows(NullPointerException.class, () -> validator.validate(schema, nullData)),
+                    () -> assertThrows(NullPointerException.class, () -> validator.required(nullSchema, data)),
+                    () -> assertThrows(NullPointerException.class, () -> validator.required(schema, nullData)));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: contentSchema is a sub-schema, so required is removed from it for validate")
+        void contentSchemaIsSubSchema() {
+            var schema = schema("""
+                    {
+                      "type": "object",
+                      "contentSchema": { "type": "object", "required": ["x"] },
+                      "properties": { "a": { "$ref": "#/contentSchema" } }
+                    }
+                    """);
+            Map<String, @Nullable Object> data = Map.of("a", Map.of());
+
+            assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                    "required inside contentSchema is not evaluated by validate");
+        }
+    }
+
+    @Nested
+    @DisplayName("data model")
+    class DataModel {
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a value outside the data model is refused, also where no keyword leads")
+        void valueOutsideDataModel() {
+            var schema = schema("{}");
+            Map<String, @Nullable Object> data = Map.of("values", List.of(1.5d));
+
+            assertThrows(IllegalArgumentException.class, () -> validator.validate(schema, data),
+                    "a Double inside a list is not of the data model");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a decimal without fraction is an integer, whatever its scale")
+        void integralDecimals() {
+            var hugeExponent = new BigDecimal(BigInteger.TEN, Integer.MIN_VALUE);
+
+            assertAll(
+                    () -> assertEquals(SimpleType.INTEGER, DataNode.root(hugeExponent).getNodeType(),
+                            "a negative scale is integral and does not throw"),
+                    () -> assertEquals(SimpleType.INTEGER, DataNode.root(new BigDecimal("1.00")).getNodeType(),
+                            "trailing zeros are integral"),
+                    () -> assertEquals(SimpleType.NUMBER, DataNode.root(new BigDecimal("1.50")).getNodeType(),
+                            "a fraction is a number"));
         }
     }
 

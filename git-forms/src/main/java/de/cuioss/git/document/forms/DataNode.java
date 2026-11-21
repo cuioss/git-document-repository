@@ -65,7 +65,26 @@ final class DataNode implements JsonNode {
      * @throws IllegalArgumentException if the value or a value inside it is outside the data model
      */
     static DataNode root(@Nullable Object value) {
+        requireDataModel(value);
         return new DataNode(value, "");
+    }
+
+    /**
+     * Checks a value and every value inside it against the data model, at the boundary: the validator descends only
+     * where a keyword of the schema leads it, so a value it never reaches would otherwise pass unchecked.
+     */
+    private static void requireDataModel(@Nullable Object value) {
+        typeOf(value);
+        if (value instanceof List<?> list) {
+            list.forEach(DataNode::requireDataModel);
+        } else if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!(entry.getKey() instanceof String)) {
+                    throw new IllegalArgumentException("not of the JSON data model: a key that is not a string");
+                }
+                requireDataModel(entry.getValue());
+            }
+        }
     }
 
     private static SimpleType typeOf(@Nullable Object value) {
@@ -94,7 +113,8 @@ final class DataNode implements JsonNode {
     }
 
     private static boolean isIntegral(BigDecimal number) {
-        return number.signum() == 0 || number.stripTrailingZeros().scale() <= 0;
+        // a scale of at most 0 is integral as it is; stripping it could leave the range of int and throw
+        return number.scale() <= 0 || number.signum() == 0 || number.stripTrailingZeros().scale() <= 0;
     }
 
     @Override
@@ -160,9 +180,8 @@ final class DataNode implements JsonNode {
             Map<String, JsonNode> built = new LinkedHashMap<>();
             if (value instanceof Map<?, ?> map) {
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    if (!(entry.getKey() instanceof String key)) {
-                        throw new IllegalArgumentException("not of the JSON data model: a key that is not a string");
-                    }
+                    // every key is a string: the root checked the whole value
+                    String key = (String) entry.getKey();
                     built.put(key, new DataNode(entry.getValue(), pointer + "/" + JsonNode.encodeJsonPointer(key)));
                 }
             }
@@ -201,7 +220,7 @@ final class DataNode implements JsonNode {
         @Override
         public JsonNode wrap(Object node) {
             return switch (node) {
-                case DataNode data -> root(data.value);
+                case DataNode data -> new DataNode(data.value, "");
                 case JsonNode foreign -> throw new IllegalArgumentException(
                         "not a node of git-forms: " + foreign.getClass().getName());
                 default -> root(node);

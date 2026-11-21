@@ -53,6 +53,9 @@ public final class SchemaValidator {
     /** The message provider of the library, reduced to the message key: the library's texts are never shown. */
     private static final MessageProvider KEY_ONLY = (key, arguments) -> key;
 
+    private static final String AT_LEAST = "must have at least ";
+    private static final String AT_MOST = "must have at most ";
+
     /**
      * Validates data against a schema, the keyword {@code required} not evaluated.
      *
@@ -126,30 +129,47 @@ public final class SchemaValidator {
             return;
         }
         if (data instanceof Map<?, ?> object) {
-            if (keywords.get("required") instanceof List<?> names) {
-                for (Object name : names) {
-                    if (name instanceof String key && !object.containsKey(key)) {
-                        missing.add(child(pointer, key));
-                    }
-                }
-            }
-            if (keywords.get("properties") instanceof Map<?, ?> properties) {
-                for (Map.Entry<?, ?> property : properties.entrySet()) {
-                    String key = (String) property.getKey();
-                    if (object.containsKey(key)) {
-                        collectMissing(property.getValue(), object.get(key), child(pointer, key), missing);
-                    }
-                }
-            }
+            collectRequired(keywords, object, pointer, missing);
+            collectProperties(keywords, object, pointer, missing);
         }
-        if (data instanceof List<?> items && keywords.get("items") instanceof Map<?, ?> itemSchema) {
-            for (int index = 0; index < items.size(); index++) {
-                collectMissing(itemSchema, items.get(index), pointer + "/" + index, missing);
-            }
+        if (data instanceof List<?> items) {
+            collectItems(keywords, items, pointer, missing);
         }
         if (keywords.get("allOf") instanceof List<?> all) {
             for (Object subSchema : all) {
                 collectMissing(subSchema, data, pointer, missing);
+            }
+        }
+    }
+
+    /** The names of the keyword {@code required} of a schema that the object does not hold. */
+    private static void collectRequired(Map<?, ?> keywords, Map<?, ?> object, String pointer, Set<String> missing) {
+        if (keywords.get("required") instanceof List<?> names) {
+            for (Object name : names) {
+                if (name instanceof String key && !object.containsKey(key)) {
+                    missing.add(child(pointer, key));
+                }
+            }
+        }
+    }
+
+    /** The missing fields within the properties the object holds, by the sub-schema of each property. */
+    private static void collectProperties(Map<?, ?> keywords, Map<?, ?> object, String pointer, Set<String> missing) {
+        if (keywords.get("properties") instanceof Map<?, ?> properties) {
+            for (Map.Entry<?, ?> property : properties.entrySet()) {
+                String key = (String) property.getKey();
+                if (object.containsKey(key)) {
+                    collectMissing(property.getValue(), object.get(key), child(pointer, key), missing);
+                }
+            }
+        }
+    }
+
+    /** The missing fields within the items of an array, by the sub-schema {@code items}. */
+    private static void collectItems(Map<?, ?> keywords, List<?> items, String pointer, Set<String> missing) {
+        if (keywords.get("items") instanceof Map<?, ?> itemSchema) {
+            for (int index = 0; index < items.size(); index++) {
+                collectMissing(itemSchema, items.get(index), pointer + "/" + index, missing);
             }
         }
     }
@@ -207,21 +227,34 @@ public final class SchemaValidator {
             return "is not allowed by the schema";
         }
         String number = constraint instanceof Number ? constraint.toString() : "the limit of the schema";
+        @Nullable String bound = boundMessage(keyword, number);
+        return bound != null ? bound : constraintMessage(keyword, constraint);
+    }
+
+    /** The message of a keyword that bounds a number, a length or a count, or {@code null} for any other keyword. */
+    private static @Nullable String boundMessage(String keyword, String number) {
         return switch (keyword) {
-            case "type" -> "must be of type " + typeNames(constraint);
             case "minimum" -> "must be at least " + number;
             case "maximum" -> "must be at most " + number;
             case "exclusiveMinimum" -> "must be greater than " + number;
             case "exclusiveMaximum" -> "must be less than " + number;
             case "multipleOf" -> "must be a multiple of " + number;
-            case "minLength" -> "must have at least " + number + " characters";
-            case "maxLength" -> "must have at most " + number + " characters";
-            case "minItems" -> "must have at least " + number + " items";
-            case "maxItems" -> "must have at most " + number + " items";
-            case "minProperties" -> "must have at least " + number + " properties";
-            case "maxProperties" -> "must have at most " + number + " properties";
+            case "minLength" -> AT_LEAST + number + " characters";
+            case "maxLength" -> AT_MOST + number + " characters";
+            case "minItems" -> AT_LEAST + number + " items";
+            case "maxItems" -> AT_MOST + number + " items";
+            case "minProperties" -> AT_LEAST + number + " properties";
+            case "maxProperties" -> AT_MOST + number + " properties";
             case "minContains" -> "must contain at least " + number + " matching items";
             case "maxContains" -> "must contain at most " + number + " matching items";
+            default -> null;
+        };
+    }
+
+    /** The message of a keyword that bounds nothing countable. */
+    private static String constraintMessage(String keyword, @Nullable Object constraint) {
+        return switch (keyword) {
+            case "type" -> "must be of type " + typeNames(constraint);
             case "pattern" -> "must match the pattern of the schema";
             case "format" -> "must be of the format " + formatName(constraint);
             case "enum" -> "must be one of the values the schema lists";

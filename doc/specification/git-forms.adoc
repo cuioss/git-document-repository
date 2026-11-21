@@ -111,7 +111,8 @@ of `git-store`.
 
 `FormSchema.parse` reads the schema file of a kind as JSON within the JSON data model of ADR-0008 (through the
 `YamlReader` of <<GDR-FORMS-1>>). `$schema` must be absent or the URI of Draft 2020-12; a `$ref` or `$dynamicRef` must
-point into the same file (`#…`). The schema is checked by `dev.harrel:json-schema` 1.9.1 against the meta-schema of the
+point into the same file (`#…`); `required` must be an array of unique strings, in the schema and every sub-schema,
+because the validator evaluates the schema without it and so never checks its form. The schema is checked by `dev.harrel:json-schema` 1.9.1 against the meta-schema of the
 dialect, which the jar holds as the resource `draft2020-12.json`
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SpecificationVersion.java[json-schema
 1.9.1, `SpecificationVersion`]). A schema the library does not accept is the outcome `MALFORMED` of `git-store`, passed
@@ -119,8 +120,11 @@ on, its detail naming the schema file and the problem, never content of the sche
 
 The data reaches the validator through the library's public interfaces `JsonNodeFactory` and `JsonNode`, implemented by
 the package-private `DataNode` over the JSON data model, so none of the optional JSON providers of the library is used.
+`DataNode` checks the whole data against the data model before validation, every nested value included, and refuses a
+value outside it (a `Double`, for example) with an `IllegalArgumentException` that names the class, never the value; a
+`BigDecimal` without fraction (`1.00`, or one with a negative scale) is an integer.
 `SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema and every
-sub-schema, and returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
+sub-schema (`contentSchema` included), and returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
 `SchemaValidator.required` checks `required` alone, in the schema, in the sub-schema of every property the data holds,
 in `items` and in `allOf`, not through `$ref`, and returns `Valid` or `MandatoryFieldsMissing` with the JSON Pointers of
 the missing fields. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is
