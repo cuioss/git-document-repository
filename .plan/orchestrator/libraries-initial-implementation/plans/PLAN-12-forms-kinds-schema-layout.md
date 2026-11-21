@@ -72,6 +72,14 @@ validator are open dependencies the owner decides inside this plan.
 - Documents hold no personal data beyond pseudonyms (`p-…`) and no encrypted field type (GDR-FORMS-2).
 - The schema file stays plain JSON Schema usable unchanged by an outside validator; link checks (`gdr-link`) are
   PLAN-14.
+- Review lessons of PLAN-08 for tests and Sonar (`landings/PLAN-08.md`): a test asserts content, not only presence, and
+  asserts exact names where names are the contract; a fixture value a test relies on to differ is distinct by construction,
+  not from independent random draws; a concurrent scenario ends with one deadline, cancellation and `shutdownNow` with
+  `awaitTermination`; one throwing call per `assertThrows` lambda, no unused `throws` (Sonar S5778, S1130); a hand-kept
+  catalogue (`LogMessages.adoc`) is checked against its source by a test; never attach a throwable to a log record on a
+  path promised sanitised (GDR-NFR-3, DEBUG included).
+- The save PLAN-08 shipped has no per-attempt step; it comes with PLAN-09 deliverable 5, and `git-forms` uses it from PLAN-13
+  on. This plan consumes the save and the codec as they are.
 
 ## Done when
 

@@ -83,6 +83,7 @@ and prefilled unbound entries saved by an administrator and bound only by a firs
 - HYPOTHESIS: `git-store`'s save lets the caller run a check against the tip on every re-application attempt —
   confirm/refute at the save implementation PLAN-08 lands in `git-store/` (its save operation / edit callback type)
   (verify-at-outline); refuted → report the gap via the inbox rather than editing `git-store`.
+  - verdict: contradicted | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: re-read at c1e02fc: StoreWriter.save (StoreWriter.java 229) offers no per-attempt check against the tip; GDR-DIR-3 (git-directory.adoc 71-76) requires one on every attempt including re-applications; git-store.adoc GDR-STORE-3 names no hook: a store gap to stage, not to absorb in git-directory
 
 ## Expected Surface
 
@@ -95,7 +96,9 @@ and prefilled unbound entries saved by an administrator and bound only by a firs
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-15.
+- Depends on: PLAN-15, and through PLAN-14 and PLAN-13 on PLAN-09 deliverable 5 (the per-attempt save step: the hypothesis
+  of the Claim Labels was contradicted at `c1e02fc` — PLAN-08's `StoreWriter.save` has no such step — and the gap was folded
+  into PLAN-09 on 2026-11-21). The check against the tip of GDR-DIR-3 is that step.
 - Overlaps with: PLAN-15 — strictly sequential.
 - Adjacent to: application-side token handling — the caller supplies claims; the module never sees a token.
 

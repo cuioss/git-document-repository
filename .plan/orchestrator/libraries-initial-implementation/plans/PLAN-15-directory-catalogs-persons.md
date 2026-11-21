@@ -87,6 +87,7 @@ application-declared catalogs, retired never deleted (GDR-DIR-1), the default pe
 - HYPOTHESIS: the Crockford base32 encoder written for ULIDs in PLAN-08 can be reused for pseudonyms without a
   `git-directory` → `git-store` internal-package dependency — confirm/refute at the encoder type PLAN-08 lands in
   `git-store/` and its `module-info.java` exports (verify-at-outline).
+  - verdict: contradicted | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: re-read at c1e02fc: the Crockford encoder of Ulid.java is private static (132 encode, 47 ALPHABET) and the module exports only de.cuioss.git.document.store with public Ulid.next() and isValid(); no public base32 encoder exists, so a pseudonym (p- plus 26 characters, git-directory.adoc 47) cannot be built from git-store without a new public type or a second encoder in git-directory
 
 ## Expected Surface
 
@@ -102,6 +103,10 @@ application-declared catalogs, retired never deleted (GDR-DIR-1), the default pe
 ## Dependencies and Sequencing
 
 - Depends on: PLAN-14 (link / catalog-resolution interface, all of git-forms), PLAN-07 (`PersonDirectory`).
+- The Crockford encoder is not reusable from `git-store` (the hypothesis of the Claim Labels was contradicted at `c1e02fc`):
+  PLAN-08's `Ulid` keeps `encode` private and exports only `Ulid.next()` and `Ulid.isValid(...)`. `git-store` is consumed,
+  not changed, so this plan carries its own small encoder in `git-directory` for the `p-` pseudonym (checked against the
+  format of GDR-DIR-2 by a test); a public encoder in `git-store` is a store gap reported through the inbox, not absorbed.
 - Overlaps with: PLAN-16 — strictly sequential.
 - Adjacent to: `git-store/` and `git-forms/` — consumed, not changed.
 

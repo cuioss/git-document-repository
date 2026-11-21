@@ -83,6 +83,7 @@ owner decides inside this plan.
 - HYPOTHESIS: `git-store`'s save offers a hook to regenerate derived files from the re-applied commit's data on every
   attempt — confirm/refute at the save implementation PLAN-08 lands in `git-store/` (its save operation type)
   (verify-at-outline); refuted → report the gap to the orchestrator via the inbox instead of editing `git-store`.
+  - verdict: contradicted | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: re-read at c1e02fc: StoreWriter.save(Author, DocumentKey, Map<String,String> expectedBlobIds, String message) (StoreWriter.java 229) takes no callback; ExplicitSave 232-239 re-applies the draft's own edits per attempt; git-store.adoc 216-228 (GDR-STORE-3) names no hook, while GDR-FORMS-4 (git-forms.adoc 84-87) needs output regenerated on every attempt: a store gap to stage, not to absorb in git-forms
 
 ## Expected Surface
 
@@ -96,7 +97,9 @@ owner decides inside this plan.
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-12; PLAN-09 (release) and PLAN-10 (trailers carrying `Auth-Context` / `Auth-Time`).
+- Depends on: PLAN-12; PLAN-09 (release, and its deliverable 5, the per-attempt save step this plan regenerates output
+  through: the hypothesis of the Claim Labels was contradicted at `c1e02fc` — PLAN-08's `StoreWriter.save` has no such
+  step — and the gap was folded into PLAN-09 on 2026-11-21) and PLAN-10 (trailers carrying `Auth-Context` / `Auth-Time`).
 - Overlaps with: WS-03 plans — strictly sequential.
 - Adjacent to: deadlines (GDR-FORMS-6) — parsed here, evaluated in PLAN-14.
 

@@ -71,6 +71,19 @@ file with validity periods, runnable from CI without the application (GDR-STORE-
 - Key material is never written in clear text, logged or put into a detail (GDR-NFR-3); test keys are generated per
   test run.
 
+- Review lessons of PLAN-08 (`landings/PLAN-08.md`): a green local build was followed by 18 valid bot findings and 33
+  Sonar findings, mostly races. For every reference operation that reads and then writes or deletes, name the locks and
+  the readers between the check and the compare-and-swap and test each with a pause point; capture identifiers once and
+  re-apply them on a retry; derive remote state from the fetch result, never from mirror references; never attach a
+  throwable to a log record on a path promised sanitised (DEBUG included, GDR-NFR-3; key material and signer failures
+  included); a test asserts content, takes fixture values that differ by construction, and ends a concurrent scenario with
+  one deadline, cancellation and `shutdownNow` with `awaitTermination` (never `ExecutorService.close()`); one throwing call
+  per `assertThrows` lambda, no unused `throws`, JGit returns (`getRef`, `resolve`, `getObjectId`) treated as `@Nullable`
+  (Sonar S5778, S1130, S4449). Plan for a second review pass.
+- The commit path PLAN-08 shipped is `ExplicitSave` with `CommitIdentities` (author pseudonym, technical-user committer,
+  `commit.email`); signature and trailers are added on that path, not beside it, and `git-core` stays read-only (PLAN-08
+  edited it against its outline; report a `git-core` gap instead).
+
 ## Done when
 
 - `verify` passes at the plan's head with GDR-STORE-12/13/14 each covered by a test naming the requirement id, and

@@ -74,6 +74,26 @@ statement chain (GDR-STORE-18).
   an `undecidable` read blocks.
 - The provider only obtains and verifies proofs; every decision about subjects, notes and pushes stays in the engine,
   so `rfc3161` (PLAN-17) plugs in without engine changes.
+- The save's fetch prunes (`FetchInput.prune` with `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, PLAN-08): it deletes
+  every local reference below `refs/heads`, `refs/tags` and `refs/notes` whose source the remote does not advertise (JGit
+  7.8.0 `FetchProcess.deleteStaleTrackingRefs`; `git-core.adoc` § fetch). A local-only proof note, checkpoint tag or
+  checkpoint branch written before its push is therefore lost to a pruning fetch of a concurrent save: write and push it
+  under the one transport lock of the clone (`RepositoryGuard`), or keep it out of the pruned set, and test the
+  interleaving with a pause between the write and the push. "A local-only note is pushed, not re-requested"
+  (deliverable 2) holds only if the note survives until that push.
+- Review lessons of PLAN-08 (`landings/PLAN-08.md`): a green local build was followed by 18 valid bot findings and 33
+  Sonar findings, mostly races. For every reference operation that reads and then writes or deletes, name the locks and
+  the readers between the check and the compare-and-swap and test each with a pause point; capture identifiers once and
+  re-apply them on a retry; do not read a result code with several causes (`LOCK_FAILURE`) as one cause; derive remote
+  state from the fetch result, never from mirror references; give a destructive option (prune) an explicit scope; after an
+  irreversible remote effect report a later failure without contradicting it; detect a skipped operation from evidence
+  that it ran, not from a pre-check; a lock covers the reads its decision depends on; never attach a throwable to a log
+  record on a path promised sanitised (DEBUG included, GDR-NFR-3); a test asserts content, takes fixture values that differ
+  by construction, and ends a concurrent scenario with one deadline, cancellation and `shutdownNow` with
+  `awaitTermination` (never `ExecutorService.close()`); one throwing call per `assertThrows` lambda, no unused `throws`,
+  JGit returns (`getRef`, `resolve`, `getObjectId`) treated as `@Nullable` (Sonar S5778, S1130, S4449). Plan for a second
+  review pass.
+- `git-core` stays read-only (PLAN-08 edited it against its outline; report a `git-core` gap instead of absorbing it).
 
 ## Done when
 

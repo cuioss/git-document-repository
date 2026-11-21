@@ -2,10 +2,10 @@
   "id": "PLAN-08",
   "slug": "store-drafts-save",
   "workstream": "WS-02",
-  "status": "staged",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "plan-08-store-drafts-save",
+  "pr": "48",
+  "landing": "landings/PLAN-08.md",
   "seq": 8
 }
