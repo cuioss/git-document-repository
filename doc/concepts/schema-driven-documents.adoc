@@ -32,9 +32,10 @@ code.
 
 A *JSON Schema* per kind of document produces the form and validates the data before every save. Mandatory fields
 are the exception: a save accepts a document with mandatory fields missing, so that unfinished work can be shared,
-and a transition out of the workflow's first state, such as submitting for review, or into a release refuses it. Once
-the dialect is decided (see <<_open_questions>>), any validator that supports that dialect can check the same data
-outside the application.
+and a transition out of the workflow's first state, such as submitting for review, or into a release refuses it. The
+dialect is JSON Schema Draft 2020-12 (owner's decision, 2026-11-21;
+link:https://json-schema.org/draft/2020-12[JSON Schema, Draft 2020-12]), so any validator that supports Draft 2020-12
+can check the same data outside the application.
 
 == Data, Free Text and Generated Output
 
@@ -140,7 +141,7 @@ modelled.
 == Open Questions
 
 . Choose the template engine for the AsciiDoc output.
-. Decide the JSON Schema dialect and the form renderer it must support.
+. Choose the form renderer; it must support JSON Schema Draft 2020-12.
 . Extend the deadline rules of xref:../specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6] to what the first
   application needs: a condition on a field, a due time of a date field plus a period, the field that meets a
   deadline, and a period selected by a value of a referenced catalog entry.

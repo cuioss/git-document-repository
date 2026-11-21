@@ -76,8 +76,9 @@ YAML 1.2 is a superset of JSON but goes beyond that model with aliases, non-stri
 
 * Content that does not fit structured fields with free text gains nothing from the layer.
 * A kind of document without a template has no readable output beyond its YAML data.
-* The template engine and the JSON Schema dialect are open questions of
-  xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
+* The template engine is an open question of
+  xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents]; the JSON Schema dialect is
+  decided: Draft 2020-12 (owner's decision, 2026-11-21; xref:../specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]).
 
 === When this is revisited
 
