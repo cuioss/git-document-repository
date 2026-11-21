@@ -18,10 +18,11 @@ xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5], xref:git-store.adoc#GDR-STORE-7[GD
 xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]; it defines its three service interfaces, whose providers are planned
 (xref:git-store.adoc[`git-store`]). Of the requirements below, <<GDR-GEN-1>> is implemented; <<GDR-NFR-2>> and the
 write-path part of <<GDR-NFR-3>> are covered by tests of `git-store` (`ConcurrentWritersTest`,
-`WritePathSecretsTest`); and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does
-not verify yet. `git-forms` exists with its outcome list and result (<<GDR-GEN-3>>) and implements
-xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]; its other requirements are planned. Every other requirement of the libraries is planned, and `git-timestamp` and `git-directory` are not yet
-created.
+`WritePathSecretsTest`); and for <<GDR-NFR-4>> `git-core` and `git-forms` ship their native-image metadata, which this
+repository does not verify yet. `git-forms` exists with its outcome list and result (<<GDR-GEN-3>>) and
+implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1], xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2] and
+xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements are planned. Every other requirement of the
+libraries is planned, and `git-timestamp` and `git-directory` are not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -73,11 +74,16 @@ The third-party dependencies declared are
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
 `cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
 `cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator` and
-`cui-test-juli-logger` in its test scope; and `cui-java-tools`, Lombok and `org.snakeyaml:snakeyaml-engine` 3.2 in
-`git-forms`, with `git-testing`, JUnit 5, `cui-test-generator` and `cui-test-juli-logger` in its test scope.
-snakeyaml-engine 3.2 brings no further artifact: its POM declares test-scope dependencies only
+`cui-test-juli-logger` in its test scope; and `cui-java-tools`, Lombok, `org.snakeyaml:snakeyaml-engine` 3.2 and
+`dev.harrel:json-schema` 1.9.1 in `git-forms`, with `git-testing`, JUnit 5, `cui-test-generator` and
+`cui-test-juli-logger` in its test scope. snakeyaml-engine 3.2 brings no further artifact: its POM declares test-scope
+dependencies only
 (link:https://repo1.maven.org/maven2/org/snakeyaml/snakeyaml-engine/3.2/snakeyaml-engine-3.2.pom[snakeyaml-engine 3.2
-POM]), and its version is managed in the root POM. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+POM]). json-schema 1.9.1 brings none either: its POM declares no compile dependency, and every runtime dependency it
+declares is an `optional` JSON provider, which Maven does not pass on
+(link:https://repo1.maven.org/maven2/dev/harrel/json-schema/1.9.1/json-schema-1.9.1.pom[json-schema 1.9.1 POM]);
+`git-forms` uses none of them, its data reaching the validator through the library's own interfaces. Both versions are
+managed in the root POM. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
 `cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17, and
 `de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
 end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
@@ -300,8 +306,8 @@ address in the e-mail fields of author and committer when the operator sets `com
 (xref:git-store.adoc#store-configuration[`git-store`, Configuration]); by default those fields stay empty
 |===
 
-Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`
-and `git-store`, see <<GDR-GEN-1>>) and with checks of result details.
+Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`,
+`git-store` and `git-forms`, see <<GDR-GEN-1>>) and with checks of result details.
 
 [#GDR-NFR-4]
 == GDR-NFR-4: Native Image
@@ -344,6 +350,22 @@ reachable, and registers each provider class for reflective instantiation
 `ServiceLoaderFeature`], checked on 2026-11-20). Whether a provider module registered only by a `provides` directive
 of its `module-info.java`, without a `META-INF/services` file, is found the same way is not checked here and stays
 open; it concerns the providers, all of which are planned.
+
+`git-forms` ships `resource-config.json` under `META-INF/native-image/de.cuioss/git-forms/` and no
+`reflect-config.json`, for the same reason `git-store` ships no empty file. Neither of its libraries ships metadata of
+its own: the jars of snakeyaml-engine 3.2 and json-schema 1.9.1 hold no `META-INF/native-image/` entry (checked against
+both jars; see xref:git-forms.adoc[`git-forms`]). json-schema 1.9.1 reaches two resources on the code paths of
+`git-forms`: `ValidatorFactory` loads the resource bundle `dev.harrel.jsonschema.messages` when it is created, even
+though `git-forms` replaces its message provider, and the validation of a schema against the meta-schema of Draft
+2020-12 reads the class-path resource `draft2020-12.json`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/ValidatorFactory.java[json-schema
+1.9.1, `ValidatorFactory`];
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SpecificationVersion.java[json-schema
+1.9.1, `SpecificationVersion`]); `resource-config.json` lists both. The data reaches the validator through `DataNode` of
+`git-forms`, so none of the library's JSON providers is loaded, and neither library nor the code of `git-forms` uses
+reflection on these paths: snakeyaml-engine is used through its event parser and core-schema resolver only.
+`NativeImageMetadataTest` of `git-forms` asserts that the file is on the class path and that every listed resource and
+bundle resolves.
 
 This repository does not verify the requirement yet: until a native test lane exists here (open), only a consuming
 application's native build verifies it, the first being the native build of

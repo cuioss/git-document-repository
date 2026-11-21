@@ -25,6 +25,12 @@
             <groupId>org.snakeyaml</groupId>
             <artifactId>snakeyaml-engine</artifactId>
         </dependency>
+        <!-- The JSON Schema validator. Its runtime dependencies are all optional JSON providers, none of which is used:
+             the data reaches it through the module's own JsonNodeFactory over the data model of YamlReader. -->
+        <dependency>
+            <groupId>dev.harrel</groupId>
+            <artifactId>json-schema</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
