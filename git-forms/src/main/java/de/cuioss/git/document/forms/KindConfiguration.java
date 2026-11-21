@@ -16,10 +16,6 @@
 package de.cuioss.git.document.forms;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -170,14 +166,8 @@ public final class KindConfiguration {
     /** Decodes, reads and checks the configuration, and logs the loaded kinds. */
     private static FormsResult<KindConfiguration> load(byte[] content, RepositoryRegistry repositories,
             String source) {
-        String text;
-        try {
-            text = StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(content))
-                    .toString();
-        } catch (CharacterCodingException e) {
+        String text = YamlReader.decodeUtf8(content);
+        if (text == null) {
             return malformed("not UTF-8");
         }
         FormsResult<Object> read = YAML.read(text);

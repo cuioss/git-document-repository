@@ -15,9 +15,6 @@
  */
 package de.cuioss.git.document.forms;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -111,14 +108,8 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
     @Override
     public StoreResult<Map<String, @Nullable Object>> decode(byte[] content) {
         Objects.requireNonNull(content, "content");
-        String text;
-        try {
-            text = StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(content))
-                    .toString();
-        } catch (CharacterCodingException e) {
+        String text = YamlReader.decodeUtf8(content);
+        if (text == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, "not UTF-8");
         }
         FormsResult<Object> read = READER.read(text);

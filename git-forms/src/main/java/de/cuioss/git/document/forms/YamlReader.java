@@ -17,6 +17,10 @@ package de.cuioss.git.document.forms;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -103,6 +107,24 @@ final class YamlReader {
             return malformed(position(mark) + ": not well-formed YAML");
         } catch (YamlEngineException e) {
             return malformed(UNKNOWN_POSITION + ": not well-formed YAML");
+        }
+    }
+
+    /**
+     * Decodes content as strict UTF-8, the form every file read through this reader has.
+     *
+     * @param content the content
+     * @return the text, or {@code null} when the content is not UTF-8
+     */
+    static @Nullable String decodeUtf8(byte[] content) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(content))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            return null;
         }
     }
 
