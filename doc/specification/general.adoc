@@ -14,11 +14,14 @@ the one limit xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1] states; and the working-
 `git-store` implements xref:git-store.adoc#GDR-STORE-1[GDR-STORE-1], xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]
 and its configuration, and its write path: xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2],
 xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-store.adoc#GDR-STORE-4[GDR-STORE-4],
-xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5], xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7] and
-xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8]; it defines its three service interfaces, whose providers are planned
-(xref:git-store.adoc[`git-store`]). Of the requirements below, <<GDR-GEN-1>> is implemented; <<GDR-NFR-2>> and the
-write-path part of <<GDR-NFR-3>> are covered by tests of `git-store` (`ConcurrentWritersTest`,
-`WritePathSecretsTest`); and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does
+xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5], xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6],
+xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7] and xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8], and its read side:
+xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9] and xref:git-store.adoc#GDR-STORE-10[GDR-STORE-10]; it defines its
+three service interfaces, whose providers are planned (xref:git-store.adoc[`git-store`]). Of the requirements below,
+<<GDR-GEN-1>> is implemented; <<GDR-NFR-1>> is covered by `IndexFootprintTest` of `git-store`; <<GDR-NFR-2>> and the
+part of <<GDR-NFR-3>> that the write path, the release, the index and the listeners touch are covered by tests of
+`git-store` (`ConcurrentWritersTest`, `WritePathSecretsTest`, and the log and detail assertions of `SaveStepTest`,
+`ReleaseTest`, `StoreIndexTest` and `CommitListenerTest`); and for <<GDR-NFR-4>> `git-core` ships its native-image metadata, which this repository does
 not verify yet. Every other requirement of the libraries is planned, and the other modules are not yet created.
 
 [#GDR-GEN-1]
@@ -70,13 +73,14 @@ The third-party dependencies declared are
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
 `cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
-`cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator` and
-`cui-test-juli-logger` in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
-`cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17, and
+`cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator`,
+`cui-test-juli-logger` and JOL in its test scope. The owner approved JGit 7.8.0, `cui-java-tools`, Lombok,
+`cui-test-generator`, JUnit 5, EasyMock and `cui-test-juli-logger` on 2026-11-17,
 `de.cuioss.test:cui-test-mockwebserver-junit5` (the CUI MockWebServer, test scope of `git-core` only, for the
-end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19; it brings OkHttp's
-`mockwebserver3` and `okhttp-tls` with it, in that test scope as well. The version of JGit is managed in the root POM,
-the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
+end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-11-19, which brings OkHttp's
+`mockwebserver3` and `okhttp-tls` with it, in that test scope as well, and `org.openjdk.jol:jol-core` (test scope of
+`git-store` only, for the footprint test of <<GDR-NFR-1>>) on 2026-11-21. The versions of JGit and JOL are managed in
+the root POM, the versions of the others by `cui-java-parent`. Every other dependency below is open and needs the owner's
 approval before it is added:
 
 [cols="1,3"]
@@ -90,7 +94,8 @@ redirect test, `cui-test-generator` and JUnit 5 (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
-`git-testing`, `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); possibly JGit's
+`git-testing`, `cui-test-juli-logger`, `cui-test-generator`, JUnit 5 and `jol-core` for the footprint test of
+<<GDR-NFR-1>> (each declared); possibly JGit's
 `org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
 |`git-forms` |a YAML library, a JSON Schema validator, a template engine (each open)
 |`git-timestamp` |an RFC 3161 client library (open)
@@ -248,7 +253,14 @@ beside its code. Debug and trace messages use `CuiLogger` directly, without iden
 * The in-memory index of 500 documents with 90 fields each must retain less than 16 MB of heap.
 
 A test is to generate the documents into an in-memory repository, build the index and measure the retained size of the
-index object graph. The measuring tool is open; a tool that adds a dependency needs the owner's approval.
+index object graph. The measuring tool is JOL (`org.openjdk.jol:jol-core` 0.17, a test-scope dependency of
+`git-store` only), decided by the owner on 2026-11-21. `IndexFootprintTest` of `git-store` measures with
+`GraphLayout.parseInstance(index).totalSize()` the size of the object graph reachable from the index, checked against
+`GraphLayout.java` at the tag `0.17` of
+link:https://github.com/openjdk/jol/blob/0.17/jol-core/src/main/java/org/openjdk/jol/info/GraphLayout.java[JOL 0.17,
+`GraphLayout`]. The walked graph includes the repository the index reads, so the measured size is an upper bound of
+what the index retains. JOL 0.17 cannot read the field offsets of record classes through `Unsafe.objectFieldOffset` on
+Java 21 or 25, so the Surefire configuration of `git-store` sets `jol.magicFieldOffset=true`.
 
 [#GDR-NFR-2]
 == GDR-NFR-2: Concurrent Writers

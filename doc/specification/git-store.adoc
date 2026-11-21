@@ -13,10 +13,13 @@ and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence an
 Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
 configuration (<<store-configuration>>), the outcome list with its result, the three service interfaces below with
 the selection of their providers, and the write path of `StoreWriter`: drafts (<<GDR-STORE-2>>), the explicit save
-(<<GDR-STORE-3>>) with its conflicts (<<GDR-STORE-4>>) and change detection (<<GDR-STORE-5>>), the draft expiry
-(<<GDR-STORE-7>>), and author, committer and credentials (<<GDR-STORE-8>>). Until <<GDR-STORE-12>> and
-<<GDR-STORE-13>> are implemented, the commits the write path writes are unsigned and carry no trailers. The providers
-themselves (`file`, `signed`) and every other requirement are planned.
+(<<GDR-STORE-3>>) with its optional per-attempt step, its conflicts (<<GDR-STORE-4>>) and change detection
+(<<GDR-STORE-5>>), the release of a document with its tag (<<GDR-STORE-6>>), the draft expiry (<<GDR-STORE-7>>), and
+author, committer and credentials (<<GDR-STORE-8>>); and the read side: the in-memory index with its contributors,
+fetch and snapshots (<<GDR-STORE-9>>) and the per-branch post-commit listeners (<<GDR-STORE-10>>). Until
+<<GDR-STORE-12>> and <<GDR-STORE-13>> are implemented, the commits the store writes are unsigned and carry no
+trailers. Planned are the signature and the identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), the requirements
+from <<GDR-STORE-14>> to <<GDR-STORE-19>>, and the providers themselves (`file`, `signed`).
 Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
 `GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module

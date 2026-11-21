@@ -125,10 +125,14 @@ xref:specification/git-store.adoc#GDR-STORE-1[GDR-STORE-1],
 xref:specification/git-store.adoc#GDR-STORE-11[GDR-STORE-11] and the write path
 xref:specification/git-store.adoc#GDR-STORE-2[GDR-STORE-2], xref:specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3],
 xref:specification/git-store.adoc#GDR-STORE-4[GDR-STORE-4], xref:specification/git-store.adoc#GDR-STORE-5[GDR-STORE-5],
-xref:specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7] and
-xref:specification/git-store.adoc#GDR-STORE-8[GDR-STORE-8] of `git-store`, together with its configuration, its
-outcome list and its service interfaces; xref:specification/general.adoc#GDR-NFR-2[GDR-NFR-2] and the write-path part
-of xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] are covered by tests of `git-store`.
+xref:specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6], xref:specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]
+and xref:specification/git-store.adoc#GDR-STORE-8[GDR-STORE-8], the index
+xref:specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9] and the listeners
+xref:specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10] of `git-store`, together with its configuration, its
+outcome list and its service interfaces; xref:specification/general.adoc#GDR-NFR-1[GDR-NFR-1],
+xref:specification/general.adoc#GDR-NFR-2[GDR-NFR-2] and the part of
+xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] that the write path, the release, the index and the listeners
+touch are covered by tests of `git-store`.
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's
 `SystemReader` is closed only when the embedding application installs `RefusingFS.systemReader`, the recommended
 setup. For xref:specification/general.adoc#GDR-NFR-4[GDR-NFR-4], `git-core` ships its native-image metadata, covering its
@@ -150,8 +154,9 @@ of a branch reservation
 |Repository fixtures and the credential generator
 
 |xref:specification/git-store.adoc[git-store]
-|Registry, outcome list, the write path (drafts, explicit save with lease, conflicts and change detection, draft
-expiry), release, identity, index, listeners, codecs, signature, verification, anchoring, own timestamp, person
+|Registry, outcome list, the write path (drafts, explicit save with lease and per-attempt step, conflicts and change
+detection, draft expiry), release with tag, identity, index with contributors and snapshots, post-commit listeners,
+codecs, signature, verification, anchoring, own timestamp, person
 directory interface, configuration
 
 |xref:specification/git-forms.adoc[git-forms]

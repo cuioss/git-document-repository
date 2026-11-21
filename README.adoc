@@ -36,7 +36,9 @@ compare-and-swap, in-core merge, notes; linked working trees, commit from a work
 
 |`git-store`
 |Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider
-selection. Depends on `git-core` only.
+selection; write path (drafts, explicit save with lease and per-attempt step, conflicts and change detection, draft
+expiry), release with tag, in-memory index with contributors, fetch and snapshots, post-commit listeners. Depends on
+`git-core` only.
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
@@ -47,8 +49,10 @@ commit from a working tree, plus a new working-tree status. `git-testing` holds 
 link:doc/concepts/module-structure.adoc[Module Structure] and link:doc/clients/pm-mcp-core.adoc[Client: `pm-mcp-core`]).
 `git-store` holds the foundation of the document store: the registry of its repositories, the typed configuration
 checked at start, the codec interface, its own outcome list and result, and the service interfaces for signing keys,
-anchor proofs and the person directory with the selection of their providers; drafts, saving, release and anchoring
-follow. The other aspect modules (`git-forms`, `git-timestamp`, `git-directory`) follow as the document store needs
+anchor proofs and the person directory with the selection of their providers. On that foundation it holds the write
+path (drafts, the explicit save with its lease, conflicts and change detection, draft expiry), the release of a
+document with its version tag, the in-memory index with consumer contributors, fetch and snapshots, and the
+per-branch post-commit listeners; the commit signature, the identity trailers and the anchoring follow. The other aspect modules (`git-forms`, `git-timestamp`, `git-directory`) follow as the document store needs
 them.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
