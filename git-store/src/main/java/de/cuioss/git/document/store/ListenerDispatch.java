@@ -267,7 +267,8 @@ final class ListenerDispatch implements StoreEvents.Observer {
             try {
                 listener.committed(branch, commit.name());
             }
-            /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+            // a failing listener never fails the save, release or fetch that triggered it (GDR-STORE-10)
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
             catch (RuntimeException e) {
                 LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getSimpleName());
             } finally {

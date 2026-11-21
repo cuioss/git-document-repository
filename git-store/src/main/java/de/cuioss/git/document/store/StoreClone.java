@@ -193,7 +193,8 @@ final class StoreClone {
                 LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), name(fetched.outcome()));
             }
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // an unchecked failure of one fetch must not end the schedule (GDR-STORE-9)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getSimpleName());
         }

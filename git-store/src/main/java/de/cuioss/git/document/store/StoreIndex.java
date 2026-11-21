@@ -113,6 +113,19 @@ public final class StoreIndex<E> implements AutoCloseable {
                 refreshQuietly();
             }
         }
+
+        /**
+         * Refreshes after an operation of the writer; a failure keeps the previous index and marks it stale, so the
+         * next operation retries the refresh even when it moves no reference.
+         */
+        private void refreshQuietly() {
+            try {
+                refresh();
+            } catch (IOException e) {
+                stale = true;
+                LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getSimpleName());
+            }
+        }
     };
     private final AtomicReference<Map<String, Source<E>>> current = new AtomicReference<>(Map.of());
 
@@ -277,19 +290,6 @@ public final class StoreIndex<E> implements AutoCloseable {
     }
 
     /**
-     * Refreshes after an operation of the writer; a failure keeps the previous index and marks it stale, so the next
-     * operation retries the refresh even when it moves no reference.
-     */
-    private void refreshQuietly() {
-        try {
-            refresh();
-        } catch (IOException e) {
-            stale = true;
-            LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getSimpleName());
-        }
-    }
-
-    /**
      * Reads the tips of the source branches under the lock of the index and publishes the index of those tips: a
      * source whose tip did not move is kept, one whose tip moved re-reads its changed documents, a new one is read in
      * full, and a gone one is dropped.
@@ -438,7 +438,8 @@ public final class StoreIndex<E> implements AutoCloseable {
         try {
             return contributor.contribute(new IndexContributor.Document(key, source, contents));
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // a failing contributor leaves its document out and never fails the refresh (GDR-STORE-9)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             LOGGER.warn(GitStoreLogMessages.WARN.CONTRIBUTOR_FAILED, alias, key.collection().name(),
                     e.getClass().getSimpleName());

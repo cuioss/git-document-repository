@@ -174,7 +174,8 @@ final class StoreEvents {
         try {
             call.run();
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // a failing observer never fails the operation that emitted the events (GDR-STORE-9, GDR-STORE-10)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             LOGGER.debug("An observer of the store events threw %s", e.getClass().getSimpleName());
         }

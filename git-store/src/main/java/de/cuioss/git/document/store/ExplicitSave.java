@@ -345,7 +345,8 @@ final class ExplicitSave {
         try {
             outcome = Objects.requireNonNull(step.apply(view), "the step returned no outcome");
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // a step that throws ends the save as a result, never as an exception (GDR-STORE-3)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("The save step of the save onto %s threw %s", request.target(), type);
