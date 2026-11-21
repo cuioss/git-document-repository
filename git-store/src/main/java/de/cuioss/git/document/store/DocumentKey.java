@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 public record DocumentKey(DocumentCollection collection, String id) {
 
     /** The form of an id of a collection that is not per-document. */
-    static final Pattern READABLE_ID = Pattern.compile("[A-Za-z0-9-]+");
+    private static final Pattern READABLE_ID = Pattern.compile("[A-Za-z0-9-]+");
 
     /** The detail of a refused id; it never carries the id. */
     private static final String INVALID_ID = "id: invalid";

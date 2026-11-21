@@ -86,11 +86,6 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
         return this;
     }
 
-    /** @return the inputs of every clone, in order */
-    synchronized List<CloneInput> clones() {
-        return List.copyOf(clones);
-    }
-
     /** @return the inputs of every fetch, scripted ones included, in order */
     synchronized List<FetchInput> fetches() {
         return List.copyOf(fetches);

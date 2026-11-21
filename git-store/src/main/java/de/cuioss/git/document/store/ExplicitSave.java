@@ -83,16 +83,16 @@ final class ExplicitSave {
     private static final CuiLogger LOGGER = new CuiLogger(ExplicitSave.class);
 
     /** The remote of every bare clone of the store. */
-    static final String ORIGIN = "origin";
+    private static final String ORIGIN = "origin";
 
     /** The detail of a save whose draft does not exist. */
-    static final String DRAFT_NOT_FOUND = "draft: not found";
+    private static final String DRAFT_NOT_FOUND = "draft: not found";
 
     /** The detail of an expected blob id that is no full object id. */
-    static final String INVALID_EXPECTED_BLOB_ID = "expectedBlobIds: not a full object id";
+    private static final String INVALID_EXPECTED_BLOB_ID = "expectedBlobIds: not a full object id";
 
     /** The detail of a draft without changes in a repository without the target branch and without {@code main}. */
-    static final String NOTHING_TO_SAVE = "draft: no changes and no target branch";
+    private static final String NOTHING_TO_SAVE = "draft: no changes and no target branch";
 
     private final Clone clone;
     private final RepositoryOperations operations;
