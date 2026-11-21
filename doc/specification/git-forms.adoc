@@ -7,8 +7,9 @@
 `git-forms` (module `de.cuioss.git.document.forms`, one package of the same name) is the layer of schema-driven
 documents on top of `git-store`, on which alone it depends. It holds so far its closed outcome list `FormsOutcome`, its
 result `FormsResult` and its log messages (xref:general.adoc#GDR-GEN-3[GDR-GEN-3],
-xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); of the requirements below, <<GDR-FORMS-1>> is implemented and the others are
-planned. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); of the requirements below, <<GDR-FORMS-1>>, <<GDR-FORMS-2>> and
+<<GDR-FORMS-3>> are implemented and the others are planned. Rationale:
+xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:
 
@@ -108,6 +109,27 @@ The dialect is JSON Schema Draft 2020-12 with the `$schema` URI `https://json-sc
 field type: a field that names a person holds a pseudonym (`p-…`), resolved for display through the `PersonDirectory`
 of `git-store`.
 
+`FormSchema.parse` reads the schema file of a kind as JSON within the JSON data model of ADR-0008 (through the
+`YamlReader` of <<GDR-FORMS-1>>). `$schema` must be absent or the URI of Draft 2020-12; a `$ref` or `$dynamicRef` must
+point into the same file (`#…`). The schema is checked by `dev.harrel:json-schema` 1.9.1 against the meta-schema of the
+dialect, which the jar holds as the resource `draft2020-12.json`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SpecificationVersion.java[json-schema
+1.9.1, `SpecificationVersion`]). A schema the library does not accept is the outcome `MALFORMED` of `git-store`, passed
+on, its detail naming the schema file and the problem, never content of the schema.
+
+The data reaches the validator through the library's public interfaces `JsonNodeFactory` and `JsonNode`, implemented by
+the package-private `DataNode` over the JSON data model, so none of the optional JSON providers of the library is used.
+`SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema and every
+sub-schema, and returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
+`SchemaValidator.required` checks `required` alone, in the schema, in the sub-schema of every property the data holds,
+in `items` and in `allOf`, not through `$ref`, and returns `Valid` or `MandatoryFieldsMissing` with the JSON Pointers of
+the missing fields. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is
+`MANDATORY_FIELDS_MISSING`; the detail names the number of findings only, the findings are data of the result. A message
+is composed by `git-forms` from the failing keyword and the constraint of the schema (a number, a type name or a format
+name, for example `must be at most 5`), never from the library's own message, which may quote the value of the
+instance (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); `git-forms` therefore replaces the library's `MessageProvider` by one
+that returns the message key.
+
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
 
@@ -129,6 +151,32 @@ Numbered kind, on the collection branch: one entry file per entry, `<collection>
 `risks/R-042.yaml`), the counter file `<collection>/.counter`, and with a template the output
 `<collection>/<number>.adoc`. A kind may split `document.yaml` into one file per independently edited part when its
 schema declares the split.
+
+The schema declares the split with the annotation keyword `gdr-split`: `"gdr-split": true` on a top-level property of
+`"type": "object"` stores that property as the part `<collection>/<ulid>/<property>.yaml`. A validator outside the
+library ignores the unknown keyword, so the schema stays plain JSON Schema; `gdr-split` anywhere else, or with a value
+that is not a boolean, makes the schema `MALFORMED`. `DocumentLayout` gives the paths of a kind (`document`,
+`narrative`, `part`, `entry`, `counter`) and splits the data of a document into `document.yaml` and its parts and joins
+them back; a ULID, a fragment name or a running number that is empty, holds a `/` or starts with `.` is refused as
+`INVALID`, naming the argument, never its value. Generated output and the allocation of running numbers are not part of
+the layout yet.
+
+`YamlDocumentCodec` is the `Codec` of `git-store` (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]) for
+`document.yaml`, an entry file and, through `part(property)`, a split part. It writes the keys of every object in the
+declaration order of the `properties` of its schema, nested objects and array items by their sub-schema, and the keys
+the schema does not declare after them in lexicographic order. The formatting is fixed by the package-private
+`YamlWriter`: block style, an indentation of two spaces, `{}` and `[]` for an empty mapping and sequence, line feed line
+ends and one trailing line feed; a string is plain only when it is made of letters, digits and a few punctuation marks
+and reads back as a string under the YAML 1.2 core schema, otherwise it is double-quoted with escapes. Equal data
+therefore yields byte-identical content, and `encode(decode(encode(v)))` equals `encode(v)` byte for byte. Decoding
+reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an anchor, an alias, an explicit tag, a
+key that is not a string, a duplicate key, an infinite number) is `MALFORMED` with its line and column, never the
+content.
+
+The counter file `<collection>/.counter` holds the last running number given, as one decimal integer without sign and
+without leading zero followed by one line feed (`42\n`; `0\n` before the first number). `CounterCodec` writes and reads
+exactly that form; any other content, a number beyond the range of `long` included, is `MALFORMED`. The codec defines the
+format; advancing the counter belongs to <<GDR-FORMS-9>>.
 
 [#GDR-FORMS-4]
 == GDR-FORMS-4: Generated Output

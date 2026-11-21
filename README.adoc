@@ -41,8 +41,8 @@ expiry), release with tag, in-memory index with contributors, fetch and snapshot
 `git-core` only.
 
 |`git-forms`
-|Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration. Depends on
-`git-store` only.
+|Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema
+validation, data layout, YAML codec in schema order. Depends on `git-store` only.
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
@@ -57,12 +57,15 @@ anchor proofs and the person directory with the selection of their providers. On
 path (drafts, the explicit save with its lease, conflicts and change detection, draft expiry), the release of a
 document with its version tag, the in-memory index with consumer contributors, fetch and snapshots, and the
 per-branch post-commit listeners; the commit signature, the identity trailers and the anchoring follow. `git-forms`
-holds the layer of schema-driven documents on top of the store; so far its own outcome list, its result and its log
-messages. The other aspect modules (`git-timestamp`, `git-directory`) follow as the document store needs them.
+holds the layer of schema-driven documents on top of the store: its own outcome list, result and log messages, the
+kinds of documents loaded from configuration alone, validation against the JSON Schema of a kind (Draft 2020-12), the
+file layout of a document and the YAML codec that writes its data in schema order; generated output, workflow and
+links follow. The other aspect modules (`git-timestamp`, `git-directory`) follow as the document store needs them.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
 the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
-`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-store` relies on it (see
+`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-store` relies on it, and
+`git-forms` ships the resource metadata of its JSON Schema validator (see
 link:doc/specification/general.adoc[General Requirements], GDR-GEN-1 and GDR-NFR-4).
 
 === Maven Coordinates

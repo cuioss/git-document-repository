@@ -60,6 +60,14 @@
                 <artifactId>snakeyaml-engine</artifactId>
                 <version>3.2</version>
             </dependency>
+            <!-- json-schema 1.9.1, the JSON Schema validator of git-forms (owner's approval 2026-11-21), not managed by
+                 cui-java-parent 1.7.7; checked: its 1.9.1 POM declares no compile dependency and only optional
+                 runtime dependencies, so it adds nothing to the closure of a consumer. -->
+            <dependency>
+                <groupId>dev.harrel</groupId>
+                <artifactId>json-schema</artifactId>
+                <version>1.9.1</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <modules>

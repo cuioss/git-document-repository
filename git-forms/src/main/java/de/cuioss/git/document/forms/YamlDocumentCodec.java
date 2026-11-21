@@ -1,0 +1,161 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.forms;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+
+
+import de.cuioss.git.document.forms.FormSchema.Shape;
+import de.cuioss.git.document.store.Codec;
+import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreResult;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The codec of the structured data of a document (GDR-FORMS-3, GDR-STORE-11): YAML in the key order of the schema of
+ * its kind.
+ * <p>
+ * The keys of an object are written in the declaration order of the {@code properties} of its schema, a nested object
+ * and the items of an array by their sub-schema; the keys the schema does not declare follow in lexicographic order.
+ * The text is the canonical form of {@link YamlWriter}, so equal data yields byte-identical content and
+ * {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte. Decoding reads YAML within the JSON data
+ * model of ADR-0008 through {@link YamlReader}: content that is not UTF-8, not YAML of that data model (an anchor, an
+ * alias, an explicit tag, a key that is not a string, a duplicate key, ...) or whose root is not a mapping is
+ * {@link StoreOutcome#MALFORMED}, its detail naming the position, never the content. A codec is immutable and may
+ * serve every thread.
+ *
+ * @since 0.1
+ */
+public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Object>> {
+
+    private static final YamlReader READER = new YamlReader();
+    private static final YamlWriter WRITER = new YamlWriter();
+
+    private final FormSchema schema;
+    private final Shape shape;
+
+    /**
+     * Creates the codec of the documents or entries of a kind: {@code document.yaml} or {@code <number>.yaml}.
+     *
+     * @param schema the schema of the kind
+     * @throws NullPointerException if {@code schema} is {@code null}
+     */
+    public YamlDocumentCodec(FormSchema schema) {
+        this(schema, Objects.requireNonNull(schema, "schema").shape());
+    }
+
+    private YamlDocumentCodec(FormSchema schema, Shape shape) {
+        this.schema = schema;
+        this.shape = shape;
+    }
+
+    /**
+     * Returns the codec of a split part, ordered by the sub-schema of its property.
+     *
+     * @param property a property the schema marks with {@value FormSchema#SPLIT}
+     * @return the codec of the part file {@code <property>.yaml}
+     * @throws NullPointerException     if {@code property} is {@code null}
+     * @throws IllegalArgumentException if the property is no split part of the schema
+     */
+    public YamlDocumentCodec part(String property) {
+        Objects.requireNonNull(property, "property");
+        if (!schema.splitProperties().contains(property)) {
+            throw new IllegalArgumentException("property: not a split part of the schema");
+        }
+        return new YamlDocumentCodec(schema, schema.shape().property(property));
+    }
+
+    /**
+     * Encodes data as YAML in schema order.
+     *
+     * @param value the data, a value of the JSON data model
+     * @return the canonical UTF-8 content
+     * @throws NullPointerException     if {@code value} is {@code null}
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model
+     */
+    @Override
+    public byte[] encode(Map<String, @Nullable Object> value) {
+        Objects.requireNonNull(value, "value");
+        return WRITER.write(ordered(value, shape)).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Decodes YAML content.
+     *
+     * @param content the content
+     * @return {@link StoreOutcome#OK} with the data, or {@link StoreOutcome#MALFORMED} whose detail names the position
+     *         and the problem
+     * @throws NullPointerException if {@code content} is {@code null}
+     */
+    @Override
+    public StoreResult<Map<String, @Nullable Object>> decode(byte[] content) {
+        Objects.requireNonNull(content, "content");
+        String text;
+        try {
+            text = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(content))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            return StoreResult.of(StoreOutcome.MALFORMED, "not UTF-8");
+        }
+        FormsResult<Object> read = READER.read(text);
+        if (!read.isOk()) {
+            return StoreResult.of(StoreOutcome.MALFORMED, Objects.requireNonNull(read.detail()));
+        }
+        if (!(read.value() instanceof Map<?, ?> root)) {
+            return StoreResult.of(StoreOutcome.MALFORMED, "line 1, column 1: a document that is not a mapping");
+        }
+        @SuppressWarnings("unchecked") Map<String, @Nullable Object> data = (Map<String, @Nullable Object>) root;
+        return StoreResult.ok(data);
+    }
+
+    /** A copy of a value with every mapping in schema order, the undeclared keys after the declared ones, sorted. */
+    private static @Nullable Object ordered(@Nullable Object value, Shape shape) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, @Nullable Object> sorted = new LinkedHashMap<>();
+            for (String name : shape.order()) {
+                if (map.containsKey(name)) {
+                    sorted.put(name, ordered(map.get(name), shape.property(name)));
+                }
+            }
+            Map<String, @Nullable Object> undeclared = new TreeMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!(entry.getKey() instanceof String key)) {
+                    throw new IllegalArgumentException("not of the JSON data model: a key that is not a string");
+                }
+                if (!sorted.containsKey(key)) {
+                    undeclared.put(key, ordered(entry.getValue(), Shape.EMPTY));
+                }
+            }
+            sorted.putAll(undeclared);
+            return sorted;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(item -> ordered(item, shape.item())).toList();
+        }
+        return value;
+    }
+}
