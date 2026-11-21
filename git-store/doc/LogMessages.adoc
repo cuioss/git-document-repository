@@ -27,7 +27,8 @@ Debug and trace messages carry no identifier and are not listed.
 |Logged when the providers of the store were selected at start: the ids of the selected signing key source, person
 directory and anchor provider, the provider ids only.
 |GIT_STORE-2 |GIT_STORE |Saved repository %s, reference %s at commit %s
-|Logged when the remote accepted an explicit save, or a draft without changes was saved as the base itself
+|Logged when the remote accepted an explicit save, or a draft without changes was saved as the tip of its existing
+target branch
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]): the repository alias, the target reference and
 the full id of the commit the target branch points at.
 |GIT_STORE-3 |GIT_STORE |Did not save repository %s, reference %s: %s conflicting paths
@@ -57,6 +58,15 @@ name of the outcome, never a credential.
 |GIT_STORE-102 |GIT_STORE |The garbage collection of repository %s failed: %s |Logged when the garbage collection
 after the draft expiry failed (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository
 alias and the simple class name of the exception, never its message, which may carry a path.
+|GIT_STORE-103 |GIT_STORE |Did not move the local branch of repository %s, reference %s after the accepted save: %s
+|Logged when the remote accepted an explicit save but the local target branch could not be moved
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-3[GDR-STORE-3]): the repository alias, the target reference and
+the simple class name of the exception, never its message, which may carry a path. The save is still `Saved`; the next
+fetch mirrors the remote branch into the clone.
+|GIT_STORE-104 |GIT_STORE |Skipped the garbage collection of repository %s: another collection holds gc.pid
+|Logged when the draft expiry did not run its garbage collection because another collection holds the clone's
+`gc.pid` (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository alias. The expiry
+ends in the passed-on `CONFLICT`, which may be retried.
 |===
 
 == ERROR Level (200-299)

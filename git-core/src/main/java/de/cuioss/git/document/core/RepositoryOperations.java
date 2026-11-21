@@ -370,10 +370,16 @@ public interface RepositoryOperations {
      * @param remote      the configured remote name, e.g. {@code origin}
      * @param refSpecs    the reference specifications; empty for the remote's configured ones
      * @param credentials the credentials of this call; {@code null} when none
+     * @param prune       whether the fetch also deletes every local reference that lies in the destination of one of
+     *                    its reference specifications and whose source the remote no longer advertises (JGit 7.8.0
+     *                    {@code FetchCommand.setRemoveDeletedRefs}, carried out by
+     *                    {@code FetchProcess.deleteStaleTrackingRefs}); a reference outside every destination is never
+     *                    deleted; {@code false} by default
      * @since 0.1
      */
     @Builder
-    record FetchInput(Path root, String remote, List<String> refSpecs, @Nullable CredentialsProvider credentials) {
+    record FetchInput(Path root, String remote, List<String> refSpecs, @Nullable CredentialsProvider credentials,
+    boolean prune) {
 
         /**
          * Requires the repository, the remote and the reference specifications, and copies the latter.
@@ -382,6 +388,7 @@ public interface RepositoryOperations {
          * @param remote      the remote name
          * @param refSpecs    the reference specifications
          * @param credentials the credentials
+         * @param prune       whether stale local references of the destinations are deleted
          * @throws NullPointerException if {@code root}, {@code remote} or {@code refSpecs} is {@code null}
          */
         public FetchInput {

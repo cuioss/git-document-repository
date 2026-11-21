@@ -16,6 +16,7 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -24,13 +25,17 @@ import java.util.Map;
 import java.util.Objects;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.InCoreWriter;
 import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.URIish;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
@@ -39,18 +44,29 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
- * the technical user, and opens the clone on a {@link RefusingFS}, so no operation starts a process (GDR-CORE-1).
- * Every commit identity comes from the section {@code commit} of the configuration and the technical user.
+ * the technical user, and opens the clone on a {@link RefusingFS}, so no operation on the clone starts a process
+ * (GDR-CORE-1). That covers the clone only: JGit 7.8.0 reads the user and system configuration through the process-wide
+ * {@code SystemReader}, whose default runs {@code git} once per JVM to locate the system configuration, so an embedding
+ * application that needs the guarantee for its whole JVM installs
+ * {@link RefusingFS#systemReader(org.eclipse.jgit.util.SystemReader)} before any JGit use. An
+ * existing clone is reused only when every fetch and push destination of its {@code origin} is the registered remote;
+ * a clone of another repository at the path is refused. Every commit identity comes from the section {@code commit}
+ * of the configuration and the technical user.
  * <p>
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes
  * and saves take the shared side of the clone's maintenance lock, and every save attempt its transport lock; the
- * garbage collection of the expiry takes the exclusive side. No
+ * expiry, its deletes and its garbage collection, takes the exclusive side. The locks belong to the clone, not to the
+ * writer: every writer of the JVM that opens the same git directory (by its real path) shares them, so the garbage
+ * collection of one writer never runs while another writer of the clone holds objects not yet referenced. No
  * operation takes a credential: every fetch and push uses those of the technical user (GDR-STORE-8). The writer holds
  * the opened clone and releases it on {@link #close()}.
  *
  * @since 0.1
  */
 public final class StoreWriter implements AutoCloseable {
+
+    /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */
+    static final String FOREIGN_CLONE = "clone: remote does not match the registry";
 
     private final String alias;
     private final Repository repository;
@@ -79,10 +95,10 @@ public final class StoreWriter implements AutoCloseable {
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return {@link StoreOutcome#OK} with the writer, or the passed-on Git outcome of the clone or of opening it, for
-     *         example {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE},
-     *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID},
-     *         {@link de.cuioss.git.document.core.GitOutcome#REFUSED_BY_POLICY} or
-     *         {@link de.cuioss.git.document.core.GitOutcome#FAILED}
+     *         example {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
+     *         {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#FAILED}, or {@link GitOutcome#NOT_A_REPOSITORY}
+     *         with the detail {@code <alias>: clone: remote does not match the registry} for an existing clone whose
+     *         remote is not the registered one; no detail names a URL, a credential or a path
      * @throws NullPointerException if an argument is {@code null}
      */
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
@@ -110,16 +126,39 @@ public final class StoreWriter implements AutoCloseable {
         } catch (IOException e) {
             return StoreResult.passOn(DraftReferences.<StoreWriter>failure(storeRepository.alias(), e));
         }
+        if (!transportsTo(repository, storeRepository.remote())) {
+            repository.close();
+            return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.NOT_A_REPOSITORY), null,
+                    storeRepository.alias() + ": " + FOREIGN_CLONE);
+        }
         var identities = new CommitIdentities(configuration.commit(), user);
         var updater = new ReferenceUpdater(new InCoreWriter());
         int attempts = configuration.save().maxAttempts();
         var drafts = new DraftReferences(repository, updater, identities, clock, attempts);
-        var guard = new RepositoryGuard();
+        var guard = RepositoryGuard.of(clone);
         var saves = new ExplicitSave(new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard),
                 operations, user, identities, clock, attempts);
         var expiry = new DraftExpiry(storeRepository.alias(), repository, guard, updater,
                 configuration.drafts().expiry(), attempts);
         return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves, expiry));
+    }
+
+    /**
+     * Tells whether every fetch and push of the clone's {@code origin} goes to the registered remote: exactly one
+     * fetch URL, and every push URL (the fetch URL when none is configured), equal to it. JGit 7.8.0
+     * {@code RemoteConfig} applies {@code url.<base>.insteadOf} to the fetch URLs and {@code pushInsteadOf} to the
+     * push URLs it derives, so the comparison sees the destinations a transport would contact.
+     */
+    private static boolean transportsTo(Repository repository, String remote) {
+        try {
+            var expected = new URIish(remote);
+            var origin = new RemoteConfig(repository.getConfig(), Constants.DEFAULT_REMOTE_NAME);
+            List<URIish> fetch = origin.getURIs();
+            List<URIish> push = origin.getPushURIs().isEmpty() ? fetch : origin.getPushURIs();
+            return fetch.size() == 1 && expected.equals(fetch.getFirst()) && push.stream().allMatch(expected::equals);
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     /**
@@ -194,7 +233,8 @@ public final class StoreWriter implements AutoCloseable {
      * Deletes every draft unchanged for {@code drafts.expiry} and removes the objects reachable only from deleted
      * references (GDR-STORE-7): a draft whose tip has a committer time at or before {@code now} minus
      * {@code drafts.expiry} (UTC) is deleted by compare-and-delete expecting that tip, so a draft changed meanwhile is
-     * kept; then a garbage collection runs under the exclusive side of the clone's maintenance lock.
+     * kept; then a garbage collection runs. Both run under the exclusive side of the clone's maintenance lock, so no
+     * draft write or save of this writer runs meanwhile.
      *
      * @param now the current time
      * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none; or

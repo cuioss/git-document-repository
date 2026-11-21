@@ -17,17 +17,23 @@ package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.Period;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -35,10 +41,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.StreamSupport;
 
 
+import de.cuioss.git.document.core.GitOutcome;
+import de.cuioss.git.document.core.InCoreWriter;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
+import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
@@ -47,6 +58,7 @@ import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
@@ -75,7 +87,9 @@ import org.junit.jupiter.api.io.TempDir;
  * reference whose parent is the tip of the target branch (else {@code main}, else none), a second save stacks on the
  * first, the listing returns the drafts of one user only, a push of every reference through the configured push
  * reference specifications never carries {@code refs/drafts/*}, and the commit identities follow {@code commit.email}
- * (GDR-NFR-3).
+ * (GDR-NFR-3). A draft deleted beneath a write, or whose publication met a held lock, is written again on its base
+ * instead of becoming a root commit, a refused first write publishes no draft, and the write ends in a retryable
+ * {@link GitOutcome#CONFLICT} when the lock is held on every attempt.
  * <p>
  * Names, ids, pseudonyms, paths, contents, addresses and times are generated; the configuration keys, the reference
  * prefixes and the details are the specified vocabulary and kept as literals.
@@ -83,6 +97,12 @@ import org.junit.jupiter.api.io.TempDir;
 @EnableGeneratorController
 @DisplayName("StoreWriter drafts (GDR-STORE-2)")
 class StoreWriterDraftTest {
+
+    /** The attempts of the tests that build the draft references directly. */
+    private static final int ATTEMPTS = 3;
+
+    /** The time a race scenario may take before it counts as hanging. */
+    private static final long TIMEOUT_SECONDS = 60;
 
     @TempDir
     Path temp;
@@ -133,10 +153,17 @@ class StoreWriterDraftTest {
     /** Writes a commit with one file onto a reference of a repository, with the given parent or none. */
     private static ObjectId commit(Repository repository, String ref, String file, ObjectId... parents)
             throws IOException {
+        return commit(repository, ref, List.of(file), parents);
+    }
+
+    /** Writes a commit with the files, each with a generated content, onto a reference, with the given parents. */
+    private static ObjectId commit(Repository repository, String ref, List<String> files, ObjectId... parents)
+            throws IOException {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
-            var blob = inserter.insert(Constants.OBJ_BLOB, content());
             var tree = new TreeFormatter();
-            tree.append(file, FileMode.REGULAR_FILE, blob);
+            for (String file : files.stream().sorted().toList()) {
+                tree.append(file, FileMode.REGULAR_FILE, inserter.insert(Constants.OBJ_BLOB, content()));
+            }
             var commit = new CommitBuilder();
             var ident = new PersonIdent(pseudonym(), "");
             commit.setTreeId(inserter.insert(tree));
@@ -168,25 +195,148 @@ class StoreWriterDraftTest {
         }
 
         RevCommit parse(String commitId) throws IOException {
-            try (Repository clone = openClone(); RevWalk walk = new RevWalk(clone)) {
-                RevCommit commit = walk.parseCommit(ObjectId.fromString(commitId));
-                walk.parseBody(commit);
-                return commit;
+            try (Repository clone = openClone()) {
+                return StoreWriterDraftTest.parse(clone, commitId);
             }
         }
 
         boolean contains(String commitId, String path) throws IOException {
-            try (Repository clone = openClone(); RevWalk walk = new RevWalk(clone)) {
-                RevCommit commit = walk.parseCommit(ObjectId.fromString(commitId));
-                try (TreeWalk found = TreeWalk.forPath(clone, path, commit.getTree())) {
-                    return found != null;
-                }
+            try (Repository clone = openClone()) {
+                return StoreWriterDraftTest.contains(clone, commitId, path);
+            }
+        }
+
+        ObjectId blobAt(String commitId, String path) throws IOException {
+            try (Repository clone = openClone()) {
+                return StoreWriterDraftTest.blobAt(clone, commitId, path);
             }
         }
 
         @Override
         public void close() {
             writer.close();
+        }
+    }
+
+    /** The blob id of a path on a commit; the path must exist. */
+    private static ObjectId blobAt(Repository repository, String commitId, String path) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit commit = walk.parseCommit(ObjectId.fromString(commitId));
+            try (TreeWalk found = TreeWalk.forPath(repository, path, commit.getTree())) {
+                return Objects.requireNonNull(found, "the path exists on the commit").getObjectId(0).copy();
+            }
+        }
+    }
+
+    /** The id the object database gives a blob of the content. */
+    private static ObjectId blobId(byte[] content) {
+        try (ObjectInserter.Formatter formatter = new ObjectInserter.Formatter()) {
+            return formatter.idFor(Constants.OBJ_BLOB, content);
+        }
+    }
+
+    private static RevCommit parse(Repository repository, String commitId) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit commit = walk.parseCommit(ObjectId.fromString(commitId));
+            walk.parseBody(commit);
+            return commit;
+        }
+    }
+
+    private static boolean contains(Repository repository, String commitId, String path) throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit commit = walk.parseCommit(ObjectId.fromString(commitId));
+            try (TreeWalk found = TreeWalk.forPath(repository, path, commit.getTree())) {
+                return found != null;
+            }
+        }
+    }
+
+    /**
+     * A clock that deletes a reference, when it exists, on each of its first readings: another writer, a save or an
+     * expiry, deleting the draft between the draft write's read of it and its compare-and-swap, the one reading in
+     * between.
+     */
+    private static final class DeletingClock extends Clock {
+
+        private final Repository repository;
+        private final String deleted;
+        private final Instant now;
+        private final int times;
+        private int deletions;
+
+        DeletingClock(Repository repository, String deleted, Instant now, int times) {
+            this.repository = repository;
+            this.deleted = deleted;
+            this.now = now;
+            this.times = times;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            throw new UnsupportedOperationException("the fixture clock stays in UTC");
+        }
+
+        @Override
+        public Instant instant() {
+            try {
+                if (deletions < times && repository.exactRef(deleted) != null) {
+                    RefUpdate delete = repository.updateRef(deleted);
+                    delete.setForceUpdate(true);
+                    delete.disableRefLog();
+                    var result = delete.delete();
+                    assertEquals(RefUpdate.Result.FORCED, result, "the fixture deletes the draft");
+                    deletions++;
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return now;
+        }
+
+        int deletions() {
+            return deletions;
+        }
+    }
+
+    /**
+     * A repository whose first updates of one reference meet its lock file held, as by a writer outside the process,
+     * and whose later updates find it released: JGit 7.8.0 then reports {@link RefUpdate.Result#LOCK_FAILURE} for a
+     * creation although the reference does not exist.
+     */
+    private static final class LockingRepository extends FileRepository {
+
+        private final String locked;
+        private final Path lockFile;
+        private final int times;
+        private int updates;
+
+        LockingRepository(Path gitDir, String locked, int times) throws IOException {
+            super(gitDir.toFile());
+            this.locked = locked;
+            this.lockFile = gitDir.resolve(locked + ".lock");
+            this.times = times;
+        }
+
+        @Override
+        public RefUpdate updateRef(String ref, boolean detach) throws IOException {
+            if (!detach && locked.equals(ref)) {
+                if (updates < times) {
+                    Files.createDirectories(lockFile.getParent());
+                    if (!Files.exists(lockFile)) {
+                        Files.createFile(lockFile);
+                    }
+                } else {
+                    Files.deleteIfExists(lockFile);
+                }
+                updates++;
+            }
+            return super.updateRef(ref, detach);
         }
     }
 
@@ -224,12 +374,15 @@ class StoreWriterDraftTest {
             var baseFile = word();
             commit(remote.repository(), StoreReferences.MAIN, word());
             var target = commit(remote.repository(), StoreReferences.target(key), baseFile);
+            var baseBlob = blobAt(remote.repository(), target.name(), baseFile);
             var author = Author.of(pseudonym());
             var path = word();
+            var content = content();
             var message = word();
 
             try (var fixture = open(remote)) {
-                var commitId = value(fixture.writer().draft(author, key, put(path), message));
+                var commitId = value(fixture.writer().draft(author, key, List.of(new TreeEdit.Put(path, content)),
+                        message));
 
                 var commit = fixture.parse(commitId);
                 try (Repository clone = fixture.openClone()) {
@@ -241,8 +394,9 @@ class StoreWriterDraftTest {
                             () -> assertEquals(List.of(target), List.of(commit.getParents()),
                                     "the parent is the tip of the target branch"),
                             () -> assertEquals(message, commit.getFullMessage(), "the message"),
-                            () -> assertTrue(fixture.contains(commitId, path), "the edit is applied"),
-                            () -> assertTrue(fixture.contains(commitId, baseFile),
+                            () -> assertEquals(blobId(content), fixture.blobAt(commitId, path),
+                                    "the edit is applied with its content"),
+                            () -> assertEquals(baseBlob, fixture.blobAt(commitId, baseFile),
                                     "the content of the branch tip is kept"));
                 }
             }
@@ -281,16 +435,22 @@ class StoreWriterDraftTest {
             var author = Author.of(pseudonym());
             var firstPath = word();
             var secondPath = firstPath + "x";
+            var firstContent = content();
+            var secondContent = content();
 
             try (var fixture = open(remote)) {
-                var first = value(fixture.writer().draft(author, key, put(firstPath), word()));
-                var second = value(fixture.writer().draft(author, key, put(secondPath), word()));
+                var first = value(fixture.writer().draft(author, key,
+                        List.of(new TreeEdit.Put(firstPath, firstContent)), word()));
+                var second = value(fixture.writer().draft(author, key,
+                        List.of(new TreeEdit.Put(secondPath, secondContent)), word()));
 
                 assertAll(
                         () -> assertEquals(List.of(ObjectId.fromString(first)),
                                 List.of(fixture.parse(second).getParents()), "the parent is the first draft commit"),
-                        () -> assertTrue(fixture.contains(second, firstPath), "the first edit is kept"),
-                        () -> assertTrue(fixture.contains(second, secondPath), "the second edit is applied"));
+                        () -> assertEquals(blobId(firstContent), fixture.blobAt(second, firstPath),
+                                "the first edit is kept with its content"),
+                        () -> assertEquals(blobId(secondContent), fixture.blobAt(second, secondPath),
+                                "the second edit is applied with its content"));
             }
         }
 
@@ -332,6 +492,221 @@ class StoreWriterDraftTest {
                         () -> assertThrows(NullPointerException.class,
                                 () -> writer.draft(author, key, edits, nullText), "message"),
                         () -> assertThrows(NullPointerException.class, () -> writer.drafts(nullText), "pseudonym"));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Races of the draft reference")
+    class Races {
+
+        /** Creates an empty bare repository and returns its git directory. */
+        private Path bareRepository() throws IOException {
+            var gitDir = temp.resolve(word() + ".git");
+            try (Repository created = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setBare().build()) {
+                created.create(true);
+            }
+            return gitDir;
+        }
+
+        private static DraftReferences drafts(Repository repository, Clock clock) {
+            return new DraftReferences(repository, new ReferenceUpdater(new InCoreWriter()),
+                    new CommitIdentities(configuration(null).commit(), user(null)), clock, ATTEMPTS);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a draft deleted before its compare-and-swap is created again on main, not as a root")
+        void draftDeletedBeforeSwap() throws Exception {
+            var gitDir = bareRepository();
+            var kept = word();
+            var gone = kept + "x";
+            var author = Author.of(pseudonym());
+            var key = key(Kind.NUMBERED);
+            var draftRef = value(StoreReferences.draft(author.pseudonym(), key));
+
+            var earlier = gone + "e";
+
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true)
+                         .build()) {
+                var main = commit(repository, StoreReferences.MAIN, List.of(kept, gone));
+                value(drafts(repository, Clock.fixed(time(), ZoneOffset.UTC)).write(author, key, put(earlier),
+                        word()));
+                var clock = new DeletingClock(repository, draftRef, time(), 1);
+
+                var commitId = value(drafts(repository, clock).write(author, key, List.of(new TreeEdit.Delete(gone)),
+                        word()));
+
+                var commit = parse(repository, commitId);
+                assertAll(
+                        () -> assertEquals(1, clock.deletions(), "the draft was deleted beneath the write once"),
+                        () -> assertEquals(List.of(main), List.of(commit.getParents()), "the parent is the tip of main"),
+                        () -> assertTrue(contains(repository, commitId, kept), "the other file of main is kept"),
+                        () -> assertFalse(contains(repository, commitId, gone), "the deleted file is gone"),
+                        () -> assertFalse(contains(repository, commitId, earlier), "the deleted draft is not revived"),
+                        () -> assertEquals(commitId,
+                                Objects.requireNonNull(repository.exactRef(draftRef)).getObjectId().name(),
+                                "the draft points at the commit"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a refused first write publishes no draft, so none is listed")
+        void refusedFirstWritePublishesNoDraft() throws Exception {
+            var gitDir = bareRepository();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.PER_DOCUMENT);
+            var draftRef = value(StoreReferences.draft(author.pseudonym(), key));
+            var path = word();
+
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true)
+                         .build()) {
+                commit(repository, StoreReferences.MAIN, word());
+                var drafts = drafts(repository, Clock.fixed(time(), ZoneOffset.UTC));
+
+                var result = drafts.write(author, key,
+                        List.of(new TreeEdit.Put(path, content()), new TreeEdit.Put(path, content())), word());
+
+                assertAll(
+                        () -> assertFalse(result.isOk(), () -> "the write is refused: " + result),
+                        () -> assertNull(repository.exactRef(draftRef), "no draft is published"),
+                        () -> assertEquals(List.of(), value(drafts.list(author.pseudonym())), "no draft is listed"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a creation that meets a held lock while the draft is absent selects the base again")
+        void creationLockFailureWithoutDraft() throws Exception {
+            var gitDir = bareRepository();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.PER_DOCUMENT);
+            var draftRef = value(StoreReferences.draft(author.pseudonym(), key));
+            var path = word();
+            ObjectId main;
+            try (Repository writer = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true)
+                         .build()) {
+                main = commit(writer, StoreReferences.MAIN, word());
+            }
+
+            try (var repository = new LockingRepository(gitDir, draftRef, 1)) {
+                var commitId = value(drafts(repository, Clock.fixed(time(), ZoneOffset.UTC)).write(author, key,
+                        put(path), word()));
+
+                var commit = parse(repository, commitId);
+                assertAll(
+                        () -> assertEquals(List.of(main), List.of(commit.getParents()), "the parent is the tip of main"),
+                        () -> assertTrue(contains(repository, commitId, path), "the edit is applied"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a creation whose lock stays held ends in a retryable CONFLICT without a draft")
+        void creationLockNeverAcquired() throws Exception {
+            var gitDir = bareRepository();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.MAIN);
+            var draftRef = value(StoreReferences.draft(author.pseudonym(), key));
+            try (Repository writer = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true)
+                         .build()) {
+                commit(writer, StoreReferences.MAIN, word());
+            }
+
+            try (var repository = new LockingRepository(gitDir, draftRef, Integer.MAX_VALUE)) {
+                var result = drafts(repository, Clock.fixed(time(), ZoneOffset.UTC)).write(author, key, put(word()),
+                        word());
+
+                assertAll(
+                        () -> assertEquals(new StoreResult.PassedOn(GitOutcome.CONFLICT), result.outcome(),
+                                "the write is a retryable conflict"),
+                        () -> assertNull(repository.exactRef(draftRef), "no draft is created"));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Clones of the writers")
+    class Clones {
+
+        private StoreRepository registered(LocalRemote remote) {
+            return new StoreRepository(word(), remote.uri().toString(), word(), null);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a clone of another repository is refused without naming a URL, and a match reused")
+        void refusesForeignClone(@Remote LocalRemote remote, @Remote LocalRemote other) {
+            var gitDir = temp.resolve(word() + ".git");
+            var operations = new JGitRepositoryOperations(RemotePolicy.localOnly());
+            var clock = Clock.fixed(time(), ZoneOffset.UTC);
+            var configuration = configuration(null);
+            var user = user(null);
+            var mine = registered(remote);
+            value(StoreWriter.open(registered(other), gitDir, user, configuration, operations, clock)).close();
+
+            var refused = StoreWriter.open(mine, gitDir, user, configuration, operations, clock);
+            var reused = StoreWriter.open(registered(other), gitDir, user, configuration, operations, clock);
+
+            try {
+                var detail = Objects.requireNonNull(refused.detail(), "a refusal carries a detail");
+                assertAll(
+                        () -> assertEquals(new StoreResult.PassedOn(GitOutcome.NOT_A_REPOSITORY), refused.outcome(),
+                                "the foreign clone is refused"),
+                        () -> assertEquals(mine.alias() + ": " + StoreWriter.FOREIGN_CLONE, detail,
+                                "the detail names the alias"),
+                        () -> assertFalse(detail.contains(remote.uri().toString()), "no URL of the registry"),
+                        () -> assertFalse(detail.contains(other.uri().toString()), "no URL of the clone"),
+                        () -> assertFalse(detail.contains(temp.toString()), "no path"),
+                        () -> assertTrue(reused.isOk(), () -> "a matching clone is reused: " + reused.detail()));
+            } finally {
+                if (reused.isOk()) {
+                    Objects.requireNonNull(reused.value()).close();
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-7: two writers of one clone share its guard, so an expiry waits for the other's save")
+        void writersOfOneCloneShareTheGuard(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN, word());
+            var storeRepository = registered(remote);
+            var gitDir = temp.resolve(word() + ".git");
+            var now = time();
+            var clock = Clock.fixed(now, ZoneOffset.UTC);
+            var configuration = configuration(null);
+            var user = user(null);
+            var scripted = new ScriptedRepositoryOperations();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.PER_DOCUMENT);
+            AtomicReference<StoreResult<List<String>>> expired = new AtomicReference<>();
+            AtomicReference<Thread> expiryRun = new AtomicReference<>();
+
+            try (var saving = value(StoreWriter.open(storeRepository, gitDir, user, configuration, scripted, clock));
+                 var expiring = value(StoreWriter.open(storeRepository, gitDir, user, configuration,
+                         new JGitRepositoryOperations(RemotePolicy.localOnly()), clock))) {
+                value(saving.draft(author, key, put(word()), word()));
+                scripted.beforeNextPush(() -> {
+                    var run = new Thread(() -> expired.set(expiring.expireDrafts(now)));
+                    expiryRun.set(run);
+                    run.start();
+                    try {
+                        ThreadStates.awaitParkedOrEnded(run, TIMEOUT_SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("the wait for the expiry is interrupted", e);
+                    }
+                });
+
+                var result = saving.save(author, key, Map.of(), word());
+
+                var run = Objects.requireNonNull(expiryRun.get(), "the expiry ran during the save");
+                run.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+                var saved = assertInstanceOf(SaveResult.Saved.class, result, "the save keeps its commit");
+                var target = remote.repository().exactRef(StoreReferences.target(key));
+                assertAll(
+                        () -> assertFalse(run.isAlive(), "the expiry ends"),
+                        () -> assertNotNull(target, "the remote has the target"),
+                        () -> assertEquals(saved.commitId(), Objects.requireNonNull(target).getObjectId().name(),
+                                "the remote holds the save"),
+                        () -> assertEquals(List.of(), value(Objects.requireNonNull(expired.get())),
+                                "no draft is stale"));
             }
         }
     }

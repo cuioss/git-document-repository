@@ -419,6 +419,14 @@ an update was not written
 `LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`. The detail names the local reference and the
 result.
 
+A fetch with `FetchInput.prune` set (`false` by default) also deletes every local reference that lies in the
+destination of one of its reference specifications and whose source the remote no longer advertises, through
+`FetchCommand.setRemoveDeletedRefs`; JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs` considers only the local
+references that match a destination of the fetch's reference specifications, so a reference outside every
+destination, such as a draft below `refs/drafts/` of `git-store`, is never deleted
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
+7.8.0 `FetchProcess`]).
+
 Every transport of a clone, a fetch and a push runs with a compiled timeout of 60 seconds
 (`JGitRepositoryOperations.TRANSPORT_TIMEOUT_SECONDS`, set through `TransportCommand.setTimeout`;
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/api/TransportCommand.java[JGit

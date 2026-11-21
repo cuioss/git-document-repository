@@ -688,6 +688,35 @@ class JGitRepositoryOperationsTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-7: only a pruning fetch deletes the tracking reference of a deleted remote branch")
+        void pruningFetch(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            assertTrue(operations.fetch(fetch(client)).isOk(), "the client fetches the branch");
+            var tracking = Constants.R_REMOTES + ORIGIN + "/" + Repository.shortenRefName(ref);
+            var outside = "refs/drafts/" + TestCommits.name();
+            var outsideId = TestCommits.commit(client, null);
+            TestCommits.setRef(client, outside, outsideId);
+            org.eclipse.jgit.lib.RefUpdate delete = remote.repository().updateRef(ref);
+            delete.setForceUpdate(true);
+            assertEquals(org.eclipse.jgit.lib.RefUpdate.Result.FORCED, delete.delete(), "the remote branch is deleted");
+
+            var plain = operations.fetch(fetch(client));
+            var keptByPlain = client.exactRef(tracking);
+            var pruned = operations.fetch(
+                    FetchInput.builder().root(dir(client)).remote(ORIGIN).refSpecs(List.of()).prune(true).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, plain.outcome(), "the plain fetch succeeds"),
+                    () -> assertNotNull(keptByPlain, "a plain fetch keeps the stale tracking reference"),
+                    () -> assertEquals(GitOutcome.OK, pruned.outcome(), "the pruning fetch succeeds"),
+                    () -> assertNull(client.exactRef(tracking), "the pruning fetch deletes it"),
+                    () -> assertEquals(outsideId, refId(client, outside),
+                            "a reference outside every destination is kept"));
+        }
+
+        @Test
         @DisplayName("GDR-CORE-7: a push that is no fast-forward is rejected")
         void rejected(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
             TestCommits.addRemote(client, ORIGIN, remote.uri().toString());

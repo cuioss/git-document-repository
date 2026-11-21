@@ -33,6 +33,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.Period;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -41,6 +42,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -85,8 +93,9 @@ import org.junit.jupiter.api.io.TempDir;
  * The expiry of drafts of GDR-STORE-7 with fixed clocks: a draft whose tip is at or before {@code now} minus
  * {@code drafts.expiry} is deleted, a younger one kept, and a draft changed between the read and the delete kept; after
  * the run the objects reachable only from deleted drafts are gone from the object database, while every object
- * reachable from {@code main}, the working branches and the kept drafts is still there. A failed garbage collection is
- * passed on as {@link GitOutcome#FAILED} naming the exception class only.
+ * reachable from {@code main}, the working branches and the kept drafts is still there. A stale draft whose update is
+ * paused between its existence check and its compare-and-swap is not deleted beneath it. A failed garbage collection
+ * is passed on as {@link GitOutcome#FAILED} naming the exception class only.
  * <p>
  * Names, ids, pseudonyms, paths, contents, periods and times are generated; the reference prefixes and the details are
  * the specified vocabulary and kept as literals.
@@ -98,6 +107,9 @@ class DraftExpiryTest {
 
     /** The attempts of a compare-and-delete in the tests that build the expiry directly. */
     private static final int ATTEMPTS = 3;
+
+    /** The time a paused scenario may take before it counts as hanging. */
+    private static final long TIMEOUT_SECONDS = 60;
 
     @TempDir
     Path temp;
@@ -364,9 +376,110 @@ class DraftExpiryTest {
         }
     }
 
+    /**
+     * A clock whose first reading pauses its caller until released: a draft update reads it once, between its
+     * existence check and its compare-and-swap.
+     */
+    private static final class PausingClock extends Clock {
+
+        private final Instant now;
+        private final AtomicBoolean armed = new AtomicBoolean(true);
+        private final CountDownLatch paused = new CountDownLatch(1);
+        private final CountDownLatch released = new CountDownLatch(1);
+
+        PausingClock(Instant now) {
+            this.now = now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            throw new UnsupportedOperationException("the fixture clock stays in UTC");
+        }
+
+        @Override
+        public Instant instant() {
+            if (armed.compareAndSet(true, false)) {
+                paused.countDown();
+                try {
+                    if (!released.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("the paused reading is never released");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("the paused reading is interrupted", e);
+                }
+            }
+            return now;
+        }
+
+        boolean awaitPaused() throws InterruptedException {
+            return paused.await(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+
+        void release() {
+            released.countDown();
+        }
+    }
+
     @Nested
     @DisplayName("Races and failures")
     class RacesAndFailures {
+
+        @Test
+        @DisplayName("GDR-STORE-7: a stale draft is not deleted between an update's existence check and its swap")
+        void keepsDraftUpdatedDuringExpiry(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN, content(), time());
+            var expiry = expiry();
+            var configuration = configuration(expiry);
+            var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+            var gitDir = temp.resolve(word() + ".git");
+            var staleAt = time();
+            var now = staleAt.atOffset(ZoneOffset.UTC).plus(expiry).toInstant();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.PER_DOCUMENT);
+            var draftRef = value(StoreReferences.draft(author.pseudonym(), key));
+            String staleCommitId;
+            try (var staleWriter = open(storeRepository, gitDir, configuration, staleAt)) {
+                staleCommitId = value(staleWriter.draft(author, key, List.of(new TreeEdit.Put(word(), content())),
+                        word()));
+            }
+            var clock = new PausingClock(now);
+            AtomicReference<StoreResult<List<String>>> expired = new AtomicReference<>();
+
+            String updated;
+            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user(), configuration,
+                         new JGitRepositoryOperations(RemotePolicy.localOnly()), clock));
+                 ExecutorService executor = Executors.newSingleThreadExecutor()) {
+                Future<StoreResult<String>> update = executor.submit(() -> writer.draft(author, key,
+                        List.of(new TreeEdit.Put(word(), content())), word()));
+                assertTrue(clock.awaitPaused(), "the update pauses before its compare-and-swap");
+                var expiryRun = new Thread(() -> expired.set(writer.expireDrafts(now)));
+                expiryRun.start();
+                ThreadStates.awaitParkedOrEnded(expiryRun, TIMEOUT_SECONDS);
+                clock.release();
+                updated = value(update.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                expiryRun.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+                assertFalse(expiryRun.isAlive(), "the expiry ends");
+            }
+
+            try (Repository clone = openRepository(gitDir); RevWalk walk = new RevWalk(clone)) {
+                RevCommit commit = walk.parseCommit(ObjectId.fromString(updated));
+                Ref draft = clone.exactRef(draftRef);
+                assertAll(
+                        () -> assertEquals(List.of(ObjectId.fromString(staleCommitId)), List.of(commit.getParents()),
+                                "the update stacks on the draft it found, not on nothing"),
+                        () -> assertNotNull(draft, "the draft is kept"),
+                        () -> assertEquals(updated, Objects.requireNonNull(draft).getObjectId().name(),
+                                "the draft points at the update"),
+                        () -> assertEquals(List.of(), value(Objects.requireNonNull(expired.get())),
+                                "the updated draft is not deleted"));
+            }
+        }
 
         @Test
         @DisplayName("GDR-STORE-7: a draft changed between the read and the delete is kept with its new commit")
@@ -399,6 +512,61 @@ class DraftExpiryTest {
                             () -> assertTrue(has(clone, read), "the commit that was read, its parent, is present"));
                 }
             }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-7: an applied-draft reference is deleted with its draft and kept beside a live one")
+        void deletesOrphanedAppliedReferences() throws Exception {
+            var gitDir = bareRepository();
+            var expiry = expiry();
+            var now = time();
+            var orphanDraft = value(StoreReferences.draft(pseudonym(), key(Kind.PER_DOCUMENT)));
+            var liveDraft = value(StoreReferences.draft(pseudonym(), key(Kind.NUMBERED)));
+            var orphan = StoreReferences.applied(orphanDraft);
+            var live = StoreReferences.applied(liveDraft);
+            ObjectId orphanCommit;
+            ObjectId liveCommit;
+            try (Repository writer = openRepository(gitDir)) {
+                orphanCommit = commit(writer, orphan, content(), now);
+                liveCommit = commit(writer, live, content(), now);
+                commit(writer, liveDraft, content(), now, liveCommit);
+            }
+
+            try (Repository repository = openRepository(gitDir)) {
+                var deleted = value(new DraftExpiry(word(), repository, new RepositoryGuard(),
+                        new ReferenceUpdater(new InCoreWriter()), expiry, ATTEMPTS).expire(now));
+
+                assertAll(
+                        () -> assertEquals(List.of(), deleted, "no draft is stale"),
+                        () -> assertNull(repository.exactRef(orphan), "the reference without draft is deleted"),
+                        () -> assertFalse(has(repository, orphanCommit), "its commit is collected"),
+                        () -> assertEquals(liveCommit, Objects.requireNonNull(repository.exactRef(live)).getObjectId(),
+                                "the reference of a live draft is kept"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-7: a garbage collection skipped for a held gc.pid is a retryable CONFLICT, no success")
+        void skippedGarbageCollectionIsNoSuccess() throws Exception {
+            var gitDir = bareRepository();
+            var now = time();
+            var draftRef = value(StoreReferences.draft(pseudonym(), key(Kind.MAIN)));
+            try (Repository writer = openRepository(gitDir)) {
+                commit(writer, draftRef, content(), now);
+            }
+            Files.writeString(gitDir.resolve(DraftExpiry.GC_PID), word() + " " + word());
+
+            StoreResult<List<String>> result;
+            try (Repository repository = openRepository(gitDir)) {
+                result = new DraftExpiry(word(), repository, new RepositoryGuard(),
+                        new ReferenceUpdater(new InCoreWriter()), expiry(), ATTEMPTS).expire(now);
+            }
+
+            assertAll(
+                    () -> assertEquals(new StoreResult<List<String>>(new StoreResult.PassedOn(GitOutcome.CONFLICT),
+                            null, DraftExpiry.GC_SKIPPED), result, "the skipped collection is a conflict"),
+                    () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.GARBAGE_COLLECTION_SKIPPED.resolveIdentifierString()));
         }
 
         @Test

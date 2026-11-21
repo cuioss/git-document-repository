@@ -497,6 +497,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             FetchResult result = git.fetch()
                     .setRemote(input.remote())
                     .setRefSpecs(input.refSpecs().stream().map(RefSpec::new).toList())
+                    .setRemoveDeletedRefs(input.prune())
                     // JGit 7.8.0 FetchCommand fetches submodules of a working tree on demand, each from its own
                     // remote that the policy check above never saw
                     .setRecurseSubmodules(FetchRecurseSubmodulesMode.NO)

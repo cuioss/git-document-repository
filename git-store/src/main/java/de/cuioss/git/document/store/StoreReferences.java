@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
 
 /**
  * The reference layout of a repository of the store (GDR-STORE-2): the released state, the working and collection
- * branches, the drafts and the push reference specifications.
+ * branches, the drafts, the applied drafts and the push reference specifications.
  * <p>
  * Every reference name is built from segments that contain no character git-check-ref-format(1) forbids, no dot and no
  * slash: the collection name ({@code [a-z0-9-]+}, {@link DocumentCollection}), the id ({@link DocumentKey}) and the
@@ -41,6 +41,14 @@ public final class StoreReferences {
 
     /** The prefix of every draft reference, {@code refs/drafts/}; never pushed (ADR-0003). */
     public static final String DRAFTS = "refs/drafts/";
+
+    /**
+     * The prefix of every applied-draft reference, {@code refs/applied/}. The reference
+     * {@code refs/applied/<pseudonym>/<collection>/<id>} points at the draft commit a save last applied while a newer
+     * draft was kept, so the next save applies only what the draft changed since then. It lives in the clone only:
+     * never pushed, never fetched.
+     */
+    public static final String APPLIED = "refs/applied/";
 
     /**
      * The push reference specifications of the bare clone: the branches, the tags and the notes, each to the same name
@@ -106,6 +114,34 @@ public final class StoreReferences {
      */
     static String drafts(String pseudonym) {
         return DRAFTS + pseudonym + "/";
+    }
+
+    /**
+     * Returns the applied-draft reference that belongs to a draft reference.
+     *
+     * @param draftRef a draft reference, below {@value #DRAFTS}
+     * @return the reference of the same name below {@value #APPLIED}
+     * @throws IllegalArgumentException if {@code draftRef} is no draft reference
+     */
+    static String applied(String draftRef) {
+        if (!draftRef.startsWith(DRAFTS)) {
+            throw new IllegalArgumentException("not a draft reference");
+        }
+        return APPLIED + draftRef.substring(DRAFTS.length());
+    }
+
+    /**
+     * Returns the draft reference an applied-draft reference belongs to.
+     *
+     * @param appliedRef an applied-draft reference, below {@value #APPLIED}
+     * @return the reference of the same name below {@value #DRAFTS}
+     * @throws IllegalArgumentException if {@code appliedRef} is no applied-draft reference
+     */
+    static String draftOf(String appliedRef) {
+        if (!appliedRef.startsWith(APPLIED)) {
+            throw new IllegalArgumentException("not an applied-draft reference");
+        }
+        return DRAFTS + appliedRef.substring(APPLIED.length());
     }
 
     /**

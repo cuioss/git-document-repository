@@ -22,10 +22,13 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,6 +53,9 @@ import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
@@ -59,7 +65,6 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -139,6 +144,18 @@ class ExplicitSaveTest {
         return new TechnicalUser(word(), email, new UsernamePasswordCredentialsProvider(word(), word()));
     }
 
+    /**
+     * Files with generated contents that end in the tag, by name, so files of different roles (base, draft, concurrent
+     * change) never share a content by chance.
+     */
+    private static Map<String, String> contents(String tag, String... names) {
+        Map<String, String> files = new TreeMap<>();
+        for (String name : names) {
+            files.put(name, text() + "-" + tag);
+        }
+        return files;
+    }
+
     /** Files with generated contents, by name; the names are flat, so a tree holds them without subtrees. */
     private static Map<String, String> files(String... names) {
         Map<String, String> files = new TreeMap<>();
@@ -148,18 +165,23 @@ class ExplicitSaveTest {
         return files;
     }
 
-    /** Writes a commit holding exactly the files onto a reference, forcing the reference. */
+    /** Writes a commit holding exactly the files, nested paths included, onto a reference, forcing the reference. */
     private static ObjectId commit(Repository repository, String ref, Map<String, String> files,
             ObjectId... parents) {
         try (ObjectInserter inserter = repository.newObjectInserter()) {
-            var tree = new TreeFormatter();
-            for (Map.Entry<String, String> file : new TreeMap<>(files).entrySet()) {
-                tree.append(file.getKey(), FileMode.REGULAR_FILE,
+            DirCache index = DirCache.newInCore();
+            DirCacheBuilder builder = index.builder();
+            for (Map.Entry<String, String> file : files.entrySet()) {
+                var entry = new DirCacheEntry(file.getKey());
+                entry.setFileMode(FileMode.REGULAR_FILE);
+                entry.setObjectId(
                         inserter.insert(Constants.OBJ_BLOB, file.getValue().getBytes(StandardCharsets.UTF_8)));
+                builder.add(entry);
             }
+            builder.finish();
             var commit = new CommitBuilder();
             var ident = new PersonIdent(pseudonym(), "");
-            commit.setTreeId(inserter.insert(tree));
+            commit.setTreeId(index.writeTree(inserter));
             commit.setParentIds(parents);
             commit.setAuthor(ident);
             commit.setCommitter(ident);
@@ -271,7 +293,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a save is one commit on the remote tip, the draft deleted and never pushed")
-        void savesOneCommitOnRemoteTip(@Remote LocalRemote remote) throws Exception {
+        void savesOneCommitOnRemoteTip(@Remote LocalRemote remote) {
             commit(remote.repository(), StoreReferences.MAIN, files(word()));
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
@@ -304,7 +326,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: the save applies onto the fetched tip, not the tip the draft started from")
-        void appliesOntoFetchedTip(@Remote LocalRemote remote) throws Exception {
+        void appliesOntoFetchedTip(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var base = files(word());
@@ -375,8 +397,140 @@ class ExplicitSaveTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-3: a retry after a lost lease re-applies the draft the save started with")
+        void retryKeepsTheDraftItStartedWith(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var start = commit(remote.repository(), target, base);
+            var author = Author.of(pseudonym());
+            var changes = files(word() + "x");
+            var later = word() + "l";
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(changes));
+                String[] newer = new String[1];
+                fixture.operations().beforeNextPush(() -> {
+                    newer[0] = fixture.draft(author, key, puts(files(later)));
+                    commit(remote.repository(), target, merged(base, files(word() + "y")), start);
+                });
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                var remoteTree = tree(remote.repository(), ObjectId.fromString(saved.commitId()));
+                assertAll(
+                        () -> assertEquals(2, fixture.operations().pushes().size(), "a second attempt"),
+                        () -> assertTrue(remoteTree.keySet().containsAll(changes.keySet()), "the started draft"),
+                        () -> assertFalse(remoteTree.containsKey(later), "the draft written meanwhile is not saved"),
+                        () -> assertEquals(ObjectId.fromString(newer[0]),
+                                fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                                "the newer draft is kept"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a save the remote accepted is Saved although the local branch cannot be moved")
+        void acceptedSaveWithLocalMoveFailure(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            commit(remote.repository(), target, files(word()));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "x")));
+                File branchDirectory = Files.createDirectories(fixture.gitDir().resolve(target).getParent()).toFile();
+                fixture.operations().beforeNextPush(() -> assertTrue(branchDirectory.setWritable(false),
+                        "the directory of the local branch is made read-only"));
+                try {
+                    var result = fixture.save(author, key, Map.of());
+                    assumeFalse(Files.isWritable(branchDirectory.toPath()),
+                            "the user can still write a read-only directory");
+
+                    var saved = assertInstanceOf(SaveResult.Saved.class, result, "the accepted save");
+                    assertAll(
+                            () -> assertEquals(ObjectId.fromString(saved.commitId()), tip(remote.repository(), target),
+                                    "the remote holds the commit"),
+                            () -> assertNull(fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                                    "the draft is deleted"),
+                            () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                    GitStoreLogMessages.WARN.LOCAL_BRANCH_NOT_MOVED.resolveIdentifierString()));
+                } finally {
+                    assertTrue(branchDirectory.setWritable(true), "the directory is writable again");
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a target branch the remote deleted is created again against the zero-id lease")
+        void deletedRemoteBranchIsCreatedAgain(@Remote LocalRemote remote) throws Exception {
+            var main = commit(remote.repository(), StoreReferences.MAIN, files(word()));
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            commit(remote.repository(), target, files(word()), main);
+            var author = Author.of(pseudonym());
+            var other = Author.of(pseudonym() + "-o");
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "x")));
+                var otherDraft = fixture.draft(other, key, puts(files(word() + "o")));
+                RefUpdate delete = remote.repository().updateRef(target);
+                delete.setForceUpdate(true);
+                assertEquals(RefUpdate.Result.FORCED, delete.delete(), "the remote branch is deleted");
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                var commit = ObjectId.fromString(saved.commitId());
+                assertAll(
+                        () -> assertEquals(commit, tip(remote.repository(), target), "the target is created again"),
+                        () -> assertEquals(List.of(main), List.of(parse(remote.repository(), commit).getParents()),
+                                "the parent is the tip of main"),
+                        () -> assertEquals(ObjectId.zeroId().name(),
+                                fixture.operations().pushes().getLast().expectedRemoteHead(), "the zero-id lease"),
+                        () -> assertEquals(ObjectId.fromString(otherDraft),
+                                fixture.localTip(value(StoreReferences.draft(other.pseudonym(), key))),
+                                "the fetch leaves the drafts alone"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a kept newer draft saves only what it changed since the save that kept it")
+        void keptDraftSavesOnlyItsLaterChanges(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var path = word();
+            var later = path + "l";
+            commit(remote.repository(), target, Map.of(path, text() + "-base"));
+            var author = Author.of(pseudonym());
+            var theirs = text() + "-theirs";
+            var laterContent = text() + "-later";
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(Map.of(path, text() + "-mine")));
+                String[] newer = new String[1];
+                fixture.operations().beforeNextPush(
+                        () -> newer[0] = fixture.draft(author, key, puts(Map.of(later, laterContent))));
+                var first = ObjectId.fromString(
+                        assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of())).commitId());
+                var concurrent = commit(remote.repository(), target,
+                        merged(tree(remote.repository(), first), Map.of(path, theirs)), first);
+
+                var second = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                var commit = ObjectId.fromString(second.commitId());
+                assertAll(
+                        () -> assertEquals(List.of(concurrent),
+                                List.of(parse(remote.repository(), commit).getParents()), "on the concurrent change"),
+                        () -> assertEquals(merged(tree(remote.repository(), concurrent), Map.of(later, laterContent)),
+                                tree(remote.repository(), commit),
+                                "only the later change is saved, the concurrent change is kept"),
+                        () -> assertNull(fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                                "the draft is deleted"));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-3: a missing target branch starts at main and is pushed against the zero-id lease")
-        void missingTargetStartsAtMain(@Remote LocalRemote remote) throws Exception {
+        void missingTargetStartsAtMain(@Remote LocalRemote remote) {
             var main = commit(remote.repository(), StoreReferences.MAIN, files(word()));
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
@@ -400,7 +554,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: the zero-id lease is refused for a branch created meanwhile, and the save re-applies")
-        void zeroIdLeaseRefusesCreatedBranch(@Remote LocalRemote remote) throws Exception {
+        void zeroIdLeaseRefusesCreatedBranch(@Remote LocalRemote remote) {
             var main = commit(remote.repository(), StoreReferences.MAIN, files(word()));
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
@@ -430,7 +584,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a lease refusal re-applies the save onto the new tip")
-        void reappliesAfterLeaseRefusal(@Remote LocalRemote remote) throws Exception {
+        void reappliesAfterLeaseRefusal(@Remote LocalRemote remote) {
             var key = key(Kind.NUMBERED);
             var target = StoreReferences.target(key);
             var base = files(word());
@@ -459,7 +613,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: content without release is saved onto main")
-        void mainKindSavesOntoMain(@Remote LocalRemote remote) throws Exception {
+        void mainKindSavesOntoMain(@Remote LocalRemote remote) {
             var main = commit(remote.repository(), StoreReferences.MAIN, files(word()));
             var key = key(Kind.MAIN);
             var author = Author.of(pseudonym());
@@ -479,7 +633,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: in an empty repository the save is a root commit")
-        void emptyRepositoryRootCommit(@Remote LocalRemote remote) throws Exception {
+        void emptyRepositoryRootCommit(@Remote LocalRemote remote) {
             var key = key(Kind.MAIN);
             var author = Author.of(pseudonym());
             var changes = files(word());
@@ -498,7 +652,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a draft without changes is saved as the base, with no commit and no push")
-        void draftWithoutChanges(@Remote LocalRemote remote) throws Exception {
+        void draftWithoutChanges(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var base = files(word());
@@ -520,8 +674,34 @@ class ExplicitSaveTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-3: a draft without changes and without its target branch is not saved and kept")
+        void draftWithoutChangesOrTarget(@Remote LocalRemote remote) {
+            var base = files(word());
+            var main = commit(remote.repository(), StoreReferences.MAIN, base);
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var draft = fixture.draft(author, key, puts(base));
+
+                var result = fixture.save(author, key, Map.of());
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.NOT_FOUND),
+                                "draft: no changes and no target branch"), result, "no branch to name"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "no push"),
+                        () -> assertNull(tip(remote.repository(), target), "no target branch is created"),
+                        () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "main is unchanged"),
+                        () -> assertEquals(ObjectId.fromString(draft),
+                                fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                                "the draft is kept"));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-3: an unreachable remote is reported and changes nothing")
-        void unreachableChangesNothing(@Remote LocalRemote remote) throws Exception {
+        void unreachableChangesNothing(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var tipId = commit(remote.repository(), target, files(word()));
@@ -550,7 +730,7 @@ class ExplicitSaveTest {
         @ParameterizedTest(name = "{0}")
         @EnumSource(value = GitOutcome.class, names = {"UNREACHABLE", "CREDENTIALS_INVALID"})
         @DisplayName("GDR-STORE-3: a push that fails ends the save at once; the local branch and the draft stay")
-        void failedPushMovesNothing(GitOutcome outcome, @Remote LocalRemote remote) throws Exception {
+        void failedPushMovesNothing(GitOutcome outcome, @Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var tipId = commit(remote.repository(), target, files(word()));
@@ -575,7 +755,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a save whose every attempt is refused or rejected is rejected")
-        void rejectedAfterLastAttempt(@Remote LocalRemote remote) throws Exception {
+        void rejectedAfterLastAttempt(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var tipId = commit(remote.repository(), target, files(word()));
@@ -629,20 +809,20 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-4: a conflict names every conflicting path; nothing is pushed, draft and branch unchanged")
-        void namesEveryConflictingPath(@Remote LocalRemote remote) throws Exception {
+        void namesEveryConflictingPath(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var stem = word();
             var first = stem + "a";
             var second = stem + "b";
             var added = stem + "c";
-            var base = files(first, second);
+            var base = contents("base", first, second);
             var start = commit(remote.repository(), target, base);
             var author = Author.of(pseudonym());
 
             try (var fixture = open(remote)) {
-                var draft = fixture.draft(author, key, puts(files(first, second, added)));
-                var moved = commit(remote.repository(), target, files(first, second), start);
+                var draft = fixture.draft(author, key, puts(contents("draft", first, second, added)));
+                var moved = commit(remote.repository(), target, contents("concurrent", first, second), start);
                 Map<String, String> expected = Map.of(first, blob(base.get(first)), second, blob(base.get(second)),
                         added, ObjectId.zeroId().name());
 
@@ -661,6 +841,77 @@ class ExplicitSaveTest {
                                 GitStoreLogMessages.INFO.SAVE_CONFLICT.resolveIdentifierString()));
             }
         }
+
+        @Test
+        @DisplayName("GDR-STORE-4: a draft adding a path below a file another writer added conflicts on that path")
+        void fileAddedWhereTheDraftAddsADirectory(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var start = commit(remote.repository(), target, base);
+            var directory = word() + "d";
+            var nested = directory + "/" + word();
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(Map.of(nested, text())));
+                var moved = commit(remote.repository(), target, merged(base, Map.of(directory, text())), start);
+
+                var result = fixture.save(author, key, Map.of(nested, ObjectId.zeroId().name()));
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.Conflicting(List.of(nested)), result, "the nested path"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                        () -> assertEquals(moved, tip(remote.repository(), target), "the remote is unchanged"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-4: a draft adding a file where another writer added a directory conflicts on it")
+        void directoryAddedWhereTheDraftAddsAFile(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var start = commit(remote.repository(), target, base);
+            var path = word() + "f";
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(Map.of(path, text())));
+                var moved = commit(remote.repository(), target, merged(base, Map.of(path + "/" + word(), text())),
+                        start);
+
+                var result = fixture.save(author, key, Map.of());
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.Conflicting(List.of(path)), result, "the file's path"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                        () -> assertEquals(moved, tip(remote.repository(), target), "the remote is unchanged"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-4: a draft adding a file below an existing directory is saved")
+        void additionBelowExistingDirectory(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var directory = word() + "d";
+            var base = Map.of(directory + "/" + word() + "a", text());
+            commit(remote.repository(), target, base);
+            var changes = Map.of(directory + "/" + word() + "b", text());
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(changes));
+
+                var saved = assertInstanceOf(SaveResult.Saved.class,
+                        fixture.save(author, key, Map.of(changes.keySet().iterator().next(),
+                                ObjectId.zeroId().name())));
+
+                assertEquals(merged(base, changes), tree(remote.repository(), ObjectId.fromString(saved.commitId())),
+                        "both files");
+            }
+        }
     }
 
     @Nested
@@ -669,17 +920,17 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-5: an expected blob id that differs on the fetched tip is a conflict")
-        void mismatchIsConflict(@Remote LocalRemote remote) throws Exception {
+        void mismatchIsConflict(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var path = word();
-            commit(remote.repository(), target, files(path));
+            commit(remote.repository(), target, contents("base", path));
             var author = Author.of(pseudonym());
 
             try (var fixture = open(remote)) {
-                fixture.draft(author, key, puts(files(path)));
+                fixture.draft(author, key, puts(contents("draft", path)));
 
-                var result = fixture.save(author, key, Map.of(path, blob(text() + "~")));
+                var result = fixture.save(author, key, Map.of(path, blob(text() + "-loaded")));
 
                 assertEquals(new SaveResult.Conflicting(List.of(path)), result, "the path conflicts");
             }
@@ -691,13 +942,13 @@ class ExplicitSaveTest {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var path = word();
-            var start = commit(remote.repository(), target, files(path));
+            var start = commit(remote.repository(), target, contents("base", path));
             var author = Author.of(pseudonym());
-            var mine = files(path);
+            var mine = contents("draft", path);
 
             try (var fixture = open(remote)) {
                 fixture.draft(author, key, puts(mine));
-                commit(remote.repository(), target, files(path), start);
+                commit(remote.repository(), target, contents("concurrent", path), start);
 
                 var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
 
@@ -708,7 +959,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-5: the zero id expects the path absent: saved when absent, a conflict when added")
-        void zeroIdExpectsAbsence(@Remote LocalRemote remote) throws Exception {
+        void zeroIdExpectsAbsence(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var stem = word();
@@ -783,7 +1034,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-8: every clone, fetch and push receives exactly the technical user's credentials")
-        void credentialsOfTechnicalUser(@Remote LocalRemote remote) throws Exception {
+        void credentialsOfTechnicalUser(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             commit(remote.repository(), StoreReferences.target(key), files(word()));
             var author = Author.of(pseudonym());
@@ -805,7 +1056,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-8: invalid credentials on the fetch are passed on and change nothing")
-        void credentialsInvalidPassedOn(@Remote LocalRemote remote) throws Exception {
+        void credentialsInvalidPassedOn(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var tipId = commit(remote.repository(), target, files(word()));

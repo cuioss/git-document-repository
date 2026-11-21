@@ -88,6 +88,9 @@ class ConcurrentWritersTest {
     /** The time a scenario may take before it counts as hanging. */
     private static final long TIMEOUT_SECONDS = 120;
 
+    /** The time the teardown waits for the workers after the scenario ended or timed out. */
+    private static final long TEARDOWN_SECONDS = 10;
+
     @TempDir
     Path temp;
 
@@ -178,12 +181,20 @@ class ConcurrentWritersTest {
                 new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(Instant.now(), ZoneOffset.UTC)));
     }
 
-    /** Runs the tasks on one thread each, released together, and returns their results in task order. */
+    /**
+     * Runs the tasks on one thread each, released together, and returns their results in task order. One deadline
+     * bounds the whole scenario: a worker that has not ended by then fails the test with a {@code TimeoutException},
+     * and the teardown cancels every outstanding task and waits for the workers at most {@value #TEARDOWN_SECONDS}
+     * seconds, so a blocked worker cannot hang the test.
+     */
     private static <T> List<T> concurrently(List<Callable<T>> tasks) throws Exception {
         var start = new CountDownLatch(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
+        ExecutorService executor = Executors.newFixedThreadPool(tasks.size());
+        List<Future<T>> futures = new ArrayList<>();
         List<T> results = new ArrayList<>();
-        try (ExecutorService executor = Executors.newFixedThreadPool(tasks.size())) {
-            List<Future<T>> futures = new ArrayList<>();
+        boolean ended;
+        try {
             for (Callable<T> task : tasks) {
                 futures.add(executor.submit(() -> {
                     assertTrue(start.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the threads are released");
@@ -192,9 +203,14 @@ class ConcurrentWritersTest {
             }
             start.countDown();
             for (Future<T> future : futures) {
-                results.add(future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                results.add(future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
             }
+        } finally {
+            futures.forEach(future -> future.cancel(true));
+            executor.shutdownNow();
+            ended = executor.awaitTermination(TEARDOWN_SECONDS, TimeUnit.SECONDS);
         }
+        assertTrue(ended, "the workers end");
         return results;
     }
 

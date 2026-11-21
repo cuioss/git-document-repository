@@ -187,8 +187,12 @@ class WritePathSecretsTest {
         }
     }
 
-    /** What a run produced: every text the write path rendered, and the commits it wrote. */
-    private record Run(List<String> texts, List<RevCommit> commits, Map<ObjectId, String> authorAddresses) {
+    /**
+     * What a run produced: every text the write path rendered, the commits it wrote, and the author address, the
+     * author name per commit and the committer name it expects.
+     */
+    private record Run(List<String> texts, List<RevCommit> commits, Map<ObjectId, String> authorAddresses,
+    Map<ObjectId, String> authorNames, String committerName) {
     }
 
     /**
@@ -210,6 +214,7 @@ class WritePathSecretsTest {
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
         List<Object> rendered = new ArrayList<>(List.of(user, author, other));
         Map<ObjectId, String> authorAddresses = new LinkedHashMap<>();
+        Map<ObjectId, String> authorNames = new LinkedHashMap<>();
         List<ObjectId> written = new ArrayList<>();
 
         try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(email),
@@ -218,16 +223,19 @@ class WritePathSecretsTest {
             rendered.add(draft);
             written.add(ObjectId.fromString(value(draft)));
             authorAddresses.put(written.getLast(), secrets.authorAddress());
+            authorNames.put(written.getLast(), author.pseudonym());
             rendered.add(writer.drafts(author.pseudonym()));
             var saved = writer.save(author, key, Map.of(path, blob(loaded)), word());
             rendered.add(saved);
             written.add(ObjectId.fromString(assertInstanceOf(SaveResult.Saved.class, saved).commitId()));
             authorAddresses.put(written.getLast(), secrets.authorAddress());
+            authorNames.put(written.getLast(), author.pseudonym());
 
             var otherDraft = writer.draft(other, key, put(path, word() + " " + secrets.personName()), word());
             rendered.add(otherDraft);
             written.add(ObjectId.fromString(value(otherDraft)));
             authorAddresses.put(written.getLast(), secrets.otherAddress());
+            authorNames.put(written.getLast(), other.pseudonym());
             var conflict = writer.save(other, key, Map.of(path, blob(loaded)), word());
             rendered.add(assertInstanceOf(SaveResult.Conflicting.class, conflict));
             rendered.add(conflict.toResult());
@@ -267,17 +275,20 @@ class WritePathSecretsTest {
                     result.detail().ifPresent(texts::add);
                 }
             }
+            var refusedPseudonym = pseudonym();
+            var refusedAuthorAddress = secrets.authorAddress() + "<";
             texts.add(assertThrows(IllegalArgumentException.class,
-                    () -> new Author(pseudonym(), secrets.authorAddress() + "<")).getMessage());
+                    () -> new Author(refusedPseudonym, refusedAuthorAddress)).getMessage());
+            var refusedName = word();
+            var refusedUserAddress = secrets.userAddress() + "\n";
+            var refusedCredentials = new UsernamePasswordCredentialsProvider(secrets.userName(), secrets.password());
             texts.add(assertThrows(IllegalArgumentException.class,
-                    () -> new TechnicalUser(word(), secrets.userAddress() + "\n",
-                            new UsernamePasswordCredentialsProvider(secrets.userName(), secrets.password())))
-                    .getMessage());
+                    () -> new TechnicalUser(refusedName, refusedUserAddress, refusedCredentials)).getMessage());
             for (RevCommit commit : commits) {
                 texts.add(commit.getFullMessage());
             }
             texts.addAll(logTexts());
-            return new Run(texts, commits, authorAddresses);
+            return new Run(texts, commits, authorAddresses, authorNames, user.name());
         }
     }
 
@@ -310,6 +321,18 @@ class WritePathSecretsTest {
                                 commit.getAuthorIdent().getEmailAddress().isEmpty()
                                         && commit.getCommitterIdent().getEmailAddress().isEmpty()),
                         "author and committer of every commit carry an empty e-mail"));
+        assertExactNames(run);
+    }
+
+    /** Asserts that every commit names exactly the author's pseudonym and the technical user. */
+    private static void assertExactNames(Run run) {
+        for (RevCommit commit : run.commits()) {
+            assertAll(
+                    () -> assertEquals(run.authorNames().get(commit.getId()), commit.getAuthorIdent().getName(),
+                            "the author name is the pseudonym"),
+                    () -> assertEquals(run.committerName(), commit.getCommitterIdent().getName(),
+                            "the committer name is the technical user"));
+        }
     }
 
     @Test
@@ -330,5 +353,6 @@ class WritePathSecretsTest {
                     () -> assertTrue(secrets.all().stream().noneMatch(secret -> author.getName().contains(secret)
                             || committer.getName().contains(secret)), "no secret in the names"));
         }
+        assertExactNames(run);
     }
 }

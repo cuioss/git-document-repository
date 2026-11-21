@@ -140,10 +140,14 @@ class CommitIdentitiesTest {
         @DisplayName("GDR-STORE-2, GDR-NFR-3: an address that breaks the identity line is refused without its value")
         void forbiddenCharacter(String character) {
             var invalid = word() + character + address();
+            var pseudonym = word();
+            var name = word();
+            var credentials = credentials(word(), word());
 
-            var forAuthor = assertThrows(IllegalArgumentException.class, () -> new Author(word(), invalid), "author");
+            var forAuthor = assertThrows(IllegalArgumentException.class, () -> new Author(pseudonym, invalid),
+                    "author");
             var forUser = assertThrows(IllegalArgumentException.class,
-                    () -> new TechnicalUser(word(), invalid, credentials(word(), word())), "technical user");
+                    () -> new TechnicalUser(name, invalid, credentials), "technical user");
 
             assertAll(
                     () -> assertEquals("email: invalid", forAuthor.getMessage(), "the author message names the component"),
@@ -156,13 +160,17 @@ class CommitIdentitiesTest {
         @ValueSource(strings = {"", " ", "\t"})
         @DisplayName("GDR-STORE-2, GDR-NFR-3: a blank address is refused")
         void blankAddress(String blank) {
+            var pseudonym = word();
+            var name = word();
+            var credentials = credentials(word(), word());
+
+            var forAuthor = assertThrows(IllegalArgumentException.class, () -> new Author(pseudonym, blank));
+            var forUser = assertThrows(IllegalArgumentException.class,
+                    () -> new TechnicalUser(name, blank, credentials));
+
             assertAll(
-                    () -> assertEquals("email: invalid",
-                            assertThrows(IllegalArgumentException.class, () -> new Author(word(), blank)).getMessage(),
-                            "author"),
-                    () -> assertEquals("email: invalid", assertThrows(IllegalArgumentException.class,
-                                    () -> new TechnicalUser(word(), blank, credentials(word(), word()))).getMessage(),
-                            "technical user"));
+                    () -> assertEquals("email: invalid", forAuthor.getMessage(), "author"),
+                    () -> assertEquals("email: invalid", forUser.getMessage(), "technical user"));
         }
 
         @Test
@@ -179,8 +187,11 @@ class CommitIdentitiesTest {
         @ValueSource(strings = {"", " ", "\t"})
         @DisplayName("GDR-STORE-2: a blank name of the technical user is refused")
         void blankUserName(String blank) {
+            var address = address();
+            var credentials = credentials(word(), word());
+
             var refused = assertThrows(IllegalArgumentException.class,
-                    () -> new TechnicalUser(blank, address(), credentials(word(), word())));
+                    () -> new TechnicalUser(blank, address, credentials));
 
             assertEquals("name: blank", refused.getMessage(), "the message names the component");
         }

@@ -97,14 +97,14 @@ class SaveResultTest {
             input.clear();
 
             var detail = conflicting.detail().orElseThrow();
+            var paths = conflicting.paths();
             assertAll(
                     () -> assertEquals(List.of(first, second), conflicting.paths(), "sorted and distinct"),
                     () -> assertEquals(new StoreResult.PassedOn(GitOutcome.CONFLICT), conflicting.outcome(),
                             "the passed-on CONFLICT"),
                     () -> assertEquals("2 conflicting paths", detail, "the number of paths"),
                     () -> assertFalse(detail.contains(first), "no path in the detail"),
-                    () -> assertThrows(UnsupportedOperationException.class, () -> conflicting.paths().add(first),
-                            "unmodifiable"));
+                    () -> assertThrows(UnsupportedOperationException.class, () -> paths.add(first), "unmodifiable"));
         }
 
         @Test
@@ -121,13 +121,16 @@ class SaveResultTest {
         void refusesInvalidPaths() {
             List<String> withNull = new ArrayList<>();
             withNull.add(null);
+            List<String> none = List.of();
+            List<String> empty = List.of("");
+            List<String> absolute = List.of("/" + path());
             assertAll(
-                    () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.Conflicting(List.of()),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.Conflicting(none),
                             "no path"),
-                    () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.Conflicting(List.of("")),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.Conflicting(empty),
                             "an empty path"),
-                    () -> assertThrows(IllegalArgumentException.class,
-                            () -> new SaveResult.Conflicting(List.of("/" + path())), "an absolute path"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.Conflicting(absolute),
+                            "an absolute path"),
                     () -> assertThrows(NullPointerException.class, () -> new SaveResult.Conflicting(withNull),
                             "a null path"));
         }
@@ -157,20 +160,22 @@ class SaveResultTest {
             var detail = detail();
 
             var notSaved = SaveResult.NotSaved.of(StoreResult.of(StoreOutcome.MALFORMED, detail));
+            var success = StoreResult.ok(detail);
 
             assertAll(
                     () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED, detail), notSaved, "kept"),
-                    () -> assertThrows(IllegalArgumentException.class,
-                            () -> SaveResult.NotSaved.of(StoreResult.ok(detail)), "a success is refused"));
+                    () -> assertThrows(IllegalArgumentException.class, () -> SaveResult.NotSaved.of(success),
+                            "a success is refused"));
         }
 
         @Test
         @DisplayName("GDR-STORE-3: a non-success is never OK and needs a detail")
         void refusesInvalid() {
             var outcome = new StoreResult.PassedOn(GitOutcome.REJECTED);
+            var detail = detail();
             assertAll(
                     () -> assertThrows(IllegalArgumentException.class,
-                            () -> new SaveResult.NotSaved(StoreOutcome.OK, detail()), "OK"),
+                            () -> new SaveResult.NotSaved(StoreOutcome.OK, detail), "OK"),
                     () -> assertThrows(IllegalArgumentException.class, () -> new SaveResult.NotSaved(outcome, " "),
                             "a blank detail"));
         }

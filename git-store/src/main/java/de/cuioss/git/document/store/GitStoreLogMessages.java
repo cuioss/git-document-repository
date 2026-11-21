@@ -117,5 +117,25 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(102)
                 .build();
+
+        /**
+         * The remote accepted a save, but the local target branch could not be moved: the repository alias, the
+         * target reference and the class of the exception, never its message; the next fetch mirrors the remote branch.
+         */
+        public static final LogRecord LOCAL_BRANCH_NOT_MOVED = LogRecordModel.builder()
+                .template("Did not move the local branch of repository %s, reference %s after the accepted save: %s")
+                .prefix(PREFIX)
+                .identifier(103)
+                .build();
+
+        /**
+         * The garbage collection after the draft expiry was not run because another collection holds the clone's
+         * {@code gc.pid}: the repository alias.
+         */
+        public static final LogRecord GARBAGE_COLLECTION_SKIPPED = LogRecordModel.builder()
+                .template("Skipped the garbage collection of repository %s: another collection holds gc.pid")
+                .prefix(PREFIX)
+                .identifier(104)
+                .build();
     }
 }
