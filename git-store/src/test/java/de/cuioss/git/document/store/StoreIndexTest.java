@@ -27,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -42,9 +43,12 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogRecord;
 
 
@@ -530,9 +534,14 @@ class StoreIndexTest {
                         merged(layout.main(), Map.of(word() + ".txt", content())), layout.mainTip());
 
                 executor.runOnce();
+                boolean doneBefore = future.isDone();
+                boolean cancelled = future.cancel();
 
                 assertAll(
                         () -> assertNotNull(future, "the schedule"),
+                        () -> assertFalse(doneBefore, "the schedule runs until it is cancelled"),
+                        () -> assertTrue(cancelled, "the schedule is cancelled"),
+                        () -> assertTrue(future.isDone(), "the cancelled schedule is done"),
                         () -> assertEquals(TimeUnit.NANOSECONDS, executor.unit, "in nanoseconds"),
                         () -> assertEquals(interval.toNanos(), executor.initialDelay, "first run one interval on"),
                         () -> assertEquals(interval.toNanos(), executor.delay, "then every interval"),
@@ -644,6 +653,200 @@ class StoreIndexTest {
                         () -> failures.forEach(logRecord -> assertNull(logRecord.getThrown(), "no throwable attached")),
                         () -> assertNothingLeaks(null, List.of(Objects.requireNonNull(recorder.poison),
                                 layout.secondEntry().id(), path(layout.secondEntry(), ".json"))));
+            }
+        }
+    }
+
+    /** The deadline of every wait for another thread. */
+    private static final long WAIT_SECONDS = 10;
+
+    /** Opens an index directly over a repository and its own events, as {@link StoreIndex#open} does for a writer. */
+    private static StoreIndex<String> direct(Repository repository, Layout layout, IndexContributor<String> contributor,
+            StoreEvents events) {
+        Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+        contributors.put(layout.documents(), contributor);
+        contributors.put(layout.numbered(), contributor);
+        return value(StoreIndex.open(word(), repository, events, contributors));
+    }
+
+    private static ObjectId tip(StoreIndex<String> index, String source) {
+        return ObjectId.fromString(index.commitId(source).orElseThrow());
+    }
+
+    /**
+     * Writes a commit holding the files and, at one more path, a blob id the repository does not hold yet, onto a
+     * reference.
+     */
+    private static ObjectId commitWithMissingBlob(Repository repository, String ref, Map<String, String> files,
+            String path, ObjectId blob, ObjectId parent) throws IOException {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            DirCache index = DirCache.newInCore();
+            DirCacheBuilder builder = index.builder();
+            Map<String, ObjectId> entries = new TreeMap<>();
+            for (Map.Entry<String, String> file : files.entrySet()) {
+                entries.put(file.getKey(),
+                        inserter.insert(Constants.OBJ_BLOB, file.getValue().getBytes(StandardCharsets.UTF_8)));
+            }
+            entries.put(path, blob);
+            entries.forEach((name, id) -> {
+                var entry = new DirCacheEntry(name);
+                entry.setFileMode(FileMode.REGULAR_FILE);
+                entry.setObjectId(id);
+                builder.add(entry);
+            });
+            builder.finish();
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(pseudonym(), "");
+            commit.setTreeId(index.writeTree(inserter));
+            commit.setParentIds(parent);
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(ref);
+            update.setNewObjectId(id);
+            update.setForceUpdate(true);
+            update.update();
+            return id;
+        }
+    }
+
+    /** A contributor that counts the threads inside it, and blocks its first call once told to. */
+    private static final class Probe implements IndexContributor<String> {
+
+        private final AtomicInteger active = new AtomicInteger();
+        private final AtomicInteger maxActive = new AtomicInteger();
+        private final CountDownLatch inside = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private volatile boolean blocking;
+
+        @Override
+        public String contribute(Document document) {
+            int now = active.incrementAndGet();
+            maxActive.accumulateAndGet(now, Math::max);
+            try {
+                if (blocking) {
+                    blocking = false;
+                    inside.countDown();
+                    assertTrue(release.await(WAIT_SECONDS, TimeUnit.SECONDS), "released");
+                }
+                return document.key().id();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return document.key().id();
+            } finally {
+                active.decrementAndGet();
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Serialisation, retry and log (GDR-STORE-9, GDR-NFR-3)")
+    class Robustness {
+
+        @Test
+        @DisplayName("GDR-STORE-9: a snapshot during a refresh waits; no contributor is called by two threads at once")
+        void snapshotDuringRefreshWaits(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var probe = new Probe();
+
+            try (var index = direct(repository, layout, probe, events)) {
+                var before = tip(index, layout.workingBranch());
+                var moved = commit(repository, layout.workingBranch(),
+                        merged(layout.workingTree(), Map.of(path(layout.working(), ".json"), content())), before);
+                probe.blocking = true;
+                var refresh = new Thread(() -> events.emit(List.of(new StoreEvents.Update(layout.workingBranch(),
+                        before.name(), moved.name()))));
+                refresh.start();
+                assertTrue(probe.inside.await(WAIT_SECONDS, TimeUnit.SECONDS), "the refresh is inside the contributor");
+                AtomicReference<StoreResult<StoreIndex.Snapshot<String>>> snapshot = new AtomicReference<>();
+                var reader = new Thread(() -> snapshot.set(index.snapshot(layout.mainTip().name())));
+                reader.start();
+                ThreadStates.awaitParkedOrEnded(reader, WAIT_SECONDS);
+                boolean waited = reader.isAlive();
+
+                probe.release.countDown();
+                refresh.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+                reader.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertAll(
+                        () -> assertTrue(waited, "the snapshot waits for the refresh"),
+                        () -> assertEquals(1, probe.maxActive.get(), "one thread at a time in the contributor"),
+                        () -> assertTrue(snapshot.get().isOk(), "the snapshot is built afterwards"),
+                        () -> assertEquals(moved, tip(index, layout.workingBranch()), "the refresh completed"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: an operation that moves no reference retries a refresh that failed")
+        void unchangedOperationRetriesAFailedRefresh(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+
+            try (var index = direct(repository, layout, new Recorder(), events)) {
+                var before = tip(index, layout.workingBranch());
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var moved = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob, before);
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), moved.name())));
+                var afterFailure = tip(index, layout.workingBranch());
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                    inserter.flush();
+                }
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertEquals(before, afterFailure, "the failed refresh keeps the previous index"),
+                        () -> assertEquals(moved, tip(index, layout.workingBranch()),
+                                "the operation without a moved reference retried the refresh"),
+                        () -> assertEquals(text, index.entries(layout.workingBranch(), layout.documents())
+                                .get(layout.working()), "the document as the clone holds it"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: the full re-read when the indexed commit is gone logs no document id")
+        void fallbackLogsNoDocumentId(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+
+            try (var index = direct(repository, layout, new Recorder(), events)) {
+                var before = tip(index, layout.workingBranch());
+                var text = content();
+                var unrelated = commit(repository, layout.workingBranch(),
+                        Map.of(path(layout.working(), ".json"), text));
+                var name = before.name();
+                Files.delete(repository.getDirectory().toPath().resolve("objects").resolve(name.substring(0, 2))
+                        .resolve(name.substring(2)));
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), name, unrelated.name())));
+
+                assertAll(
+                        () -> assertEquals(unrelated, tip(index, layout.workingBranch()), "read in full"),
+                        () -> assertEquals(text, index.entries(layout.workingBranch(), layout.documents())
+                                .get(layout.working()), "the document of the new tip"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                                "since its indexed commit were not read"),
+                        () -> assertNothingLeaks(null, List.of(layout.working().id())));
             }
         }
     }

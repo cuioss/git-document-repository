@@ -33,10 +33,15 @@ import org.jspecify.annotations.Nullable;
  * its tag, and the reference updates of every fetch, each as the full reference name with its old and new id. An
  * operation collects its updates while it runs and emits them once, on its own thread, after it released every lock of
  * the store ({@link RepositoryGuard}), so an observer that calls the store again cannot deadlock it and never runs
- * while the transport lock is held. An operation that moved nothing emits nothing. The registered observers, the
+ * while the transport lock is held. An operation that moved nothing emits no update: it only tells the registered
+ * observers so ({@link Observer#unchanged}), and the listener dispatch is not called. The registered observers, the
  * indexes ({@link StoreIndex}), are called first, in the order of their registration, and the listener dispatch
  * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A {@link RuntimeException}
  * of one observer is logged by its class only and never fails the operation or keeps the next observer from its call.
+ * <p>
+ * The events of two operations may reach an observer in either order, since each is emitted by its own thread once its
+ * locks are free: an observer derives its state from the Git state the event points at, never from the old id of an
+ * update, which a concurrent operation may already have moved past.
  * <p>
  * An update names a reference and object ids only, never a path, a content or a pseudonym (GDR-NFR-3).
  */
@@ -69,6 +74,14 @@ final class StoreEvents {
          * @param updates the moved references, in the order the operation moved them, never empty
          */
         void moved(List<Update> updates);
+
+        /**
+         * Called once per operation that moved no reference, for example a fetch that found the clone current, after
+         * every lock of the store was released; an index retries a failed refresh here. Does nothing by default.
+         */
+        default void unchanged() {
+            // nothing moved, nothing to observe
+        }
     }
 
     /**
@@ -144,20 +157,22 @@ final class StoreEvents {
     /**
      * Hands the updates of one operation to every observer; called after every lock of the store was released.
      *
-     * @param updates the updates of the operation; nothing is called when there are none
+     * @param updates the updates of the operation; when there are none, every registered observer is told that the
+     *                operation moved nothing ({@link Observer#unchanged}) and the listener dispatch is not called
      */
     void emit(List<Update> updates) {
         if (updates.isEmpty()) {
+            observers.forEach(observer -> call(observer::unchanged));
             return;
         }
         List<Update> moved = List.copyOf(updates);
-        observers.forEach(observer -> call(observer, moved));
-        call(listeners, moved);
+        observers.forEach(observer -> call(() -> observer.moved(moved)));
+        call(() -> listeners.moved(moved));
     }
 
-    private static void call(Observer observer, List<Update> moved) {
+    private static void call(Runnable call) {
         try {
-            observer.moved(moved);
+            call.run();
         }
         /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
         catch (RuntimeException e) {

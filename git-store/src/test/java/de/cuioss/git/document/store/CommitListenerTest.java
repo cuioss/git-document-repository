@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.LogRecord;
 
 
@@ -85,6 +87,15 @@ class CommitListenerTest {
 
     /** The attempts of every save and release. */
     private static final int ATTEMPTS = 3;
+
+    /** The deadline of every wait for another thread. */
+    private static final long WAIT_SECONDS = 10;
+
+    /**
+     * The reference the dispatch tests write their later commits onto, outside {@code refs/heads/}, so a subscription
+     * still starts at the branch tip the test set before; the dispatch reads the commits by the ids of its events.
+     */
+    private static final String SCRATCH = "refs/scratch/commits";
 
     @TempDir
     Path temp;
@@ -376,6 +387,156 @@ class CommitListenerTest {
                         List.copyOf(calls), "the inner save is delivered after the call that made it returned");
             }
         }
+    }
+
+    /** The branch and the tree of a branch commit of the dispatch tests. */
+    private static String branch() {
+        return StoreReferences.MAIN.replace("main", "b" + word());
+    }
+
+    private static Map<String, String> files() {
+        return Map.of(word(), content());
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: two moves of a new branch dispatched out of order deliver each commit once, oldest first")
+    void outOfOrderMovesDeliverEveryCommitOnce(@Remote LocalRemote remote) {
+        var repository = remote.repository();
+        var mainTip = commit(repository, StoreReferences.MAIN, files());
+        var branch = branch();
+        var dispatch = new ListenerDispatch(word(), repository);
+        var listener = new Recording();
+
+        try (var subscription = dispatch.subscribe(branch, listener)) {
+            var first = commit(repository, branch, files(), mainTip);
+            var second = commit(repository, branch, files(), first);
+
+            dispatch.moved(List.of(new StoreEvents.Update(branch, first.name(), second.name())));
+            dispatch.moved(List.of(new StoreEvents.Update(branch, null, first.name())));
+
+            assertEquals(List.of(first.name(), second.name()), listener.commits(),
+                    "both commits, oldest first, none twice, nothing of main");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: a new branch merged into main before its event still delivers its commit")
+    void newBranchMergedBeforeItsEventDelivers(@Remote LocalRemote remote) {
+        var repository = remote.repository();
+        var mainTip = commit(repository, StoreReferences.MAIN, files());
+        var branch = branch();
+        var dispatch = new ListenerDispatch(word(), repository);
+        var listener = new Recording();
+
+        try (var subscription = dispatch.subscribe(branch, listener)) {
+            var saved = commit(repository, branch, files(), mainTip);
+            commit(repository, StoreReferences.MAIN, files(), mainTip, saved);
+
+            dispatch.moved(List.of(new StoreEvents.Update(branch, null, saved.name())));
+
+            assertEquals(List.of(saved.name()), listener.commits(), "the saved commit, though main now holds it");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: listeners that save onto each other's branch on two threads do not deadlock")
+    void crossSubscriptionDeliveryDoesNotDeadlock(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var xBranch = branch();
+        var yBranch = branch();
+        var x0 = commit(repository, xBranch, files());
+        var y0 = commit(repository, yBranch, files());
+        var x1 = commit(repository, SCRATCH, files(), x0);
+        var x2 = commit(repository, SCRATCH, files(), x1);
+        var y1 = commit(repository, SCRATCH, files(), y0);
+        var y2 = commit(repository, SCRATCH, files(), y1);
+        var dispatch = new ListenerDispatch(word(), repository);
+        var bothInside = new CountDownLatch(2);
+        var onX = new Recording();
+        var onY = new Recording();
+
+        try (var xSubscription = dispatch.subscribe(xBranch,
+                     crossing(onX, bothInside, dispatch, new StoreEvents.Update(yBranch, y1.name(), y2.name())));
+             var ySubscription = dispatch.subscribe(yBranch,
+                     crossing(onY, bothInside, dispatch, new StoreEvents.Update(xBranch, x1.name(), x2.name())))) {
+            var first = new Thread(() -> dispatch.moved(List.of(new StoreEvents.Update(xBranch, x0.name(),
+                    x1.name()))));
+            var second = new Thread(() -> dispatch.moved(List.of(new StoreEvents.Update(yBranch, y0.name(),
+                    y1.name()))));
+            first.start();
+            second.start();
+            first.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+            second.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+            assertAll(
+                    () -> assertFalse(first.isAlive(), "the first trigger ended"),
+                    () -> assertFalse(second.isAlive(), "the second trigger ended"),
+                    () -> assertEquals(List.of(x1.name(), x2.name()), onX.commits(), "every commit of x once"),
+                    () -> assertEquals(List.of(y1.name(), y2.name()), onY.commits(), "every commit of y once"));
+        }
+    }
+
+    /**
+     * A listener that records its commits and, on its first call, waits until the other listener is inside its call
+     * too, then moves the other branch, as a save onto it from within the call would.
+     */
+    private static CommitListener crossing(Recording recording, CountDownLatch bothInside, ListenerDispatch dispatch,
+            StoreEvents.Update other) {
+        boolean[] crossed = new boolean[1];
+        return (branch, commitId) -> {
+            recording.committed(branch, commitId);
+            if (!crossed[0]) {
+                crossed[0] = true;
+                bothInside.countDown();
+                try {
+                    assertTrue(bothInside.await(WAIT_SECONDS, TimeUnit.SECONDS), "both listeners are inside");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                dispatch.moved(List.of(other));
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: close waits for a delivery in progress; no call starts after it returned")
+    void closeWaitsForTheDeliveryInProgress(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var branch = branch();
+        var start = commit(repository, branch, files());
+        var first = commit(repository, SCRATCH, files(), start);
+        var second = commit(repository, SCRATCH, files(), first);
+        var dispatch = new ListenerDispatch(word(), repository);
+        var inside = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var listener = new Recording();
+        var subscription = dispatch.subscribe(branch, (name, commitId) -> {
+            listener.committed(name, commitId);
+            inside.countDown();
+            try {
+                assertTrue(release.await(WAIT_SECONDS, TimeUnit.SECONDS), "released");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        var delivery = new Thread(() -> dispatch.moved(List.of(new StoreEvents.Update(branch, start.name(),
+                second.name()))));
+        delivery.start();
+        assertTrue(inside.await(WAIT_SECONDS, TimeUnit.SECONDS), "the delivery is inside the call");
+        var closer = new Thread(subscription::close);
+        closer.start();
+        ThreadStates.awaitParkedOrEnded(closer, WAIT_SECONDS);
+        boolean waited = closer.isAlive();
+
+        release.countDown();
+        closer.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+        delivery.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+        assertAll(
+                () -> assertTrue(waited, "close waits while the listener is inside its call"),
+                () -> assertFalse(closer.isAlive(), "close returned after the call"),
+                () -> assertEquals(List.of(first.name()), listener.commits(),
+                        "the second commit is not called after close"));
     }
 
     @Test

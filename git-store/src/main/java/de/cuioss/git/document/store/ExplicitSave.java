@@ -89,7 +89,11 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * An optional {@link SaveStep} runs on every attempt, after the conflict check and before the commit is written, with
  * a read-only view of the base and of the tree the draft's edits produce on it. The edits it returns are added to the
- * draft's edits of the same commit, an edit on a path the draft also changed replacing the draft's edit; its refusal
+ * draft's edits of the same commit, an edit on a path the draft also changed replacing the draft's edit. The edits
+ * together are checked once more for a file and a directory overlap, against the base and between two puts, every path
+ * of the edits counting as changed, so a step put that would replace a directory of the base, or turn a file into a
+ * directory, is a conflict as well, while a step edit disjoint from the base's files, such as a counter, stays valid;
+ * its refusal
  * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} it throws with the passed-on
  * {@link GitOutcome#FAILED} naming the class of the exception only, without a further attempt. In both cases nothing is
  * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step.
@@ -319,7 +323,12 @@ final class ExplicitSave {
                 if (ended != null) {
                     return Optional.of(ended);
                 }
-                return apply(request, drafted.draft(), base, merge(edits, Objects.requireNonNull(stepped.edits())));
+                List<TreeEdit> merged = merge(edits, Objects.requireNonNull(stepped.edits()));
+                List<String> overlapping = overlapping(repository, merged, baseCommit);
+                if (!overlapping.isEmpty()) {
+                    return Optional.of(new SaveResult.Conflicting(overlapping));
+                }
+                return apply(request, drafted.draft(), base, merged);
             }
         } catch (IOException e) {
             return Optional.of(failed(request, e));
@@ -519,6 +528,41 @@ final class ExplicitSave {
             }
         }
         return false;
+    }
+
+    /**
+     * Every put of the save commit's edits, the draft's and the step's together, that overlaps as a file and a
+     * directory what the edits do not resolve: another put at one of its parents or below it, or the base as
+     * {@link #overlaps} checks it with every path of the edits counting as changed. Sorted and distinct.
+     */
+    private static List<String> overlapping(Repository repository, List<TreeEdit> edits, @Nullable RevCommit base)
+            throws IOException {
+        Set<String> paths = new HashSet<>();
+        Set<String> puts = new HashSet<>();
+        for (TreeEdit edit : edits) {
+            paths.add(edit.path());
+            if (edit instanceof TreeEdit.Put) {
+                puts.add(edit.path());
+            }
+        }
+        Set<String> conflicts = new TreeSet<>();
+        for (String path : puts) {
+            if (nested(path, puts) || base != null && overlaps(repository, path, paths, base)) {
+                conflicts.add(path);
+            }
+        }
+        return List.copyOf(conflicts);
+    }
+
+    /** Whether another put lies at one of the path's parents or below the path. */
+    private static boolean nested(String path, Set<String> puts) {
+        for (int slash = path.indexOf('/'); slash > 0; slash = path.indexOf('/', slash + 1)) {
+            if (puts.contains(path.substring(0, slash))) {
+                return true;
+            }
+        }
+        String prefix = path + "/";
+        return puts.stream().anyMatch(other -> other.startsWith(prefix));
     }
 
     /** Whether the commit holds a file, anything but a directory, at the path. */

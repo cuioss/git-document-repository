@@ -312,7 +312,11 @@ edits and read on demand: it writes no object, and the step gets no `Repository`
 did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two variants:
 
 * `Edits` with a list of `TreeEdit`, possibly empty: they are added to the draft's edits of the one save commit, whose
-  only parent stays the tip; a step edit on a path the draft also changed replaces the draft's edit of that path.
+  only parent stays the tip; a step edit on a path the draft also changed replaces the draft's edit of that path. The
+  edits together are checked once more for the file and directory overlap of <<GDR-STORE-5>>, against the tip with
+  every path of the edits counting as changed and between two puts, so a step put that replaces a directory of the tip
+  holding a file no edit names, or turns a file into a directory, ends the save as `Conflicting` naming the step's
+  path, nothing written or pushed; a step edit disjoint from the tip's files, such as a counter, stays valid.
 * `Refusal`, which carries no text of the caller: the save ends as `NotSaved` with `StoreOutcome.REFUSED` and the
   fixed detail `<target>: step: refused`.
 
@@ -533,8 +537,10 @@ every working branch and collection branch. After a save only the changed docume
   shared side of the maintenance lock and the transport lock (<<GDR-STORE-3>>), and returns `OK` with the full names of
   the references it moved, sorted, or the passed-on Git outcome. `StoreWriter.fetchPeriodically(executor)` schedules
   that fetch on the caller's `ScheduledExecutorService` with a fixed delay of `fetch.interval`; the writer starts no
-  thread of its own, and the caller ends the schedule by cancelling the returned `ScheduledFuture` or shutting its
-  executor down. A failed periodic fetch, an outcome or an exception, is logged and never ends the schedule.
+  thread of its own, and the caller ends the schedule by cancelling the returned `FetchSchedule` or shutting its
+  executor down. `FetchSchedule` wraps the `ScheduledFuture<?>` of
+  `ScheduledExecutorService.scheduleWithFixedDelay` (Java SE 21 API) so that no public signature carries a wildcard
+  type; it offers `cancel()`, which starts no further fetch and lets a running one complete, and `isDone()`. A failed periodic fetch, an outcome or an exception, is logged and never ends the schedule.
 * *Snapshot.* `snapshot(tagOrCommit)` takes a tag, by its full name or its name below `refs/tags/`, or a full commit
   id, and builds a separate `StoreIndex.Snapshot` of that commit, indexed as `main` is; the current index is not
   changed. A tag or commit the clone does not hold is the passed-on `NOT_FOUND` of `RepositoryReader.snapshot`, whose
@@ -546,7 +552,12 @@ every working branch and collection branch. After a save only the changed docume
   rebuild from the tips read under that lock; the published index is an immutable value swapped atomically, so a
   reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
   operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
-  A refresh that fails to read the clone keeps the previous index.
+  A refresh that fails to read the clone keeps the previous index and marks it stale: an operation that moved no
+  reference, such as a fetch that found the clone current, tells the index so (`StoreEvents.Observer.unchanged`), and a
+  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. A
+  snapshot calls the contributors under the same lock, so the contributors of one index are never called by two
+  threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
+  documents changed.
 
 A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, a throwing contributor as
 `GIT_STORE-108` with the alias, the collection and the class of the exception (`git-store/doc/LogMessages.adoc`). No
@@ -565,23 +576,37 @@ image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source 
 
 * *Subscription.* `StoreWriter.subscribe(branch, listener)` subscribes a `CommitListener` to one branch, by its full
   name or its name below `refs/heads/`, and returns a `CommitListener.Subscription`, an `AutoCloseable` whose `close`
-  unsubscribes and throws nothing; no call starts after `close` returned. The listener is called with the full name of
-  the branch and the full id of each new commit.
+  unsubscribes and throws nothing. `close` takes the lock of the subscription, so a call in progress on another thread
+  ends first and no call starts after `close` returned; a listener may close its own subscription, and a `close` from
+  within a listener of another subscription does not wait, so it cannot deadlock, and stops the calls not yet started.
+  The listener is called with the full name of the branch and the full id of each new commit.
 * *Triggers.* The listener dispatch is the last observer of the `StoreEvents` of the writer (<<GDR-STORE-9>>): after a
   save that pushed onto the branch, after a release that pushed `main`, and after a fetch that moved the branch, it is
   called on the thread of that operation once the operation released every lock of the store and every index over the
-  writer was refreshed. A listener may therefore call the store, a save included, without a deadlock.
-* *Oldest first.* The dispatch walks the commits reachable from the new tip and not from the subscription's cursor,
-  oldest first (JGit 7.8.0 `RevWalk` with `RevSort.TOPO` and `RevSort.REVERSE`), so a fetch that moved the branch by
-  several commits delivers each of them in order. Without a cursor the boundary is the old id of the update, else the
-  tips of every other branch, so a branch the operation created delivers its own commits and not the history it forked
-  from.
-* *In-memory cursor.* Every subscription keeps the last commit it delivered, starting at the tip the branch has in the
-  clone when it is subscribed. The cursor is never written anywhere: it only keeps one subscription from delivering a
-  commit twice, and a new writer over the same clone starts its subscriptions at the current tips and delivers nothing
-  older. That is no kept progress: work that must not be lost is derived from the Git state at start. The delivery of
-  one subscription is serialised by its lock, so concurrent triggers deliver every commit once and in order; a listener
-  that re-enters the store gets its own new commits after it returned.
+  writer was refreshed, or on the thread of a concurrent trigger that was delivering to the subscription already. A listener may therefore call the store, a save included, without a deadlock.
+* *Oldest first, exactly once.* What is new is derived from the Git state, never from the old id of an event: the events
+  of two operations are emitted by their own threads once their locks are free, so they may arrive in either order,
+  and the old id of an update may already be history another operation moved past (a release that merged a saved
+  commit into `main` before the save emitted its event, for example). Every subscription keeps a fixed *start*, the
+  tip the branch has in the clone when it is subscribed, or the tip of every branch of the clone for a branch that does
+  not exist yet, and its *delivered tips*, the new ids it walked, an ancestor of a later one dropped. For each move of
+  the branch the dispatch walks the commits reachable from the new id and from neither the start nor a delivered tip,
+  oldest first (JGit 7.8.0 `RevWalk` with `RevSort.TOPO` and `RevSort.REVERSE`). So every commit reachable from the
+  branch that was not reachable from the start reaches the listener exactly once, oldest first, whatever the order of
+  the events: a fetch that moved the branch by several commits delivers each of them in order, a later move dispatched
+  first delivers the earlier commits with it and the earlier move then finds them delivered, and a branch created
+  after the subscription delivers its own commits together with the history it forked from that was not in the clone
+  when the subscription started, but nothing older.
+* *In-memory state.* Start and delivered tips are never written anywhere: they only keep one subscription from
+  delivering a commit twice, and a new writer over the same clone starts its subscriptions at the current tips and
+  delivers nothing older. That is no kept progress: work that must not be lost is derived from the Git state at start.
+* *Serial delivery without deadlock.* The delivery of one subscription is serialised by its lock, so the calls of one
+  subscription never overlap. A thread inside a listener call never waits for the lock of a subscription: the move it
+  caused is queued, walked after the listener returned when it belongs to the listener's own subscription, walked at
+  once when the other subscription is free, and otherwise walked by the thread that holds that subscription, which
+  drains the queue before it lets go of the lock. Two listeners on two branches that save onto each other's branch on
+  two threads therefore never deadlock, and a listener that re-enters the store gets its own new commits after it
+  returned.
 * *Failure isolation.* A `RuntimeException` of a listener is caught and logged with the class of the exception only, no
   throwable attached; the commit counts as delivered, and the save, release or fetch that triggered the call keeps its
   result.

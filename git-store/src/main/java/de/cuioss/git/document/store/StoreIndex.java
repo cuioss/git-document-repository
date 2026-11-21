@@ -73,7 +73,9 @@ import org.jspecify.annotations.Nullable;
  * immutable value swapped atomically: a reader sees either the index before or the index after a refresh, never a
  * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, so
  * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the clone keeps the previous
- * index.
+ * index and marks it stale; the next operation of the writer retries the refresh, also a fetch or save that moved no
+ * reference, until one succeeds. A snapshot calls the contributors under the same lock, so no contributor is called
+ * by two threads at once.
  * <p>
  * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
  * one.
@@ -98,8 +100,24 @@ public final class StoreIndex<E> implements AutoCloseable {
     private final Map<DocumentCollection, IndexContributor<? extends E>> contributors;
     private final ReentrantLock lock = new ReentrantLock();
     private final RepositoryReader reader = new RepositoryReader();
-    private final StoreEvents.Observer observer = updates -> refreshQuietly();
+    private final StoreEvents.Observer observer = new StoreEvents.Observer() {
+
+        @Override
+        public void moved(List<StoreEvents.Update> updates) {
+            refreshQuietly();
+        }
+
+        @Override
+        public void unchanged() {
+            if (stale) {
+                refreshQuietly();
+            }
+        }
+    };
     private final AtomicReference<Map<String, Source<E>>> current = new AtomicReference<>(Map.of());
+
+    /** Whether the last refresh failed, so the index may lag behind the clone until a refresh succeeds. */
+    private volatile boolean stale;
 
     private StoreIndex(String alias, Repository repository, StoreEvents events,
             Map<DocumentCollection, IndexContributor<? extends E>> contributors) {
@@ -207,7 +225,8 @@ public final class StoreIndex<E> implements AutoCloseable {
 
     /**
      * Builds a separate index of one tag or commit, as {@code main} would be indexed at it, without changing the
-     * current index (GDR-STORE-9). The contributors are called for every document of the tag or commit.
+     * current index (GDR-STORE-9). The contributors are called for every document of the tag or commit, under the
+     * lock of the index, so never at the same time as by a refresh or another snapshot.
      *
      * @param tagOrCommit a tag, by its full name or its name below {@code refs/tags/}, or a full commit id
      * @return {@link StoreOutcome#OK} with the snapshot; or the passed-on {@link GitOutcome#NOT_FOUND} for a tag or
@@ -228,6 +247,7 @@ public final class StoreIndex<E> implements AutoCloseable {
         for (SnapshotFile file : read.files()) {
             files.put(file.path(), ObjectId.fromString(file.blobId()));
         }
+        lock.lock();
         try {
             var scope = new Scope(List.copyOf(collections.values()), null);
             return StoreResult.ok(new Snapshot<>(read.commitId(), contribute(scope, read.commitId(), files)));
@@ -235,6 +255,8 @@ public final class StoreIndex<E> implements AutoCloseable {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("The snapshot of %s was not built: %s", alias, type);
             return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null, "snapshot: " + type);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -254,11 +276,15 @@ public final class StoreIndex<E> implements AutoCloseable {
         return "StoreIndex[alias=" + alias + ", sources=" + current.get().size() + "]";
     }
 
-    /** Refreshes after an operation of the writer; a failure keeps the previous index. */
+    /**
+     * Refreshes after an operation of the writer; a failure keeps the previous index and marks it stale, so the next
+     * operation retries the refresh even when it moves no reference.
+     */
     private void refreshQuietly() {
         try {
             refresh();
         } catch (IOException e) {
+            stale = true;
             LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getSimpleName());
         }
     }
@@ -290,6 +316,7 @@ public final class StoreIndex<E> implements AutoCloseable {
                 }
             }
             current.set(Map.copyOf(next));
+            stale = false;
         } finally {
             lock.unlock();
         }
@@ -332,26 +359,34 @@ public final class StoreIndex<E> implements AutoCloseable {
                 List<String> paths = Objects.requireNonNull(changes.value()).stream().map(PathChange::path).toList();
                 return new Source<>(commit.copy(), reread(source, scope, indexed, commit.getTree(), paths));
             }
-            LOGGER.debug("The changes of %s since the indexed commit were not read: %s", source, changes.outcome());
+            LOGGER.debug("The changes of a source of %s since its indexed commit were not read: %s", alias,
+                    changes.outcome());
         }
         return new Source<>(commit.copy(), contribute(scope, source, files(commit.getTree(), scope.collections())));
     }
 
-    /** Re-reads the documents of the source with a changed path and keeps every other entry. */
+    /**
+     * Re-reads the documents of the source with a changed path and keeps every other entry. The files of a collection
+     * are enumerated once per collection, however many of its documents changed.
+     */
     private Map<DocumentCollection, Map<DocumentKey, E>> reread(String source, Scope scope, Source<E> indexed,
             RevTree tree, List<String> changedPaths) throws IOException {
         Map<DocumentCollection, Map<DocumentKey, E>> entries = new LinkedHashMap<>();
         indexed.entries().forEach((collection, values) -> entries.put(collection, new LinkedHashMap<>(values)));
+        Map<DocumentCollection, CollectionFiles> enumerated = new HashMap<>();
         for (DocumentKey key : DocumentPaths.changed(scope.collections(), changedPaths)) {
             if (!scope.covers(key)) {
                 continue;
             }
+            CollectionFiles collectionFiles = enumerated.get(key.collection());
+            if (collectionFiles == null) {
+                collectionFiles = enumerate(tree, key.collection());
+                enumerated.put(key.collection(), collectionFiles);
+            }
             Map<String, ObjectId> files = new LinkedHashMap<>();
-            files(tree, List.of(key.collection())).forEach((path, blob) -> {
-                if (DocumentPaths.belongs(key, path)) {
-                    files.put(path, blob);
-                }
-            });
+            for (String path : collectionFiles.documents().getOrDefault(key, List.of())) {
+                files.put(path, collectionFiles.files().get(path));
+            }
             Map<DocumentKey, E> values = entries.computeIfAbsent(key.collection(), c -> new LinkedHashMap<>());
             @Nullable E value = files.isEmpty() ? null : contribute(key, source, files);
             if (value == null) {
@@ -361,6 +396,12 @@ public final class StoreIndex<E> implements AutoCloseable {
             }
         }
         return immutable(entries);
+    }
+
+    /** Enumerates the files of one collection of a tree once and groups them into its documents. */
+    private CollectionFiles enumerate(RevTree tree, DocumentCollection collection) throws IOException {
+        Map<String, ObjectId> files = files(tree, List.of(collection));
+        return new CollectionFiles(files, DocumentPaths.documents(List.of(collection), files.keySet()));
     }
 
     /** Calls the contributors for every document of the scope among the files. */
@@ -485,6 +526,15 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @param <E>     the type of the entry values
      */
     private record Source<E>(ObjectId commit, Map<DocumentCollection, Map<DocumentKey, E>> entries) {
+    }
+
+    /**
+     * The files of one collection of a tree, enumerated once.
+     *
+     * @param files     the regular and executable files below the collection's directory, by path
+     * @param documents the paths of every document of the collection among them, by key
+     */
+    private record CollectionFiles(Map<String, ObjectId> files, Map<DocumentKey, List<String>> documents) {
     }
 
     /**

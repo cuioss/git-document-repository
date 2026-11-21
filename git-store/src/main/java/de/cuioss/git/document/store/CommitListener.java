@@ -19,11 +19,14 @@ package de.cuioss.git.document.store;
  * An in-process listener of the new commits of one branch (GDR-STORE-10), subscribed through
  * {@link StoreWriter#subscribe(String, CommitListener)}.
  * <p>
- * The store calls the listener with each new commit of its branch, oldest first: after every save or release the store
- * pushed onto the branch, and after every fetch that moved the branch. The call happens on the thread of the save,
- * release or fetch, after it released every lock of the store, and after the index was refreshed; the calls of one
- * subscription never overlap. A listener may call the store, a save included: the commits that call adds are delivered
- * after the listener returned. A {@link RuntimeException} of the listener is logged with its class only and never
+ * The store calls the listener with each new commit of its branch, oldest first and once: every commit reachable from
+ * the branch that was not reachable from its tip when the listener subscribed (from the tip of any branch, for a
+ * branch that did not exist yet), after every save or release the store pushed onto the branch, and after every fetch
+ * that moved the branch. The call happens on the thread of the save, release or fetch, after it released every lock of
+ * the store, and after the index was refreshed, or on the thread of a concurrent trigger of the same subscription that
+ * was delivering already; the calls of one subscription never overlap. A listener may call the store, a save included:
+ * the commits that call adds are delivered after the listener returned, and listeners that save onto each other's
+ * branches never deadlock. A {@link RuntimeException} of the listener is logged with its class only and never
  * fails the save, release or fetch; the commit counts as delivered. The store keeps no progress of a listener: what
  * must not be lost has to be derivable from the Git state at start.
  *
@@ -48,7 +51,10 @@ public interface CommitListener {
     interface Subscription extends AutoCloseable {
 
         /**
-         * Unsubscribes the listener: no call starts after this method returned, and closing again has no effect.
+         * Unsubscribes the listener: a call in progress on another thread ends first, no call starts after this method
+         * returned, and
+         * closing again has no effect. Called from within a listener call of another subscription, it does not wait for
+         * a call of this subscription in progress on another thread.
          */
         @Override
         void close();

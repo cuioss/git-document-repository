@@ -346,6 +346,87 @@ class SaveStepTest {
     }
 
     @Test
+    @DisplayName("GDR-STORE-5: a step put that replaces a directory of the tip is a conflict; nothing is pushed")
+    void stepPutReplacingADirectoryConflicts(@Remote LocalRemote remote) {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var directory = word() + "d";
+        var keep = directory + "/" + word();
+        var changed = word() + "x";
+        var tipFiles = Map.of(keep, content(), changed, content());
+        var tipId = commit(remote.repository(), target, tipFiles);
+        var author = Author.of(pseudonym());
+
+        try (var fixture = open(remote)) {
+            var draft = fixture.draft(author, key, puts(Map.of(changed, content())));
+
+            var result = fixture.save(author, key,
+                    attempt -> new SaveStep.Edits(List.of(new TreeEdit.Put(directory, bytes(content())))));
+
+            assertAll(
+                    () -> assertEquals(new SaveResult.Conflicting(List.of(directory)), result,
+                            "the step's path conflicts"),
+                    () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                    () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
+                    () -> assertEquals(tipFiles, tree(remote.repository(), tipId), "the directory keeps its file"),
+                    () -> assertEquals(ObjectId.fromString(draft),
+                            fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                            "the draft is unchanged"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-5: a step put that turns a file of the tip into a directory is a conflict")
+    void stepPutBelowAFileConflicts(@Remote LocalRemote remote) {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var file = word() + "f";
+        var changed = word() + "x";
+        var below = file + "/" + word();
+        var tipId = commit(remote.repository(), target, Map.of(file, content(), changed, content()));
+        var author = Author.of(pseudonym());
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(changed, content())));
+
+            var result = fixture.save(author, key,
+                    attempt -> new SaveStep.Edits(List.of(new TreeEdit.Put(below, bytes(content())))));
+
+            assertAll(
+                    () -> assertEquals(new SaveResult.Conflicting(List.of(below)), result, "the step's path conflicts"),
+                    () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                    () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-5: a step edit disjoint from the tip's files, such as a counter, still saves")
+    void disjointStepEditSaves(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var directory = word() + "d";
+        var keep = directory + "/" + word();
+        var counter = directory + "/" + DocumentPaths.COUNTER;
+        var changed = word() + "x";
+        var keepContent = content();
+        var changedContent = content();
+        var counterContent = content();
+        commit(remote.repository(), target, Map.of(keep, keepContent, changed, content()));
+        var author = Author.of(pseudonym());
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(changed, changedContent)));
+
+            var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key,
+                    attempt -> new SaveStep.Edits(List.of(new TreeEdit.Put(counter, bytes(counterContent))))));
+
+            assertEquals(Map.of(keep, keepContent, changed, changedContent, counter, counterContent),
+                    tree(remote.repository(), ObjectId.fromString(saved.commitId())),
+                    "the counter beside the directory's file and the draft's change");
+        }
+    }
+
+    @Test
     @DisplayName("GDR-STORE-3: the step reads the tip and the tree the draft's changes produce on it")
     void readsTipAndProducedTree(@Remote LocalRemote remote) {
         var key = key();

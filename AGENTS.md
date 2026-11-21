@@ -57,7 +57,7 @@ service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` wi
 provider selection `StoreProviders` through `ServiceLoader`, and the `LogRecord` holder `GitStoreLogMessages`; and the
 write path: `StoreWriter` (drafts, listing, explicit save with lease and the optional per-attempt `SaveStep`,
 `release` of a document with its tag returning `Release`, draft expiry with garbage collection, `fetch` and
-`fetchPeriodically` on the caller's executor, and `subscribe` of a per-branch `CommitListener`) with
+`fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
 every fetch, save and release, with `snapshot` of a tag or commit) over the consumer's `IndexContributor` per

@@ -16,11 +16,11 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -39,21 +39,29 @@ import org.jspecify.annotations.Nullable;
  * The dispatch of the new commits of a branch to its subscribed {@link CommitListener}s (GDR-STORE-10), the last
  * observer of the {@link StoreEvents} of a writer, after every index.
  * <p>
- * Every subscription keeps an in-memory cursor: the last commit of its branch it delivered, or the tip of the branch in
- * the clone when it was subscribed. When an event moves the branch to a new id, the dispatch walks the commits
- * reachable from that id and not from the cursor, oldest first ({@code RevSort.TOPO} with {@code RevSort.REVERSE},
- * JGit 7.8.0), and calls the listener with each; without a cursor, the boundary is the old id of the update, else the
- * tips of every other branch of the clone, so a branch the event created delivers its own commits, not the history it
- * forked from. The cursor moves to each commit before the listener is called, so a failing listener never gets the
- * commit again. A cursor is never persisted: a new writer starts its subscriptions at the tips of the clone and delivers
- * nothing older.
+ * Every subscription derives what is new from the Git state, never from the old id of an event. Its <em>start</em> is
+ * fixed when it subscribes: the tip the branch has in the clone, or, for a branch the clone does not hold yet, the tip
+ * of every branch of the clone. Its <em>delivered tips</em> are the new ids it has walked, an ancestor of a later one
+ * dropped. When an event moves the branch to a new id, the dispatch walks the commits reachable from that id and from
+ * neither the start nor a delivered tip, oldest first ({@code RevSort.TOPO} with {@code RevSort.REVERSE}, JGit 7.8.0),
+ * and calls the listener with each. Every commit reachable from the branch that was not reachable from the start
+ * therefore reaches the listener exactly once, oldest first, whatever order the events of two operations arrive in: a
+ * later move dispatched first delivers the earlier commits with it, and the earlier move then finds them delivered. A
+ * branch created after the subscription delivers its own commits, and the history it forked from that was not in the
+ * clone when the subscription started. Neither start nor delivered tips are persisted: a new writer starts its
+ * subscriptions at the tips of the clone and delivers nothing older.
  * <p>
  * The delivery of one subscription is serialised by its lock, so concurrent triggers deliver every commit once, in
- * order: a later trigger walks from the cursor an earlier one left. A listener that calls the store on its own thread,
- * a save included, re-enters the dispatch; that delivery is queued and runs once the listener returned, so the listener
- * gets its own new commits after its call. A {@link RuntimeException} of a listener is caught, logged as
- * {@code GIT_STORE-109} with the alias, the branch and the class of the exception, no throwable attached, and never
- * fails the trigger. A walk that fails to read the clone delivers nothing and keeps the cursor.
+ * order. A thread never waits for the lock of a subscription while it is inside a listener call: a listener that calls
+ * the store on its own thread, a save included, re-enters the dispatch, and the delivery of a move it caused is queued
+ * and runs once the listener returned (for its own subscription) or at once when the other subscription is free, else
+ * by the thread that holds it, which drains the queue before it lets go of it. Two listeners that save onto each other's
+ * branch on two threads therefore never deadlock. {@link CommitListener.Subscription#close} takes the lock, so it waits
+ * for a delivery in progress and no call starts after it returned; called from within a listener of another
+ * subscription it does not wait, so it cannot deadlock either, and only stops the calls not yet started. A
+ * {@link RuntimeException} of a listener is caught, logged as {@code GIT_STORE-109} with the alias, the branch and the
+ * class of the exception, no throwable attached, and never fails the trigger; the commit counts as delivered. A walk
+ * that fails to read the clone delivers nothing and keeps the delivered tips.
  */
 final class ListenerDispatch implements StoreEvents.Observer {
 
@@ -61,6 +69,9 @@ final class ListenerDispatch implements StoreEvents.Observer {
 
     /** The prefix of every branch. */
     private static final String HEADS = "refs/heads/";
+
+    /** How deep the current thread is inside listener calls, of every dispatch; absent outside any. */
+    private static final ThreadLocal<int[]> CALLBACK_DEPTH = new ThreadLocal<>();
 
     private final String alias;
     private final Repository repository;
@@ -79,7 +90,8 @@ final class ListenerDispatch implements StoreEvents.Observer {
     }
 
     /**
-     * Subscribes a listener to a branch, its cursor at the tip the branch has in the clone now.
+     * Subscribes a listener to a branch, starting at the tip the branch has in the clone now, or at the tips of every
+     * branch when the clone does not hold it.
      *
      * @param branch   the full name of the branch
      * @param listener the listener
@@ -89,7 +101,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
     CommitListener.Subscription subscribe(String branch, CommitListener listener) {
         Objects.requireNonNull(branch, "branch");
         Objects.requireNonNull(listener, "listener");
-        var subscription = new Subscription(branch, listener, tip(branch));
+        var subscription = new Subscription(branch, listener, start(branch));
         subscriptions.add(subscription);
         return subscription;
     }
@@ -103,78 +115,138 @@ final class ListenerDispatch implements StoreEvents.Observer {
             }
             for (Subscription subscription : subscriptions) {
                 if (subscription.branch.equals(update.ref())) {
-                    subscription.deliver(new Move(update.oldId(), newId));
+                    subscription.deliver(ObjectId.fromString(newId));
                 }
             }
         }
     }
 
-    private @Nullable ObjectId tip(String branch) {
+    /** The start of a subscription: the tip of the branch, else the tip of every branch of the clone. */
+    private List<ObjectId> start(String branch) {
         try {
             Ref ref = repository.exactRef(branch);
-            return ref == null ? null : ref.getObjectId();
+            @Nullable ObjectId tip = ref == null ? null : ref.getObjectId();
+            if (tip != null) {
+                return List.of(tip);
+            }
+            List<ObjectId> tips = new ArrayList<>();
+            for (Ref other : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
+                @Nullable ObjectId id = other.getObjectId();
+                if (id != null) {
+                    tips.add(id);
+                }
+            }
+            return List.copyOf(tips);
         } catch (IOException e) {
-            LOGGER.debug("The tip of a subscribed branch was not read: %s", e.getClass().getSimpleName());
-            return null;
+            LOGGER.debug("The start of a subscription was not read: %s", e.getClass().getSimpleName());
+            return List.of();
         }
     }
 
-    /**
-     * One move of a branch.
-     *
-     * @param oldId the id the branch had before; {@code null} when the event created it
-     * @param newId the id the branch has now
-     */
-    private record Move(@Nullable String oldId, String newId) {
+    /** Whether the current thread is inside a listener call. */
+    private static boolean inCallback() {
+        int[] depth = CALLBACK_DEPTH.get();
+        return depth != null && depth[0] > 0;
     }
 
-    /** One listener on one branch, with its in-memory cursor. */
+    private static void enterCallback() {
+        int[] depth = CALLBACK_DEPTH.get();
+        if (depth == null) {
+            depth = new int[1];
+            CALLBACK_DEPTH.set(depth);
+        }
+        depth[0]++;
+    }
+
+    private static void leaveCallback() {
+        int[] depth = Objects.requireNonNull(CALLBACK_DEPTH.get(), "entered before");
+        depth[0]--;
+        if (depth[0] == 0) {
+            CALLBACK_DEPTH.remove();
+        }
+    }
+
+    /** Marks a commit uninteresting; one the clone no longer holds marks nothing. */
+    private static void uninteresting(RevWalk walk, ObjectId commit) throws IOException {
+        try {
+            walk.markUninteresting(walk.parseCommit(commit));
+        } catch (MissingObjectException e) {
+            LOGGER.debug("A boundary commit is no longer in the clone");
+        }
+    }
+
+    /** One listener on one branch, with its start and its delivered tips. */
     private final class Subscription implements CommitListener.Subscription {
 
         private final String branch;
         private final CommitListener listener;
+        private final List<ObjectId> start;
         private final ReentrantLock lock = new ReentrantLock();
 
-        /** The moves still to deliver; guarded by {@link #lock}. */
-        private final Deque<Move> pending = new ArrayDeque<>();
+        /** The new ids still to walk, queued by any thread without waiting. */
+        private final Queue<ObjectId> pending = new ConcurrentLinkedQueue<>();
 
-        /** The last commit delivered; guarded by {@link #lock}. */
-        private @Nullable ObjectId cursor;
+        /** The new ids walked, none an ancestor of another; guarded by {@link #lock}. */
+        private List<ObjectId> delivered = List.of();
 
         private volatile boolean closed;
 
-        Subscription(String branch, CommitListener listener, @Nullable ObjectId cursor) {
+        Subscription(String branch, CommitListener listener, List<ObjectId> start) {
             this.branch = branch;
             this.listener = listener;
-            this.cursor = cursor;
+            this.start = start;
         }
 
         /**
-         * Delivers the commits of a move. A call of the delivering thread from within a listener only queues the move;
-         * the outer delivery runs it once the listener returned.
+         * Delivers the new commits up to a new id. Inside a listener call the thread never waits for the lock: the move
+         * is queued, and walked at once only when the lock is free.
          */
-        void deliver(Move move) {
+        void deliver(ObjectId newId) {
+            pending.add(newId);
             if (lock.isHeldByCurrentThread()) {
-                pending.add(move);
                 return;
             }
-            lock.lock();
-            try {
-                pending.add(move);
-                for (Move next = pending.poll(); next != null && !closed; next = pending.poll()) {
-                    walk(next);
+            if (!inCallback()) {
+                lock.lock();
+                try {
+                    drain();
+                } finally {
+                    lock.unlock();
                 }
-                pending.clear();
-            } finally {
-                lock.unlock();
+            }
+            drainWhileFree();
+        }
+
+        /**
+         * Drains the queue as long as the lock is free, checking again after each release, so a move a thread queued
+         * without waiting is walked by whoever holds the lock last.
+         */
+        private void drainWhileFree() {
+            while (!pending.isEmpty() && lock.tryLock()) {
+                try {
+                    drain();
+                } finally {
+                    lock.unlock();
+                }
             }
         }
 
-        /** Walks the commits of one move from the cursor, oldest first, and calls the listener with each. */
-        private void walk(Move move) {
+        /** Walks every queued new id; with the lock held. */
+        private void drain() {
+            for (ObjectId next = pending.poll(); next != null; next = pending.poll()) {
+                if (closed) {
+                    pending.clear();
+                    return;
+                }
+                walk(next);
+            }
+        }
+
+        /** Walks the commits up to a new id that the subscription does not have, oldest first, and calls the listener. */
+        private void walk(ObjectId newId) {
             List<ObjectId> commits;
             try {
-                commits = commits(move);
+                commits = commits(newId);
             } catch (IOException e) {
                 LOGGER.debug("The new commits of %s were not read: %s", branch, e.getClass().getSimpleName());
                 return;
@@ -183,25 +255,39 @@ final class ListenerDispatch implements StoreEvents.Observer {
                 if (closed) {
                     return;
                 }
-                cursor = commit;
-                try {
-                    listener.committed(branch, commit.name());
-                }
-                /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
-                catch (RuntimeException e) {
-                    LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getSimpleName());
-                }
+                call(commit);
+            }
+            if (!commits.isEmpty()) {
+                delivered = advanced(newId);
             }
         }
 
-        /** The commits reachable from the new id and not from the boundary, oldest first. */
-        private List<ObjectId> commits(Move move) throws IOException {
+        private void call(ObjectId commit) {
+            enterCallback();
+            try {
+                listener.committed(branch, commit.name());
+            }
+            /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+            catch (RuntimeException e) {
+                LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getSimpleName());
+            } finally {
+                leaveCallback();
+            }
+        }
+
+        /** The commits reachable from the new id and from neither the start nor a delivered tip, oldest first. */
+        private List<ObjectId> commits(ObjectId newId) throws IOException {
             List<ObjectId> commits = new ArrayList<>();
             try (RevWalk walk = new RevWalk(repository)) {
                 walk.sort(RevSort.TOPO, true);
                 walk.sort(RevSort.REVERSE, true);
-                walk.markStart(walk.parseCommit(ObjectId.fromString(move.newId())));
-                markBoundary(walk, move);
+                walk.markStart(walk.parseCommit(newId));
+                for (ObjectId known : start) {
+                    uninteresting(walk, known);
+                }
+                for (ObjectId known : delivered) {
+                    uninteresting(walk, known);
+                }
                 for (RevCommit commit = walk.next(); commit != null; commit = walk.next()) {
                     commits.add(commit.copy());
                 }
@@ -209,41 +295,46 @@ final class ListenerDispatch implements StoreEvents.Observer {
             return commits;
         }
 
-        /**
-         * Marks what the subscription already has: the cursor; without one the old id of the move; without that the
-         * tips of every other branch.
-         */
-        private void markBoundary(RevWalk walk, Move move) throws IOException {
-            @Nullable ObjectId known = cursor;
-            @Nullable String oldId = move.oldId();
-            if (known == null && oldId != null) {
-                known = ObjectId.fromString(oldId);
-            }
-            if (known != null) {
-                uninteresting(walk, known);
-                return;
-            }
-            for (Ref ref : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
-                @Nullable ObjectId other = ref.getObjectId();
-                if (!branch.equals(ref.getName()) && other != null) {
-                    uninteresting(walk, other);
+        /** The delivered tips after a walk up to a new id: the new id and every former tip not an ancestor of it. */
+        private List<ObjectId> advanced(ObjectId newId) {
+            List<ObjectId> next = new ArrayList<>();
+            next.add(newId);
+            try (RevWalk walk = new RevWalk(repository)) {
+                for (ObjectId known : delivered) {
+                    if (!walk.isMergedInto(walk.parseCommit(known), walk.parseCommit(newId))) {
+                        next.add(known);
+                    }
                 }
+            } catch (IOException e) {
+                LOGGER.debug("The delivered tips of %s were not compared: %s", branch, e.getClass().getSimpleName());
+                delivered.stream().filter(known -> !next.contains(known)).forEach(next::add);
             }
+            return List.copyOf(next);
         }
 
-        /** Marks a commit uninteresting; one the clone no longer holds marks nothing. */
-        private static void uninteresting(RevWalk walk, ObjectId commit) throws IOException {
-            try {
-                walk.markUninteresting(walk.parseCommit(commit));
-            } catch (MissingObjectException e) {
-                LOGGER.debug("A boundary commit is no longer in the clone");
-            }
-        }
-
+        /**
+         * Unsubscribes. Marks the subscription closed, so a delivery in progress starts no further call, then takes the
+         * lock, so the call in progress ends first and no call starts afterwards; from within a listener call of
+         * another subscription it does not wait, and stops only the calls not yet started.
+         */
         @Override
         public void close() {
             closed = true;
-            subscriptions.remove(this);
+            boolean locked;
+            if (inCallback()) {
+                locked = lock.tryLock();
+            } else {
+                lock.lock();
+                locked = true;
+            }
+            try {
+                subscriptions.remove(this);
+                pending.clear();
+            } finally {
+                if (locked) {
+                    lock.unlock();
+                }
+            }
         }
     }
 }
