@@ -59,7 +59,7 @@ release, signature, trailers, index, listeners, anchoring
 |`git-forms`
 |Schema-driven documents: schema, template, workflow, deadlines, step-up for releases
 (xref:schema-driven-documents.adoc[Schema-Driven Documents])
-|implemented: outcome list and result; planned: kinds as configuration, schema validation, data layout, generated
+|implemented: outcome list and result, kinds as configuration; planned: schema validation, data layout, generated
 output, workflow, deadlines, step-up, links, running numbers
 
 |`git-timestamp` (optional)

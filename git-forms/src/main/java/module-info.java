@@ -18,12 +18,15 @@
  * <p>
  * The module requires {@code de.cuioss.git.document.store} transitively, because its public result
  * {@code FormsResult} exposes the outcome type {@code StoreResult.Outcome} of that module when it passes on a
- * non-success of the store.
+ * non-success of the store, and its {@code KindConfiguration} reads a JGit {@code Repository}. The YAML library is
+ * the module {@code org.snakeyaml.engine} (named by the {@code module-info.class} of snakeyaml-engine 3.2); no type of
+ * it appears in the public API.
  */
 module de.cuioss.git.document.forms {
     exports de.cuioss.git.document.forms;
 
     requires transitive de.cuioss.git.document.store;
+    requires org.snakeyaml.engine;
     requires static lombok;
     requires static org.jspecify;
 }

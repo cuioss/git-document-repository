@@ -24,7 +24,7 @@ import lombok.experimental.UtilityClass;
  * follow the CUI ranges: INFO 1-99, WARN 100-199, ERROR 200-299. The catalogue is
  * {@code git-forms/doc/LogMessages.adoc}.
  * <p>
- * No message carries anything GDR-NFR-3 forbids: a message names a number, a directory or a repository alias, never a
+ * No message carries anything GDR-NFR-3 forbids: a message names a number, a directory or a commit id, never a
  * configured or entered value, a token, a password, an e-mail address or a person name.
  *
  * @since 0.1
@@ -44,8 +44,9 @@ public final class GitFormsLogMessages {
     public static final class INFO {
 
         /**
-         * The kinds of documents were loaded: their number and the source, the configuration directory or the alias of
-         * the configuration repository, never a configured value.
+         * The kinds of documents were loaded: their number and the source, {@code directory <path>} for a
+         * configuration directory or {@code commit <id>} for a commit of a configuration repository, never a
+         * configured value.
          */
         public static final LogRecord KINDS_LOADED = LogRecordModel.builder()
                 .template("Loaded %s kinds of documents from %s")
