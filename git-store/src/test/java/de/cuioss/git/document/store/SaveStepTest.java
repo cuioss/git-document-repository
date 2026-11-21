@@ -275,7 +275,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: the step runs on every attempt and sees the new tip on a re-application")
-    void runsOnEveryAttemptAndSeesTheNewTip(@Remote LocalRemote remote) throws Exception {
+    void runsOnEveryAttemptAndSeesTheNewTip(@Remote LocalRemote remote) {
         var key = key();
         var target = StoreReferences.target(key);
         var path = word();
@@ -310,7 +310,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: the step's edits land in the one save commit whose only parent is the tip")
-    void editsLandInTheSaveCommit(@Remote LocalRemote remote) throws Exception {
+    void editsLandInTheSaveCommit(@Remote LocalRemote remote) {
         var key = key();
         var target = StoreReferences.target(key);
         var kept = word() + "a";
@@ -403,7 +403,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: a refusal pushes nothing and leaves draft and branch unchanged, outcome REFUSED")
-    void refusalChangesNothing(@Remote LocalRemote remote) throws Exception {
+    void refusalChangesNothing(@Remote LocalRemote remote) {
         var key = key();
         var target = StoreReferences.target(key);
         var path = word();
@@ -436,7 +436,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: a throwing step ends FAILED after one attempt, naming the class only, without throwable")
-    void throwingStepFailsAfterOneAttempt(@Remote LocalRemote remote) throws Exception {
+    void throwingStepFailsAfterOneAttempt(@Remote LocalRemote remote) {
         var key = key();
         var target = StoreReferences.target(key);
         var path = word();

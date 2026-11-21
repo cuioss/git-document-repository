@@ -25,6 +25,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 
@@ -87,6 +88,9 @@ public final class StoreIndex<E> implements AutoCloseable {
     /** The prefix of every branch. */
     private static final String HEADS = "refs/heads/";
 
+    /** The name of a collection argument in the null checks. */
+    private static final String COLLECTION = "collection";
+
     private final String alias;
     private final Repository repository;
     private final StoreEvents events;
@@ -95,7 +99,7 @@ public final class StoreIndex<E> implements AutoCloseable {
     private final ReentrantLock lock = new ReentrantLock();
     private final RepositoryReader reader = new RepositoryReader();
     private final StoreEvents.Observer observer = updates -> refreshQuietly();
-    private volatile Map<String, Source<E>> current = Map.of();
+    private final AtomicReference<Map<String, Source<E>>> current = new AtomicReference<>(Map.of());
 
     private StoreIndex(String alias, Repository repository, StoreEvents events,
             Map<DocumentCollection, IndexContributor<? extends E>> contributors) {
@@ -144,7 +148,7 @@ public final class StoreIndex<E> implements AutoCloseable {
         Objects.requireNonNull(events, "events");
         Objects.requireNonNull(contributors, "contributors");
         Map<DocumentCollection, IndexContributor<? extends E>> copy = new LinkedHashMap<>();
-        contributors.forEach((collection, contributor) -> copy.put(Objects.requireNonNull(collection, "collection"),
+        contributors.forEach((collection, contributor) -> copy.put(Objects.requireNonNull(collection, COLLECTION),
                 Objects.requireNonNull(contributor, "contributor")));
         var declared = StoreReferences.collections(List.copyOf(copy.keySet()));
         if (!declared.isOk()) {
@@ -169,7 +173,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @return the full names of the indexed branches, sorted
      */
     public Set<String> sources() {
-        return new TreeSet<>(current.keySet());
+        return new TreeSet<>(current.get().keySet());
     }
 
     /**
@@ -181,7 +185,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      */
     public Optional<String> commitId(String source) {
         Objects.requireNonNull(source, "source");
-        Source<E> found = current.get(source);
+        Source<E> found = current.get().get(source);
         return found == null ? Optional.empty() : Optional.of(found.commit().name());
     }
 
@@ -196,8 +200,8 @@ public final class StoreIndex<E> implements AutoCloseable {
      */
     public Map<DocumentKey, E> entries(String source, DocumentCollection collection) {
         Objects.requireNonNull(source, "source");
-        Objects.requireNonNull(collection, "collection");
-        Source<E> found = current.get(source);
+        Objects.requireNonNull(collection, COLLECTION);
+        Source<E> found = current.get().get(source);
         return found == null ? Map.of() : found.entries().getOrDefault(collection, Map.of());
     }
 
@@ -247,7 +251,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      */
     @Override
     public String toString() {
-        return "StoreIndex[alias=" + alias + ", sources=" + current.size() + "]";
+        return "StoreIndex[alias=" + alias + ", sources=" + current.get().size() + "]";
     }
 
     /** Refreshes after an operation of the writer; a failure keeps the previous index. */
@@ -267,7 +271,7 @@ public final class StoreIndex<E> implements AutoCloseable {
     private void refresh() throws IOException {
         lock.lock();
         try {
-            Map<String, Source<E>> before = current;
+            Map<String, Source<E>> before = current.get();
             Map<String, Source<E>> next = new HashMap<>();
             try (RevWalk walk = new RevWalk(repository)) {
                 for (Ref ref : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
@@ -285,7 +289,7 @@ public final class StoreIndex<E> implements AutoCloseable {
                     }
                 }
             }
-            current = Map.copyOf(next);
+            current.set(Map.copyOf(next));
         } finally {
             lock.unlock();
         }
@@ -468,7 +472,7 @@ public final class StoreIndex<E> implements AutoCloseable {
          * @throws NullPointerException if {@code collection} is {@code null}
          */
         public Map<DocumentKey, E> entries(DocumentCollection collection) {
-            Objects.requireNonNull(collection, "collection");
+            Objects.requireNonNull(collection, COLLECTION);
             return entries.getOrDefault(collection, Map.of());
         }
     }

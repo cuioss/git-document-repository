@@ -68,7 +68,7 @@ public final class StoreReferences {
     private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
 
     /** The last segment of a release tag, {@code v<n>} with {@code n} from 1 to 999999999 without leading zeros. */
-    private static final Pattern RELEASE_VERSION = Pattern.compile("v([1-9][0-9]{0,8})");
+    private static final Pattern RELEASE_VERSION = Pattern.compile("v([1-9]\\d{0,8})");
 
     /** The detail of a refused pseudonym; it never carries the pseudonym. */
     static final String INVALID_PSEUDONYM = "pseudonym: invalid";

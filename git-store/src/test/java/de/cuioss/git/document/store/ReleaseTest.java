@@ -309,7 +309,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a per-document release merges into main with tag v1, then v2; main and tag pushed")
-        void perDocumentReleasesV1ThenV2(@Remote LocalRemote remote) throws Exception {
+        void perDocumentReleasesV1ThenV2(@Remote LocalRemote remote) {
             var key = document();
             var target = StoreReferences.target(key);
             var forked = fork(remote.repository(), key);
@@ -355,7 +355,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a numbered release merges only the entry's paths, main its only parent")
-        void numberedReleaseMergesOnlyTheEntry(@Remote LocalRemote remote) throws Exception {
+        void numberedReleaseMergesOnlyTheEntry(@Remote LocalRemote remote) {
             var collection = collection(Kind.NUMBERED);
             var key = entry(collection);
             var other = value(DocumentKey.of(collection, key.id() + "0"));
@@ -408,7 +408,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: content without release and a missing branch release nothing")
-        void refusals(@Remote LocalRemote remote) throws Exception {
+        void refusals(@Remote LocalRemote remote) {
             var mainContent = entry(collection(Kind.MAIN));
             var missing = document();
             var mainTip = commit(remote.repository(), StoreReferences.MAIN, files(word()));
@@ -431,7 +431,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a conflicting merge is CONFLICT naming the number of paths; nothing is pushed")
-        void conflictingMerge(@Remote LocalRemote remote) throws Exception {
+        void conflictingMerge(@Remote LocalRemote remote) {
             var key = document();
             var target = StoreReferences.target(key);
             var path = key.collection().name() + "/" + key.id() + ".json";
@@ -500,7 +500,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a refused push of main is REJECTED at once; no tag reaches the remote")
-        void refusedPushOfMainIsRejected(@Remote LocalRemote remote) throws Exception {
+        void refusedPushOfMainIsRejected(@Remote LocalRemote remote) {
             var key = document();
             var forked = fork(remote.repository(), key);
             var author = Author.of(pseudonym());
@@ -525,7 +525,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a lost lease of main retries from the fetch and releases onto the new tip")
-        void lostLeaseRetries(@Remote LocalRemote remote) throws Exception {
+        void lostLeaseRetries(@Remote LocalRemote remote) {
             var key = document();
             var forked = fork(remote.repository(), key);
             var author = Author.of(pseudonym());
@@ -601,11 +601,12 @@ class ReleaseTest {
             var key = document();
             var commit = ObjectId.zeroId().name().replace('0', 'a');
             var tag = StoreReferences.releaseTag(key, 1);
+            var notACommit = word();
 
             assertAll(
                     () -> assertThrows(IllegalArgumentException.class, () -> new Release(StoreReferences.MAIN, commit,
                             1), "not a tag"),
-                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, word(), 1),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, notACommit, 1),
                             "not a commit id"),
                     () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, commit, 0),
                             "version 0"),

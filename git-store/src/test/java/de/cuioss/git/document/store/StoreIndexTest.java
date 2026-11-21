@@ -46,7 +46,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.LogRecord;
-import java.util.stream.Collectors;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -350,7 +349,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: the index is built at start from main, the working and the collection branch")
-        void buildsAtStart(@Remote LocalRemote remote) throws Exception {
+        void buildsAtStart(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
 
             try (var fixture = open(remote, layout)) {
@@ -383,7 +382,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: after a save only the changed document is re-read")
-        void saveReReadsOnlyTheChangedDocument(@Remote LocalRemote remote) throws Exception {
+        void saveReReadsOnlyTheChangedDocument(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
             var author = Author.of(pseudonym());
             var workingText = content();
@@ -422,7 +421,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: after a release main holds the released document")
-        void releaseRefreshesMain(@Remote LocalRemote remote) throws Exception {
+        void releaseRefreshesMain(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
 
             try (var fixture = open(remote, layout)) {
@@ -469,7 +468,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: a closed index is no longer refreshed")
-        void closedIndexIsNotRefreshed(@Remote LocalRemote remote) throws Exception {
+        void closedIndexIsNotRefreshed(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
 
             try (var fixture = open(remote, layout)) {
@@ -520,7 +519,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: the periodic fetch runs at fetch.interval and picks up a change made outside")
-        void periodicFetchPicksUpOutsideChange(@Remote LocalRemote remote) throws Exception {
+        void periodicFetchPicksUpOutsideChange(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
             var interval = Duration.ofSeconds(Generators.integers(1, 3_600).next());
             var executor = new RecordingExecutor();
@@ -546,7 +545,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: a failed periodic fetch is logged and never ends the schedule")
-        void failedPeriodicFetchIsLogged(@Remote LocalRemote remote) throws Exception {
+        void failedPeriodicFetchIsLogged(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
             var executor = new RecordingExecutor();
 
@@ -578,7 +577,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: a snapshot of a tag or a commit leaves the current index unchanged")
-        void snapshotLeavesCurrentUnchanged(@Remote LocalRemote remote) throws Exception {
+        void snapshotLeavesCurrentUnchanged(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
             var author = Author.of(pseudonym());
             var later = content();
@@ -623,7 +622,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: a throwing contributor leaves its document out, logged by class name only")
-        void throwingContributorLeavesDocumentOut(@Remote LocalRemote remote) throws Exception {
+        void throwingContributorLeavesDocumentOut(@Remote LocalRemote remote) {
             var layout = layout(remote.repository());
             var recorder = new Recorder();
             recorder.poison = layout.collectionTree().get(path(layout.secondEntry(), ".json"));
@@ -633,7 +632,7 @@ class StoreIndexTest {
                 String identifier = GitStoreLogMessages.WARN.CONTRIBUTOR_FAILED.resolveIdentifierString();
                 List<LogRecord> failures = TestLoggerFactory.getTestHandler().getRecords().stream()
                         .filter(logRecord -> String.valueOf(logRecord.getMessage()).contains(identifier))
-                        .collect(Collectors.toList());
+                        .toList();
 
                 assertAll(
                         () -> assertEquals(Set.of(layout.firstEntry()), entries.keySet(),

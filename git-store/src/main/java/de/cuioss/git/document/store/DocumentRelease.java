@@ -319,10 +319,8 @@ final class DocumentRelease {
             walk.setRecursive(true);
             while (walk.next()) {
                 String path = walk.getPathString();
-                if (key != null && !DocumentPaths.belongs(key, path)) {
-                    continue;
-                }
-                if (walk.getRawMode(0) == walk.getRawMode(1) && walk.idEqual(0, 1)) {
+                boolean unchanged = walk.getRawMode(0) == walk.getRawMode(1) && walk.idEqual(0, 1);
+                if (key != null && !DocumentPaths.belongs(key, path) || unchanged) {
                     continue;
                 }
                 if (walk.getRawMode(1) == FileMode.MISSING.getBits()) {
@@ -344,10 +342,8 @@ final class DocumentRelease {
     private static @Nullable ObjectId mergedRelease(Repository repository, ObjectId main, @Nullable ObjectId previous,
             String message) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
-            for (RevCommit commit = walk.parseCommit(main); commit != null; ) {
-                if (commit.equals(previous)) {
-                    return null;
-                }
+            RevCommit commit = walk.parseCommit(main);
+            while (commit != null && !commit.equals(previous)) {
                 walk.parseBody(commit);
                 if (message.equals(commit.getFullMessage().strip())) {
                     return commit.copy();
