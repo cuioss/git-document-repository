@@ -15,8 +15,19 @@
  */
 package de.cuioss.git.document.store;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * The document path convention of the store (GDR-STORE-2): which repository paths belong to which document or entry.
@@ -27,6 +38,10 @@ import java.util.Optional;
  * so the first dot after the id starts the suffix. A path whose segment after the collection starts with a dot, such as
  * the counter file {@value #COUNTER} of a numbered collection, belongs to no document. Every path is repository-relative,
  * its segments separated by {@code /}.
+ * <p>
+ * The release takes the paths of one entry by {@link #belongs}; the index ({@link StoreIndex}) groups the files of a
+ * tree into documents by {@link #documents} and maps the paths a commit changed to the documents it changed by
+ * {@link #changed}.
  */
 final class DocumentPaths {
 
@@ -85,5 +100,56 @@ final class DocumentPaths {
     static boolean belongs(DocumentKey key, String path) {
         Objects.requireNonNull(key, "key");
         return key(key.collection(), path).filter(key::equals).isPresent();
+    }
+
+    /**
+     * Groups the paths of a tree into the documents and entries of the given collections (GDR-STORE-9).
+     *
+     * @param collections the collections whose documents are grouped
+     * @param paths       the repository-relative paths of the files of a tree
+     * @return the paths of every document or entry, by key, both in the order the paths come; a path that belongs to
+     *         no document of the collections is left out
+     * @throws NullPointerException if an argument or one of its elements is {@code null}
+     */
+    static Map<DocumentKey, List<String>> documents(Collection<DocumentCollection> collections, Iterable<String> paths) {
+        Map<String, DocumentCollection> byName = byName(collections);
+        Map<DocumentKey, List<String>> documents = new LinkedHashMap<>();
+        for (String path : Objects.requireNonNull(paths, "paths")) {
+            key(byName, path).ifPresent(key -> documents.computeIfAbsent(key, k -> new ArrayList<>()).add(path));
+        }
+        return documents;
+    }
+
+    /**
+     * Maps changed paths to the documents and entries of the given collections they change (GDR-STORE-9).
+     *
+     * @param collections the collections whose documents are looked for
+     * @param paths       the repository-relative changed paths
+     * @return the key of every document or entry with at least one changed path, in the order the paths come
+     * @throws NullPointerException if an argument or one of its elements is {@code null}
+     */
+    static Set<DocumentKey> changed(Collection<DocumentCollection> collections, Iterable<String> paths) {
+        Map<String, DocumentCollection> byName = byName(collections);
+        Set<DocumentKey> changed = new LinkedHashSet<>();
+        for (String path : Objects.requireNonNull(paths, "paths")) {
+            key(byName, path).ifPresent(changed::add);
+        }
+        return changed;
+    }
+
+    /** The key of a path among the collections by name: the collection named by the path's first segment. */
+    private static Optional<DocumentKey> key(Map<String, DocumentCollection> byName, String path) {
+        Objects.requireNonNull(path, "path");
+        int slash = path.indexOf('/');
+        @Nullable DocumentCollection collection = slash < 0 ? null : byName.get(path.substring(0, slash));
+        return collection == null ? Optional.empty() : key(collection, path);
+    }
+
+    private static Map<String, DocumentCollection> byName(Collection<DocumentCollection> collections) {
+        Map<String, DocumentCollection> byName = new HashMap<>();
+        for (DocumentCollection collection : Objects.requireNonNull(collections, "collections")) {
+            byName.put(Objects.requireNonNull(collection, "collection").name(), collection);
+        }
+        return byName;
     }
 }

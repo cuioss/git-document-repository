@@ -105,6 +105,10 @@ import org.jspecify.annotations.Nullable;
  * branch it is {@link GitOutcome#NOT_FOUND} and kept. The save commit is the only commit pushed; no other commit the
  * store writes is combined with it.
  * <p>
+ * After the save released every lock, the references its fetches moved in the clone and the commit its push placed
+ * on the target branch are emitted to the {@link StoreEvents} of the writer, so the index refreshes (GDR-STORE-9); a
+ * save that moved nothing emits nothing.
+ * <p>
  * A detail names a reference or a field, never a path, a content, a pseudonym or an address (GDR-NFR-3).
  */
 final class ExplicitSave {
@@ -135,6 +139,7 @@ final class ExplicitSave {
     private final CommitIdentities identities;
     private final Clock clock;
     private final int attempts;
+    private final StoreEvents events;
     private final InCoreWriter writer = new InCoreWriter();
     private final ReferenceUpdater updater = new ReferenceUpdater(writer);
     private final RepositoryReader reader = new RepositoryReader();
@@ -175,11 +180,13 @@ final class ExplicitSave {
      * @param identities the commit identities
      * @param clock      the clock of the commit times
      * @param attempts   the attempts of a save ({@code save.max-attempts}), at least 1
+     * @param events     the notification seam of the writer, told of the moved references after the locks were
+     *                   released
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if {@code attempts} is less than 1
      */
     ExplicitSave(Clone clone, RepositoryOperations operations, TechnicalUser user, CommitIdentities identities,
-            Clock clock, int attempts) {
+            Clock clock, int attempts, StoreEvents events) {
         this.clone = Objects.requireNonNull(clone, "clone");
         this.operations = Objects.requireNonNull(operations, "operations");
         this.user = Objects.requireNonNull(user, "user");
@@ -189,6 +196,7 @@ final class ExplicitSave {
             throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
         }
         this.attempts = attempts;
+        this.events = Objects.requireNonNull(events, "events");
     }
 
     /**
@@ -226,9 +234,13 @@ final class ExplicitSave {
         if (!draftRef.isOk()) {
             return report(target, SaveResult.NotSaved.of(draftRef));
         }
-        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message, step);
+        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message, step,
+                new ArrayList<>());
         RepositoryGuard guard = clone.guard();
-        return report(target, guard.shared(() -> guard.draft(request.draft(), () -> saveDraft(request))));
+        SaveResult result = report(target,
+                guard.shared(() -> guard.draft(request.draft(), () -> saveDraft(request))));
+        events.emit(request.updates());
+        return result;
     }
 
     /**
@@ -279,6 +291,7 @@ final class ExplicitSave {
             if (!fetched.isOk()) {
                 return Optional.of(passedOn(fetched));
             }
+            StoreEvents.fetched(fetched.value(), request.updates());
             Base base = base(repository, request.target());
             try (RevWalk walk = new RevWalk(repository)) {
                 RevCommit draftCommit = walk.parseCommit(drafted.draft());
@@ -379,6 +392,7 @@ final class ExplicitSave {
         if (!pushed.isOk()) {
             return Optional.of(passedOn(pushed));
         }
+        request.updates().add(StoreEvents.Update.pushed(request.target(), base.lease().name(), commit));
         try {
             moveLocal(request.target(), base.localExpected(), ObjectId.fromString(commit));
         } catch (IOException e) {
@@ -652,9 +666,11 @@ final class ExplicitSave {
      * @param expected the expected blob id per path
      * @param message  the commit message
      * @param step     the per-attempt step; {@code null} for none
+     * @param updates  the references the save moved, in the clone by its fetches and on the remote by its push,
+     *                 collected on the saving thread and emitted after the locks were released
      */
     private record Request(Author author, String target, String draft, Map<String, ObjectId> expected,
-    String message, @Nullable SaveStep step) {
+    String message, @Nullable SaveStep step, List<StoreEvents.Update> updates) {
     }
 
     /**

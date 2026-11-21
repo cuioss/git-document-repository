@@ -1,0 +1,498 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.store;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.locks.ReentrantLock;
+
+
+import de.cuioss.git.document.core.GitIdentity;
+import de.cuioss.git.document.core.GitOutcome;
+import de.cuioss.git.document.core.RepositoryReader;
+import de.cuioss.git.document.core.RepositoryReader.PathChange;
+import de.cuioss.git.document.core.RepositoryReader.SnapshotFile;
+import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.eclipse.jgit.treewalk.filter.PathFilterGroup;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The in-memory index of one repository of the store (GDR-STORE-9): the value an {@link IndexContributor} returns for
+ * every document of its collection, per source reference.
+ * <p>
+ * The sources of the index are the branches of the clone: {@code main}, holding the released documents of every
+ * collection that has a contributor; every working branch {@code refs/heads/<collection>/<id>} of a per-document
+ * collection, holding the one document {@code <collection>/<id>}; and every collection branch
+ * {@code refs/heads/<collection>} of a numbered collection, holding its entries. A document is found by the path
+ * convention of {@link DocumentPaths}; the counter file of a numbered collection is no document. Every other branch,
+ * and every collection without a contributor, is not indexed.
+ * <p>
+ * The index is built when it is opened and refreshed after every fetch, save and release of its {@link StoreWriter},
+ * once that operation released every lock of the store. A refresh reads the tips of the source branches and keeps a
+ * source whose tip did not move; for a source whose tip moved, it re-reads only the documents with a path changed
+ * between the indexed commit and the new tip ({@link RepositoryReader#changes}); a new source is read in full, and a
+ * source whose branch is gone is dropped. Only when the changed paths cannot be read, for example because the indexed
+ * commit is no longer in the clone, the source is read in full. A document whose contributor returns {@code null} or
+ * throws is left out; a throwing contributor is logged ({@code GIT_STORE-108}) with the class of the exception only, and
+ * the refresh goes on.
+ * <p>
+ * Refreshes are serialised by one lock of the index and always rebuild from the tips read under that lock, so a refresh
+ * started after a save and one started after a fetch can never publish out of order. The published index is an
+ * immutable value swapped atomically: a reader sees either the index before or the index after a refresh, never a
+ * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, so
+ * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the clone keeps the previous
+ * index.
+ * <p>
+ * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
+ * one.
+ *
+ * @param <E> the type of the entry values
+ * @since 0.1
+ */
+public final class StoreIndex<E> implements AutoCloseable {
+
+    private static final CuiLogger LOGGER = new CuiLogger(StoreIndex.class);
+
+    /** The prefix of every branch. */
+    private static final String HEADS = "refs/heads/";
+
+    private final String alias;
+    private final Repository repository;
+    private final StoreEvents events;
+    private final Map<String, DocumentCollection> collections;
+    private final Map<DocumentCollection, IndexContributor<? extends E>> contributors;
+    private final ReentrantLock lock = new ReentrantLock();
+    private final RepositoryReader reader = new RepositoryReader();
+    private final StoreEvents.Observer observer = updates -> refreshQuietly();
+    private volatile Map<String, Source<E>> current = Map.of();
+
+    private StoreIndex(String alias, Repository repository, StoreEvents events,
+            Map<DocumentCollection, IndexContributor<? extends E>> contributors) {
+        this.alias = alias;
+        this.repository = repository;
+        this.events = events;
+        this.contributors = contributors;
+        Map<String, DocumentCollection> byName = new LinkedHashMap<>();
+        contributors.keySet().forEach(collection -> byName.put(collection.name(), collection));
+        this.collections = byName;
+    }
+
+    /**
+     * Opens the index of a writer's repository and builds it from the branches of the clone.
+     *
+     * @param writer       the writer whose fetches, saves and releases refresh the index
+     * @param contributors the contributor of every indexed collection
+     * @param <E>          the type of the entry values
+     * @return {@link StoreOutcome#OK} with the built index; {@link StoreOutcome#MALFORMED} with the detail
+     *         {@code collection <name>: declared twice} for two collections of one name; or the passed-on
+     *         {@link GitOutcome#FAILED} naming the class of the exception when the clone could not be read
+     * @throws NullPointerException if an argument, a collection or a contributor is {@code null}
+     */
+    public static <E> StoreResult<StoreIndex<E>> open(StoreWriter writer,
+            Map<DocumentCollection, ? extends IndexContributor<? extends E>> contributors) {
+        Objects.requireNonNull(writer, "writer");
+        return open(writer.alias(), writer.repository(), writer.events(), contributors);
+    }
+
+    /**
+     * Opens the index of a repository refreshed by the given events and builds it from the branches of the
+     * repository; {@link #open(StoreWriter, Map)} passes those of a writer.
+     *
+     * @param alias        the alias of the repository, for the log
+     * @param repository   the repository whose branches are indexed
+     * @param events       the events that refresh the index
+     * @param contributors the contributor of every indexed collection
+     * @param <E>          the type of the entry values
+     * @return the results of {@link #open(StoreWriter, Map)}
+     * @throws NullPointerException if an argument, a collection or a contributor is {@code null}
+     */
+    static <E> StoreResult<StoreIndex<E>> open(String alias, Repository repository, StoreEvents events,
+            Map<DocumentCollection, ? extends IndexContributor<? extends E>> contributors) {
+        Objects.requireNonNull(alias, "alias");
+        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(events, "events");
+        Objects.requireNonNull(contributors, "contributors");
+        Map<DocumentCollection, IndexContributor<? extends E>> copy = new LinkedHashMap<>();
+        contributors.forEach((collection, contributor) -> copy.put(Objects.requireNonNull(collection, "collection"),
+                Objects.requireNonNull(contributor, "contributor")));
+        var declared = StoreReferences.collections(List.copyOf(copy.keySet()));
+        if (!declared.isOk()) {
+            return new StoreResult<>(declared.outcome(), null, declared.detail());
+        }
+        var index = new StoreIndex<>(alias, repository, events, copy);
+        index.events.register(index.observer);
+        try {
+            index.refresh();
+        } catch (IOException e) {
+            index.close();
+            String type = e.getClass().getSimpleName();
+            LOGGER.debug("The index of %s was not built: %s", index.alias, type);
+            return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null, "index: " + type);
+        }
+        return StoreResult.ok(index);
+    }
+
+    /**
+     * Returns the source references the index currently holds.
+     *
+     * @return the full names of the indexed branches, sorted
+     */
+    public Set<String> sources() {
+        return new TreeSet<>(current.keySet());
+    }
+
+    /**
+     * Returns the commit a source reference is indexed at.
+     *
+     * @param source the full name of a source reference
+     * @return the full id of the indexed commit, or empty when the index does not hold the source
+     * @throws NullPointerException if {@code source} is {@code null}
+     */
+    public Optional<String> commitId(String source) {
+        Objects.requireNonNull(source, "source");
+        Source<E> found = current.get(source);
+        return found == null ? Optional.empty() : Optional.of(found.commit().name());
+    }
+
+    /**
+     * Returns the current entries of one collection on one source reference.
+     *
+     * @param source     the full name of a source reference, such as {@code refs/heads/main}
+     * @param collection the collection
+     * @return the entry value of every indexed document of the collection on the source, by key, unmodifiable;
+     *         empty when the index does not hold the source or the collection
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public Map<DocumentKey, E> entries(String source, DocumentCollection collection) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(collection, "collection");
+        Source<E> found = current.get(source);
+        return found == null ? Map.of() : found.entries().getOrDefault(collection, Map.of());
+    }
+
+    /**
+     * Builds a separate index of one tag or commit, as {@code main} would be indexed at it, without changing the
+     * current index (GDR-STORE-9). The contributors are called for every document of the tag or commit.
+     *
+     * @param tagOrCommit a tag, by its full name or its name below {@code refs/tags/}, or a full commit id
+     * @return {@link StoreOutcome#OK} with the snapshot; or the passed-on {@link GitOutcome#NOT_FOUND} for a tag or
+     *         commit the clone does not hold, {@link GitOutcome#AMBIGUOUS}, or {@link GitOutcome#FAILED} naming the
+     *         class of the exception; the detail names the field {@code revision}, never the revision itself
+     * @throws NullPointerException if {@code tagOrCommit} is {@code null}
+     */
+    public StoreResult<Snapshot<E>> snapshot(String tagOrCommit) {
+        Objects.requireNonNull(tagOrCommit, "tagOrCommit");
+        String revision = GitIdentity.isFullCommitId(tagOrCommit) || tagOrCommit.startsWith(StoreReferences.TAGS)
+                ? tagOrCommit : StoreReferences.TAGS + tagOrCommit;
+        var snapshot = reader.snapshot(repository, revision);
+        if (!snapshot.isOk()) {
+            return StoreResult.passOn(snapshot);
+        }
+        RepositoryReader.Snapshot read = Objects.requireNonNull(snapshot.value());
+        Map<String, ObjectId> files = new LinkedHashMap<>();
+        for (SnapshotFile file : read.files()) {
+            files.put(file.path(), ObjectId.fromString(file.blobId()));
+        }
+        try {
+            var scope = new Scope(List.copyOf(collections.values()), null);
+            return StoreResult.ok(new Snapshot<>(read.commitId(), contribute(scope, read.commitId(), files)));
+        } catch (IOException e) {
+            String type = e.getClass().getSimpleName();
+            LOGGER.debug("The snapshot of %s was not built: %s", alias, type);
+            return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null, "snapshot: " + type);
+        }
+    }
+
+    /** Stops the refreshes of the index; the entries stay readable as they were. */
+    @Override
+    public void close() {
+        events.unregister(observer);
+    }
+
+    /**
+     * Renders the alias and the number of sources only.
+     *
+     * @return the rendering
+     */
+    @Override
+    public String toString() {
+        return "StoreIndex[alias=" + alias + ", sources=" + current.size() + "]";
+    }
+
+    /** Refreshes after an operation of the writer; a failure keeps the previous index. */
+    private void refreshQuietly() {
+        try {
+            refresh();
+        } catch (IOException e) {
+            LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Reads the tips of the source branches under the lock of the index and publishes the index of those tips: a
+     * source whose tip did not move is kept, one whose tip moved re-reads its changed documents, a new one is read in
+     * full, and a gone one is dropped.
+     */
+    private void refresh() throws IOException {
+        lock.lock();
+        try {
+            Map<String, Source<E>> before = current;
+            Map<String, Source<E>> next = new HashMap<>();
+            try (RevWalk walk = new RevWalk(repository)) {
+                for (Ref ref : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
+                    @Nullable Scope scope = scope(ref.getName());
+                    @Nullable ObjectId tip = ref.getObjectId();
+                    if (scope == null || tip == null) {
+                        continue;
+                    }
+                    @Nullable Source<E> indexed = before.get(ref.getName());
+                    if (indexed != null && indexed.commit().equals(tip)) {
+                        next.put(ref.getName(), indexed);
+                    } else {
+                        RevCommit commit = walk.parseCommit(tip);
+                        next.put(ref.getName(), read(ref.getName(), scope, indexed, commit));
+                    }
+                }
+            }
+            current = Map.copyOf(next);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * The scope of a branch: {@code main} holds every indexed collection, a collection branch of a numbered collection
+     * its entries, and a working branch of a per-document collection its one document; {@code null} for any other
+     * branch.
+     */
+    private @Nullable Scope scope(String ref) {
+        if (StoreReferences.MAIN.equals(ref)) {
+            return new Scope(List.copyOf(collections.values()), null);
+        }
+        String rest = ref.substring(HEADS.length());
+        int slash = rest.indexOf('/');
+        @Nullable DocumentCollection collection = collections.get(slash < 0 ? rest : rest.substring(0, slash));
+        if (collection == null) {
+            return null;
+        }
+        if (slash < 0) {
+            return collection.kind() == DocumentCollection.Kind.NUMBERED ? new Scope(List.of(collection), null) : null;
+        }
+        if (collection.kind() != DocumentCollection.Kind.PER_DOCUMENT) {
+            return null;
+        }
+        var key = DocumentKey.of(collection, rest.substring(slash + 1));
+        return key.isOk() ? new Scope(List.of(collection), key.value()) : null;
+    }
+
+    /**
+     * Reads one source at a commit: only the changed documents when the source was indexed before and the changed
+     * paths can be read, otherwise every document.
+     */
+    private Source<E> read(String source, Scope scope, @Nullable Source<E> indexed, RevCommit commit)
+            throws IOException {
+        if (indexed != null) {
+            var changes = reader.changes(repository, indexed.commit().name(), commit.name());
+            if (changes.isOk()) {
+                List<String> paths = Objects.requireNonNull(changes.value()).stream().map(PathChange::path).toList();
+                return new Source<>(commit.copy(), reread(source, scope, indexed, commit.getTree(), paths));
+            }
+            LOGGER.debug("The changes of %s since the indexed commit were not read: %s", source, changes.outcome());
+        }
+        return new Source<>(commit.copy(), contribute(scope, source, files(commit.getTree(), scope.collections())));
+    }
+
+    /** Re-reads the documents of the source with a changed path and keeps every other entry. */
+    private Map<DocumentCollection, Map<DocumentKey, E>> reread(String source, Scope scope, Source<E> indexed,
+            RevTree tree, List<String> changedPaths) throws IOException {
+        Map<DocumentCollection, Map<DocumentKey, E>> entries = new LinkedHashMap<>();
+        indexed.entries().forEach((collection, values) -> entries.put(collection, new LinkedHashMap<>(values)));
+        for (DocumentKey key : DocumentPaths.changed(scope.collections(), changedPaths)) {
+            if (!scope.covers(key)) {
+                continue;
+            }
+            Map<String, ObjectId> files = new LinkedHashMap<>();
+            files(tree, List.of(key.collection())).forEach((path, blob) -> {
+                if (DocumentPaths.belongs(key, path)) {
+                    files.put(path, blob);
+                }
+            });
+            Map<DocumentKey, E> values = entries.computeIfAbsent(key.collection(), c -> new LinkedHashMap<>());
+            @Nullable E value = files.isEmpty() ? null : contribute(key, source, files);
+            if (value == null) {
+                values.remove(key);
+            } else {
+                values.put(key, value);
+            }
+        }
+        return immutable(entries);
+    }
+
+    /** Calls the contributors for every document of the scope among the files. */
+    private Map<DocumentCollection, Map<DocumentKey, E>> contribute(Scope scope, String source,
+            Map<String, ObjectId> files) throws IOException {
+        Map<DocumentKey, List<String>> documents = DocumentPaths.documents(scope.collections(), files.keySet());
+        Map<DocumentCollection, Map<DocumentKey, E>> entries = new LinkedHashMap<>();
+        for (Map.Entry<DocumentKey, List<String>> document : documents.entrySet()) {
+            DocumentKey key = document.getKey();
+            if (!scope.covers(key)) {
+                continue;
+            }
+            Map<String, ObjectId> own = new LinkedHashMap<>();
+            document.getValue().forEach(path -> own.put(path, files.get(path)));
+            @Nullable E value = contribute(key, source, own);
+            if (value != null) {
+                entries.computeIfAbsent(key.collection(), c -> new LinkedHashMap<>()).put(key, value);
+            }
+        }
+        return immutable(entries);
+    }
+
+    /**
+     * Calls the contributor of one document with its files. A {@link RuntimeException} of the contributor leaves the
+     * document out and is logged with the class of the exception only, no throwable attached.
+     */
+    private @Nullable E contribute(DocumentKey key, String source, Map<String, ObjectId> blobs) throws IOException {
+        Map<String, byte[]> contents = new LinkedHashMap<>();
+        for (Map.Entry<String, ObjectId> blob : blobs.entrySet()) {
+            contents.put(blob.getKey(), repository.open(blob.getValue(), Constants.OBJ_BLOB)
+                    .getBytes(Integer.MAX_VALUE));
+        }
+        IndexContributor<? extends E> contributor = Objects.requireNonNull(contributors.get(key.collection()));
+        try {
+            return contributor.contribute(new IndexContributor.Document(key, source, contents));
+        }
+        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        catch (RuntimeException e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.CONTRIBUTOR_FAILED, alias, key.collection().name(),
+                    e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** The regular and executable files of a tree below the directories of the collections, by path. */
+    private Map<String, ObjectId> files(RevTree tree, List<DocumentCollection> scope) throws IOException {
+        Map<String, ObjectId> files = new LinkedHashMap<>();
+        if (scope.isEmpty()) {
+            return files;
+        }
+        List<String> directories = new ArrayList<>(scope.size());
+        scope.forEach(collection -> directories.add(collection.name()));
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.addTree(tree);
+            walk.setRecursive(true);
+            walk.setFilter(directories.size() == 1 ? PathFilter.create(directories.getFirst())
+                    : PathFilterGroup.createFromStrings(directories));
+            while (walk.next()) {
+                FileMode mode = walk.getFileMode(0);
+                if (FileMode.REGULAR_FILE.equals(mode) || FileMode.EXECUTABLE_FILE.equals(mode)) {
+                    files.put(walk.getPathString(), walk.getObjectId(0));
+                }
+            }
+        }
+        return files;
+    }
+
+    private static <E> Map<DocumentCollection, Map<DocumentKey, E>> immutable(
+            Map<DocumentCollection, Map<DocumentKey, E>> entries) {
+        Map<DocumentCollection, Map<DocumentKey, E>> copy = new HashMap<>();
+        entries.forEach((collection, values) -> {
+            if (!values.isEmpty()) {
+                copy.put(collection, Map.copyOf(values));
+            }
+        });
+        return Map.copyOf(copy);
+    }
+
+    /**
+     * A separate index of one tag or commit (GDR-STORE-9).
+     *
+     * @param commitId the full id of the commit the snapshot was built from
+     * @param entries  the entry values of every indexed document, by collection and key
+     * @param <E>      the type of the entry values
+     * @since 0.1
+     */
+    public record Snapshot<E>(String commitId, Map<DocumentCollection, Map<DocumentKey, E>> entries) {
+
+        /**
+         * Checks the components and copies the entries.
+         *
+         * @param commitId the commit id
+         * @param entries  the entries
+         * @throws NullPointerException if a component, a key or a value is {@code null}
+         */
+        public Snapshot {
+            Objects.requireNonNull(commitId, "commitId");
+            Map<DocumentCollection, Map<DocumentKey, E>> copy = new HashMap<>();
+            Objects.requireNonNull(entries, "entries").forEach((collection, values) -> copy.put(collection,
+                    Map.copyOf(values)));
+            entries = Map.copyOf(copy);
+        }
+
+        /**
+         * Returns the entries of one collection.
+         *
+         * @param collection the collection
+         * @return the entry value of every document of the collection, by key, unmodifiable; empty when there is none
+         * @throws NullPointerException if {@code collection} is {@code null}
+         */
+        public Map<DocumentKey, E> entries(DocumentCollection collection) {
+            Objects.requireNonNull(collection, "collection");
+            return entries.getOrDefault(collection, Map.of());
+        }
+    }
+
+    /**
+     * The indexed state of one source reference.
+     *
+     * @param commit  the commit the source is indexed at
+     * @param entries the entry values, by collection and key
+     * @param <E>     the type of the entry values
+     */
+    private record Source<E>(ObjectId commit, Map<DocumentCollection, Map<DocumentKey, E>> entries) {
+    }
+
+    /**
+     * The documents a source holds.
+     *
+     * @param collections the collections of the source
+     * @param only        the one document of a working branch; {@code null} for every document of the collections
+     */
+    private record Scope(List<DocumentCollection> collections, @Nullable DocumentKey only) {
+
+        boolean covers(DocumentKey key) {
+            return only == null ? collections.contains(key.collection()) : only.equals(key);
+        }
+    }
+}

@@ -19,18 +19,26 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.InCoreWriter;
+import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
+import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
 import de.cuioss.git.document.core.TreeEdit;
+import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
@@ -40,8 +48,9 @@ import org.eclipse.jgit.transport.URIish;
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
  * with lease, conflicts and change detection and an optional per-attempt step (GDR-STORE-3, GDR-STORE-4,
- * GDR-STORE-5), the release of a document onto {@code main} with its version tag (GDR-STORE-6), and the expiry of
- * drafts (GDR-STORE-7).
+ * GDR-STORE-5), the release of a document onto {@code main} with its version tag (GDR-STORE-6), the expiry of
+ * drafts (GDR-STORE-7), and the fetch of the remote, on demand or on the caller's schedule, that keeps the clone and
+ * every {@link StoreIndex} over the writer current (GDR-STORE-9).
  * <p>
  * {@link #open} clones the remote of the repository into a bare clone if none exists yet, with the push reference
  * specifications {@link StoreReferences#PUSH_REF_SPECS} (never {@code refs/drafts/*}, ADR-0003) and the credentials of
@@ -56,7 +65,8 @@ import org.eclipse.jgit.transport.URIish;
  * <p>
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes,
  * saves and releases take the shared side of the clone's maintenance lock, every save the lock of its draft, so the
- * saves of one draft run one after the other, and every save or release attempt the transport lock; the expiry, its
+ * saves of one draft run one after the other, and every save or release attempt and every fetch the transport lock;
+ * the moved references of a save, a release or a fetch reach the index only after every lock was released; the expiry, its
  * deletes and its garbage
  * collection, takes the exclusive side. The locks belong to the clone, not to the
  * writer: every writer of the JVM that opens the same git directory (by its real path) shares them, so the garbage
@@ -71,23 +81,44 @@ public final class StoreWriter implements AutoCloseable {
     /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */
     static final String FOREIGN_CLONE = "clone: remote does not match the registry";
 
-    private final String alias;
-    private final Repository repository;
-    private final RepositoryGuard guard;
+    private static final CuiLogger LOGGER = new CuiLogger(StoreWriter.class);
+
+    /** The remote of every bare clone of the store. */
+    private static final String ORIGIN = "origin";
+
+    private final ExplicitSave.Clone clone;
+    private final RepositoryOperations operations;
+    private final TechnicalUser user;
+    private final Duration fetchInterval;
+    private final StoreEvents events;
     private final DraftReferences drafts;
     private final ExplicitSave saves;
     private final DocumentRelease releases;
     private final DraftExpiry expiry;
 
-    private StoreWriter(String alias, Repository repository, RepositoryGuard guard, DraftReferences drafts,
-            ExplicitSave saves, DocumentRelease releases, DraftExpiry expiry) {
-        this.alias = alias;
-        this.repository = repository;
-        this.guard = guard;
+    private StoreWriter(Transport transport, StoreEvents events, DraftReferences drafts, ExplicitSave saves,
+            DocumentRelease releases, DraftExpiry expiry) {
+        this.clone = transport.bareClone();
+        this.operations = transport.operations();
+        this.user = transport.user();
+        this.fetchInterval = transport.fetchInterval();
+        this.events = events;
         this.drafts = drafts;
         this.saves = saves;
         this.releases = releases;
         this.expiry = expiry;
+    }
+
+    /**
+     * What the writer fetches with.
+     *
+     * @param bareClone     the bare clone
+     * @param operations    the repository operations of {@code git-core}
+     * @param user          the technical user, holder of the credentials of every fetch
+     * @param fetchInterval the interval of the periodic fetch ({@code fetch.interval})
+     */
+    private record Transport(ExplicitSave.Clone bareClone, RepositoryOperations operations, TechnicalUser user,
+    Duration fetchInterval) {
     }
 
     /**
@@ -142,12 +173,13 @@ public final class StoreWriter implements AutoCloseable {
         var drafts = new DraftReferences(repository, updater, identities, clock, attempts);
         var guard = RepositoryGuard.of(clone);
         var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, clone, guard);
-        var saves = new ExplicitSave(bareClone, operations, user, identities, clock, attempts);
-        var releases = new DocumentRelease(bareClone, operations, user, identities, clock, attempts);
+        var events = new StoreEvents();
+        var saves = new ExplicitSave(bareClone, operations, user, identities, clock, attempts, events);
+        var releases = new DocumentRelease(bareClone, operations, user, identities, clock, attempts, events);
         var expiry = new DraftExpiry(storeRepository.alias(), repository, guard, updater,
                 configuration.drafts().expiry(), attempts);
-        return StoreResult.ok(new StoreWriter(storeRepository.alias(), repository, guard, drafts, saves, releases,
-                expiry));
+        var transport = new Transport(bareClone, operations, user, configuration.fetch().interval());
+        return StoreResult.ok(new StoreWriter(transport, events, drafts, saves, releases, expiry));
     }
 
     /**
@@ -174,7 +206,7 @@ public final class StoreWriter implements AutoCloseable {
      * @return the alias
      */
     public String alias() {
-        return alias;
+        return clone.alias();
     }
 
     /**
@@ -195,7 +227,7 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(edits, "edits");
         Objects.requireNonNull(message, "message");
-        return guard.shared(() -> drafts.write(author, key, edits, message));
+        return clone.guard().shared(() -> drafts.write(author, key, edits, message));
     }
 
     /**
@@ -208,7 +240,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public StoreResult<List<Draft>> drafts(String pseudonym) {
         Objects.requireNonNull(pseudonym, "pseudonym");
-        return guard.shared(() -> drafts.list(pseudonym));
+        return clone.guard().shared(() -> drafts.list(pseudonym));
     }
 
     /**
@@ -310,10 +342,103 @@ public final class StoreWriter implements AutoCloseable {
         return expiry.expire(now);
     }
 
+    /**
+     * Fetches the remote into the clone (GDR-STORE-9): every branch, tag and note of the remote mirrored, with the
+     * credentials of the technical user, and every local branch, tag and note the remote deleted pruned; drafts and
+     * applied-draft references are never pruned. The fetch runs under the shared side of the clone's maintenance lock
+     * and under its transport lock; after both were released, the moved references are handed to every
+     * {@link StoreIndex} opened over this writer, which refreshes.
+     *
+     * @return {@link StoreOutcome#OK} with the full names of the references the fetch moved, created or deleted, sorted,
+     *         possibly none; or the passed-on Git outcome of the fetch, for example
+     *         {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE} or
+     *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
+     */
+    public StoreResult<List<String>> fetch() {
+        List<StoreEvents.Update> updates = new ArrayList<>();
+        RepositoryGuard guard = clone.guard();
+        StoreResult<List<String>> result = guard.shared(() -> guard.transport(() -> mirror(updates)));
+        events.emit(updates);
+        return result;
+    }
+
+    private StoreResult<List<String>> mirror(List<StoreEvents.Update> updates) {
+        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+                .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
+                .prune(true).build());
+        if (!fetched.isOk()) {
+            return StoreResult.passOn(fetched);
+        }
+        StoreEvents.fetched(fetched.value(), updates);
+        return StoreResult.ok(updates.stream().map(StoreEvents.Update::ref).sorted().toList());
+    }
+
+    /**
+     * Schedules {@link #fetch()} on the caller's executor at {@code fetch.interval} of the configuration, the first
+     * run one interval from now and every next one an interval after the previous one ended (GDR-STORE-9). The writer
+     * starts no thread of its own. A failed fetch is logged ({@code GIT_STORE-107}) with the alias and the outcome, or
+     * the class of an exception, and never ends the schedule; the schedule ends when the caller cancels the returned
+     * future or shuts the executor down, which the caller does before it closes the writer.
+     *
+     * @param executor the executor of the caller
+     * @return the future of the schedule, to cancel it
+     * @throws NullPointerException                                if {@code executor} is {@code null}
+     * @throws java.util.concurrent.RejectedExecutionException if the executor refuses the schedule
+     */
+    public ScheduledFuture<?> fetchPeriodically(ScheduledExecutorService executor) {
+        Objects.requireNonNull(executor, "executor");
+        long interval;
+        try {
+            interval = fetchInterval.toNanos();
+        } catch (ArithmeticException e) {
+            interval = Long.MAX_VALUE;
+        }
+        return executor.scheduleWithFixedDelay(this::periodicFetch, interval, interval, TimeUnit.NANOSECONDS);
+    }
+
+    /** One run of the periodic fetch: a failure is logged and the schedule goes on. */
+    private void periodicFetch() {
+        try {
+            var fetched = fetch();
+            if (!fetched.isOk()) {
+                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), name(fetched.outcome()));
+            }
+        }
+        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        catch (RuntimeException e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getSimpleName());
+        }
+    }
+
+    private static String name(StoreResult.Outcome outcome) {
+        return switch (outcome) {
+            case StoreOutcome store -> store.name();
+            case StoreResult.PassedOn(GitOutcome git) -> git.name();
+        };
+    }
+
+    /**
+     * Returns the opened clone, for the index over this writer.
+     *
+     * @return the clone
+     */
+    Repository repository() {
+        return clone.repository();
+    }
+
+    /**
+     * Returns the notification seam of this writer, for the index over it.
+     *
+     * @return the events
+     */
+    StoreEvents events() {
+        return events;
+    }
+
     /** Releases the opened clone. */
     @Override
     public void close() {
-        repository.close();
+        clone.repository().close();
     }
 
     /**
@@ -323,6 +448,6 @@ public final class StoreWriter implements AutoCloseable {
      */
     @Override
     public String toString() {
-        return "StoreWriter[alias=" + alias + "]";
+        return "StoreWriter[alias=" + alias() + "]";
     }
 }

@@ -495,8 +495,51 @@ credentials (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). The save commit is the onl
 
 The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
 every working branch and collection branch. After a save only the changed documents are re-read.
-`snapshotIndex(tag | commit)` builds
-the index of a reporting date.
+`StoreIndex.snapshot(tag | commit)` builds the index of a reporting date.
+
+* *Contributor.* `IndexContributor<E>` is the consumer interface: for one `IndexContributor.Document` (the
+  `DocumentKey`, the source the document was read from, and the content of each of its files by path, grouped by the
+  document path convention of `DocumentPaths`, <<GDR-STORE-2>>) it returns the entry value, or `null` to leave the
+  document out. The index keeps only the returned value, never the files. `StoreIndex.open(writer, contributors)`
+  takes one contributor per `DocumentCollection` and returns a `StoreResult<StoreIndex<E>>`: `MALFORMED` for two
+  collections of one name, the passed-on `FAILED` with the detail `index: <exception class>` when the clone cannot be
+  read.
+* *Sources.* The index is built at its start from the branches of the clone: `refs/heads/main` holds the released
+  documents of every collection that has a contributor, a working branch `refs/heads/<collection>/<id>` of a
+  per-document collection holds the one document `<collection>/<id>`, and a collection branch
+  `refs/heads/<collection>` of a numbered collection holds its entries; the counter file is no document. Every other
+  branch, and every collection without a contributor, is not indexed. `entries(source, collection)` returns the current
+  entry values of one collection on one source by key, `sources()` the indexed branches and `commitId(source)` the
+  commit a source is indexed at.
+* *Refresh.* Every fetch, save and release of the writer hands the references it moved to the `StoreEvents` of the
+  writer once it released every lock of the store, and the index refreshes. A refresh reads the tips of the source
+  branches; a source whose tip did not move is kept, one whose tip moved re-reads only the documents with a path
+  changed between the indexed commit and the new tip (`RepositoryReader.changes` of `git-core`,
+  xref:git-core.adoc#GDR-CORE-9[GDR-CORE-9]), a new source is read in full and a gone one is dropped. When the changed
+  paths cannot be read, for example because the indexed commit is no longer in the clone, the source is read in full.
+* *Fetch.* `StoreWriter.fetch()` mirrors the remote into the clone with
+  `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, pruning, and the credentials of the technical user, under the
+  shared side of the maintenance lock and the transport lock (<<GDR-STORE-3>>), and returns `OK` with the full names of
+  the references it moved, sorted, or the passed-on Git outcome. `StoreWriter.fetchPeriodically(executor)` schedules
+  that fetch on the caller's `ScheduledExecutorService` with a fixed delay of `fetch.interval`; the writer starts no
+  thread of its own, and the caller ends the schedule by cancelling the returned `ScheduledFuture` or shutting its
+  executor down. A failed periodic fetch, an outcome or an exception, is logged and never ends the schedule.
+* *Snapshot.* `snapshot(tagOrCommit)` takes a tag, by its full name or its name below `refs/tags/`, or a full commit
+  id, and builds a separate `StoreIndex.Snapshot` of that commit, indexed as `main` is; the current index is not
+  changed. A tag or commit the clone does not hold is the passed-on `NOT_FOUND` of `RepositoryReader.snapshot`, whose
+  detail names the field `revision`.
+* *Contributor failure.* A contributor that throws a `RuntimeException` leaves its document out; the failure is logged
+  with the class of the exception only, no throwable attached, and the refresh goes on with the next document.
+* *Index lock.* A refresh reads the references and then publishes a new index, so two refreshes, one after a save and
+  one after a fetch, could publish out of order. Refreshes are therefore serialised by one lock of the index and always
+  rebuild from the tips read under that lock; the published index is an immutable value swapped atomically, so a
+  reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
+  operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
+  A refresh that fails to read the clone keeps the previous index.
+
+A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, a throwing contributor as
+`GIT_STORE-108` with the alias, the collection and the class of the exception (`git-store/doc/LogMessages.adoc`). No
+message names a path, a content, an id or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-10]
 == GDR-STORE-10: Post-Commit Listeners

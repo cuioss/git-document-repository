@@ -81,6 +81,10 @@ import org.jspecify.annotations.Nullable;
  * the release at once as {@link GitOutcome#REJECTED}. A local tag whose push never happened is pruned by the next
  * fetch, since the remote lacks it; no tag on the remote is ever moved or deleted.
  * <p>
+ * After the release released every lock, the references its fetches moved in the clone, the release commit its push
+ * placed on {@code main} and its pushed tag are emitted to the {@link StoreEvents} of the writer, so the index
+ * refreshes (GDR-STORE-9).
+ * <p>
  * A detail names a reference or a field, never a path, a content or a pseudonym (GDR-NFR-3).
  */
 final class DocumentRelease {
@@ -99,6 +103,7 @@ final class DocumentRelease {
     private final CommitIdentities identities;
     private final Clock clock;
     private final int attempts;
+    private final StoreEvents events;
     private final InCoreWriter writer = new InCoreWriter();
     private final InCoreMerger merger = new InCoreMerger();
 
@@ -111,11 +116,13 @@ final class DocumentRelease {
      * @param identities the commit identities
      * @param clock      the clock of the commit times
      * @param attempts   the attempts of a release ({@code save.max-attempts}), at least 1
+     * @param events     the notification seam of the writer, told of the moved references after the locks were
+     *                   released
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if {@code attempts} is less than 1
      */
     DocumentRelease(ExplicitSave.Clone clone, RepositoryOperations operations, TechnicalUser user,
-            CommitIdentities identities, Clock clock, int attempts) {
+            CommitIdentities identities, Clock clock, int attempts, StoreEvents events) {
         this.clone = Objects.requireNonNull(clone, "clone");
         this.operations = Objects.requireNonNull(operations, "operations");
         this.user = Objects.requireNonNull(user, "user");
@@ -125,6 +132,7 @@ final class DocumentRelease {
             throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
         }
         this.attempts = attempts;
+        this.events = Objects.requireNonNull(events, "events");
     }
 
     /**
@@ -147,9 +155,11 @@ final class DocumentRelease {
         if (key.collection().kind() == DocumentCollection.Kind.MAIN) {
             return report(source, StoreResult.of(StoreOutcome.MALFORMED, NO_RELEASE));
         }
-        var request = new Request(author, key, source);
+        var request = new Request(author, key, source, new ArrayList<>());
         RepositoryGuard guard = clone.guard();
-        return report(source, guard.shared(() -> attempts(request)));
+        StoreResult<Release> result = report(source, guard.shared(() -> attempts(request)));
+        events.emit(request.updates());
+        return result;
     }
 
     /** Runs the attempts of a release, each under the transport lock. */
@@ -182,6 +192,7 @@ final class DocumentRelease {
             if (!fetched.isOk()) {
                 return Optional.of(StoreResult.passOn(fetched));
             }
+            StoreEvents.fetched(fetched.value(), request.updates());
             @Nullable ObjectId main = tip(repository, StoreReferences.MAIN);
             @Nullable ObjectId source = tip(repository, request.source());
             if (source == null) {
@@ -196,7 +207,7 @@ final class DocumentRelease {
             if (merged != null) {
                 LOGGER.debug("The release %s is on %s without its tag; pushing the tag only", tag,
                         StoreReferences.MAIN);
-                return Optional.of(tagAndPush(merged, tag, version));
+                return Optional.of(tagAndPush(request, merged, tag, version));
             }
             GitResult<String> written = write(repository, request, main, source, message);
             if (!written.isOk()) {
@@ -216,8 +227,9 @@ final class DocumentRelease {
             if (!pushed.isOk()) {
                 return Optional.of(StoreResult.passOn(pushed));
             }
+            request.updates().add(StoreEvents.Update.pushed(StoreReferences.MAIN, lease.name(), commit.name()));
             moveMain(repository, lease, commit);
-            return Optional.of(pushTag(tag, commit, version));
+            return Optional.of(pushTag(request, tag, commit, version));
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the release of %s: %s", request.source(), type);
@@ -226,18 +238,19 @@ final class DocumentRelease {
     }
 
     /** Creates the missing local tag of a merged release and pushes it. */
-    private StoreResult<Release> tagAndPush(ObjectId commit, String tag, int version) throws IOException {
+    private StoreResult<Release> tagAndPush(Request request, ObjectId commit, String tag, int version)
+            throws IOException {
         if (!createTag(clone.repository(), tag, commit)) {
             return passedOn(GitOutcome.REJECTED, tag + ": exists");
         }
-        return pushTag(tag, commit, version);
+        return pushTag(request, tag, commit, version);
     }
 
     /**
      * Pushes the tag against the zero-id lease; after {@code main} moved on the remote, a failure is
      * {@link StoreOutcome#INCOMPLETE}.
      */
-    private StoreResult<Release> pushTag(String tag, ObjectId commit, int version) {
+    private StoreResult<Release> pushTag(Request request, String tag, ObjectId commit, int version) {
         var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit.name())
                 .remoteRef(tag).expectedRemoteHead(ObjectId.zeroId().name()).credentials(user.credentials())
                 .build());
@@ -246,6 +259,7 @@ final class DocumentRelease {
             LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_INCOMPLETE, clone.alias(), tag, commit.name());
             return StoreResult.of(StoreOutcome.INCOMPLETE, tag + ": not pushed (" + pushed.outcome().name() + ")");
         }
+        request.updates().add(StoreEvents.Update.pushed(tag, ObjectId.zeroId().name(), commit.name()));
         return StoreResult.ok(new Release(tag, commit.name(), version));
     }
 
@@ -440,9 +454,11 @@ final class DocumentRelease {
      *
      * @param author the author of the release commit
      * @param key    the document or entry
-     * @param source the working or collection branch
+     * @param source  the working or collection branch
+     * @param updates the references the release moved, in the clone by its fetches and on the remote by its pushes,
+     *                collected on the releasing thread and emitted after the locks were released
      */
-    private record Request(Author author, DocumentKey key, String source) {
+    private record Request(Author author, DocumentKey key, String source, List<StoreEvents.Update> updates) {
     }
 
     /**

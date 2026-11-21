@@ -81,6 +81,16 @@ document creates the missing tag on that commit instead of merging again.
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]), for example a missing branch, a conflicting
 merge, a refused push of `main` or a lease refused on every attempt: the repository alias, the working or collection
 branch of the document or entry and the name of the outcome, never a path or a credential.
+|GIT_STORE-107 |GIT_STORE |The periodic fetch of repository %s failed: %s
+|Logged when a fetch started by `StoreWriter.fetchPeriodically` failed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias and the name of the
+outcome, or the simple class name of an exception, never its message or a credential. The schedule goes on, and the
+next run fetches again.
+|GIT_STORE-108 |GIT_STORE |Left a document of repository %s, collection %s out of the index: the contributor threw %s
+|Logged when an index contributor threw while the index read a document
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias, the name of the
+collection and the simple class name of the exception, never its message, the id, a path or a content. The document is
+left out of the index, and the refresh goes on with the next document.
 |===
 
 == ERROR Level (200-299)

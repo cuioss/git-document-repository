@@ -167,5 +167,25 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(106)
                 .build();
+
+        /**
+         * A periodic fetch failed, the schedule goes on: the repository alias and the outcome, or the class of the
+         * exception, never its message.
+         */
+        public static final LogRecord PERIODIC_FETCH_FAILED = LogRecordModel.builder()
+                .template("The periodic fetch of repository %s failed: %s")
+                .prefix(PREFIX)
+                .identifier(107)
+                .build();
+
+        /**
+         * An index contributor threw, the document is left out of the index: the repository alias, the collection and
+         * the class of the exception, never its message.
+         */
+        public static final LogRecord CONTRIBUTOR_FAILED = LogRecordModel.builder()
+                .template("Left a document of repository %s, collection %s out of the index: the contributor threw %s")
+                .prefix(PREFIX)
+                .identifier(108)
+                .build();
     }
 }
