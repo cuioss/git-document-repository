@@ -28,7 +28,7 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners | `git-core` |
-| `git-forms` | Schema-driven documents: outcome list and result, log messages | `git-store` |
+| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration | `git-store` |
 
 Planned but not yet created: `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
@@ -68,7 +68,10 @@ unsigned and carry no trailers until GDR-STORE-12/13. JOL (`org.openjdk.jol:jol-
 `git-store` only, for `IndexFootprintTest` (GDR-NFR-1). Its tests run on the class path against
 the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
 `FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as
-`FormsResult.PassedOn`) and the `LogRecord` holder `GitFormsLogMessages`; its tests run on the class path as well.
+`FormsResult.PassedOn`) and the `LogRecord` holder `GitFormsLogMessages`, and with the kinds of documents as
+configuration: `KindConfiguration` (loads `kinds.yaml` from a directory or a commit of a configuration repository) with
+`Kind` and `Numbering`, over the package-private `YamlReader` (YAML within the JSON data model, on
+`org.snakeyaml:snakeyaml-engine`); its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 

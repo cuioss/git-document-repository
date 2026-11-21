@@ -53,6 +53,13 @@
                 <artifactId>jol-core</artifactId>
                 <version>0.17</version>
             </dependency>
+            <!-- snakeyaml-engine 3.2, the YAML library of git-forms (owner's approval 2026-11-21), not managed by
+                 cui-java-parent 1.7.7; checked: its 3.2 POM declares test-scope dependencies only. -->
+            <dependency>
+                <groupId>org.snakeyaml</groupId>
+                <artifactId>snakeyaml-engine</artifactId>
+                <version>3.2</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <modules>

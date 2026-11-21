@@ -7,7 +7,8 @@
 `git-forms` (module `de.cuioss.git.document.forms`, one package of the same name) is the layer of schema-driven
 documents on top of `git-store`, on which alone it depends. It holds so far its closed outcome list `FormsOutcome`, its
 result `FormsResult` and its log messages (xref:general.adoc#GDR-GEN-3[GDR-GEN-3],
-xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); the requirements below are planned. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
+xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); of the requirements below, <<GDR-FORMS-1>> is implemented and the others are
+planned. Rationale: xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:
 
@@ -63,6 +64,29 @@ kinds:
 A kind with `numbering` is a numbered collection, a kind without it a per-document collection (see
 xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]). The configuration files live in a configuration repository or directory
 chosen by the application.
+
+`KindConfiguration` loads the kinds from the file `kinds.yaml` at the root of a configuration directory
+(`fromDirectory`) or of a commit of a configuration repository (`fromRepository`, which resolves the revision with
+`RepositoryReader.snapshot` of `git-core` and reads the blob through the repository's JGit `ObjectReader`); both
+return a `FormsResult` with the kinds in configuration order and `find(id)`. The file holds the one key `kinds`, a list
+of kinds with the keys of the example:
+
+* `id`, `repository`, `collection`, `schema` and `workflow` are required, each a string that is not blank; `id` and
+  `collection` must match `[a-z0-9-]+`, `id` must be unique, and `repository` must be an alias of the repository
+  registry of `git-store`.
+* `template` is required for a per-document kind and optional for a numbered kind.
+* `numbering` holds `prefix`, a string, and `digits`, an integer of at least 1.
+* `schema`, `template` and `workflow` are repository-relative references; loading the kinds does not read them.
+
+The file is read as YAML within the JSON data model (ADR-0008) by the package-private `YamlReader`, built on
+`org.snakeyaml:snakeyaml-engine` 3.2: plain scalars resolve by the YAML 1.2 core schema, and an anchor, an alias, an
+explicit tag, a key that is not a string, a duplicate key, an infinite number or not-a-number and more than one document
+are refused. Every refusal is the outcome `MALFORMED` of `git-store`, passed on: a key that is missing or unknown, a
+value of the wrong type or form, a duplicate id, an unknown alias, a per-document kind without `template`, or text the
+reader refuses. The detail names the file and the key path, positions counted from 0 (`kinds.yaml: kinds[1].template:
+missing key, required for a per-document kind`), or the line and column of the text, never a configured value. A
+missing file is `MALFORMED` as well; an I/O failure is the passed-on `FAILED` of `git-core`, naming the exception class
+only. A successful load is logged as `GIT_FORMS-1` (`git-forms/doc/LogMessages.adoc`).
 
 [#GDR-FORMS-2]
 == GDR-FORMS-2: Schema Validation

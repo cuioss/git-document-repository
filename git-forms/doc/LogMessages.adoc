@@ -12,8 +12,8 @@ WARN 100-199, ERROR 200-299). The messages are declared in
 `de.cuioss.git.document.forms.GitFormsLogMessages`.
 
 No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message names a
-number, a directory or a repository alias, never a configured or entered value, a token, a password, an e-mail address
-or a person name.
+number, a directory or a commit id, never a configured or entered value, a token, a password, an e-mail address or a
+person name.
 Debug and trace messages carry no identifier and are not listed.
 
 == INFO Level (1-99)
@@ -23,8 +23,9 @@ Debug and trace messages carry no identifier and are not listed.
 |ID |Component |Message |Description
 |GIT_FORMS-1 |GIT_FORMS |Loaded %s kinds of documents from %s
 |Logged when the kinds of documents were loaded from configuration
-(xref:../../doc/specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]): the number of kinds and the source, the
-configuration directory or the alias of the configuration repository, never a configured value.
+(xref:../../doc/specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]): the number of kinds and the source,
+`directory <path>` for a configuration directory or `commit <id>` for a commit of a configuration repository, never a
+configured value.
 |===
 
 == WARN Level (100-199)

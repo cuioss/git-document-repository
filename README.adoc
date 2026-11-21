@@ -41,7 +41,8 @@ expiry), release with tag, in-memory index with contributors, fetch and snapshot
 `git-core` only.
 
 |`git-forms`
-|Schema-driven documents: outcome list and result, log messages. Depends on `git-store` only.
+|Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration. Depends on
+`git-store` only.
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
