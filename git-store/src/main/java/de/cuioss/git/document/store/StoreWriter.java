@@ -102,7 +102,7 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        var opened = StoreClone.open(storeRepository, gitDir, user, configuration, operations, clock);
+        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, operations, clock);
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
