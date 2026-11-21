@@ -482,7 +482,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a release keeps the mode of an executable file the working branch adds or changes")
-        void releaseKeepsFileModes(@Remote LocalRemote remote) throws Exception {
+        void releaseKeepsFileModes(@Remote LocalRemote remote) {
             var key = document();
             var prefix = key.collection().name() + "/" + key.id();
             var changed = prefix + ".sh";
@@ -538,7 +538,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a save outside the entry with the message of its missing release is no release")
-        void numberedSaveWithReleaseMessageIsNoRelease(@Remote LocalRemote remote) throws Exception {
+        void numberedSaveWithReleaseMessageIsNoRelease(@Remote LocalRemote remote) {
             var collection = collection(Kind.NUMBERED);
             var key = entry(collection);
             var base = files(word());
