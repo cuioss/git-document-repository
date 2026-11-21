@@ -140,12 +140,15 @@ class DocumentLayoutTest {
         void wrongKind() {
             var perDocument = layout(perDocument(name()));
             var numbered = layout(numbered(name()));
+            var ulid = name();
+            var fragment = name();
+            var number = name();
 
             assertAll(
-                    () -> assertThrows(IllegalStateException.class, () -> numbered.document(name())),
-                    () -> assertThrows(IllegalStateException.class, () -> numbered.narrative(name(), name())),
-                    () -> assertThrows(IllegalStateException.class, () -> numbered.part(name(), "details")),
-                    () -> assertThrows(IllegalStateException.class, () -> perDocument.entry(name())),
+                    () -> assertThrows(IllegalStateException.class, () -> numbered.document(ulid)),
+                    () -> assertThrows(IllegalStateException.class, () -> numbered.narrative(ulid, fragment)),
+                    () -> assertThrows(IllegalStateException.class, () -> numbered.part(ulid, "details")),
+                    () -> assertThrows(IllegalStateException.class, () -> perDocument.entry(number)),
                     () -> assertThrows(IllegalStateException.class, perDocument::counter));
         }
 
@@ -154,8 +157,44 @@ class DocumentLayoutTest {
         void refusedCollection() {
             var schema = SchemaValidatorTest.schema(SchemaValidatorTest.SCHEMA);
 
-            assertAll(REFUSED.stream().<Executable>map(collection -> () -> assertThrows(IllegalArgumentException.class,
-                    () -> new DocumentLayout(perDocument(collection), schema), "collection '" + collection + "'")));
+            assertAll(REFUSED.stream().<Executable>map(collection -> {
+                var kind = perDocument(collection);
+                return () -> assertThrows(IllegalArgumentException.class, () -> new DocumentLayout(kind, schema),
+                        "collection '" + collection + "'");
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a split property stored as document.yaml is refused, an ordinary part is not")
+        void splitPropertyNamedDocument() {
+            var kind = perDocument(name());
+            var clashing = SchemaValidatorTest.schema("""
+                    { "properties": { "document": { "type": "object", "gdr-split": true } } }
+                    """);
+            var ordinary = SchemaValidatorTest.schema(SchemaValidatorTest.SCHEMA);
+            var ulid = name();
+
+            var refused = assertThrows(IllegalArgumentException.class, () -> new DocumentLayout(kind, clashing),
+                    "the part would overwrite the document");
+            assertAll(
+                    () -> assertEquals("gdr-split: a split property stored as document.yaml", refused.getMessage(),
+                            "the reason names no value"),
+                    () -> assertEquals(FormsResult.ok(kind.collection() + "/" + ulid + "/details.yaml"),
+                            new DocumentLayout(kind, ordinary).part(ulid, "details"), "details stays a valid part"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a split property that is no name segment is refused")
+        void splitPropertyNoSegment() {
+            var kind = perDocument(name());
+            var schema = SchemaValidatorTest.schema("""
+                    { "properties": { "details/summary": { "type": "object", "gdr-split": true } } }
+                    """);
+
+            var refused = assertThrows(IllegalArgumentException.class, () -> new DocumentLayout(kind, schema),
+                    "the part has no path");
+            assertEquals("gdr-split: a split property that is no name segment", refused.getMessage(),
+                    "the reason names no value");
         }
     }
 
@@ -209,12 +248,13 @@ class DocumentLayoutTest {
             var layout = layout(perDocument(name()));
             Map<String, Map<String, ?>> part = Map.of("details", Map.of("reason", name()));
             Map<String, Map<String, ?>> foreign = Map.of("title", Map.of());
+            Map<String, @Nullable Object> empty = Map.of();
 
             assertAll(
                     () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
                                     "document.yaml: holds a property that is stored as a part")),
                             layout.join(Map.of("details", Map.of()), part), "the part is held twice"),
-                    () -> assertThrows(IllegalArgumentException.class, () -> layout.join(Map.of(), foreign),
+                    () -> assertThrows(IllegalArgumentException.class, () -> layout.join(empty, foreign),
                             "a part of a property that is not split"));
         }
 
@@ -224,11 +264,14 @@ class DocumentLayoutTest {
             var layout = layout(perDocument(name()));
             var data = data();
             var split = layout.split(data);
+            var document = split.document();
+            var key = name();
+            var value = name();
 
             data.clear();
 
-            assertFalse(split.document().isEmpty(), "the split keeps its document");
-            assertThrows(UnsupportedOperationException.class, () -> split.document().put(name(), name()),
+            assertFalse(document.isEmpty(), "the split keeps its document");
+            assertThrows(UnsupportedOperationException.class, () -> document.put(key, value),
                     "the document of a split is unmodifiable");
         }
     }
@@ -236,19 +279,27 @@ class DocumentLayoutTest {
     @Test
     @DisplayName("GDR-GEN-3: a null argument is refused")
     void nullArguments() {
-        var layout = layout(perDocument(name()));
+        var kind = perDocument(name());
+        var layout = layout(kind);
         var schema = SchemaValidatorTest.schema(SchemaValidatorTest.SCHEMA);
+        var ulid = name();
+        Map<String, @Nullable Object> document = Map.of();
+        Map<String, Map<String, ?>> parts = Map.of();
+        Kind nullKind = nullValue();
+        FormSchema nullSchema = nullValue();
+        String nullText = nullValue();
+        Map<String, @Nullable Object> nullDocument = nullValue();
+        Map<String, Map<String, ?>> nullParts = nullValue();
 
         assertAll(
-                () -> assertThrows(NullPointerException.class, () -> new DocumentLayout(nullValue(), schema)),
-                () -> assertThrows(NullPointerException.class,
-                        () -> new DocumentLayout(perDocument(name()), nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> layout.document(nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> layout.narrative(name(), nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> layout.part(name(), nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> layout.split(nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> layout.join(nullValue(), Map.of())),
-                () -> assertThrows(NullPointerException.class, () -> layout.join(Map.of(), nullValue())));
+                () -> assertThrows(NullPointerException.class, () -> new DocumentLayout(nullKind, schema)),
+                () -> assertThrows(NullPointerException.class, () -> new DocumentLayout(kind, nullSchema)),
+                () -> assertThrows(NullPointerException.class, () -> layout.document(nullText)),
+                () -> assertThrows(NullPointerException.class, () -> layout.narrative(ulid, nullText)),
+                () -> assertThrows(NullPointerException.class, () -> layout.part(ulid, nullText)),
+                () -> assertThrows(NullPointerException.class, () -> layout.split(nullDocument)),
+                () -> assertThrows(NullPointerException.class, () -> layout.join(nullDocument, parts)),
+                () -> assertThrows(NullPointerException.class, () -> layout.join(document, nullParts)));
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */

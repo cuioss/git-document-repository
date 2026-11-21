@@ -162,7 +162,9 @@ library ignores the unknown keyword, so the schema stays plain JSON Schema; `gdr
 that is not a boolean, makes the schema `MALFORMED`. `DocumentLayout` gives the paths of a kind (`document`,
 `narrative`, `part`, `entry`, `counter`) and splits the data of a document into `document.yaml` and its parts and joins
 them back; a ULID, a fragment name or a running number that is empty, holds a `/` or starts with `.` is refused as
-`INVALID`, naming the argument, never its value. Generated output and the allocation of running numbers are not part of
+`INVALID`, naming the argument, never its value. Creating a layout refuses, with an `IllegalArgumentException` that
+names no value, a split property that is no such name segment (`details/summary`) or whose part would be stored as
+`document.yaml` (a split property `document`). Generated output and the allocation of running numbers are not part of
 the layout yet.
 
 `YamlDocumentCodec` is the `Codec` of `git-store` (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]) for

@@ -24,7 +24,7 @@ import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreResult;
 
 /**
- * The codec of the counter file {@value DocumentLayout#COUNTER} of a numbered kind (GDR-FORMS-3, GDR-FORMS-9): the last
+ * The codec of the counter file {@value DocumentLayout#COUNTER_FILE} of a numbered kind (GDR-FORMS-3, GDR-FORMS-9): the last
  * running number given, as one decimal integer without sign and without leading zero, followed by one line feed, for
  * example {@code 42\n}; a counter that has given no number yet is {@code 0\n}.
  * <p>
@@ -37,7 +37,7 @@ import de.cuioss.git.document.store.StoreResult;
  */
 public final class CounterCodec implements Codec<Long> {
 
-    private static final String FORMAT = DocumentLayout.COUNTER
+    private static final String FORMAT = DocumentLayout.COUNTER_FILE
             + ": not one decimal integer without sign or leading zero, followed by one line feed";
 
     /**
@@ -78,7 +78,7 @@ public final class CounterCodec implements Codec<Long> {
                 return StoreResult.of(StoreOutcome.MALFORMED, FORMAT);
             }
             if (value > (Long.MAX_VALUE - (digit - '0')) / 10) {
-                return StoreResult.of(StoreOutcome.MALFORMED, DocumentLayout.COUNTER + ": beyond the range of a long");
+                return StoreResult.of(StoreOutcome.MALFORMED, DocumentLayout.COUNTER_FILE + ": beyond the range of a long");
             }
             value = value * 10 + (digit - '0');
         }

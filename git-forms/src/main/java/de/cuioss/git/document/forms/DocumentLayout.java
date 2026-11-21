@@ -29,28 +29,30 @@ import org.jspecify.annotations.Nullable;
  * The data layout of a kind of document (GDR-FORMS-3): the paths of its files and the split of its data into parts.
  * <p>
  * A per-document kind stores a document in the directory {@code <collection>/<ulid>/} of its working branch: the
- * structured fields in {@value #DOCUMENT}, every free-text fragment as {@code narrative/<name>.adoc}, and every part
+ * structured fields in {@value #DOCUMENT_FILE}, every free-text fragment as {@code narrative/<name>.adoc}, and every part
  * the schema marks with {@value FormSchema#SPLIT} as {@code <property>.yaml}. A numbered kind stores an entry as
  * {@code <collection>/<number>.yaml} on its collection branch, beside the counter file {@code <collection>/}{@value
- * #COUNTER}. Generated output and the allocation of running numbers are not part of the layout.
+ * #COUNTER_FILE}. Generated output and the allocation of running numbers are not part of the layout.
  * <p>
  * Every name segment a caller supplies (a ULID, a fragment name, a running number) is checked: it is not empty and
  * holds no {@code /} and no leading {@code .}, which excludes {@code .} and {@code ..}; a refused segment is
  * {@link FormsOutcome#INVALID}, its detail naming the argument, never its value. Calling a per-document path on a
- * numbered kind, or the reverse, is a programming error. A layout is immutable and may serve every thread.
+ * numbered kind, or the reverse, is a programming error. The collection of the kind and every split property of the
+ * schema are checked when the layout is created: each must be a name segment, and no split property may be stored as
+ * {@value #DOCUMENT_FILE}. A layout is immutable and may serve every thread.
  *
  * @since 0.1
  */
 public final class DocumentLayout {
 
     /** The file of the structured fields of a document of a per-document kind. */
-    public static final String DOCUMENT = "document.yaml";
+    public static final String DOCUMENT_FILE = "document.yaml";
 
     /** The directory of the free-text fragments of a document of a per-document kind. */
-    public static final String NARRATIVE = "narrative";
+    public static final String NARRATIVE_DIRECTORY = "narrative";
 
     /** The counter file of a numbered kind. */
-    public static final String COUNTER = ".counter";
+    public static final String COUNTER_FILE = ".counter";
 
     private static final String YAML = ".yaml";
 
@@ -63,13 +65,23 @@ public final class DocumentLayout {
      * @param kind   the kind of document
      * @param schema the schema of the kind, which declares the split parts
      * @throws NullPointerException     if an argument is {@code null}
-     * @throws IllegalArgumentException if the collection of the kind is no name segment
+     * @throws IllegalArgumentException if the collection of the kind is no name segment, or a split property of the
+     *                                  schema is no name segment or would be stored as {@value #DOCUMENT_FILE}
      */
     public DocumentLayout(Kind kind, FormSchema schema) {
         this.kind = Objects.requireNonNull(kind, "kind");
         this.schema = Objects.requireNonNull(schema, "schema");
         if (!isSegment(kind.collection())) {
             throw new IllegalArgumentException("collection: not a name segment");
+        }
+        for (String property : schema.splitProperties()) {
+            if (!isSegment(property)) {
+                throw new IllegalArgumentException(FormSchema.SPLIT + ": a split property that is no name segment");
+            }
+            if (DOCUMENT_FILE.equals(property + YAML)) {
+                throw new IllegalArgumentException(
+                        FormSchema.SPLIT + ": a split property stored as " + DOCUMENT_FILE);
+            }
         }
     }
 
@@ -84,7 +96,7 @@ public final class DocumentLayout {
      */
     public FormsResult<String> document(String ulid) {
         requirePerDocument();
-        return directory(ulid, DOCUMENT);
+        return directory(ulid, DOCUMENT_FILE);
     }
 
     /**
@@ -103,7 +115,7 @@ public final class DocumentLayout {
         if (!isSegment(name)) {
             return invalid("name");
         }
-        return directory(ulid, NARRATIVE + "/" + name + ".adoc");
+        return directory(ulid, NARRATIVE_DIRECTORY + "/" + name + ".adoc");
     }
 
     /**
@@ -119,7 +131,7 @@ public final class DocumentLayout {
     public FormsResult<String> part(String ulid, String property) {
         requirePerDocument();
         Objects.requireNonNull(property, "property");
-        if (!schema.splitProperties().contains(property) || !isSegment(property)) {
+        if (!schema.splitProperties().contains(property)) {
             return invalid("property");
         }
         return directory(ulid, property + YAML);
@@ -151,11 +163,11 @@ public final class DocumentLayout {
      */
     public String counter() {
         requireNumbered();
-        return kind.collection() + "/" + COUNTER;
+        return kind.collection() + "/" + COUNTER_FILE;
     }
 
     /**
-     * Splits the data of a document into the content of {@value #DOCUMENT} and its parts: every split property the data
+     * Splits the data of a document into the content of {@value #DOCUMENT_FILE} and its parts: every split property the data
      * holds as an object becomes a part; every other value stays in the document.
      *
      * @param data the data of the document
@@ -176,9 +188,9 @@ public final class DocumentLayout {
     }
 
     /**
-     * Joins the content of {@value #DOCUMENT} and its parts back into the data of a document.
+     * Joins the content of {@value #DOCUMENT_FILE} and its parts back into the data of a document.
      *
-     * @param document the content of {@value #DOCUMENT}
+     * @param document the content of {@value #DOCUMENT_FILE}
      * @param parts    the parts by property
      * @return {@link FormsOutcome#OK} with the data, the parts after the fields of the document in declaration order;
      *         the passed-on {@link StoreOutcome#MALFORMED} when the document holds a property that is also given as a
@@ -196,7 +208,7 @@ public final class DocumentLayout {
             }
             if (document.containsKey(property)) {
                 return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
-                        DOCUMENT + ": holds a property that is stored as a part"));
+                        DOCUMENT_FILE + ": holds a property that is stored as a part"));
             }
         }
         Map<String, @Nullable Object> data = new LinkedHashMap<>(document);
@@ -247,7 +259,7 @@ public final class DocumentLayout {
     /**
      * The data of a document split into files.
      *
-     * @param document the content of {@value #DOCUMENT}
+     * @param document the content of {@value #DOCUMENT_FILE}
      * @param parts    the parts by property, in declaration order
      * @since 0.1
      */
@@ -256,7 +268,7 @@ public final class DocumentLayout {
         /**
          * Checks and keeps the components; the maps keep their order.
          *
-         * @param document the content of {@value #DOCUMENT}
+         * @param document the content of {@value #DOCUMENT_FILE}
          * @param parts    the parts by property
          * @throws NullPointerException if an argument is {@code null}
          */
