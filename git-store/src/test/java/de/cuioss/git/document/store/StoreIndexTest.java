@@ -70,7 +70,6 @@ import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.PersonIdent;
-import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
@@ -170,12 +169,6 @@ class StoreIndexTest {
         RefUpdate update = repository.updateRef(ref);
         update.setForceUpdate(true);
         assertEquals(RefUpdate.Result.FORCED, update.delete(), "the fixture reference is deleted");
-    }
-
-    private static ObjectId tip(Repository repository, String ref) throws IOException {
-        Ref found = repository.exactRef(ref);
-        assertNotNull(found, () -> "the reference exists: " + ref);
-        return Objects.requireNonNull(found.getObjectId());
     }
 
     private static Map<String, String> merged(Map<String, String> base, Map<String, String> more) {
