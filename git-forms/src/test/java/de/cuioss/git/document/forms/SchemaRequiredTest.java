@@ -105,16 +105,16 @@ class SchemaRequiredTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-2: a reference cycle ends and reports each missing field once")
-        void referenceCycle() {
+        @DisplayName("GDR-FORMS-2: a definition applied twice to one value reports each missing field once")
+        void referencedTwice() {
             var schema = schema("""
-                    { "$ref": "#/$defs/a",
+                    { "allOf": [ { "$ref": "#/$defs/a" }, { "$ref": "#/$defs/b" } ],
                       "$defs": { "a": { "$ref": "#/$defs/b", "required": ["x"] },
-                                 "b": { "$ref": "#/$defs/a", "required": ["y"] } } }
+                                 "b": { "required": ["y"] } } }
                     """);
 
             assertEquals(new ValidationResult.MandatoryFieldsMissing(List.of("/x", "/y")),
-                    validator.required(schema, Map.of()), "the cycle is walked once");
+                    validator.required(schema, Map.of()), "the definition applied twice is walked once");
         }
     }
 

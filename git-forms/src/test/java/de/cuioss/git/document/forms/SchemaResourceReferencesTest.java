@@ -19,6 +19,7 @@ import static de.cuioss.git.document.forms.SchemaValidatorTest.PATH;
 import static de.cuioss.git.document.forms.SchemaValidatorTest.schema;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -46,6 +47,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 class SchemaResourceReferencesTest {
 
     private static final FormsResult.Outcome MALFORMED = new FormsResult.PassedOn(StoreOutcome.MALFORMED);
+
+    private static final String CYCLE = "a reference cycle that returns to the same value without descending into a "
+            + "child value";
 
     /** A relative reference inside an embedded resource and a definition of the same name at the root. */
     private static final String EMBEDDED_CONTACT = """
@@ -136,5 +140,162 @@ class SchemaResourceReferencesTest {
                 () -> assertEquals(MALFORMED, result.outcome(), "the schema is refused"),
                 () -> assertEquals(PATH + ": $ref: a reference outside the schema file", result.detail(),
                         "the detail names the file and the fixed reason"));
+    }
+
+    static Stream<Arguments> unknownKeywordTargets() {
+        return Stream.of(
+                Arguments.of("a $ref to a schema under an unknown keyword",
+                        "{ \"$ref\": \"#/x-contact\", \"x-contact\": { \"required\": [\"name\"] } }", Map.of(),
+                        List.of("/name")),
+                Arguments.of("a $dynamicRef to a schema under an unknown keyword",
+                        "{ \"$dynamicRef\": \"#/x-person\", \"x-person\": { \"required\": [\"id\"], "
+                                + "\"properties\": { \"id\": { \"type\": \"string\" } } } }",
+                        Map.of(), List.of("/id")),
+                Arguments.of("a $ref from a property into an object nested under an unknown keyword",
+                        "{ \"properties\": { \"c\": { \"$ref\": \"#/x-forms/contact\" } }, "
+                                + "\"x-forms\": { \"contact\": { \"required\": [\"name\"] } } }",
+                        Map.of("c", Map.of()), List.of("/c/name")));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: {0}: validate stays valid, required reports the field")
+    @MethodSource("unknownKeywordTargets")
+    void unknownKeywordTarget(String description, String text, Map<String, @Nullable Object> data,
+            List<String> missing) {
+        var schema = schema(text);
+
+        assertAll(
+                () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                        "validate does not evaluate required in the target"),
+                () -> assertEquals(new ValidationResult.MandatoryFieldsMissing(missing),
+                        validator.required(schema, data), "required follows the same target"));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-2: a key named required in the value of const is data, not removed for validate")
+    void requiredInConstUnchanged() {
+        var schema = schema("{ \"properties\": { \"a\": { \"const\": { \"required\": [\"x\"] } } } }");
+
+        assertAll(
+                () -> assertEquals(new ValidationResult.Valid(),
+                        validator.validate(schema, Map.of("a", Map.of("required", List.of("x")))),
+                        "the value of const keeps the key"),
+                () -> assertEquals(new ValidationResult.Invalid(
+                                List.of(new Violation("/a", "must be the value the schema prescribes"))),
+                        validator.validate(schema, Map.of("a", Map.of())), "and another value differs"));
+    }
+
+    static Stream<Arguments> refusedSelections() {
+        return Stream.of(
+                Arguments.of("a $ref to a missing fragment", "{ \"$ref\": \"#/$defs/missing\", \"$defs\": {} }",
+                        "$ref: a reference that selects no schema of the file"),
+                Arguments.of("a $ref to a string", "{ \"properties\": { \"a\": { \"$ref\": \"#/x-label\" } }, "
+                        + "\"x-label\": \"secret text\" }",
+                        "$ref: a reference that selects no schema of the file"),
+                Arguments.of("a $dynamicRef to an anchor no schema declares", "{ \"$dynamicRef\": \"#secretAnchor\" }",
+                        "$dynamicRef: a reference that selects no schema of the file"),
+                Arguments.of("required that is no array in a target under an unknown keyword",
+                        "{ \"$ref\": \"#/x-contact\", \"x-contact\": { \"required\": \"secretName\" } }",
+                        "required: not an array of unique strings"),
+                Arguments.of("required under anyOf in a target under an unknown keyword",
+                        "{ \"$ref\": \"#/x-contact\", \"x-contact\": { \"anyOf\": [ { \"required\": [\"secret\"] } ] } }",
+                        "required: not allowed under anyOf, where it cannot be deferred"),
+                Arguments.of("a $ref whose fragment holds a plus sign",
+                        "{ \"$ref\": \"#/$defs/secret+name\", \"$defs\": { \"secret+name\": {}, \"secret name\": {} } }",
+                        "$ref: a fragment with a plus sign, which the validator decodes as a space"),
+                Arguments.of("a $dynamicRef whose fragment holds a plus sign",
+                        "{ \"$dynamicRef\": \"#secret+anchor\", \"$defs\": { \"a\": { \"$anchor\": \"secret anchor\" } } }",
+                        "$dynamicRef: a fragment with a plus sign, which the validator decodes as a space"));
+    }
+
+    static Stream<Arguments> percentEncodedFragments() {
+        return Stream.of(
+                Arguments.of("an encoded space", "#/$defs/a%20b", "a b"),
+                Arguments.of("an encoded plus sign", "#/$defs/a%2Bb", "a+b"));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: a fragment with {0} is accepted and resolved")
+    @MethodSource("percentEncodedFragments")
+    void percentEncodedFragment(String description, String reference, String name) {
+        var schema = schema("{ \"properties\": { \"p\": { \"$ref\": \"" + reference + "\" } }, \"$defs\": { \""
+                + name + "\": { \"required\": [\"name\"], \"properties\": { \"name\": { \"type\": \"string\" } } } } }");
+
+        assertAll(
+                () -> assertEquals(new ValidationResult.MandatoryFieldsMissing(List.of("/p/name")),
+                        validator.required(schema, Map.of("p", Map.of())), "required follows the decoded fragment"),
+                () -> assertEquals(new ValidationResult.Invalid(
+                                List.of(new Violation("/p/name", "must be of type string"))),
+                        validator.validate(schema, Map.of("p", Map.of("name", 5))),
+                        "validate follows the same target"));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: {0} is MALFORMED with a fixed reason")
+    @MethodSource("refusedSelections")
+    void refusedSelection(String description, String text, String reason) {
+        var result = FormSchema.parse(PATH, text.getBytes(StandardCharsets.UTF_8));
+
+        assertAll(
+                () -> assertEquals(MALFORMED, result.outcome(), "the schema is refused"),
+                () -> assertEquals(PATH + ": " + reason, result.detail(),
+                        "the detail names the file and the fixed reason"),
+                () -> assertFalse(String.valueOf(result.detail()).contains("secret"),
+                        "the detail quotes nothing of the schema"));
+    }
+
+    static Stream<Arguments> descendingRecursion() {
+        return Stream.of(
+                Arguments.of("a definition whose property references it again",
+                        "{ \"$ref\": \"#/$defs/node\", \"$defs\": { \"node\": { \"type\": \"object\", "
+                                + "\"required\": [\"name\"], "
+                                + "\"properties\": { \"child\": { \"$ref\": \"#/$defs/node\" } } } } }",
+                        Map.of("name", "a", "child", Map.of("child", Map.of())),
+                        List.of("/child/name", "/child/child/name")),
+                Arguments.of("a tree of items that reference the root",
+                        "{ \"properties\": { \"v\": { \"$ref\": \"#\" } }, \"items\": { \"$ref\": \"#\" } }",
+                        Map.of("v", List.of(List.of(Map.of("v", List.of())))), List.of()),
+                Arguments.of("a property under allOf that references the root",
+                        "{ \"required\": [\"a\"], \"allOf\": [ { \"properties\": { \"next\": { \"$ref\": \"#\" } } } ] }",
+                        Map.of("a", 1, "next", Map.of()), List.of("/next/a")));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: {0} stays valid")
+    @MethodSource("descendingRecursion")
+    void descendingRecursionStaysValid(String description, String text, Map<String, @Nullable Object> data,
+            List<String> missing) {
+        var schema = schema(text);
+
+        assertAll(
+                () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                        "validate follows the recursion as deep as the data goes"),
+                () -> assertEquals(missing.isEmpty() ? new ValidationResult.Valid()
+                                : new ValidationResult.MandatoryFieldsMissing(missing),
+                        validator.required(schema, data), "required follows it likewise"));
+    }
+
+    static Stream<Arguments> inPlaceCycles() {
+        return Stream.of(
+                Arguments.of("allOf with a $ref to the root",
+                        "{ \"allOf\": [ { \"$ref\": \"#\" } ], \"unevaluatedProperties\": { \"required\": [\"x\"] } }"),
+                Arguments.of("a $ref to the root", "{ \"$ref\": \"#\" }"),
+                Arguments.of("two definitions that reference each other, never referenced from the root",
+                        "{ \"$defs\": { \"secretFirst\": { \"$ref\": \"#/$defs/secretSecond\" }, "
+                                + "\"secretSecond\": { \"$ref\": \"#/$defs/secretFirst\" } } }"),
+                Arguments.of("anyOf with a $ref to the root", "{ \"anyOf\": [ { \"$ref\": \"#\" } ] }"),
+                Arguments.of("if with a $ref to the root", "{ \"if\": { \"$ref\": \"#\" } }"),
+                Arguments.of("dependentSchemas with a $ref to the root",
+                        "{ \"dependentSchemas\": { \"secretName\": { \"$ref\": \"#\" } } }"),
+                Arguments.of("a $dynamicRef to the root", "{ \"allOf\": [ { \"$dynamicRef\": \"#\" } ] }"));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: {0} is MALFORMED with a fixed reason")
+    @MethodSource("inPlaceCycles")
+    void inPlaceCycleRefused(String description, String text) {
+        var result = FormSchema.parse(PATH, text.getBytes(StandardCharsets.UTF_8));
+
+        assertAll(
+                () -> assertEquals(MALFORMED, result.outcome(), "the schema is refused"),
+                () -> assertEquals(PATH + ": " + CYCLE, result.detail(),
+                        "the detail names the file and the fixed reason"),
+                () -> assertFalse(String.valueOf(result.detail()).contains("secret"),
+                        "the detail quotes no name of the schema"));
     }
 }

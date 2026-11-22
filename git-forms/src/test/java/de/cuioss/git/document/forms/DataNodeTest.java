@@ -160,13 +160,14 @@ class DataNodeTest {
         @DisplayName("GDR-FORMS-2: asInteger expands an integer and refuses to expand a number beyond the limit")
         void asInteger() {
             var atLimit = new BigDecimal(BigInteger.ONE, 1 - DataNode.MAX_INTEGER_DIGITS);
+            var huge = DataNode.root(ONE_HUGE);
 
             assertAll(
                     () -> assertEquals(BigInteger.TEN.pow(DataNode.MAX_INTEGER_DIGITS - 1),
                             DataNode.root(atLimit).asInteger(), "an integer is expanded exactly"),
                     () -> assertEquals(BigInteger.ONE, DataNode.root(new BigDecimal("1.5")).asInteger(),
                             "of a fraction the integer part"),
-                    () -> assertThrows(ArithmeticException.class, () -> DataNode.root(ONE_HUGE).asInteger(),
+                    () -> assertThrows(ArithmeticException.class, huge::asInteger,
                             "1e2147483647 is not expanded"),
                     () -> assertEquals("1E+2147483647", DataNode.root(ONE_HUGE).toPrintableString(),
                             "nor printed expanded"));

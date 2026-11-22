@@ -18,10 +18,14 @@ package de.cuioss.git.document.forms;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 import dev.harrel.jsonschema.JsonNode;
@@ -37,7 +41,8 @@ import org.jspecify.annotations.Nullable;
  * resolved against the URI of the resource that contains it; like the validator, every object of the file counts, not
  * only those at a keyword that holds a schema. A reference is resolved against the URI of the resource that contains the
  * schema holding it (for a schema that declares an {@code $id} itself, its own): the part before {@code #} selects a
- * resource of the file, the fragment, URL-decoded, is empty for the resource itself, a JSON Pointer (RFC 6901) from the
+ * resource of the file, the fragment, URL-decoded with {@link URLDecoder} as the validator decodes it (a {@code +}
+ * would become a space, see {@link #fragmentHoldsPlus(String)}), is empty for the resource itself, a JSON Pointer (RFC 6901) from the
  * root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared within that resource. A
  * {@code $dynamicRef} is resolved like a {@code $ref}; its dynamic scope is not considered. An instance is immutable.
  */
@@ -56,8 +61,10 @@ final class SchemaResources {
     private final Map<Object, URI> baseOf = new IdentityHashMap<>();
     private final Map<Object, String> pointerOf = new IdentityHashMap<>();
     private final URI root;
+    private final Map<?, ?> document;
 
     private SchemaResources(Map<?, ?> document) {
+        this.document = document;
         URI rootUri = BASE;
         if (document.get(ID) instanceof String id) {
             @Nullable URI declared = resolveUri(BASE, id);
@@ -110,6 +117,31 @@ final class SchemaResources {
         if (name instanceof String anchor) {
             byResource.computeIfAbsent(resource, key -> new HashMap<>()).putIfAbsent(anchor, schema);
         }
+    }
+
+    /**
+     * The schema objects of the file that a validator may apply: the root, every object at a keyword that holds a
+     * sub-schema, and every object a {@code $ref} or {@code $dynamicRef} selects, wherever it sits in the file (also
+     * under a keyword the dialect does not define, such as {@code x-contact}), with their sub-schemas and targets in
+     * turn. Each object is listed once, compared by identity; the walk uses an explicit stack, so a deeply nested schema
+     * cannot overflow it.
+     *
+     * @return the schema objects, the root first
+     */
+    List<Map<?, ?>> schemaObjects() {
+        List<Map<?, ?>> found = new ArrayList<>();
+        Set<Object> seen = FormSchema.identitySet();
+        Deque<Map<?, ?>> pending = new ArrayDeque<>();
+        pending.push(document);
+        while (!pending.isEmpty()) {
+            Map<?, ?> schema = pending.pop();
+            if (seen.add(schema)) {
+                found.add(schema);
+                schema.forEach((keyword, value) -> FormSchema.subSchemas(keyword, value).forEach(pending::push));
+                FormSchema.targets(this, schema).forEach(pending::push);
+            }
+        }
+        return found;
     }
 
     /** A URI resolved against a base, without its fragment, or {@code null} when it is no URI. */
@@ -168,6 +200,21 @@ final class SchemaResources {
         }
         @Nullable Map<?, ?> anchored = anchors.getOrDefault(target, Map.of()).get(fragment);
         return anchored != null ? anchored : dynamicAnchors.getOrDefault(target, Map.of()).get(fragment);
+    }
+
+    /**
+     * Tells whether the fragment of a reference holds a {@code +}. The validator decodes a fragment with
+     * {@link URLDecoder}, form-decoding it ({@code UriUtil} of {@code dev.harrel:json-schema} 1.9.1), so a {@code +}
+     * becomes a space, which RFC 6901 and RFC 3986 do not do; {@link #resolve(Map, String)} decodes the same way, to
+     * follow the target the validator follows, and {@link FormSchema#parse(String, byte[])} refuses such a reference, so
+     * that no schema depends on the difference. A {@code +} encoded as {@code %2B} stays a {@code +}.
+     *
+     * @param reference the value of {@code $ref} or {@code $dynamicRef}
+     * @return {@code true} when the fragment holds a {@code +}
+     */
+    static boolean fragmentHoldsPlus(String reference) {
+        int hash = reference.indexOf('#');
+        return hash >= 0 && fragmentOf(reference, hash).indexOf('+') >= 0;
     }
 
     /** The fragment of a reference up to a further {@code #}, as the validator splits it. */

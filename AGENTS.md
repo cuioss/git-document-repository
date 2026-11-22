@@ -75,7 +75,8 @@ configuration: `KindConfiguration` (loads `kinds.yaml` from a directory or a com
 Draft 2020-12, its declaration order and the split keyword `gdr-split`), `SchemaValidator` (on `dev.harrel:json-schema`,
 `required` checked separately) with the sealed `ValidationResult` and `Violation`, `DocumentLayout`, `YamlDocumentCodec`
 and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNode` over the data model),
-`SchemaResources` (the schema resources of a file and the resolution of references), `MandatoryFields` and
+`SchemaResources` (the schema resources of a file and the resolution of references), `SchemaChecks` (the refusals of
+a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to the same value), `MandatoryFields` and
 `EvaluatedLocations` (the check of `required`) and
 `YamlWriter` (the canonical emitter); its tests run on the class path as well.
 Add an `exports` directive together with the first

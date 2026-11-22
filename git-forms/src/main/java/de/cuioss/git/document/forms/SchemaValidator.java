@@ -87,8 +87,9 @@ public final class SchemaValidator {
      * holds; in every schema a {@code $ref} or {@code $dynamicRef} references within the schema file, for example
      * {@code #/$defs/contact}; and in the sub-schema of {@code unevaluatedProperties} and {@code unevaluatedItems} for
      * exactly the properties and items that Draft 2020-12 treats as unevaluated at its location, where an applied schema
-     * evaluates only if the value satisfies it as {@link #validate(FormSchema, Map)} evaluates it. A reference cycle ends
-     * at the first schema applied twice to the same value. A schema with
+     * evaluates only if the value satisfies it as {@link #validate(FormSchema, Map)} evaluates it. A schema applied a
+     * second time to the same value is not walked again; a schema whose references apply a schema to the same value
+     * without end is refused by {@link FormSchema#parse(String, byte[])}. A schema with
      * {@code required} under a keyword that decides between alternatives or conditions ({@code oneOf}, {@code anyOf},
      * {@code not}, {@code if}, {@code then}, {@code else}, {@code contains}) is refused by
      * {@link FormSchema#parse(String, byte[])}.

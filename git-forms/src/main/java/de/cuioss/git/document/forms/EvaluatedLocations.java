@@ -191,14 +191,9 @@ final class EvaluatedLocations {
             return false;
         }
         Map<Object, Boolean> byValue = satisfied.computeIfAbsent(subSchema, key -> new IdentityHashMap<>());
-        Boolean known = byValue.get(value);
-        if (known == null) {
-            SchemaValidator.Prepared validator = validator();
-            URI reference = references.computeIfAbsent(pointer, this::register);
-            known = validator.validator().validate(reference, DataNode.root(value)).isValid();
-            byValue.put(value, known);
-        }
-        return known;
+        // IdentityHashMap admits the null value as a key; the validation never calls back into this method
+        return byValue.computeIfAbsent(value, key -> validator().validator()
+                .validate(references.computeIfAbsent(pointer, this::register), DataNode.root(key)).isValid());
     }
 
     /**

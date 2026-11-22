@@ -17,7 +17,6 @@ package de.cuioss.git.document.forms;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,13 +42,17 @@ import org.jspecify.annotations.Nullable;
  * A schema the library does not accept is the passed-on {@link StoreOutcome#MALFORMED}, its detail naming the schema
  * file and the problem, never content of the schema (GDR-NFR-3): text that is not UTF-8 or not JSON within the JSON
  * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
- * {@code $dynamicRef} that points outside the schema file, {@value #SPLIT} that is not a boolean or not on a top-level
- * property of type {@code object}, {@code required} that is not an array of unique strings, {@code required} in a
- * sub-schema of {@code oneOf}, {@code anyOf}, {@code not}, {@code if}, {@code then}, {@code else} or {@code contains}
- * (also in a schema such a sub-schema references), where deferring it to {@link SchemaValidator#required(FormSchema,
- * Map)} would change which alternative or condition holds, and a schema the validator {@code dev.harrel:json-schema}
- * refuses, for example one that does not conform to the meta-schema of the dialect. A schema is immutable and may serve
- * every thread.
+ * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it,
+ * a cycle of schemas applied to the same value without descending into a child value (for example
+ * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
+ * on a top-level property of type {@code object}, {@code required} that is not an array of unique strings,
+ * {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not}, {@code if}, {@code then},
+ * {@code else} or {@code contains} (also in a schema such a sub-schema references), where deferring it to
+ * {@link SchemaValidator#required(FormSchema, Map)} would change which alternative or condition holds, and a schema the
+ * validator {@code dev.harrel:json-schema} refuses, for example one that does not conform to the meta-schema of the
+ * dialect. These rules hold for every schema of the file a validator may apply, a schema that only a reference selects
+ * (under an unknown keyword such as {@code x-contact}) included, and {@code required} is removed from each of them for
+ * {@link SchemaValidator#validate(FormSchema, Map)}. A schema is immutable and may serve every thread.
  *
  * @since 0.1
  */
@@ -102,16 +105,7 @@ public final class FormSchema {
     static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
 
     /** The keywords that reference a schema; within one file only. */
-    private static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
-
-    /**
-     * The keywords whose sub-schemas decide between alternatives or conditions; {@code required} in them cannot be
-     * deferred without changing which alternative or condition holds.
-     */
-    private static final Set<String> CONDITIONAL = Set.of("oneOf", "anyOf", "not", "if", "then", "else", "contains");
-
-    /** The keywords that only hold sub-schemas for references; not part of the schema they are declared in. */
-    private static final Set<String> DEFINITIONS = Set.of("$defs", "definitions");
+    static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
 
     private final String path;
     private final Map<String, @Nullable Object> withoutRequired;
@@ -121,11 +115,13 @@ public final class FormSchema {
     private final SchemaResources resources;
 
     private FormSchema(String path, Map<String, @Nullable Object> schema, SchemaResources resources,
-            List<String> splitProperties) {
+            List<Map<?, ?>> schemas, List<String> splitProperties) {
         this.path = path;
         this.schema = schema;
         this.resources = resources;
-        this.withoutRequired = withoutRequired(schema);
+        Set<Object> schemaObjects = identitySet();
+        schemaObjects.addAll(schemas);
+        this.withoutRequired = withoutRequired(schema, schemaObjects);
         this.shape = Shape.of(schema);
         this.splitProperties = List.copyOf(splitProperties);
     }
@@ -137,7 +133,8 @@ public final class FormSchema {
      *                detail
      * @param content the content of the schema file
      * @return {@link FormsOutcome#OK} with the schema, or the passed-on {@link StoreOutcome#MALFORMED} for a schema the
-     *         library does not accept
+     *         library does not accept; a cycle of schemas applied to the same value is refused before any other check
+     *         of the sub-schemas and before the validator sees the schema
      * @throws NullPointerException if an argument is {@code null}
      */
     public static FormsResult<FormSchema> parse(String path, byte[] content) {
@@ -160,11 +157,12 @@ public final class FormSchema {
             return malformed(path, "$schema: not the dialect Draft 2020-12");
         }
         SchemaResources resources = SchemaResources.of(schema);
-        @Nullable String problem = checkSubSchemas(resources, schema, false, true);
+        List<Map<?, ?>> schemas = resources.schemaObjects();
+        @Nullable String problem = SchemaChecks.problem(resources, schema, schemas);
         if (problem != null) {
             return malformed(path, problem);
         }
-        var formSchema = new FormSchema(path, schema, resources, splitProperties(schema));
+        var formSchema = new FormSchema(path, schema, resources, schemas, splitProperties(schema));
         if (!SchemaValidator.accepts(formSchema)) {
             return malformed(path, "not a JSON Schema the validator accepts");
         }
@@ -172,63 +170,10 @@ public final class FormSchema {
     }
 
     /**
-     * Checks a schema and its sub-schemas: references within the file only, {@value #SPLIT} only as a boolean on a
-     * top-level property of type {@code object}, {@code required} only as an array of unique strings and never in a
-     * sub-schema of a {@linkplain #CONDITIONAL conditional keyword}, also not through a reference.
-     *
-     * @param resources the resources of the file, against which references are resolved
-     * @return the problem, or {@code null} when there is none
-     */
-    private static @Nullable String checkSubSchemas(SchemaResources resources, Map<?, ?> schema,
-            boolean topLevelProperty, boolean root) {
-        @Nullable String problem = checkKeywords(resources, schema, topLevelProperty);
-        if (problem != null) {
-            return problem;
-        }
-        for (Map.Entry<?, ?> entry : schema.entrySet()) {
-            Object keyword = entry.getKey();
-            for (Map<?, ?> subSchema : subSchemas(keyword, entry.getValue())) {
-                problem = checkSubSchemas(resources, subSchema, root && PROPERTIES.equals(keyword), false);
-                if (problem == null && CONDITIONAL.contains(keyword) && holdsRequired(resources, subSchema,
-                        identitySet())) {
-                    problem = REQUIRED + ": not allowed under " + keyword + ", where it cannot be deferred";
-                }
-                if (problem != null) {
-                    return problem;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Tells whether a schema holds the keyword {@code required}: itself, in a sub-schema or in a schema it references
-     * within the file. The definitions of a schema count only where they are referenced.
-     *
-     * @param visited the schemas already looked at, compared by identity, so that a reference cycle ends
-     */
-    private static boolean holdsRequired(SchemaResources resources, Map<?, ?> schema, Set<Object> visited) {
-        if (!visited.add(schema)) {
-            return false;
-        }
-        if (schema.containsKey(REQUIRED)) {
-            return true;
-        }
-        for (Map.Entry<?, ?> entry : schema.entrySet()) {
-            if (!DEFINITIONS.contains(entry.getKey()) && subSchemas(entry.getKey(), entry.getValue()).stream()
-                    .anyMatch(subSchema -> holdsRequired(resources, subSchema, visited))) {
-                return true;
-            }
-        }
-        return targets(resources, schema).stream()
-                .anyMatch(target -> holdsRequired(resources, target, visited));
-    }
-
-    /**
      * The schemas within the file that the references of a schema resolve to, each against the base URI of the resource
      * that contains the schema ({@link SchemaResources}).
      */
-    private static List<Map<?, ?>> targets(SchemaResources resources, Map<?, ?> schema) {
+    static List<Map<?, ?>> targets(SchemaResources resources, Map<?, ?> schema) {
         List<Map<?, ?>> targets = new ArrayList<>();
         for (String reference : REFERENCES) {
             if (schema.get(reference) instanceof String target) {
@@ -243,60 +188,8 @@ public final class FormSchema {
         return Collections.newSetFromMap(new IdentityHashMap<>());
     }
 
-    /** Checks the keywords of one schema, not its sub-schemas; the problem, or {@code null}. */
-    private static @Nullable String checkKeywords(SchemaResources resources, Map<?, ?> schema,
-            boolean topLevelProperty) {
-        @Nullable String problem = checkReferences(resources, schema);
-        if (problem == null) {
-            problem = checkSplit(schema, topLevelProperty);
-        }
-        if (problem == null) {
-            problem = checkRequired(schema);
-        }
-        return problem;
-    }
-
-    /** Refuses a reference that selects no resource of the file, whatever its fragment. */
-    private static @Nullable String checkReferences(SchemaResources resources, Map<?, ?> schema) {
-        for (String reference : REFERENCES) {
-            if (schema.get(reference) instanceof String target && !resources.withinFile(schema, target)) {
-                return reference + ": a reference outside the schema file";
-            }
-        }
-        return null;
-    }
-
-    private static @Nullable String checkSplit(Map<?, ?> schema, boolean topLevelProperty) {
-        if (!schema.containsKey(SPLIT)) {
-            return null;
-        }
-        @Nullable Object split = schema.get(SPLIT);
-        if (!(split instanceof Boolean)) {
-            return SPLIT + ": not a boolean";
-        }
-        if (Boolean.TRUE.equals(split) && !(topLevelProperty && "object".equals(schema.get("type")))) {
-            return SPLIT + ": only on a top-level property of type object";
-        }
-        return null;
-    }
-
-    /**
-     * Checks the keyword {@code required}, which the validator never sees, because validation evaluates the schema
-     * without it: it must be an array of unique strings. The reason quotes nothing of the schema.
-     */
-    private static @Nullable String checkRequired(Map<?, ?> schema) {
-        if (!schema.containsKey(REQUIRED)) {
-            return null;
-        }
-        if (schema.get(REQUIRED) instanceof List<?> names && names.stream().allMatch(String.class::isInstance)
-                && new HashSet<>(names).size() == names.size()) {
-            return null;
-        }
-        return REQUIRED + ": not an array of unique strings";
-    }
-
     /** The sub-schemas that are objects in the value of a keyword; empty for a keyword that holds no schema. */
-    private static List<Map<?, ?>> subSchemas(Object keyword, @Nullable Object value) {
+    static List<Map<?, ?>> subSchemas(Object keyword, @Nullable Object value) {
         List<Map<?, ?>> found = new ArrayList<>();
         if (SCHEMA_MAPS.contains(keyword) && value instanceof Map<?, ?> named) {
             named.values().forEach(sub -> addSchema(found, sub));
@@ -328,35 +221,34 @@ public final class FormSchema {
         return split;
     }
 
-    /** A copy of a schema without the keyword {@code required} in the schema and every sub-schema. */
-    private static Map<String, @Nullable Object> withoutRequired(Map<?, ?> schema) {
+    /**
+     * A copy of the schema file without the keyword {@code required} in every schema object a validator may apply
+     * ({@link SchemaResources#schemaObjects()}): the root, every sub-schema, and every object a reference selects,
+     * wherever it sits, also under a keyword the dialect does not define. Any other object, the value of {@code const}
+     * or {@code enum} for example, keeps a key named {@code required}.
+     *
+     * @param schemas the schema objects, compared by identity
+     */
+    private static Map<String, @Nullable Object> withoutRequired(Map<?, ?> schema, Set<Object> schemas) {
         Map<String, @Nullable Object> copy = new LinkedHashMap<>();
+        boolean isSchema = schemas.contains(schema);
         for (Map.Entry<?, ?> entry : schema.entrySet()) {
-            String keyword = (String) entry.getKey();
-            if (!REQUIRED.equals(keyword)) {
-                copy.put(keyword, withoutRequired(keyword, entry.getValue()));
+            String key = (String) entry.getKey();
+            if (!(isSchema && REQUIRED.equals(key))) {
+                copy.put(key, withoutRequiredValue(entry.getValue(), schemas));
             }
         }
         return copy;
     }
 
-    private static @Nullable Object withoutRequired(String keyword, @Nullable Object value) {
-        if (SCHEMA_MAPS.contains(keyword) && value instanceof Map<?, ?> named) {
-            Map<String, @Nullable Object> copy = new LinkedHashMap<>();
-            named.forEach((name, sub) -> copy.put((String) name, withoutRequiredSchema(sub)));
-            return copy;
+    private static @Nullable Object withoutRequiredValue(@Nullable Object value, Set<Object> schemas) {
+        if (value instanceof Map<?, ?> map) {
+            return withoutRequired(map, schemas);
         }
-        if (SCHEMA_VALUES.contains(keyword)) {
-            return withoutRequiredSchema(value);
-        }
-        if (SCHEMA_LISTS.contains(keyword) && value instanceof List<?> list) {
-            return list.stream().map(FormSchema::withoutRequiredSchema).toList();
+        if (value instanceof List<?> list) {
+            return list.stream().map(item -> withoutRequiredValue(item, schemas)).toList();
         }
         return value;
-    }
-
-    private static @Nullable Object withoutRequiredSchema(@Nullable Object value) {
-        return value instanceof Map<?, ?> map ? withoutRequired(map) : value;
     }
 
     private static FormsResult<FormSchema> malformed(String path, String problem) {
@@ -406,7 +298,7 @@ public final class FormSchema {
      * references within this schema.
      */
     boolean holdsRequired(Map<?, ?> subSchema) {
-        return holdsRequired(resources, subSchema, identitySet());
+        return SchemaChecks.holdsRequired(resources, subSchema, identitySet());
     }
 
     /** The resources of the schema file, against which references are resolved. */

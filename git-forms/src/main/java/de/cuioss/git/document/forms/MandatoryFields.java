@@ -59,8 +59,8 @@ final class MandatoryFields {
     /**
      * Collects the missing fields of a value by one of its sub-schemas.
      *
-     * @param entered the sub-schemas already applied to this value, compared by identity, so that a reference cycle
-     *                ends; a new value starts a new set
+     * @param entered the sub-schemas already applied to this value, compared by identity, so that a schema applied
+     *                twice is walked once; a new value starts a new set
      */
     private void collect(@Nullable Object subSchema, @Nullable Object data, String pointer, Set<Object> entered) {
         if (!(subSchema instanceof Map<?, ?> keywords) || !entered.add(keywords)) {
