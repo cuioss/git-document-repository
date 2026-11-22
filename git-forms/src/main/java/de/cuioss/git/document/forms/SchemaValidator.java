@@ -82,8 +82,11 @@ public final class SchemaValidator {
 
     /**
      * Checks the keyword {@code required} of a schema: in the schema itself, in the sub-schema of every property the data
-     * holds, in the sub-schema {@code items} of an array and in every sub-schema of {@code allOf}, not through
-     * {@code $ref}.
+     * holds, in the sub-schema {@code items} of an array, in every sub-schema of {@code allOf} and in every schema a
+     * {@code $ref} or {@code $dynamicRef} references within the schema file, for example {@code #/$defs/contact}. A
+     * reference cycle ends at the first schema applied twice to the same value. A schema with {@code required} under a
+     * keyword that decides between alternatives or conditions ({@code oneOf}, {@code anyOf}, {@code not}, {@code if},
+     * {@code then}, {@code else}, {@code contains}) is refused by {@link FormSchema#parse(String, byte[])}.
      *
      * @param schema the schema of the kind
      * @param data   the data of the document
@@ -95,7 +98,7 @@ public final class SchemaValidator {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(data, "data");
         Set<String> missing = new LinkedHashSet<>();
-        collectMissing(schema.schema(), data, "", missing);
+        new MissingFields(schema, missing).collect(schema.schema(), data, "", FormSchema.identitySet());
         return missing.isEmpty() ? new ValidationResult.Valid()
                 : new ValidationResult.MandatoryFieldsMissing(List.copyOf(missing));
     }
@@ -123,59 +126,77 @@ public final class SchemaValidator {
         return new Prepared(validator, uri);
     }
 
-    private static void collectMissing(@Nullable Object schema, @Nullable Object data, String pointer,
-            Set<String> missing) {
-        if (!(schema instanceof Map<?, ?> keywords)) {
-            return;
-        }
-        if (data instanceof Map<?, ?> object) {
-            collectRequired(keywords, object, pointer, missing);
-            collectProperties(keywords, object, pointer, missing);
-        }
-        if (data instanceof List<?> items) {
-            collectItems(keywords, items, pointer, missing);
-        }
-        if (keywords.get("allOf") instanceof List<?> all) {
-            for (Object subSchema : all) {
-                collectMissing(subSchema, data, pointer, missing);
-            }
-        }
-    }
-
-    /** The names of the keyword {@code required} of a schema that the object does not hold. */
-    private static void collectRequired(Map<?, ?> keywords, Map<?, ?> object, String pointer, Set<String> missing) {
-        if (keywords.get("required") instanceof List<?> names) {
-            for (Object name : names) {
-                if (name instanceof String key && !object.containsKey(key)) {
-                    missing.add(child(pointer, key));
-                }
-            }
-        }
-    }
-
-    /** The missing fields within the properties the object holds, by the sub-schema of each property. */
-    private static void collectProperties(Map<?, ?> keywords, Map<?, ?> object, String pointer, Set<String> missing) {
-        if (keywords.get("properties") instanceof Map<?, ?> properties) {
-            for (Map.Entry<?, ?> property : properties.entrySet()) {
-                String key = (String) property.getKey();
-                if (object.containsKey(key)) {
-                    collectMissing(property.getValue(), object.get(key), child(pointer, key), missing);
-                }
-            }
-        }
-    }
-
-    /** The missing fields within the items of an array, by the sub-schema {@code items}. */
-    private static void collectItems(Map<?, ?> keywords, List<?> items, String pointer, Set<String> missing) {
-        if (keywords.get("items") instanceof Map<?, ?> itemSchema) {
-            for (int index = 0; index < items.size(); index++) {
-                collectMissing(itemSchema, items.get(index), pointer + "/" + index, missing);
-            }
-        }
-    }
-
     private static String child(String pointer, String key) {
         return pointer + "/" + JsonNode.encodeJsonPointer(key);
+    }
+
+    /**
+     * Collects the JSON Pointers of the missing mandatory fields of one data value, walking the schema and every schema
+     * it references within the file.
+     *
+     * @param schema  the schema of the kind, against which references are resolved
+     * @param missing the pointers found so far, in the order found
+     */
+    private record MissingFields(FormSchema schema, Set<String> missing) {
+
+        /**
+         * Collects the missing fields of a value by one of its sub-schemas.
+         *
+         * @param entered the sub-schemas already applied to this value, compared by identity, so that a reference cycle
+         *                ends; a new value starts a new set
+         */
+        void collect(@Nullable Object subSchema, @Nullable Object data, String pointer, Set<Object> entered) {
+            if (!(subSchema instanceof Map<?, ?> keywords) || !entered.add(keywords)) {
+                return;
+            }
+            if (data instanceof Map<?, ?> object) {
+                collectRequired(keywords, object, pointer);
+                collectProperties(keywords, object, pointer);
+            }
+            if (data instanceof List<?> items) {
+                collectItems(keywords, items, pointer);
+            }
+            if (keywords.get("allOf") instanceof List<?> all) {
+                for (Object member : all) {
+                    collect(member, data, pointer, entered);
+                }
+            }
+            for (Map<?, ?> target : schema.referencedSchemas(keywords)) {
+                collect(target, data, pointer, entered);
+            }
+        }
+
+        /** The names of the keyword {@code required} of a schema that the object does not hold. */
+        private void collectRequired(Map<?, ?> keywords, Map<?, ?> object, String pointer) {
+            if (keywords.get("required") instanceof List<?> names) {
+                for (Object name : names) {
+                    if (name instanceof String key && !object.containsKey(key)) {
+                        missing.add(child(pointer, key));
+                    }
+                }
+            }
+        }
+
+        /** The missing fields within the properties the object holds, by the sub-schema of each property. */
+        private void collectProperties(Map<?, ?> keywords, Map<?, ?> object, String pointer) {
+            if (keywords.get("properties") instanceof Map<?, ?> properties) {
+                for (Map.Entry<?, ?> property : properties.entrySet()) {
+                    String key = (String) property.getKey();
+                    if (object.containsKey(key)) {
+                        collect(property.getValue(), object.get(key), child(pointer, key), FormSchema.identitySet());
+                    }
+                }
+            }
+        }
+
+        /** The missing fields within the items of an array, by the sub-schema {@code items}. */
+        private void collectItems(Map<?, ?> keywords, List<?> items, String pointer) {
+            if (keywords.get("items") instanceof Map<?, ?> itemSchema) {
+                for (int index = 0; index < items.size(); index++) {
+                    collect(itemSchema, items.get(index), pointer + "/" + index, FormSchema.identitySet());
+                }
+            }
+        }
     }
 
     /** The violation of an error of the library: its instance location and a message of this class. */
@@ -195,27 +216,8 @@ public final class SchemaValidator {
         } catch (IllegalArgumentException e) {
             return null;
         }
-        @Nullable Object node = schema;
-        if (fragment != null && !fragment.isEmpty()) {
-            for (String segment : fragment.substring(1).split("/", -1)) {
-                String name = segment.replace("~1", "/").replace("~0", "~");
-                node = switch (node) {
-                    case Map<?, ?> map -> map.get(name);
-                    case List<?> list -> index(list, name);
-                    case null, default -> null;
-                };
-            }
-        }
+        @Nullable Object node = FormSchema.pointer(schema, fragment == null ? "" : fragment);
         return node instanceof Map<?, ?> map ? map.get(keyword) : null;
-    }
-
-    private static @Nullable Object index(List<?> list, String segment) {
-        try {
-            int index = Integer.parseInt(segment);
-            return index >= 0 && index < list.size() ? list.get(index) : null;
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 
     /**

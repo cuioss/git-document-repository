@@ -113,7 +113,12 @@ of `git-store`.
 `FormSchema.parse` reads the schema file of a kind as JSON within the JSON data model of ADR-0008 (through the
 `YamlReader` of <<GDR-FORMS-1>>). `$schema` must be absent or the URI of Draft 2020-12; a `$ref` or `$dynamicRef` must
 point into the same file (`#…`); `required` must be an array of unique strings, in the schema and every sub-schema,
-because the validator evaluates the schema without it and so never checks its form. The schema is checked by `dev.harrel:json-schema` 1.9.1 against the meta-schema of the
+because the validator evaluates the schema without it and so never checks its form. `required` must not occur in a
+sub-schema of `oneOf`, `anyOf`, `not`, `if`, `then`, `else` or `contains`, nor in a schema such a sub-schema references
+within the file: these keywords decide between alternatives or conditions, and removing `required` for `validate` would
+change which alternative or condition holds, so a schema that puts it there is refused with the reason
+`required: not allowed under <keyword>, where it cannot be deferred`. A definition under `$defs` counts only where it is
+referenced. The schema is checked by `dev.harrel:json-schema` 1.9.1 against the meta-schema of the
 dialect, which the jar holds as the resource `draft2020-12.json`
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SpecificationVersion.java[json-schema
 1.9.1, `SpecificationVersion`]). A schema the library does not accept is the outcome `MALFORMED` of `git-store`, passed
@@ -127,8 +132,11 @@ value outside it (a `Double`, for example) with an `IllegalArgumentException` th
 `SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema and every
 sub-schema (`contentSchema` included), and returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
 `SchemaValidator.required` checks `required` alone, in the schema, in the sub-schema of every property the data holds,
-in `items` and in `allOf`, not through `$ref`, and returns `Valid` or `MandatoryFieldsMissing` with the JSON Pointers of
-the missing fields. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is
+in `items`, in `allOf` and in every schema a `$ref` or `$dynamicRef` references within the file (`#`, a JSON Pointer
+fragment such as `#/$defs/contact`, or the name of an `$anchor` or `$dynamicAnchor`; a `$dynamicRef` is resolved like a
+`$ref`), and returns `Valid` or `MandatoryFieldsMissing` with the JSON Pointers of the missing fields, those of a
+referenced definition exactly as those of an inline schema. A reference cycle ends at the first schema applied a second
+time to the same value, so each missing field is named once; a recursive schema is checked as deep as the data goes. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is
 `MANDATORY_FIELDS_MISSING`; the detail names the number of findings only, the findings are data of the result. A message
 is composed by `git-forms` from the failing keyword and the constraint of the schema (a number, a type name or a format
 name, for example `must be at most 5`), never from the library's own message, which may quote the value of the
