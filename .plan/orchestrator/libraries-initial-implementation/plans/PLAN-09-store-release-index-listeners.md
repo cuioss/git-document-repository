@@ -122,10 +122,12 @@ per-attempt step, which the later plans of `git-forms` and `git-directory` need 
 
 - OBSERVED: the release, index and listener contracts are specified in `doc/specification/git-store.adoc` §
   GDR-STORE-6, GDR-STORE-9, GDR-STORE-10; the index footprint limit in `doc/specification/general.adoc` § GDR-NFR-1.
+  - verdict: corroborated | checked_at: 4a5eed5f593b4624f7b350358d289168ba1f9ae0 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 4a5eed5: git-store.adoc GDR-STORE-6 (376-384), GDR-STORE-9 and GDR-STORE-10 keep their original bullets and gained bodies matching the code; general.adoc GDR-NFR-1 states the footprint limit; read by the three-layer leaf and re-read by the orchestrator (the GDR-STORE-6 bullet 'main and the tag must be pushed together' cannot be met by git-core, which pushes one reference per call: PLAN-22 deliverable 3 (m))
 - HYPOTHESIS: the retained size of the index object graph cannot be measured reliably with the approved dependencies
   alone (a heap-walk tool such as JOL would be a new dependency) — confirm/refute at
   `doc/specification/general.adoc` § GDR-NFR-1 ("the measuring tool is open") and the approved list in the epic's
   Decisions at outline (verify-at-outline); confirmed → owner decision on a tool before the test is written.
+  - verdict: corroborated | checked_at: 4a5eed5f593b4624f7b350358d289168ba1f9ae0 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: confirmed and settled by the owner at 4a5eed5: the approved dependencies cannot measure the retained size of the index graph; org.openjdk.jol:jol-core 0.17 was approved on 2026-11-21 as a test-scope dependency of git-store only (git-store/pom.xml, version managed in the root pom, jol.magicFieldOffset=true in Surefire); module-layering and consumer-isolation untouched
 - OBSERVED: the shipped save has no per-attempt step — `StoreWriter.save(Author, DocumentKey, Map<String, String>, String)`
   takes no callback (`git-store/src/main/java/de/cuioss/git/document/store/StoreWriter.java` 229) and `ExplicitSave` loops
   `attempt <= attempts` over the draft captured once (232-239) — read at `c1e02fc`.

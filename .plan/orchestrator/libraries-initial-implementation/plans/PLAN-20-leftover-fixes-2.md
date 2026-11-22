@@ -10,8 +10,10 @@ workstream: WS-01
 ## Objective
 
 Collect the leftovers the three-layer analyses of landed plans find — the layer-3 defects of PLAN-19 (the worktrees code,
-since PLAN-21 the package `de.cuioss.git.document.core.worktrees` of `git-core`) and PLAN-04 (`git-core`), the minor layer-3 defects of PLAN-07 and PLAN-08 (`git-store`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
-spec — and fix them in one plan instead of one plan per landing. This is the second collection plan, after PLAN-18.
+since PLAN-21 the package `de.cuioss.git.document.core.worktrees` of `git-core`) and PLAN-04 (`git-core`), the test gaps beside them, the `git-testing` leftovers of PLAN-18 and the residue of PLAN-06's build guards, which have no other
+spec — and fix them in one plan instead of one plan per landing. This is the second collection plan, after PLAN-18. The
+`git-store` leftovers of PLAN-07, PLAN-08 and PLAN-09, which this plan held as deliverables 7 and 8 until 2026-11-22, belong to
+PLAN-22.
 None of the items gives a wrong result on the default path: each needs a malformed configuration, a hostile or
 unusual input, or a failure in the middle of an operation. Later analyses fold further leftovers into this spec (see
 Dependencies and Sequencing) until the operator releases it.
@@ -93,7 +95,10 @@ Dependencies and Sequencing) until the operator releases it.
    `RepositoryReader.history`: drive `walk.next()` and return `FAILED`, with a test whose commit after the limit has a
    missing parent; (e) the `git-core` tests use hand-written doubles (`Proxy`, lambdas, a fake `Transport`) where AGENTS.md
    prescribes EasyMock, although the approval list names it: EasyMock replaces them where it can (a test-scope entry in
-   `git-core/pom.xml`, covered by the standing approval) or the exception is recorded with its reason.
+   `git-core/pom.xml`, covered by the standing approval) or the exception is recorded with its reason; (f) from PLAN-09's
+   landing (`landings/PLAN-09.md`, added 2026-11-22): `JGitRepositoryOperationsTest.publishLosesRace` failed once with a
+   `StackOverflowError` in a quality gate on code that branch had not changed, and passed on re-run: find the recursion, in
+   the test double or in the publish path of `JGitRepositoryOperations`, reproduce it and fix it.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
 5. `git-testing` leftovers of PLAN-18's landing (`landings/PLAN-18.md` L1-5, L1-6, L2-1 to L2-5, L3-1, L3-2), each
@@ -136,58 +141,6 @@ Dependencies and Sequencing) until the operator releases it.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:manage-maven-profiles
    - Persona: implementer
 
-7. `git-store` leftovers of PLAN-07's landing (`landings/PLAN-07.md` L3-2 to L3-5, L2-1 to L2-3; L3-1, the bound of
-   `save.max-attempts`, is folded into PLAN-08), each first re-read at the plan's head: (a) `StoreRepository.toString`
-   (and so `RepositoryRegistry.toString` and `StoreConfiguration.toString`) removes user and password only, so a token in a
-   remote's path or query (`https://host/repo.git?token=x`) is rendered, against GDR-NFR-3: render the remote without its
-   query and credential-bearing parts, or refuse such a remote at the registry, tested with a JUL capture and a rendering
-   check; (b) `StoreProviders.select` calls `idOf.apply(candidate)` unguarded, so a candidate whose `id()` throws escapes as
-   an exception instead of a `StoreResult` (GDR-GEN-3): return `MALFORMED` naming the interface, tested with a throwing
-   provider, and decide whether a `LinkageError` from loading is treated alike; (c) `StoreProviders.load` instantiates every
-   `AnchorProvider` on the class path even when `anchor.provider` is absent, so a broken anchor jar stops a start that does
-   not use it, and `GIT_STORE-1` logs the selected ids while the Javadoc argues a refusal omits the id because a configured
-   value may be secret: instantiate the anchor providers only when `anchor.provider` is set, and decide, with the owner when
-   it changes a documented behaviour, whether the selected ids may be logged; (d) `StoreConfiguration.anchorKeyIsSigningKey`
-   compares the two key strings, so the same key under another spelling (`/k`, `/./k`) passes GDR-STORE-18: normalise a
-   path-like key before comparing, or record the limit and its owner (the `signed` provider) as an accepted exception in
-   `git-store.adoc`; (e) `CodecTest` proves byte identity only for a codec that lives in the test, so no `git-store` change
-   can fail it: either give the contract code to check (a verifying helper or a test-kit class other modules reuse) or record
-   it as a documented contract test; (f) provider selection is tested on the class path only (`useModulePath=false`, the
-   registrations in `META-INF/services`), so lookup in module mode (`provides`) is not exercised: add one module-path
-   test run or record the limit in `git-store.adoc`; (g) the four domain terms are copied into the `DomainTermAbsenceTest`
-   classes of `git-core`, `git-testing` and `git-store` (PLAN-21 removed the fourth copy with `git-worktrees`): item (c) of
-   deliverable 6 names all three, so nothing remains here but that `git-store` is among them.
-   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
-   - Persona: implementer
-8. `git-store` leftovers of PLAN-08's landing (`landings/PLAN-08.md` L3-1 to L3-5 and L2-1 to L2-3; added at the operator's
-   word on 2026-11-21), each first re-read at the plan's head, behaviour fixes reproduced by a test that fails at the base:
-   (a) `RepositoryGuard` keeps one `ReentrantLock` per draft reference ever saved and one guard per clone path, never
-   removed (`RepositoryGuard.java` 45-57), so a long-running JVM that saves many per-document drafts grows without bound:
-   release a draft lock when no save holds it and a guard with its last writer, or record the limit with its reason in
-   `git-store.adoc`; (b) `ExplicitSave` retries a permanent `REJECTED` (a protected branch, a server hook) like a lost lease,
-   up to `save.max-attempts` (at most 100) fetch-and-push rounds under the clone-wide transport lock and with no pause
-   (`ExplicitSave.java` 235-240), which also holds back an expiry waiting for the write lock: tell a rejection that cannot
-   change from a lost lease, or pause between attempts, or record the bound as the accepted behaviour; (c) `ExplicitSave`
-   answers an `expectedBlobIds` value that is not a full object id with `NOT_FOUND` (202-204), the outcome of a missing
-   draft, while every other malformed input of the save is `MALFORMED`-class: return the outcome the other malformed
-   inputs use, naming the argument and never the value, and update the Javadoc, `git-store.adoc` and the tests; (d)
-   `DraftExpiry.deleteIfStale` (201) and `DraftReferences.list` (233) call `parseCommit` on the tip of a reference below
-   `refs/drafts/`, so one that is not a commit (written by a foreign tool) ends every expiry and the listing of that user
-   as `FAILED`: skip it with a log record naming the class only and carry on, or record the limit; (e) the garbage
-   collection runs with `pruneExpire=now` under the in-process guard only (`DraftExpiry.java` 222), so another JVM or a
-   `git-core` fetch outside `StoreWriter` on the same clone can lose objects received but not yet referenced: decide with
-   the JGit 7.8.0 sources read (`GC.deleteOldPacks`, `PidLock`) whether the `gc.pid` lock and JGit's own locking suffice, and
-   record the decision in `git-store.adoc` § GDR-STORE-7; (f) the landing's "no suppression was used" is false (one
-   `@SuppressWarnings("java:S4449")` added to `StoreConfiguration.readCommit`, two `unchecked` ones to `DraftExpiryTest` and
-   `StoreWriterDraftTest`): fix the cause or record each with its reason (a Sonar dismissal is the operator's, see the
-   constraints); (g) `ConcurrentWritersTest.tenWritersWithOwnClones` (237) asserts the outcome only, so it passes with no
-   contention at all and does not touch the `attempts` boundary: make the writers race (a barrier at the lease, or a pause in
-   a repository double) and assert that at least one writer retried and that a writer which loses nine times still ends
-   `Saved` with `save.max-attempts` 10; (h) `StoreReferences.collections`, the "declared twice" refusal of GDR-STORE-2, has no
-   caller in main code, so nothing enforces that a collection is not both per-document and numbered: call it where the
-   configuration meets the writer, or record that the consumer calls it and test that path.
-   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
-   - Persona: implementer
 
 ## Standing Constraints
 
@@ -227,13 +180,11 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Done when
 
-- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 and of items (a), (b) and (c) of deliverable 7 has a test that
+- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 has a test that
   fails at `9e3cfb04b1a02246b826266b54f6095033ec80f2` (`main` after PLAN-21; unchanged at `c1e02fc`, `main` after PLAN-08, for every file the deliverables 1 to 4 and 6 name except `JGitRepositoryOperations.java` and `RepositoryOperations.java` (PLAN-08 added `FetchInput.prune`, the public `MIRROR_FETCH_REF_SPECS` and moved the `cloneIfMissing` site by 10 lines); re-read at outline: the worktrees defects are
   present since `e2aced9` and were moved by PLAN-21 without a behaviour change, the `git-core` ones are those the analyses of
-  PLAN-04 and PLAN-05 name at `14269fe`, the `git-store` ones those of `a558afd`) and passes at the plan's head.
-- Every behaviour fix of items (a) to (d) and (g) of deliverable 8 has a test that fails at
-  `c1e02fced1353da9ad953ab7a32c1a7eb44f1f39` (`main` after PLAN-08) and passes at the plan's head.
-- Every item of deliverables 1 to 8 is either fixed and tested at the plan's head, or recorded as an accepted exception
+  PLAN-04 and PLAN-05 name at `14269fe`) and passes at the plan's head.
+- Every item of deliverables 1 to 6 is either fixed and tested at the plan's head, or recorded as an accepted exception
   or an owner decision with its reason in the specification document of its module; no document lists an outcome the
   code does not return.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
@@ -347,21 +298,6 @@ Dependencies and Sequencing) until the operator releases it.
   hand (PLAN-04 and PLAN-06 each fixed one flake that way) — confirm/refute at
   `git-testing/src/main/java/de/cuioss/git/document/testing/GitGenerators.java` and the tests of `git-core` that assert a
   generated value is absent from a log record or a rendering (verify-at-outline).
-- OBSERVED: `StoreRepository.toString` renders a remote through `new URIish(remote).setUser(null).setPass(null).toString()`, which keeps
-  the path and the query, so a token in either is printed — read at `git-store/src/main/java/de/cuioss/git/document/store/StoreRepository.java`
-  70-84 at `a558afd`.
-  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreRepository.java 66-78 re-read at c1e02fc: toString renders withoutUserInformation(remote) = new URIish(remote).setUser(null).setPass(null).toString(), which keeps path and query; the file is unchanged since a558afd (empty git diff e0a8c5b c1e02fc)
-- OBSERVED: `StoreProviders.unique` calls `idOf.apply(candidate)` without a guard, and `StoreProviders.load` instantiates every
-  `AnchorProvider` through `loadAll` before it reads `anchor.provider` — read at
-  `git-store/src/main/java/de/cuioss/git/document/store/StoreProviders.java` 78-90, 158-175 at `a558afd`.
-  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreProviders.java re-read at c1e02fc: load calls loadAll(AnchorProvider.class) at 83 before anchor.provider is read, unique calls idOf.apply(candidate) at 163 unguarded; the file is unchanged since a558afd
-- OBSERVED: `StoreConfiguration.anchorKeyIsSigningKey` compares `signed.key()` and `signing.key()` with `String.equals` — read at
-  `git-store/src/main/java/de/cuioss/git/document/store/StoreConfiguration.java` 164-168 at `a558afd` (174-177 at `c1e02fc`).
-  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: StoreConfiguration.java 174-177 re-read at c1e02fc: anchorKeyIsSigningKey compares anchorKey.equals(signing.key()) && anchorKeySource.equals(signing.keySource()) as strings (moved from 164-168 by PLAN-08)
-- OBSERVED: `CodecTest` holds the only `Codec` implementation of the module's tests (`KeyValueCodec`, a private nested class) and
-  Surefire runs with `useModulePath=false` — read at `git-store/src/test/java/de/cuioss/git/document/store/CodecTest.java` 125-130
-  and `git-store/pom.xml` 100 at `a558afd`.
-  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: CodecTest.java 127 re-read at c1e02fc: KeyValueCodec is a private static nested class of the test and the only Codec implementation; git-store/pom.xml 100 sets useModulePath=false; both unchanged since a558afd
 - Verify-first clause: the three-layer analyses of PLAN-04, PLAN-05 and PLAN-19 read the code only (no build, no test run);
   the `git-core` line references above are those of `c8feb0b`, and PLAN-05 moved them (`landings/PLAN-05.md` names where each
   defect P1 to P10 sits at `14269fe`, all still present); every
@@ -369,14 +305,6 @@ Dependencies and Sequencing) until the operator releases it.
   that names it. Item (b) of deliverable 3 and item (b) of deliverable 4 each end in an owner decision: put the
   question before the work, not after it.
   - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: the verify-first clause is a procedure, not a claim (the parser counts the bullet): every OBSERVED claim is re-read at the plan's own HEAD at outline; an earlier stamp here was a displaced one and is replaced
-- OBSERVED: the PLAN-08 leftovers of deliverable 8 at `c1e02fc`: `RepositoryGuard.java` 45-57 (the `GUARDS` and `drafts` maps,
-  "never removed"); `ExplicitSave.java` 202-204 (`NOT_FOUND` for an `expectedBlobIds` value that is not an object id) and
-  232-240 (the attempt loop, whose debug record says "lost its lease or was rejected"); `DraftExpiry.java` 201 and
-  `DraftReferences.java` 233 (`walk.parseCommit` on the tip of a draft reference); `DraftExpiry.java` 222-226 (`gc` with
-  `pruneExpire=now` under the in-process guard); `StoreConfiguration.java` 194 (`@SuppressWarnings("java:S4449")`);
-  `ConcurrentWritersTest.java` 237-262 (outcome-only assertions); a search of `git-store/src/main` finds no caller of
-  `StoreReferences.collections`.
-  - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at c1e02fc: RepositoryGuard.java 45-57 (GUARDS and drafts maps, Javadoc 'never removed'); ExplicitSave.java 202-204 (NOT_FOUND) and 235-240 (attempt loop); DraftExpiry.java 201 and DraftReferences.java 233 (parseCommit on the ref tip); DraftExpiry.java 224-226 (gc); StoreConfiguration.java 194 (@SuppressWarnings S4449; git diff e0a8c5b c1e02fc adds exactly one in main and two unchecked in tests); ConcurrentWritersTest.java 237-262; git grep collections( finds no main caller
 
 ## Expected Surface
 
@@ -389,10 +317,6 @@ Dependencies and Sequencing) until the operator releases it.
 - OBSERVED: `pom.xml`
 - OBSERVED: `git-core/pom.xml`
 - HYPOTHESIS: `git-core/src/main/resources/META-INF/native-image/`
-- OBSERVED: `git-store/src/main/java/de/cuioss/git/document/store/`
-- OBSERVED: `git-store/src/test/java/de/cuioss/git/document/store/`
-- OBSERVED: `git-store/pom.xml`
-- OBSERVED: `doc/specification/git-store.adoc`
 - HYPOTHESIS: `README.adoc` (the native-image wording, if it changes)
 - OBSERVED: `doc/specification/git-core.adoc` (§ Working Trees and the Tests section included)
 - OBSERVED: `doc/specification/git-testing.adoc`
@@ -403,11 +327,12 @@ Dependencies and Sequencing) until the operator releases it.
 
 ## Dependencies and Sequencing
 
-- Eight deliverables, over the scope-bloat guard (about six): it proceeds unsplit because the operator asked for one collection
-  plan, each deliverable is independent and touches its own module, and deliverable 7 was added at the operator's word on
-  2026-11-20 (PLAN-07's landing) and deliverable 8 on 2026-11-21 (PLAN-08's landing). The operator may split it when releasing it; the natural cut is by package and module
-  (deliverables 1 and 2 the worktrees package of `git-core`; 3 and 4 the rest of `git-core`; 5 `git-testing`; 6 the build
-  guards; 7 and 8 `git-store`).
+- Six deliverables, at the scope-bloat guard (about six): it proceeds unsplit because the operator asked for one collection
+  plan and each deliverable is independent and touches its own module. It had eight until 2026-11-22: its former deliverables 7
+  (PLAN-07's `git-store` leftovers) and 8 (PLAN-08's) moved, with PLAN-09's, to the new `git-store` hardening plan PLAN-22 at the
+  operator's word, so that `git-store` has one hardening plan. The operator may split what remains when releasing it; the natural
+  cut is by package and module (deliverables 1 and 2 the worktrees package of `git-core`; 3 and 4 the rest of `git-core`; 5
+  `git-testing`; 6 the build guards).
 - Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further leftovers into
   this spec as new deliverables or as items of a deliverable, in the same edit as their Expected Surface; the operator
   releases the plan by naming it in a `next` round. It is queued at the end of WS-01.
@@ -423,13 +348,10 @@ Dependencies and Sequencing) until the operator releases it.
 - Overlaps with: nothing in flight. PLAN-05 and PLAN-06, which shared entries with it, have shipped. It shares the root
   `pom.xml`, `AGENTS.md` and `doc/specification/general.adoc` with the later module-creating plans (PLAN-07 adds a module line
   and an allowed-edge block), so the pairing gate puts the pair to the operator when both are launched at once.
-- Deliverables 7 and 8 edit `git-store/`, which PLAN-09..11 also edit: strictly sequential with them, queue order decides, and the
-  gate reads `git-store/` from `a558afd` on. PLAN-08 has shipped (PR #48, `c1e02fc`, 2026-11-21) and took L3-1 of PLAN-07 (the
-  bound of `save.max-attempts`, 100) itself; the loop in `git-core` stays item (c) of deliverable 3. PLAN-09 gains the
-  per-attempt save step (its deliverable 5), which edits `ExplicitSave` and `StoreWriter` — the same files as items (b), (c)
-  and (h) of deliverable 8 — so release this plan after PLAN-09 or split deliverable 8 out to follow it.
-- Adjacent to: `git-store/` — PLAN-08 (shipped) is the first consumer of `compareAndSwap` and `compareAndDelete`, PLAN-09
-  the next, so the items of deliverable 3 are cheaper to fix before more callers.
+- This plan no longer edits `git-store/`: PLAN-08 (shipped, PR #48, `c1e02fc`) took L3-1 of PLAN-07 (the bound of
+  `save.max-attempts`, 100) itself, and the loop in `git-core` stays item (c) of deliverable 3.
+- Adjacent to: `git-store/` — PLAN-08 and PLAN-09 (shipped) are the first consumers of `compareAndSwap` and
+  `compareAndDelete`, PLAN-10 and PLAN-11 the next, so the items of deliverable 3 are cheaper to fix before more callers.
 
 ## Hand-Off Command
 

@@ -94,6 +94,19 @@ statement chain (GDR-STORE-18).
   JGit returns (`getRef`, `resolve`, `getObjectId`) treated as `@Nullable` (Sonar S5778, S1130, S4449). Plan for a second
   review pass.
 - `git-core` stays read-only (PLAN-08 edited it against its outline; report a `git-core` gap instead of absorbing it).
+  PLAN-09 did the same for `TreeEdit.Mode`, owner-approved after the fact; `git-core` still pushes one reference per call, so
+  a checkpoint and its tag, like a release and its tag, cannot go up atomically: report the incomplete state and repair it on
+  the next due check, as the release does.
+- Review lessons of PLAN-09 (`landings/PLAN-09.md`; again many valid bot findings after a green build, mostly races): a recovery
+  or repair guard (here: the pending-subject derivation and the repair of a missing note or tag) identifies its target by data
+  only the guarded operation can produce, never by free text the caller controls, and is tested with a crafted input that
+  imitates the scenario; a boundary that event delivery depends on is captured while the lock that made the change is held;
+  a callback never blocks on a lock another callback may hold, and a check-then-act on a closed flag happens under the lock
+  `close()` takes; a reference name or path contains the document id, so log only the alias and the outcome, DEBUG and
+  fallback records included; recovery of a failed derived state is not gated on the next change event; a test of a
+  tree-producing operation (the checkpoint tree) compares file modes as well as bytes; a Sonar S6539 fix lowers the count of
+  every class it touches, and a deliberate `catch (RuntimeException ...)` carries its justification in the form the
+  OpenRewrite recipe accepts, so no `java:S1135` placeholder reaches new code.
 
 ## Done when
 
