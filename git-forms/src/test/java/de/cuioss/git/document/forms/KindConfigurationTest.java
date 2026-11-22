@@ -321,6 +321,19 @@ class KindConfigurationTest {
         }
 
         @Test
+        @DisplayName("GDR-FORMS-1: a numbering with an empty prefix loads, numbers without a prefix")
+        void numberedWithEmptyPrefix(@TempDir Path directory) throws Exception {
+            var values = Values.generate(name());
+            var keys = with(values.numbered("3"), "numbering", "{ prefix: \"\", digits: 3 }");
+
+            var configuration = loaded(KindConfiguration.fromDirectory(write(directory, yaml(keys)),
+                    registry(values.alias())));
+
+            assertEquals(new Numbering("", 3), configuration.find(values.id()).orElseThrow().numbering(),
+                    "the empty prefix is kept");
+        }
+
+        @Test
         @DisplayName("GDR-FORMS-1: a load is logged as GIT_FORMS-1 with the number and the source, no configured value")
         void loadIsLogged(@TempDir Path directory) throws Exception {
             var first = Values.generate(name());
@@ -394,6 +407,9 @@ class KindConfigurationTest {
                             "kinds[0].numbering: unknown key"),
                     Arguments.of("a numbering without prefix", yaml(with(numbered, "numbering", "{ digits: 3 }")),
                             "kinds[0].numbering.prefix: missing key"),
+                    Arguments.of("a prefix that is not a string",
+                            yaml(with(numbered, "numbering", "{ prefix: 42, digits: 3 }")),
+                            "kinds[0].numbering.prefix: not a string"),
                     Arguments.of("a numbering without digits",
                             yaml(with(numbered, "numbering", "{ prefix: " + quoted(values.prefix()) + " }")),
                             "kinds[0].numbering.digits: missing key"),
@@ -490,6 +506,7 @@ class KindConfigurationTest {
         @DisplayName("GDR-GEN-3: a null argument is refused")
         void nullArguments(@TempDir Path directory, @InMemory Repository repository) {
             var registry = registry(name());
+            var revision = name();
             Path nullPath = nullValue();
             Repository nullRepository = nullValue();
             String nullRevision = nullValue();
@@ -501,13 +518,13 @@ class KindConfigurationTest {
                     () -> assertThrows(NullPointerException.class,
                             () -> KindConfiguration.fromDirectory(directory, nullRegistry), "a null registry"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> KindConfiguration.fromRepository(nullRepository, name(), registry),
+                            () -> KindConfiguration.fromRepository(nullRepository, revision, registry),
                             "a null repository"),
                     () -> assertThrows(NullPointerException.class,
                             () -> KindConfiguration.fromRepository(repository, nullRevision, registry),
                             "a null revision"),
                     () -> assertThrows(NullPointerException.class,
-                            () -> KindConfiguration.fromRepository(repository, name(), nullRegistry),
+                            () -> KindConfiguration.fromRepository(repository, revision, nullRegistry),
                             "a null registry"));
         }
     }

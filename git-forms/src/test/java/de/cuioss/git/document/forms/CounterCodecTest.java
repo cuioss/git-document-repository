@@ -93,11 +93,12 @@ class CounterCodecTest {
     void refusedEncode() {
         long negative = -Generators.longs(1, Long.MAX_VALUE).next();
         Long nullValue = nullValue();
+        byte[] nullContent = nullValue();
 
         assertAll(
                 () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(negative)),
                 () -> assertThrows(NullPointerException.class, () -> codec.encode(nullValue)),
-                () -> assertThrows(NullPointerException.class, () -> codec.decode(nullValue())));
+                () -> assertThrows(NullPointerException.class, () -> codec.decode(nullContent)));
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */

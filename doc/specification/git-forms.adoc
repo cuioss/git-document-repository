@@ -76,7 +76,8 @@ of kinds with the keys of the example:
   `collection` must match `[a-z0-9-]+`, `id` must be unique, and `repository` must be an alias of the repository
   registry of `git-store`.
 * `template` is required for a per-document kind and optional for a numbered kind.
-* `numbering` holds `prefix`, a string, and `digits`, an integer of at least 1.
+* `numbering` holds `prefix`, a string that may be empty (numbers without a prefix), and `digits`, an integer of at
+  least 1.
 * `schema`, `template` and `workflow` are repository-relative references; loading the kinds does not read them.
 
 The file is read as YAML within the JSON data model (ADR-0008) by the package-private `YamlReader`, built on

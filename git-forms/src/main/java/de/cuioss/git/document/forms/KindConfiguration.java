@@ -96,10 +96,10 @@ public final class KindConfiguration {
     private static final YamlReader YAML = new YamlReader();
 
     /** The kinds by id, in configuration order. */
-    private final Map<String, Kind> kinds;
+    private final Map<String, Kind> byId;
 
-    private KindConfiguration(Map<String, Kind> kinds) {
-        this.kinds = kinds;
+    private KindConfiguration(Map<String, Kind> byId) {
+        this.byId = byId;
     }
 
     /**
@@ -141,7 +141,7 @@ public final class KindConfiguration {
      */
     public static FormsResult<KindConfiguration> fromRepository(Repository repository, String revision,
             RepositoryRegistry repositories) {
-        Objects.requireNonNull(repository, "repository");
+        Objects.requireNonNull(repository, REPOSITORY);
         Objects.requireNonNull(revision, "revision");
         Objects.requireNonNull(repositories, "repositories");
         GitResult<Snapshot> snapshot = new RepositoryReader().snapshot(repository, revision);
@@ -176,7 +176,7 @@ public final class KindConfiguration {
         }
         try {
             KindConfiguration configuration = new KindConfiguration(kinds(read.value(), repositories));
-            LOGGER.info(GitFormsLogMessages.INFO.KINDS_LOADED, configuration.kinds.size(), source);
+            LOGGER.info(GitFormsLogMessages.INFO.KINDS_LOADED, configuration.byId.size(), source);
             return FormsResult.ok(configuration);
         } catch (Malformed e) {
             return malformed(Objects.requireNonNull(e.getMessage()));
@@ -224,7 +224,7 @@ public final class KindConfiguration {
     /** Checks the numbering of a kind. */
     private static Numbering numbering(@Nullable Object entry, String path) {
         Map<String, @Nullable Object> keys = mapping(entry, path, NUMBERING_KEYS);
-        String prefix = string(keys, PREFIX, path);
+        String prefix = anyString(keys, PREFIX, path);
         Object digits = require(keys, DIGITS, path + "." + DIGITS);
         if (!(digits instanceof Long count) || count < 1 || count > Integer.MAX_VALUE) {
             throw new Malformed(path + "." + DIGITS + ": not an integer between 1 and " + Integer.MAX_VALUE);
@@ -264,6 +264,15 @@ public final class KindConfiguration {
         return text;
     }
 
+    /** The value of a required key that must be a string, which may be empty or blank. */
+    private static String anyString(Map<String, @Nullable Object> keys, String key, String path) {
+        String keyPath = path + "." + key;
+        if (!(require(keys, key, keyPath) instanceof String text)) {
+            throw new Malformed(keyPath + ": not a string");
+        }
+        return text;
+    }
+
     /** The value of a required key that must be a name: lower-case letters, digits and hyphens. */
     private static String name(Map<String, @Nullable Object> keys, String key, String path) {
         String text = string(keys, key, path);
@@ -290,7 +299,7 @@ public final class KindConfiguration {
      * @return the kinds in configuration order, unmodifiable
      */
     public List<Kind> kinds() {
-        return List.copyOf(kinds.values());
+        return List.copyOf(byId.values());
     }
 
     /**
@@ -300,7 +309,7 @@ public final class KindConfiguration {
      * @return the kind, or empty when no kind has that id
      */
     public Optional<Kind> find(String id) {
-        return Optional.ofNullable(kinds.get(id));
+        return Optional.ofNullable(byId.get(id));
     }
 
     /** A configuration the loader does not accept, carrying the detail: the key path and the problem. */
