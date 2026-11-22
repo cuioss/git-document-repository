@@ -155,29 +155,23 @@ final class EvaluatedLocations {
         List<Map<?, ?>> candidates = new ArrayList<>();
         for (String keyword : IN_PLACE_LISTS) {
             if (keywords.get(keyword) instanceof List<?> members) {
-                members.forEach(member -> addSchema(candidates, member));
+                members.forEach(member -> FormSchema.addSchema(candidates, member));
             }
         }
         if (keywords.containsKey(IF)) {
             @Nullable Object condition = keywords.get(IF);
-            addSchema(candidates, condition);
-            addSchema(candidates, keywords.get(satisfies(condition, value) ? "then" : "else"));
+            FormSchema.addSchema(candidates, condition);
+            FormSchema.addSchema(candidates, keywords.get(satisfies(condition, value) ? "then" : "else"));
         }
         if (value instanceof Map<?, ?> object && keywords.get("dependentSchemas") instanceof Map<?, ?> dependent) {
             dependent.forEach((name, dependentSchema) -> {
                 if (object.containsKey(name)) {
-                    addSchema(candidates, dependentSchema);
+                    FormSchema.addSchema(candidates, dependentSchema);
                 }
             });
         }
         candidates.addAll(schema.referencedSchemas(keywords));
         return candidates.stream().filter(candidate -> satisfies(candidate, value)).toList();
-    }
-
-    private static void addSchema(List<Map<?, ?>> candidates, @Nullable Object value) {
-        if (value instanceof Map<?, ?> map) {
-            candidates.add(map);
-        }
     }
 
     /**

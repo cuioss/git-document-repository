@@ -308,7 +308,8 @@ public final class FormSchema {
         return found;
     }
 
-    private static void addSchema(List<Map<?, ?>> found, @Nullable Object value) {
+    /** Adds a value to a list of sub-schemas when it is an object; a boolean schema and any other value are skipped. */
+    static void addSchema(List<Map<?, ?>> found, @Nullable Object value) {
         if (value instanceof Map<?, ?> map) {
             found.add(map);
         }
