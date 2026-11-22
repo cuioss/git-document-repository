@@ -42,8 +42,9 @@ import org.jspecify.annotations.Nullable;
  * only those at a keyword that holds a schema. A reference is resolved against the URI of the resource that contains the
  * schema holding it (for a schema that declares an {@code $id} itself, its own): the part before {@code #} selects a
  * resource of the file, the fragment, URL-decoded with {@link URLDecoder} as the validator decodes it (a {@code +}
- * would become a space, see {@link #fragmentHoldsPlus(String)}), is empty for the resource itself, a JSON Pointer (RFC 6901) from the
- * root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared within that resource. A
+ * would become a space, see {@link #fragmentHoldsPlus(String)}), is empty for the resource itself, a JSON Pointer
+ * (RFC 6901) from the root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared
+ * within that resource. A
  * {@code $dynamicRef} is resolved like a {@code $ref}; its dynamic scope is not considered. An instance is immutable.
  */
 final class SchemaResources {
