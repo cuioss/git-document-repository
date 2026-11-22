@@ -45,7 +45,9 @@ import org.jspecify.annotations.Nullable;
  * would become a space, see {@link #fragmentHoldsPlus(String)}), is empty for the resource itself, a JSON Pointer
  * (RFC 6901) from the root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared
  * within that resource. A
- * {@code $dynamicRef} is resolved like a {@code $ref}; its dynamic scope is not considered. An instance is immutable.
+ * {@code $dynamicRef} is resolved like a {@code $ref} by {@link #resolve(Map, String)}; the schemas its dynamic scope
+ * may bind it to at validation time are given separately by {@link #dynamicScopeTargets(String)}. An instance is
+ * immutable.
  */
 final class SchemaResources {
 
@@ -59,6 +61,7 @@ final class SchemaResources {
     private final Map<URI, Map<?, ?>> resources = new HashMap<>();
     private final Map<URI, Map<String, Map<?, ?>>> anchors = new HashMap<>();
     private final Map<URI, Map<String, Map<?, ?>>> dynamicAnchors = new HashMap<>();
+    private final Map<String, List<Map<?, ?>>> dynamicAnchorHolders = new HashMap<>();
     private final Map<Object, URI> baseOf = new IdentityHashMap<>();
     private final Map<Object, String> pointerOf = new IdentityHashMap<>();
     private final URI root;
@@ -103,6 +106,9 @@ final class SchemaResources {
             pointerOf.put(map, pointer);
             addAnchor(anchors, own, map.get("$anchor"), map);
             addAnchor(dynamicAnchors, own, map.get("$dynamicAnchor"), map);
+            if (map.get("$dynamicAnchor") instanceof String name) {
+                dynamicAnchorHolders.computeIfAbsent(name, key -> new ArrayList<>()).add(map);
+            }
             URI childBase = own;
             map.forEach((key, value) -> index(value, childBase, pointer + "/" + JsonNode.encodeJsonPointer((String) key),
                     false));
@@ -183,14 +189,8 @@ final class SchemaResources {
         URI base = baseOf(containing);
         @Nullable URI target = resolveUri(base, reference);
         @Nullable Map<?, ?> resource = target == null ? null : resources.get(target);
-        if (resource == null) {
-            return null;
-        }
-        int hash = reference.indexOf('#');
-        String fragment;
-        try {
-            fragment = hash < 0 ? "" : URLDecoder.decode(fragmentOf(reference, hash), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
+        @Nullable String fragment = resource == null ? null : decodedFragment(reference);
+        if (resource == null || fragment == null) {
             return null;
         }
         if (fragment.isEmpty()) {
@@ -201,6 +201,38 @@ final class SchemaResources {
         }
         @Nullable Map<?, ?> anchored = anchors.getOrDefault(target, Map.of()).get(fragment);
         return anchored != null ? anchored : dynamicAnchors.getOrDefault(target, Map.of()).get(fragment);
+    }
+
+    /**
+     * The schema objects a {@code $dynamicRef} may bind to through its dynamic scope, an over-approximation of what the
+     * validator does. {@code dev.harrel:json-schema} 1.9.1 ({@code EvaluationContext.resolveDynamicSchema},
+     * {@code SchemaRegistry}) first looks the reference up statically, by a JSON Pointer or an {@code $anchor} of the
+     * target resource; a {@code $dynamicAnchor} is registered for the dynamic lookup only. When that finds nothing, it
+     * takes the first resource of the evaluation scope, outermost first, that declares a {@code $dynamicAnchor} of the
+     * name in the fragment, whatever resource the reference names before the {@code #}; so a reference can bind to a
+     * schema of an outer resource that its static target does not show. As the scope depends on the data, every schema
+     * object of the file that declares a {@code $dynamicAnchor} of that name is taken.
+     *
+     * @param reference the value of {@code $dynamicRef}
+     * @return the objects that declare a {@code $dynamicAnchor} named by the fragment; empty
+     *         for a fragment that is empty, a JSON Pointer, or not decodable
+     */
+    List<Map<?, ?>> dynamicScopeTargets(String reference) {
+        @Nullable String fragment = decodedFragment(reference);
+        if (fragment == null || fragment.isEmpty() || fragment.startsWith("/")) {
+            return List.of();
+        }
+        return List.copyOf(dynamicAnchorHolders.getOrDefault(fragment, List.of()));
+    }
+
+    /** The fragment of a reference, URL-decoded as the validator decodes it, or {@code null} when it does not decode. */
+    private static @Nullable String decodedFragment(String reference) {
+        int hash = reference.indexOf('#');
+        try {
+            return hash < 0 ? "" : URLDecoder.decode(fragmentOf(reference, hash), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**

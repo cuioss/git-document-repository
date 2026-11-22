@@ -254,7 +254,16 @@ class SchemaResourceReferencesTest {
                         Map.of("v", List.of(List.of(Map.of("v", List.of())))), List.of()),
                 Arguments.of("a property under allOf that references the root",
                         "{ \"required\": [\"a\"], \"allOf\": [ { \"properties\": { \"next\": { \"$ref\": \"#\" } } } ] }",
-                        Map.of("a", 1, "next", Map.of()), List.of("/next/a")));
+                        Map.of("a", 1, "next", Map.of()), List.of("/next/a")),
+                Arguments.of("a tree whose items bind a $dynamicRef to the root by its $dynamicAnchor",
+                        "{ \"$id\": \"https://example.invalid/tree\", \"$dynamicAnchor\": \"node\", "
+                                + "\"type\": \"object\", \"properties\": { \"children\": { \"type\": \"array\", "
+                                + "\"items\": { \"$dynamicRef\": \"#node\" } } } }",
+                        Map.of("children", List.of(Map.of("children", List.of()))), List.of()),
+                Arguments.of("a $dynamicRef whose every candidate target holds no cycle",
+                        "{ \"$ref\": \"#/$defs/b\", \"$defs\": { \"b\": { \"$dynamicRef\": \"#node\" }, "
+                                + "\"c\": { \"$dynamicAnchor\": \"node\", \"required\": [\"name\"] } } }",
+                        Map.of(), List.of("/name")));
     }
 
     @ParameterizedTest(name = "GDR-FORMS-2: {0} stays valid")
@@ -283,7 +292,11 @@ class SchemaResourceReferencesTest {
                 Arguments.of("if with a $ref to the root", "{ \"if\": { \"$ref\": \"#\" } }"),
                 Arguments.of("dependentSchemas with a $ref to the root",
                         "{ \"dependentSchemas\": { \"secretName\": { \"$ref\": \"#\" } } }"),
-                Arguments.of("a $dynamicRef to the root", "{ \"allOf\": [ { \"$dynamicRef\": \"#\" } ] }"));
+                Arguments.of("a $dynamicRef to the root", "{ \"allOf\": [ { \"$dynamicRef\": \"#\" } ] }"),
+                Arguments.of("a $dynamicRef whose dynamic scope binds it to the outer resource that references it",
+                        "{ \"$id\": \"https://example.invalid/a\", \"$dynamicAnchor\": \"node\", \"$ref\": \"b\", "
+                                + "\"$defs\": { \"b\": { \"$id\": \"b\", \"$dynamicRef\": \"c#node\" }, "
+                                + "\"c\": { \"$id\": \"c\", \"$dynamicAnchor\": \"node\" } } }"));
     }
 
     @ParameterizedTest(name = "GDR-FORMS-2: {0} is MALFORMED with a fixed reason")

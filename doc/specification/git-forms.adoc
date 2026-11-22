@@ -132,9 +132,23 @@ check
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Applicators.java[json-schema
 1.9.1, `RefEvaluator` and `DynamicRefEvaluator` in `Applicators`]). The edges of such a cycle lead from a schema to the schemas Draft
 2020-12 applies to the same value: the members of `allOf`, `anyOf` and `oneOf`, the sub-schemas of `not`, `if`, `then`
-and `else`, the schemas of `dependentSchemas`, and the targets of `$ref` and `$dynamicRef`; a keyword that descends into
-a child value (`properties`, `items`, `unevaluatedProperties` and the others) is no edge, so a recursive schema such as
-a tree of items that reference `#` stays valid. The check starts from every schema of the file, those under `$defs`
+and `else`, the schemas of `dependentSchemas`, and the targets of `$ref` and `$dynamicRef`. A `$dynamicRef` has further
+edges: `dev.harrel:json-schema` 1.9.1 first looks the reference up statically, by a JSON Pointer or an `$anchor` of its
+target resource (a `$dynamicAnchor` is registered for the dynamic lookup only), and when that finds nothing takes the
+first resource being evaluated, outermost first, that declares a `$dynamicAnchor` of the name in the fragment,
+whatever resource the reference names
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/EvaluationContext.java[json-schema
+1.9.1, `EvaluationContext.resolveDynamicSchema`] and
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SchemaRegistry.java[`SchemaRegistry`]).
+It can therefore return to an outer schema that its static target does not show: in
+`{"$id": "https://example.invalid/a", "$dynamicAnchor": "node", "$ref": "b", "$defs": {"b": {"$id": "b",
+"$dynamicRef": "c#node"}, "c": {"$id": "c", "$dynamicAnchor": "node"}}}` the static targets lead from `a` to `b` to
+`c`, but the validator binds the `$dynamicRef` to `a`. As the scope depends on the data, a `$dynamicRef` whose fragment
+is a name has an edge to every schema object of the file that declares a `$dynamicAnchor` of that name, an
+over-approximation that finds every cycle some scope could produce, so that schema is refused. A keyword that descends
+into a child value (`properties`, `items`, `unevaluatedProperties` and the others) is no edge, so a recursive schema such
+as a tree of items that reference `#`, or whose items bind a `$dynamicRef` to the root by its `$dynamicAnchor`, stays
+valid. The check starts from every schema of the file, those under `$defs`
 included, so a cycle that is declared but never referenced is refused as well, and it runs before the other checks of
 the sub-schemas and before the validator sees the schema. `required` must be an array of unique strings, in the schema and every sub-schema,
 because the validator evaluates the schema without it and so never checks its form. `required` must not occur in a
