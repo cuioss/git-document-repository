@@ -68,17 +68,38 @@ public final class FormSchema {
     private static final String PREFIX_ITEMS = "prefixItems";
     private static final String REQUIRED = "required";
 
-    /** The keywords whose value maps names to sub-schemas. */
-    private static final Set<String> SCHEMA_MAPS = Set.of(PROPERTIES, "patternProperties", "$defs", "definitions",
+    /**
+     * The keywords whose value maps names to sub-schemas.
+     * <p>
+     * The three lists of keywords that hold sub-schemas ({@link #SCHEMA_MAPS}, {@link #SCHEMA_VALUES},
+     * {@link #SCHEMA_LISTS}) are derived from the meta-schema of Draft 2020-12 that {@code dev.harrel:json-schema}
+     * 1.9.1 ships as the class path resource {@code draft2020-12.json}, with its vocabulary meta-schemas bundled under
+     * {@code $defs}. In the {@code properties} of every vocabulary meta-schema, a keyword whose schema is the dynamic
+     * reference {@code #meta} holds one sub-schema, a keyword whose schema is an array of such items holds a list, and
+     * a keyword whose schema is an object with such {@code additionalProperties} holds a map. Beyond that derivation
+     * the lists hold two keywords of Draft-07: {@code definitions} here, which the root meta-schema retains as a name
+     * but not as a keyword and which schemas still use as a target of references, and {@code additionalItems} in
+     * {@link #SCHEMA_VALUES}, which Draft 2020-12 no longer defines. The root meta-schema retains {@code dependencies}
+     * as a name as well; no vocabulary of the dialect defines it, the validator does not evaluate it under Draft
+     * 2020-12, and it is not walked. {@code FormSchemaKeywordLocationsTest} repeats the derivation, so a change of the
+     * library or the dialect that adds a location fails the build instead of leaving the location unchecked.
+     */
+    static final Set<String> SCHEMA_MAPS = Set.of(PROPERTIES, "patternProperties", "$defs", "definitions",
             "dependentSchemas");
 
-    /** The keywords whose value is one sub-schema. */
-    private static final Set<String> SCHEMA_VALUES = Set.of(ITEMS, "additionalProperties", "not", "if", "then", "else",
+    /**
+     * The keywords whose value is one sub-schema; derived from the meta-schema as {@link #SCHEMA_MAPS} describes, plus
+     * {@code additionalItems}.
+     */
+    static final Set<String> SCHEMA_VALUES = Set.of(ITEMS, "additionalProperties", "not", "if", "then", "else",
             "contains", "propertyNames", "unevaluatedItems", "unevaluatedProperties", "additionalItems",
             "contentSchema");
 
-    /** The keywords whose value is a list of sub-schemas. */
-    private static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
+    /**
+     * The keywords whose value is a list of sub-schemas; derived from the meta-schema as {@link #SCHEMA_MAPS}
+     * describes.
+     */
+    static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
 
     /** The keywords that reference a schema; within one file only. */
     private static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
