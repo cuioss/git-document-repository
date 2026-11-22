@@ -40,7 +40,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * The handling of the keyword {@code required} (GDR-FORMS-2): {@link SchemaValidator#required(FormSchema, Map)} follows
- * the references within the schema file, cycles included, while {@link SchemaValidator#validate(FormSchema, Map)}
+ * the references within the schema file, cycles included, and applies {@code patternProperties},
+ * {@code additionalProperties}, {@code prefixItems}, {@code items} and {@code dependentSchemas} as JSON Schema Draft
+ * 2020-12 applies them, while {@link SchemaValidator#validate(FormSchema, Map)}
  * still ignores {@code required}; and {@link FormSchema#parse(String, byte[])} refuses {@code required} under a keyword
  * that decides between alternatives or conditions, also when reached through a reference.
  * <p>
@@ -112,6 +114,77 @@ class SchemaRequiredTest {
 
             assertEquals(new ValidationResult.MandatoryFieldsMissing(List.of("/x", "/y")),
                     validator.required(schema, Map.of()), "the cycle is walked once");
+        }
+    }
+
+    @Nested
+    @DisplayName("applicator positions")
+    class ApplicatorPositions {
+
+        static Stream<Arguments> positions() {
+            return Stream.of(
+                    Arguments.of("patternProperties checks a matching property",
+                            "{ \"patternProperties\": { \"^entry-\": { \"required\": [\"name\"] } } }",
+                            Map.of("entry-a", Map.of()), List.of("/entry-a/name")),
+                    Arguments.of("patternProperties does not check a property no pattern matches",
+                            "{ \"patternProperties\": { \"^entry-\": { \"required\": [\"name\"] } } }",
+                            Map.of("other", Map.of()), List.of()),
+                    Arguments.of("a pattern matches anywhere in the name, not anchored",
+                            "{ \"patternProperties\": { \"entry\": { \"required\": [\"name\"] } } }",
+                            Map.of("my-entry-1", Map.of()), List.of("/my-entry-1/name")),
+                    Arguments.of("a property that matches two patterns is checked by both",
+                            "{ \"patternProperties\": { \"^entry-\": { \"required\": [\"name\"] }, "
+                                    + "\"-a$\": { \"required\": [\"id\"] } } }",
+                            Map.of("entry-a", Map.of()), List.of("/entry-a/name", "/entry-a/id")),
+                    Arguments.of("additionalProperties checks a property nothing else selects",
+                            "{ \"additionalProperties\": { \"required\": [\"name\"] } }",
+                            Map.of("entry", Map.of()), List.of("/entry/name")),
+                    Arguments.of("additionalProperties does not check a property properties or a pattern selects",
+                            "{ \"properties\": { \"a\": { \"type\": \"object\" } }, "
+                                    + "\"patternProperties\": { \"^p-\": { \"type\": \"object\" } }, "
+                                    + "\"additionalProperties\": { \"required\": [\"name\"] } }",
+                            Map.of("a", Map.of(), "p-x", Map.of()), List.of()),
+                    Arguments.of("prefixItems checks the item at its position",
+                            "{ \"properties\": { \"rows\": { \"prefixItems\": [ { \"required\": [\"name\"] } ] } } }",
+                            Map.of("rows", List.of(Map.of())), List.of("/rows/0/name")),
+                    Arguments.of("prefixItems does not require an absent item",
+                            "{ \"properties\": { \"rows\": { \"prefixItems\": [ { \"required\": [\"name\"] } ] } } }",
+                            Map.of("rows", List.of()), List.of()),
+                    Arguments.of("items does not apply to the items of prefixItems",
+                            "{ \"properties\": { \"rows\": { \"prefixItems\": [ {} ], "
+                                    + "\"items\": { \"required\": [\"tail\"] } } } }",
+                            Map.of("rows", List.of(Map.of(), Map.of("tail", 1))), List.of()),
+                    Arguments.of("items applies from the number of entries of prefixItems onwards",
+                            "{ \"properties\": { \"rows\": { \"prefixItems\": [ {} ], "
+                                    + "\"items\": { \"required\": [\"tail\"] } } } }",
+                            Map.of("rows", List.of(Map.of(), Map.of())), List.of("/rows/1/tail")),
+                    Arguments.of("dependentSchemas applies when the object holds its property",
+                            "{ \"dependentSchemas\": { \"enabled\": { \"required\": [\"name\"] } } }",
+                            Map.of("enabled", true), List.of("/name")),
+                    Arguments.of("dependentSchemas does not apply when the object lacks its property",
+                            "{ \"dependentSchemas\": { \"enabled\": { \"required\": [\"name\"] } } }",
+                            Map.of(), List.of()),
+                    Arguments.of("a cycle through additionalProperties ends with the data",
+                            "{ \"$ref\": \"#/$defs/node\", \"$defs\": { \"node\": { \"required\": [\"id\"], "
+                                    + "\"additionalProperties\": { \"$ref\": \"#/$defs/node\" } } } }",
+                            Map.of("id", 1, "a", Map.of("b", Map.of())), List.of("/a/id", "/a/b/id")),
+                    Arguments.of("a cycle through patternProperties ends with the data",
+                            "{ \"$ref\": \"#/$defs/node\", \"$defs\": { \"node\": { \"required\": [\"id\"], "
+                                    + "\"patternProperties\": { \"^n\": { \"$ref\": \"#/$defs/node\" } } } } }",
+                            Map.of("id", 1, "n1", Map.of("n2", Map.of())), List.of("/n1/id", "/n1/n2/id")));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-2: {0}")
+        @MethodSource("positions")
+        void position(String description, String text, Map<String, @Nullable Object> data, List<String> missing) {
+            var schema = schema(text);
+
+            assertAll(
+                    () -> assertEquals(missing.isEmpty() ? new ValidationResult.Valid()
+                                    : new ValidationResult.MandatoryFieldsMissing(missing),
+                            validator.required(schema, data), "required reports exactly the missing fields"),
+                    () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                            "validate does not evaluate required"));
         }
     }
 

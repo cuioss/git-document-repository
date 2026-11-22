@@ -503,10 +503,23 @@ public final class FormSchema {
          * {@code items}; empty when the schema declares neither.
          */
         Shape item(int index) {
-            if (index < prefixItems.size()) {
-                return prefixItems.get(index);
-            }
-            return items == null ? EMPTY : items;
+            @Nullable Shape shape = byPosition(prefixItems, items, index);
+            return shape == null ? EMPTY : shape;
         }
+    }
+
+    /**
+     * The sub-schema of the item of an array at a position, by the rule of Draft 2020-12 that the codec and the check of
+     * {@code required} share: the entry of {@code prefixItems} for a leading item, {@code items} for every item from the
+     * number of entries of {@code prefixItems} onwards.
+     *
+     * @param <T>         the type of a sub-schema: a schema as read, or its {@link Shape}
+     * @param prefixItems the entries of {@code prefixItems}, empty when the schema has none
+     * @param items       the value of {@code items}, or {@code null}
+     * @param index       the position of the item, from 0
+     * @return the sub-schema of the item, or {@code null} when the schema declares none
+     */
+    static <T> @Nullable T byPosition(List<? extends T> prefixItems, @Nullable T items, int index) {
+        return index < prefixItems.size() ? prefixItems.get(index) : items;
     }
 }

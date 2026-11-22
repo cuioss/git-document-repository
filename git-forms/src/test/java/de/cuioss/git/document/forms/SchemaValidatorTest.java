@@ -196,6 +196,22 @@ class SchemaValidatorTest {
             assertEquals(new ValidationResult.MandatoryFieldsMissing(List.of("/a~1b", "/c~0d")),
                     validator.required(schema, Map.of()), "the pointers are escaped");
         }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a property reached by a pattern or by additionalProperties is escaped as well")
+        void escapedPointerOfPatternAndAdditional() {
+            var schema = schema("""
+                    { "type": "object",
+                      "patternProperties": { "/": { "required": ["x"] } },
+                      "additionalProperties": { "required": ["y"] } }
+                    """);
+            Map<String, @Nullable Object> data = new LinkedHashMap<>();
+            data.put("a/b", Map.of());
+            data.put("c~d", Map.of());
+
+            assertEquals(new ValidationResult.MandatoryFieldsMissing(List.of("/a~1b/x", "/c~0d/y")),
+                    validator.required(schema, data), "the pointers are escaped");
+        }
     }
 
     @Nested
