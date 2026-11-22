@@ -41,8 +41,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * The handling of the keyword {@code required} (GDR-FORMS-2): {@link SchemaValidator#required(FormSchema, Map)} follows
  * the references within the schema file, cycles included, and applies {@code patternProperties},
- * {@code additionalProperties}, {@code prefixItems}, {@code items} and {@code dependentSchemas} as JSON Schema Draft
- * 2020-12 applies them, while {@link SchemaValidator#validate(FormSchema, Map)}
+ * {@code additionalProperties}, {@code prefixItems}, {@code items}, {@code dependentSchemas},
+ * {@code unevaluatedProperties} and {@code unevaluatedItems} as JSON Schema Draft 2020-12 applies them, while
+ * {@link SchemaValidator#validate(FormSchema, Map)}
  * still ignores {@code required}; and {@link FormSchema#parse(String, byte[])} refuses {@code required} under a keyword
  * that decides between alternatives or conditions, also when reached through a reference.
  * <p>
@@ -183,6 +184,73 @@ class SchemaRequiredTest {
                     () -> assertEquals(missing.isEmpty() ? new ValidationResult.Valid()
                                     : new ValidationResult.MandatoryFieldsMissing(missing),
                             validator.required(schema, data), "required reports exactly the missing fields"),
+                    () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                            "validate does not evaluate required"));
+        }
+    }
+
+    @Nested
+    @DisplayName("unevaluated positions")
+    class UnevaluatedPositions {
+
+        private static final String REST = "\"unevaluatedProperties\": { \"required\": [\"name\"] }";
+        private static final String REST_ITEMS = "\"unevaluatedItems\": { \"required\": [\"name\"] }";
+
+        static Stream<Arguments> positions() {
+            return Stream.of(
+                    Arguments.of("unevaluatedProperties checks a property nothing evaluates",
+                            "{ " + REST + " }", Map.of("entry", Map.of()), List.of("/entry/name")),
+                    Arguments.of("unevaluatedProperties requires nothing of an absent property",
+                            "{ " + REST + " }", Map.of(), List.of()),
+                    Arguments.of("a property of a sibling properties entry is evaluated",
+                            "{ \"properties\": { \"entry\": { \"type\": \"object\" } }, " + REST + " }",
+                            Map.of("entry", Map.of(), "other", Map.of()), List.of("/other/name")),
+                    Arguments.of("a property a sibling pattern matches is evaluated",
+                            "{ \"patternProperties\": { \"^p-\": {} }, " + REST + " }",
+                            Map.of("p-a", Map.of(), "other", Map.of()), List.of("/other/name")),
+                    Arguments.of("a property the target of a reference declares is evaluated",
+                            "{ \"$ref\": \"#/$defs/base\", \"$defs\": { \"base\": { \"properties\": { \"entry\": {} } } },"
+                                    + " " + REST + " }",
+                            Map.of("entry", Map.of(), "other", Map.of()), List.of("/other/name")),
+                    Arguments.of("a property an allOf member declares is evaluated",
+                            "{ \"allOf\": [ { \"properties\": { \"entry\": {} } } ], " + REST + " }",
+                            Map.of("entry", Map.of()), List.of()),
+                    Arguments.of("only the anyOf member the value satisfies evaluates",
+                            "{ \"anyOf\": [ { \"properties\": { \"a\": { \"type\": \"object\" } } }, "
+                                    + "{ \"properties\": { \"b\": { \"minProperties\": 1 } } } ], " + REST + " }",
+                            Map.of("a", Map.of(), "b", Map.of()), List.of("/b/name")),
+                    Arguments.of("then evaluates when if holds",
+                            "{ \"if\": { \"properties\": { \"kind\": { \"const\": \"x\" } } }, "
+                                    + "\"then\": { \"properties\": { \"entry\": {} } }, " + REST + " }",
+                            Map.of("kind", "x", "entry", Map.of()), List.of()),
+                    Arguments.of("then does not evaluate when if fails",
+                            "{ \"if\": { \"properties\": { \"kind\": { \"const\": \"x\" } } }, "
+                                    + "\"then\": { \"properties\": { \"entry\": {} } }, " + REST + " }",
+                            Map.of("kind", "y", "entry", Map.of()), List.of("/entry/name")),
+                    Arguments.of("an applied unevaluatedProperties evaluates every remaining property",
+                            "{ \"allOf\": [ { \"unevaluatedProperties\": { \"type\": \"object\" } } ], " + REST + " }",
+                            Map.of("entry", Map.of()), List.of()),
+                    Arguments.of("unevaluatedItems checks the items after prefixItems",
+                            "{ \"properties\": { \"rows\": { \"prefixItems\": [ {} ], " + REST_ITEMS + " } } }",
+                            Map.of("rows", List.of(Map.of(), Map.of())), List.of("/rows/1/name")),
+                    Arguments.of("an item contains matches is evaluated",
+                            "{ \"properties\": { \"rows\": { \"contains\": { \"minProperties\": 1 }, " + REST_ITEMS
+                                    + " } } }",
+                            Map.of("rows", List.of(Map.of("a", 1), Map.of())), List.of("/rows/1/name")),
+                    Arguments.of("items evaluates every item",
+                            "{ \"properties\": { \"rows\": { \"items\": {}, " + REST_ITEMS + " } } }",
+                            Map.of("rows", List.of(Map.of())), List.of()));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-2: {0}")
+        @MethodSource("positions")
+        void position(String description, String text, Map<String, @Nullable Object> data, List<String> missing) {
+            var schema = schema(text);
+
+            assertAll(
+                    () -> assertEquals(missing.isEmpty() ? new ValidationResult.Valid()
+                                    : new ValidationResult.MandatoryFieldsMissing(missing),
+                            validator.required(schema, data), "required reports exactly the unevaluated fields"),
                     () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
                             "validate does not evaluate required"));
         }

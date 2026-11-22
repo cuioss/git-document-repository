@@ -447,6 +447,14 @@ public final class FormSchema {
         return targets(schema, subSchema);
     }
 
+    /**
+     * Tells whether one of its sub-schemas holds the keyword {@code required}: itself, in a sub-schema or in a schema it
+     * references within this schema.
+     */
+    boolean holdsRequired(Map<?, ?> subSchema) {
+        return holdsRequired(schema, subSchema, identitySet());
+    }
+
     /** The schema without the keyword {@code required}, which validation evaluates. */
     Map<String, @Nullable Object> withoutRequired() {
         return withoutRequired;

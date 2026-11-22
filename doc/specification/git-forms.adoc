@@ -154,7 +154,18 @@ its position and in `items` only for the items after those of `prefixItems`, so 
 never required; in every sub-schema of `allOf`; in the schema of every entry of `dependentSchemas` whose property the
 data holds, applied to the same object; and in every schema a `$ref` or `$dynamicRef` references within the file (`#`,
 a JSON Pointer fragment such as `#/$defs/contact`, or the name of an `$anchor` or `$dynamicAnchor`; a `$dynamicRef` is
-resolved like a `$ref`). A pattern is a Java regular expression found anywhere in the name, not anchored, as
+resolved like a `$ref`); and in the sub-schema of `unevaluatedProperties` and of `unevaluatedItems` for exactly the
+properties and items that Draft 2020-12 treats as unevaluated at its location (Core, section 11, "A Vocabulary for
+Unevaluated Locations"). A property is evaluated there by `properties`, `patternProperties` and `additionalProperties`
+of the same schema, and by these keywords and `unevaluatedProperties` of every schema applied in place to the same
+value that the value satisfies: a sub-schema of `allOf`, `anyOf` and `oneOf`, `if` and the branch `then` or `else` it
+selects, the schema of an entry of `dependentSchemas` whose property the object holds, and the target of a `$ref` or
+`$dynamicRef`; an item likewise by `prefixItems` (the leading items), `items` (every item), `contains` (each item it
+matches) and `unevaluatedItems` of an applied schema; the annotations of `not` are never collected. Whether a value
+satisfies an applied schema is decided by the validator with the schema without `required`, as `validate` evaluates it,
+so `{"unevaluatedProperties": {"required": ["name"]}}` with the data `{"entry": {}}` reports `/entry/name`, while the
+data `{}` is complete. The evaluation is computed only for an `unevaluatedProperties` or `unevaluatedItems` whose
+sub-schema holds `required`. A pattern is a Java regular expression found anywhere in the name, not anchored, as
 `dev.harrel:json-schema` 1.9.1 matches it (`Pattern.compile` and `Matcher.find`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Applicators.java[json-schema
 1.9.1, `Applicators`]). `required` under `oneOf`, `anyOf`, `not`, `if`, `then`, `else` and `contains` stays refused
