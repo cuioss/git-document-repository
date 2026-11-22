@@ -54,8 +54,14 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - PLAN-12 — Can start once PLAN-08 has landed, in parallel with PLAN-09..11 (multi-file overlap on `pom.xml`,
   `general.adoc`, `AGENTS.md` → the gate puts it to the operator). PLAN-08 has landed; on 2026-11-21 the operator confirmed
   PLAN-09 and PLAN-12 together and the overlap it names (`general.adoc`, `AGENTS.md`, `doc/README.adoc`; `pom.xml` is only in
-  PLAN-12's surface, `git-store/pom.xml` lies inside PLAN-09's `git-store/`). PLAN-12 is running (PR #54 open); PLAN-09 landed first, so its
-  rebase onto PLAN-09's documents is still to come.
+  PLAN-12's surface, `git-store/pom.xml` lies inside PLAN-09's `git-store/`). PLAN-12 shipped (PR #54, `8d09629`, `landings/PLAN-12.md`): the
+  `git-forms` module (53 paths, +8903/-41), the largest change of the epic, merged on top of PLAN-09 after an operator override of the
+  review barrier (CodeRabbit paused before the last three commits, the optional reviewer refused the diff on size). The landing does not
+  say whether the rebase onto PLAN-09's documents conflicted, so the pairing's collision outcome is not recorded. Its two major defects
+  (no nesting-depth limit, an unbounded decimal exponent) and its minors went to PLAN-23.
+- PLAN-23 — `git-forms` hardening (staged 2026-11-22 on the operator's word, WS-03): both majors of PLAN-12 first, then the minors
+  and the missing tests. **Not held back**: emitted on 2026-11-22 beside PLAN-10 (three-file overlap, the operator accepted two: on `general.adoc` and `AGENTS.md`,
+  accepted), and PLAN-13 depends on it (strictly sequential in WS-03: PLAN-12, PLAN-23, PLAN-13).
 - PLAN-08 — Shipped (PR #48, `c1e02fc`, `landings/PLAN-08.md`): the write path of `git-store` (41 paths, +7661/-54): drafts, explicit save
   with lease, conflicts, `expectedBlobId`, draft expiry with garbage collection, the bound of `save.max-attempts` (100) and the
   `commit.email` setting. It ran alone after PLAN-21. The spec said five deliverables, the lane reported seven (the outline split them);
@@ -396,6 +402,19 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `general.adoc`, `AGENTS.md`, `doc/README.adoc`). The 28 candidate messages: 8 recurrences extended, 6 new lessons
   (`2026-11-22-13-001` to `-006`), 2 folded into the architecture-inventory Watch, 10 folded into PLAN-10 and PLAN-11 as Standing
   Constraints, 2 folded into PLAN-20 and PLAN-22 (the flaky tests, the duplicates and the JOL scope).
+- 2026-11-22 — PLAN-10 emitted (the operator confirmed the four-file overlap with the then running PLAN-12); the operator has not yet said
+  "#10 is running", so it stays staged, not recorded as launched.
+- 2026-11-22 — PLAN-12 landed (PR #54, `8d09629`) and was analysed on three layers: no blocker, **two major layer-3 defects** in
+  `git-forms` (no nesting-depth limit: `validate`, `required` and `encode` end in a `StackOverflowError` on a document nested a few
+  thousand levels, through four recursive sites behind an iterative reader; an unbounded decimal exponent: `1e2147483647` under a
+  `multipleOf` schema stalls or throws in the library's `BigDecimal.remainder`, a gap the spec itself accepts), six minor (a duplicate
+  collection accepted, unchecked prefix and paths, an unbounded file read, a validator rebuilt per call, YAML 1.1 words written plain, an
+  expensive huge-integer parse), layer 2: five minor (codec key order ignores `$ref`/`allOf`, `format` silently not asserted, stale
+  wording, missing tests, an automatic module never run on the module path), layer 1: the dependency record names no alternative
+  although the spec asked for them. Not shown by reading: the build, the 1,362 tests, the Sonar read and the review numbers (both reads
+  undecidable on a merged PR; the landing is incomplete at those four keys). Reported to the operator at once. **The operator's answer
+  (2026-11-22):** a new PLAN-23 (`git-forms` hardening), emitted at once beside PLAN-10 and ahead of PLAN-13. The three candidate
+  messages: 2 recurrences extended, 1 new lesson (`2026-11-22-21-004`); the run's own lessons `2026-11-22-21-001` to `-003` stay as filed.
 
 ## Open Defects
 
@@ -447,12 +466,21 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   that copies instead of merging, a weak GDR-NFR-1 measurement and test gaps, the "pushed together" bullet of GDR-STORE-6 that
   `git-core` cannot meet, and stale document sentences. — routed to PLAN-22 (deliverable 3) on the operator's word (2026-11-22); open
   until PLAN-22 ships.
+- PLAN-12 defects in `git-forms` (`landings/PLAN-12.md`; two major, six minor, with the layer-1 and layer-2 residue): no nesting-depth
+  limit (a `StackOverflowError` out of `validate`, `required` and `encode`), an unbounded decimal exponent under `multipleOf`, an
+  expensive huge-integer parse, YAML 1.1 words written plain, a duplicate kind collection accepted, unchecked `numbering.prefix` and
+  paths, an unbounded kinds-file read, a validator rebuilt per call; codec key order that ignores `$ref`/`allOf`, `format` silently not
+  asserted, stale wording, missing tests, an automatic module never run on the module path, and a dependency decision recorded without its
+  alternatives. — routed to PLAN-23 on the operator's word (2026-11-22); open until PLAN-23 ships.
 - Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
   `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`, PLAN-07
-  `plan-07-store-module-registry-spi-011.md`, PLAN-21 `plan-21-merge-worktrees-into-core-008.md`, PLAN-08 `plan-08-store-drafts-save-025.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-08 misses `effort` only (the review and Sonar numbers were supplied: 0 unresolved threads, 2 body findings, 2
+  `plan-07-store-module-registry-spi-011.md`, PLAN-21 `plan-21-merge-worktrees-into-core-008.md`, PLAN-08 `plan-08-store-drafts-save-025.md`, PLAN-12 `plan-12-forms-kinds-schema-layout-004.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-12 misses the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize step records them; the
+  lane names what it knows from the plan state: 0 open new-code issues on the merged head `a2792c7`); its `review-gate` re-read is
+  undecidable (CodeRabbit's review-body section header) and the Sonar read is undecidable (`head_revision_unavailable`, analysis
+  revision `a2792c7`), so nothing is re-verified. PLAN-09 was complete (the first). PLAN-08 misses `effort` only (the review and Sonar numbers were supplied: 0 unresolved threads, 2 body findings, 2
   handled, 0 open Sonar issues); its `review-gate` re-read is undecidable (the CodeRabbit "Minor comments: 10" section) and the Sonar
   read is undecidable (`head_revision_unavailable`, analysis revision `457160b2`), so none of the four is re-verified, and the lane's
   body-finding total (2) does not match the 11 findings its own lesson counts in the one review body (a difference of definition). PLAN-21 misses `effort` and the three review numbers (all `unknown`; `cleanup_owed=false` and
@@ -501,7 +529,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   has landed (PR #48), so the cut would also publish the draft and save write path, with its public `FetchInput` record change in
   `git-core` (a canonical-constructor break, acceptable only because nothing is released yet); PLAN-09 has landed too (PR #52: release,
   index, listeners, the save step, and `TreeEdit.Mode` in `git-core`, and a test-scope JOL dependency), so the cut would publish those;
-  PLAN-10, PLAN-11, PLAN-22 and PLAN-20 are what is still open against it. The operator's #50 (2026-11-21) added the consumer
+  PLAN-12 has landed too (PR #54): `git-forms` is on `main` and in the reactor, so the cut would publish a module with two open major
+  defects until PLAN-23 ships; PLAN-10, PLAN-11, PLAN-22, PLAN-23 and PLAN-20 are what is still open against it. The operator's #50 (2026-11-21) added the consumer
   propagation block to `.github/project.yml` (no version change).
 - The committed architecture inventory `.plan/project-architecture/` still names the removed module `git-worktrees` (`_project.json`,
   `git-document-repository/enriched.json` and a whole `git-worktrees/enriched.json`) after PLAN-21 (`landings/PLAN-21.md` L2-4). It is

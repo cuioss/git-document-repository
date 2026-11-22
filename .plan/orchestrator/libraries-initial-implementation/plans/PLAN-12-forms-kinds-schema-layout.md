@@ -92,8 +92,10 @@ validator are open dependencies the owner decides inside this plan.
 
 - OBSERVED: GDR-FORMS-2 leaves the schema dialect open and `git-forms` lists its YAML library, JSON Schema validator
   and template engine as open — read at `doc/specification/git-forms.adoc` § intro and § GDR-FORMS-2.
+  - verdict: corroborated | checked_at: 8d09629b70e4c9a4fca68df5a744531c7b4db7f6 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 8d09629: the schema dialect, YAML library, validator and template engine were open in git-forms.adoc at dfde126 (§ intro, § GDR-FORMS-2); 8d09629 records the YAML library (snakeyaml-engine 3.2), the validator (json-schema 1.9.1) and the dialect (2020-12) in git-forms.adoc and general.adoc GDR-GEN-1 and leaves the template engine open; read by the three-layer leaf and re-read by the orchestrator
 - OBSERVED: `git-store` carries no YAML library; `git-forms` supplies the YAML codec — read at
   `doc/specification/git-store.adoc` § GDR-STORE-11.
+  - verdict: corroborated | checked_at: 8d09629b70e4c9a4fca68df5a744531c7b4db7f6 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at 8d09629: git-store carries no YAML library (git-store/pom.xml unchanged by the plan) and git-forms supplies the codec (YamlDocumentCodec); git-store.adoc GDR-STORE-11 says so; the diff leaves git-core, git-store and git-testing poms untouched
 
 ## Expected Surface
 
