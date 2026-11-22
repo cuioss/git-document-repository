@@ -331,13 +331,15 @@ class SchemaValidatorTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-2: a decimal without fraction is an integer, whatever its scale")
+        @DisplayName("GDR-FORMS-2: a decimal without fraction is an integer up to the digit limit, whatever its scale")
         void integralDecimals() {
             var hugeExponent = new BigDecimal(BigInteger.TEN, Integer.MIN_VALUE);
 
             assertAll(
-                    () -> assertEquals(SimpleType.INTEGER, DataNode.root(hugeExponent).getNodeType(),
-                            "a negative scale is integral and does not throw"),
+                    () -> assertEquals(SimpleType.INTEGER, DataNode.root(new BigDecimal("1e3")).getNodeType(),
+                            "a negative scale is integral"),
+                    () -> assertEquals(SimpleType.NUMBER, DataNode.root(hugeExponent).getNodeType(),
+                            "a number beyond the digit limit is of the type number and does not throw"),
                     () -> assertEquals(SimpleType.INTEGER, DataNode.root(new BigDecimal("1.00")).getNodeType(),
                             "trailing zeros are integral"),
                     () -> assertEquals(SimpleType.NUMBER, DataNode.root(new BigDecimal("1.50")).getNodeType(),

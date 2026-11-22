@@ -36,17 +36,39 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The value is one of the types {@link YamlReader} produces: a {@link Map} with {@link String} keys, a {@link List}, a
  * {@link String}, a {@link Long}, {@link Integer} or {@link BigInteger}, a {@link BigDecimal}, a {@link Boolean} or
- * {@code null}. A {@link BigDecimal} without fraction is an integer, as in the providers of the validator. Equality
- * ignores the JSON Pointer and compares numbers by value, which the keywords {@code const}, {@code enum} and
- * {@code uniqueItems} rely on.
+ * {@code null}. A number without fraction is an integer, as in the providers of the validator, if it has at most
+ * {@value #MAX_INTEGER_DIGITS} digits; a longer one is of the type {@code number}.
+ * <p>
+ * A number is held in its canonical form: the unscaled value stripped of its trailing zeros, as far as the scale stays
+ * within the range of {@code int}. Equal numbers have the same canonical form whatever their notation ({@code 10},
+ * {@code 1e1} and {@code 10.0}), so equality ignores the JSON Pointer and compares numbers by value without ever
+ * expanding a number by its exponent.
+ * <p>
+ * Checked against the source of {@code dev.harrel:json-schema} 1.9.1: because this class is not one of the library's
+ * own node types, its keywords {@code const}, {@code enum} and {@code uniqueItems} compare two nodes through
+ * {@code JsonNodeUtil.equals}, which reads {@link #asInteger()} of two integers and {@link #asNumber()} of two numbers,
+ * and {@code enum} also collects its values in a hash set through {@link #equals(Object)} and {@link #hashCode()}. The
+ * digit limit of an integer keeps {@link #asInteger()} cheap, the canonical form of {@link #asNumber()} makes the
+ * library's scale-sensitive {@link BigDecimal#equals(Object)} compare by value, and {@code minimum}, {@code maximum} and
+ * their exclusive forms compare by {@link BigDecimal#compareTo(BigDecimal)}, which expands nothing. Only
+ * {@code multipleOf} is left: the library computes {@link BigDecimal#remainder(BigDecimal)}, whose working precision
+ * grows with the difference of the exponents, so a number with a large exponent under {@code multipleOf} can stall the
+ * validation, and no node can prevent that.
  */
 final class DataNode implements JsonNode {
 
     /** The factory of nodes for schemas and data: {@code create} reads JSON (as YAML) through {@link YamlReader}. */
     static final JsonNodeFactory FACTORY = new Factory();
 
+    /** The most digits a number without fraction may have to be an integer; a longer one is of the type number. */
+    static final int MAX_INTEGER_DIGITS = 1000;
+
+    /** log10(2), rounded up, so that a digit count derived from a bit length is never too small. */
+    private static final double LOG10_OF_2 = 0.30103;
+
     private final @Nullable Object value;
     private final String pointer;
+    private final @Nullable BigDecimal number;
     private final SimpleType type;
     private @Nullable List<JsonNode> array;
     private @Nullable Map<String, JsonNode> object;
@@ -54,7 +76,8 @@ final class DataNode implements JsonNode {
     private DataNode(@Nullable Object value, String pointer) {
         this.value = value;
         this.pointer = pointer;
-        this.type = typeOf(value);
+        this.number = canonicalNumber(value);
+        this.type = typeOf(value, number);
     }
 
     /**
@@ -74,7 +97,9 @@ final class DataNode implements JsonNode {
      * where a keyword of the schema leads it, so a value it never reaches would otherwise pass unchecked.
      */
     private static void requireDataModel(@Nullable Object value) {
-        typeOf(value);
+        if (value != null && !isOfDataModel(value)) {
+            throw new IllegalArgumentException("not of the JSON data model: " + value.getClass().getName());
+        }
         if (value instanceof List<?> list) {
             list.forEach(DataNode::requireDataModel);
         } else if (value instanceof Map<?, ?> map) {
@@ -87,34 +112,80 @@ final class DataNode implements JsonNode {
         }
     }
 
-    private static SimpleType typeOf(@Nullable Object value) {
-        if (value == null) {
-            return SimpleType.NULL;
-        }
-        if (value instanceof Boolean) {
-            return SimpleType.BOOLEAN;
-        }
-        if (value instanceof String) {
-            return SimpleType.STRING;
-        }
-        if (value instanceof Long || value instanceof Integer || value instanceof BigInteger) {
-            return SimpleType.INTEGER;
-        }
-        if (value instanceof BigDecimal decimal) {
-            return isIntegral(decimal) ? SimpleType.INTEGER : SimpleType.NUMBER;
-        }
-        if (value instanceof List) {
-            return SimpleType.ARRAY;
-        }
-        if (value instanceof Map) {
-            return SimpleType.OBJECT;
-        }
-        throw new IllegalArgumentException("not of the JSON data model: " + value.getClass().getName());
+    private static boolean isOfDataModel(Object value) {
+        return value instanceof Boolean || value instanceof String || value instanceof Long
+                || value instanceof Integer || value instanceof BigInteger || value instanceof BigDecimal
+                || value instanceof List || value instanceof Map;
     }
 
-    private static boolean isIntegral(BigDecimal number) {
-        // a scale of at most 0 is integral as it is; stripping it could leave the range of int and throw
-        return number.scale() <= 0 || number.signum() == 0 || number.stripTrailingZeros().scale() <= 0;
+    /** The type of a value of the data model; {@code number} is its canonical form, or {@code null} if it is none. */
+    private static SimpleType typeOf(@Nullable Object value, @Nullable BigDecimal number) {
+        if (number != null) {
+            return isInteger(number) ? SimpleType.INTEGER : SimpleType.NUMBER;
+        }
+        return switch (value) {
+            case null -> SimpleType.NULL;
+            case Boolean ignored -> SimpleType.BOOLEAN;
+            case String ignored -> SimpleType.STRING;
+            case List<?> ignored -> SimpleType.ARRAY;
+            case Map<?, ?> ignored -> SimpleType.OBJECT;
+            default -> throw new IllegalArgumentException("not of the JSON data model: " + value.getClass().getName());
+        };
+    }
+
+    /**
+     * Tells whether a canonical number is an integer: no fraction and at most {@value #MAX_INTEGER_DIGITS} digits. The
+     * canonical form has no trailing zeros left to strip, so it has a fraction exactly when its scale is positive; the
+     * digits are counted from precision and scale in {@code long}, never by expanding the number.
+     */
+    private static boolean isInteger(BigDecimal number) {
+        return number.scale() <= 0
+                && (number.signum() == 0 || (long) number.precision() - number.scale() <= MAX_INTEGER_DIGITS);
+    }
+
+    /** The canonical form of a number of the data model, or {@code null} for any other value. */
+    private static @Nullable BigDecimal canonicalNumber(@Nullable Object value) {
+        return switch (value) {
+            case Long integer -> canonical(BigDecimal.valueOf(integer));
+            case Integer integer -> canonical(BigDecimal.valueOf(integer));
+            case BigInteger integer -> canonical(new BigDecimal(integer));
+            case BigDecimal decimal -> canonical(decimal);
+            case null, default -> null;
+        };
+    }
+
+    /**
+     * Strips the trailing zeros of a number, as far as its scale stays within the range of {@code int}, so that every
+     * notation of a value yields the same form; unlike {@link BigDecimal#stripTrailingZeros()}, which throws when the
+     * stripped scale leaves that range ({@code 100e2147483647}). Zeros are removed by powers of ten that double and then
+     * halve, so the number of divisions grows with the logarithm of the number of zeros, not with the zeros themselves.
+     */
+    private static BigDecimal canonical(BigDecimal number) {
+        if (number.signum() == 0) {
+            return BigDecimal.ZERO;
+        }
+        BigInteger unscaled = number.unscaledValue();
+        // 10 = 2 * 5: a number has no more trailing decimal zeros than trailing binary zeros, nor more than its digits
+        long digits = (long) ((unscaled.bitLength() - 1) * LOG10_OF_2) + 1;
+        long removable = Math.min(Math.min(unscaled.getLowestSetBit(), digits),
+                (long) number.scale() - Integer.MIN_VALUE);
+        // powers.get(i) is 10^(2^i); together they can remove every zero there is to remove
+        List<BigInteger> powers = new ArrayList<>();
+        for (long step = 1; step <= removable; step <<= 1) {
+            powers.add(powers.isEmpty() ? BigInteger.TEN : powers.getLast().multiply(powers.getLast()));
+        }
+        long stripped = 0;
+        for (int exponent = powers.size() - 1; exponent >= 0; exponent--) {
+            long step = 1L << exponent;
+            if (stripped + step <= removable) {
+                BigInteger[] division = unscaled.divideAndRemainder(powers.get(exponent));
+                if (division[1].signum() == 0) {
+                    unscaled = division[0];
+                    stripped += step;
+                }
+            }
+        }
+        return stripped == 0 ? number : new BigDecimal(unscaled, (int) (number.scale() - stripped));
     }
 
     @Override
@@ -137,24 +208,43 @@ final class DataNode implements JsonNode {
         return String.valueOf(value);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * An integer has at most {@value #MAX_INTEGER_DIGITS} digits, so its expansion is cheap. Of a number with a
+     * fraction the integer part is returned; the library reads this only of integers.
+     *
+     * @throws ArithmeticException for a number without fraction of more than {@value #MAX_INTEGER_DIGITS} digits held
+     *                             with a negative scale, which would have to be expanded by its exponent
+     */
     @Override
     public BigInteger asInteger() {
-        return switch (value) {
-            case BigInteger integer -> integer;
-            case BigDecimal decimal -> decimal.toBigInteger();
-            case Number number -> BigInteger.valueOf(number.longValue());
-            case null, default -> BigInteger.ZERO;
-        };
+        if (value instanceof BigInteger integer) {
+            return integer;
+        }
+        if (number == null) {
+            return BigInteger.ZERO;
+        }
+        if (type != SimpleType.INTEGER && number.scale() < 0) {
+            throw new ArithmeticException("a number of more than " + MAX_INTEGER_DIGITS + " digits is not expanded");
+        }
+        return number.toBigInteger();
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The number is returned in its canonical form, so that {@link BigDecimal#equals(Object)} compares it by value.
+     */
     @Override
     public BigDecimal asNumber() {
-        return switch (value) {
-            case BigDecimal decimal -> decimal;
-            case BigInteger integer -> new BigDecimal(integer);
-            case Number number -> BigDecimal.valueOf(number.longValue());
-            case null, default -> BigDecimal.ZERO;
-        };
+        return number == null ? BigDecimal.ZERO : number;
+    }
+
+    /** {@inheritDoc} A number is printed in its canonical form, never expanded by its exponent. */
+    @Override
+    public String toPrintableString() {
+        return number == null ? JsonNode.super.toPrintableString() : number.toString();
     }
 
     @Override
@@ -191,11 +281,10 @@ final class DataNode implements JsonNode {
         return entries;
     }
 
-    /** The comparable form of the value: numbers by value, containers by their nodes. */
+    /** The comparable form of the value: numbers by their canonical form, containers by their nodes. */
     private @Nullable Object comparable() {
         return switch (type) {
-            case INTEGER -> asInteger();
-            case NUMBER -> asNumber().stripTrailingZeros();
+            case INTEGER, NUMBER -> number;
             case ARRAY -> asArray();
             case OBJECT -> asObject();
             default -> value;
