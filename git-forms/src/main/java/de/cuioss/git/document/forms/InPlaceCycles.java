@@ -39,9 +39,8 @@ import org.jspecify.annotations.Nullable;
  * schema object of the file its dynamic scope may bind it to ({@link SchemaResources#dynamicScopeTargets(String)}): the
  * validator resolves a {@code $dynamicRef} through the resources being evaluated, outermost first, so it can return to
  * an outer schema that no static target shows, and taking every candidate finds each cycle some scope could produce.
- * The keywords that descend into a child
- * value ({@code properties}, {@code items}, {@code unevaluatedProperties} and the others) are no edges, so a recursion
- * that descends stays valid. The search is depth-first with the three states unvisited, on the path and done, over the
+ * The keywords that descend into a child value ({@code properties}, {@code items}, {@code unevaluatedProperties} and
+ * the others) are no edges, so a recursion that descends stays valid. The search is depth-first with the three states unvisited, on the path and done, over the
  * schema objects compared by identity, started from every schema object of the file
  * ({@link SchemaResources#schemaObjects()}), those under {@code $defs} and {@code definitions} included, so that a cycle
  * declared but never referenced is refused as well. Both the enumeration of the schema objects and the search use an

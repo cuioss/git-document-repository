@@ -48,8 +48,9 @@ import org.jspecify.annotations.Nullable;
  * schemas applied to the same value without descending into a child value (for example
  * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
  * on a top-level property of type {@code object} (also in a schema only a reference selects), {@code required} that is
- * not an array of unique strings, {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not}, {@code if}, {@code then},
- * {@code else} or {@code contains} (also in a schema such a sub-schema references), where deferring it to
+ * not an array of unique strings, {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not},
+ * {@code if}, {@code then}, {@code else} or {@code contains} (also in a schema such a sub-schema references), where
+ * deferring it to
  * {@link SchemaValidator#required(FormSchema, Map)} would change which alternative or condition holds, and a schema the
  * validator {@code dev.harrel:json-schema} refuses, for example one that does not conform to the meta-schema of the
  * dialect. These rules hold for every schema of the file a validator may apply, a schema that only a reference selects
