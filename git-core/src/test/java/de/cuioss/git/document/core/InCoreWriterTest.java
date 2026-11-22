@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -220,6 +221,38 @@ class InCoreWriterTest {
                     () -> assertEquals(parent, commit.getParent(0).name(), "the parent is the one passed"),
                     () -> assertEquals(Map.of(kept, keptContent, replaced, replacedContent, added, addedContent),
                             files(repository, commit), "the parent's tree with the edits applied"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a put writes its mode: regular by default, executable, symbolic link, and a mode change")
+        void putWritesItsMode(@InMemory Repository repository) throws Exception {
+            var regular = TestCommits.name();
+            var executable = TestCommits.name();
+            var link = TestCommits.name();
+            var content = content();
+            var parent = writeRoot(repository, Map.of(regular, content()));
+
+            var result = writer.write(repository, List.of(parent), metadata(), List.of(
+                    new TreeEdit.Put(regular, content.getBytes(UTF_8), TreeEdit.Mode.EXECUTABLE_FILE),
+                    new TreeEdit.Put(executable, content.getBytes(UTF_8), TreeEdit.Mode.EXECUTABLE_FILE),
+                    new TreeEdit.Put(link, regular.getBytes(UTF_8), TreeEdit.Mode.SYMLINK)));
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            Map<String, FileMode> modes = new TreeMap<>();
+            try (TreeWalk walk = new TreeWalk(repository)) {
+                walk.addTree(commit.getTree());
+                while (walk.next()) {
+                    modes.put(walk.getPathString(), walk.getFileMode(0));
+                }
+            }
+            var put = new TreeEdit.Put(regular, content.getBytes(UTF_8));
+            assertAll(
+                    () -> assertEquals(Map.of(regular, FileMode.EXECUTABLE_FILE, executable, FileMode.EXECUTABLE_FILE,
+                            link, FileMode.SYMLINK), modes, "every put with its mode, a regular file made executable"),
+                    () -> assertEquals(TreeEdit.Mode.REGULAR_FILE, put.mode(), "a regular file by default"),
+                    () -> assertNotEquals(new TreeEdit.Put(regular, content.getBytes(UTF_8),
+                            TreeEdit.Mode.EXECUTABLE_FILE), put, "the mode is part of the value"),
+                    () -> assertTrue(put.toString().endsWith("mode=REGULAR_FILE]"), "the mode is rendered"));
         }
 
         @Test

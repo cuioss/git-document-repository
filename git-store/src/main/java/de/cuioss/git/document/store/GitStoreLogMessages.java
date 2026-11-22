@@ -78,6 +78,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(4)
                 .build();
+
+        /**
+         * A release completed, {@code main} and the release tag both on the remote: the repository alias, the release
+         * tag and the release commit id.
+         */
+        public static final LogRecord RELEASED = LogRecordModel.builder()
+                .template("Released repository %s, tag %s at commit %s")
+                .prefix(PREFIX)
+                .identifier(5)
+                .build();
     }
 
     /**
@@ -136,6 +146,56 @@ public final class GitStoreLogMessages {
                 .template("Skipped the garbage collection of repository %s: another collection holds gc.pid")
                 .prefix(PREFIX)
                 .identifier(104)
+                .build();
+
+        /**
+         * A release moved {@code main} on the remote, but its tag is missing there: the repository alias, the missing
+         * release tag and the release commit id; a repeated release creates the tag on that commit.
+         */
+        public static final LogRecord RELEASE_INCOMPLETE = LogRecordModel.builder()
+                .template("Released repository %s onto main, but the tag %s is missing for commit %s")
+                .prefix(PREFIX)
+                .identifier(105)
+                .build();
+
+        /**
+         * A release did not complete, nothing of it on the remote: the repository alias, the branch of the document or
+         * entry and the outcome.
+         */
+        public static final LogRecord RELEASE_NOT_COMPLETED = LogRecordModel.builder()
+                .template("Did not complete the release of repository %s, reference %s: %s")
+                .prefix(PREFIX)
+                .identifier(106)
+                .build();
+
+        /**
+         * A periodic fetch failed, the schedule goes on: the repository alias and the outcome, or the class of the
+         * exception, never its message.
+         */
+        public static final LogRecord PERIODIC_FETCH_FAILED = LogRecordModel.builder()
+                .template("The periodic fetch of repository %s failed: %s")
+                .prefix(PREFIX)
+                .identifier(107)
+                .build();
+
+        /**
+         * An index contributor threw, the document is left out of the index: the repository alias, the collection and
+         * the class of the exception, never its message.
+         */
+        public static final LogRecord CONTRIBUTOR_FAILED = LogRecordModel.builder()
+                .template("Left a document of repository %s, collection %s out of the index: the contributor threw %s")
+                .prefix(PREFIX)
+                .identifier(108)
+                .build();
+
+        /**
+         * A commit listener threw, the save, release or fetch that triggered it is unaffected: the repository alias, the
+         * branch and the class of the exception, never its message.
+         */
+        public static final LogRecord LISTENER_FAILED = LogRecordModel.builder()
+                .template("A commit listener of repository %s, branch %s threw %s")
+                .prefix(PREFIX)
+                .identifier(109)
                 .build();
     }
 }

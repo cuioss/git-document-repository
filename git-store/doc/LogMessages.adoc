@@ -39,6 +39,10 @@ the number of conflicting paths, never a path.
 |Logged when the draft expiry deleted the drafts unchanged for `drafts.expiry` and collected the garbage
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository alias and the number of deleted
 drafts, never a draft reference, which names a pseudonym.
+|GIT_STORE-5 |GIT_STORE |Released repository %s, tag %s at commit %s
+|Logged when a release completed, `main` and the release tag both accepted by the remote
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
+release tag and the full id of the release commit.
 |===
 
 == WARN Level (100-199)
@@ -67,6 +71,31 @@ fetch mirrors the remote branch into the clone.
 |Logged when the draft expiry did not run its garbage collection because another collection holds the clone's
 `gc.pid` (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository alias. The expiry
 ends in the passed-on `CONFLICT`, which may be retried.
+|GIT_STORE-105 |GIT_STORE |Released repository %s onto main, but the tag %s is missing for commit %s
+|Logged when a release moved `main` on the remote but the push of its tag failed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
+missing release tag and the full id of the release commit. The release is `INCOMPLETE`; a repeated release of the
+document creates the missing tag on that commit instead of merging again.
+|GIT_STORE-106 |GIT_STORE |Did not complete the release of repository %s, reference %s: %s
+|Logged when a release ended with nothing of it on the remote
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]), for example a missing branch, a conflicting
+merge, a refused push of `main` or a lease refused on every attempt: the repository alias, the working or collection
+branch of the document or entry and the name of the outcome, never a path or a credential.
+|GIT_STORE-107 |GIT_STORE |The periodic fetch of repository %s failed: %s
+|Logged when a fetch started by `StoreWriter.fetchPeriodically` failed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias and the name of the
+outcome, or the simple class name of an exception, never its message or a credential. The schedule goes on, and the
+next run fetches again.
+|GIT_STORE-108 |GIT_STORE |Left a document of repository %s, collection %s out of the index: the contributor threw %s
+|Logged when an index contributor threw while the index read a document
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias, the name of the
+collection and the simple class name of the exception, never its message, the id, a path or a content. The document is
+left out of the index, and the refresh goes on with the next document.
+|GIT_STORE-109 |GIT_STORE |A commit listener of repository %s, branch %s threw %s
+|Logged when a commit listener threw while it was called with a new commit of its branch
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10]): the repository alias, the full name of the
+branch and the simple class name of the exception, never its message; no throwable is attached. The save, release or
+fetch that triggered the call is unaffected, and the commit counts as delivered.
 |===
 
 == ERROR Level (200-299)

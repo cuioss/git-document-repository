@@ -45,6 +45,14 @@
                 <artifactId>org.eclipse.jgit</artifactId>
                 <version>7.8.0.202609011348-r</version>
             </dependency>
+            <!-- JOL 0.17: the latest release in maven-metadata.xml of org.openjdk.jol:jol-core on Maven Central,
+                 checked 2026-11-21; cui-java-parent 1.7.7 does not manage it. Test scope of git-store only
+                 (GDR-NFR-1, IndexFootprintTest). -->
+            <dependency>
+                <groupId>org.openjdk.jol</groupId>
+                <artifactId>jol-core</artifactId>
+                <version>0.17</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
     <modules>

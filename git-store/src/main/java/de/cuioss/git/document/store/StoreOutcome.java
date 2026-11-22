@@ -42,8 +42,9 @@ public enum StoreOutcome implements StoreResult.Outcome {
     UNAVAILABLE,
 
     /**
-     * Refused: raised when obtaining an anchor proof and the provider refuses it, the subject staying pending, and by
-     * a signing key source that refuses to sign or to hand out a public key.
+     * Refused: raised when obtaining an anchor proof and the provider refuses it, the subject staying pending, by a
+     * signing key source that refuses to sign or to hand out a public key, and by a save whose per-attempt step
+     * refused, nothing being pushed.
      */
     REFUSED,
 

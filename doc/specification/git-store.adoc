@@ -13,10 +13,13 @@ and Signing] and xref:../concepts/evidence-and-companion-stores.adoc[Evidence an
 Implemented are the repository registry (<<GDR-STORE-1>>), the codec interface (<<GDR-STORE-11>>), the typed
 configuration (<<store-configuration>>), the outcome list with its result, the three service interfaces below with
 the selection of their providers, and the write path of `StoreWriter`: drafts (<<GDR-STORE-2>>), the explicit save
-(<<GDR-STORE-3>>) with its conflicts (<<GDR-STORE-4>>) and change detection (<<GDR-STORE-5>>), the draft expiry
-(<<GDR-STORE-7>>), and author, committer and credentials (<<GDR-STORE-8>>). Until <<GDR-STORE-12>> and
-<<GDR-STORE-13>> are implemented, the commits the write path writes are unsigned and carry no trailers. The providers
-themselves (`file`, `signed`) and every other requirement are planned.
+(<<GDR-STORE-3>>) with its optional per-attempt step, its conflicts (<<GDR-STORE-4>>) and change detection
+(<<GDR-STORE-5>>), the release of a document with its tag (<<GDR-STORE-6>>), the draft expiry (<<GDR-STORE-7>>), and
+author, committer and credentials (<<GDR-STORE-8>>); and the read side: the in-memory index with its contributors,
+fetch and snapshots (<<GDR-STORE-9>>) and the per-branch post-commit listeners (<<GDR-STORE-10>>). Until
+<<GDR-STORE-12>> and <<GDR-STORE-13>> are implemented, the commits the store writes are unsigned and carry no
+trailers. Planned are the signature and the identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), the requirements
+from <<GDR-STORE-14>> to <<GDR-STORE-19>>, and the providers themselves (`file`, `signed`).
 Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
 `GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
@@ -189,6 +192,17 @@ per-document collection, otherwise an id of the form `[A-Za-z0-9-]+`; `Ulid.next
 `SecureRandom`, without the optional monotonic mode of the specification. A pseudonym is a reference segment of the
 form `[A-Za-z0-9-]+`; any other is refused as `MALFORMED` with the detail `pseudonym: invalid`, which never names it.
 Every refusal of a name or id is `MALFORMED`, and its detail names the field, never the value.
+`StoreReferences` also builds the release tags of <<GDR-STORE-6>>: `releaseTags(key)` is the prefix
+`refs/tags/<collection>/<id>/`, `releaseTag(key, n)` the tag `v<n>` below it, and `releaseVersion(key, ref)` parses
+`n` back.
+
+The paths of a document follow one convention, `DocumentPaths`: a path belongs to the document or entry
+`<collection>/<id>` when it is the file `<collection>/<id>`, a file at any depth below the directory
+`<collection>/<id>/`, or the file `<collection>/<id>.<suffix>` with a non-empty suffix, which may hold further dots but
+no slash (the convention of xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]). An id holds no dot, so the first dot after
+it starts the suffix. A path whose segment after the collection starts with a dot, such as the counter file
+`<collection>/.counter` of a numbered collection, belongs to no document. The release of a numbered entry
+(<<GDR-STORE-6>>) takes exactly the paths that belong to it.
 
 `StoreWriter.open(repository, gitDir, user, configuration, operations, clock)` clones the remote into a bare clone if
 none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user. An existing clone is reused only
@@ -220,6 +234,10 @@ tip as the time of the last intermediate save).
   commit may become reachable from a pushed reference.
 * The save must push with lease; when the lease is refused or the push rejected, it must fetch and re-apply its
   operation onto the new tip, up to `save.max-attempts`.
+* A save may carry a per-attempt step of the caller. The store must call it on every attempt, after the conflict
+  check, with a read-only view of the tip and of the tree the draft's changes produce on it; the edits it returns must
+  become part of the one save commit, and a refusal or a failure of the step must end the save with nothing pushed and
+  the draft and the working branch unchanged.
 * When the remote cannot be reached, the save must report unreachable and change nothing; the draft keeps the work.
 * After a successful save the draft reference must be deleted only if it still points to the draft commit that was
   applied; a newer draft commit must be kept for the next save.
@@ -229,7 +247,8 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 
 . Fetch the working branch; its tip is the base.
 . Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
-  Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>).
+  Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>). Then call the per-attempt step, if any: its
+  edits join the commit, and its refusal or failure ends the save before anything is written or pushed.
 . Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
 . After the accepted push, move the local working branch to the new commit and delete the draft reference by
   compare-and-delete (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]); a draft reference that moved meanwhile is kept.
@@ -281,6 +300,32 @@ error only, and the next fetch mirrors the remote branch. The draft is then dele
 the applied draft commit. Every Git outcome is passed on as
 `StoreResult.PassedOn`. A save is logged as `GIT_STORE-2`, a save that ended without a commit for another reason than
 a conflict as `GIT_STORE-101`, naming the outcome, never a credential (`git-store/doc/LogMessages.adoc`).
+
+`StoreWriter.save(author, key, expectedBlobIds, message, step)` saves the same way with a `SaveStep`, a functional
+interface of the caller; the four-argument `save` is that save without a step. The attempt loop of `ExplicitSave`
+calls the step on every attempt, the first and each re-application onto a new tip, after the conflict check and
+before the save commit is written, so a step that derives its edits from the tip, such as a counter, sees the tip the
+commit is written on. The step receives a read-only `SaveStep.Attempt`: the full id of that tip (`null` for a root
+commit), the content of a path on the tip, the content of a path in the tree the draft's edits produce on the tip, and
+the paths of the files below a directory of that produced tree. The view is the tip's tree overlaid with the draft's
+edits and read on demand: it writes no object, and the step gets no `Repository`, no credential and nothing the caller
+did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two variants:
+
+* `Edits` with a list of `TreeEdit`, possibly empty: they are added to the draft's edits of the one save commit, whose
+  only parent stays the tip; a step edit on a path the draft also changed replaces the draft's edit of that path. The
+  edits together are checked once more for the file and directory overlap of <<GDR-STORE-5>>, against the tip with
+  every path of the edits counting as changed and between two puts, so a step put that replaces a directory of the tip
+  holding a file no edit names, or turns a file into a directory, ends the save as `Conflicting` naming the step's
+  path, nothing written or pushed; a step edit disjoint from the tip's files, such as a counter, stays valid.
+* `Refusal`, which carries no text of the caller: the save ends as `NotSaved` with `StoreOutcome.REFUSED` and the
+  fixed detail `<target>: step: refused`.
+
+A step that throws a `RuntimeException` ends the save as `NotSaved` with the passed-on `FAILED` and the detail
+`<target>: step: <simple class name of the exception>`, without a further attempt; no log record attaches the
+exception, and neither names its message (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A failure to read the view reaches
+the step as an `UncheckedIOException` and ends the save the same way. After a refusal or a failure nothing is written
+or pushed, and the draft and the target branch are unchanged; the save is logged as `GIT_STORE-101` with its outcome.
+A draft without changes writes no commit and calls no step.
 
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes
@@ -344,6 +389,58 @@ the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the det
 The store merges every release itself. `main` is protected on the Git server so that only the technical user may
 push to it and nobody may force-push; a refused push of `main` returns rejected. The release commit carries the
 identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the approver.
+
+`StoreWriter.release(author, key)` returns a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
+full id of the release commit and the version `n`. Content without release (a key of a `MAIN` collection) is
+`MALFORMED` with the detail `key: content without release`. A release runs under the shared side of the clone's
+maintenance lock and takes no draft lock; each attempt runs under the transport lock (<<GDR-STORE-3>>), from its fetch
+to the push of its tag. An attempt fetches with `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS` and the credentials
+of the technical user, pruning what the remote deleted, and then reads `main`, the working or collection branch and the
+release tags of the document once. A missing working or collection branch is the passed-on `NOT_FOUND` with the detail
+`<branch>: not found`.
+
+* *Version and message.* `n` is one more than the highest `v<k>` below `refs/tags/<collection>/<id>/` (a `k` without
+  leading zero, at most 999999999), so the first release is `v1`. The message of the release commit is always
+  `Release <collection>/<id> v<n>`, composed by the store; a release takes no message of the caller.
+* *Release commit.* For a per-document collection, `InCoreMerger` of `git-core` merges the working branch into `main`
+  at path level (xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]), and the release commit has the tip of `main` and the tip of
+  the working branch as its parents and the edits from the tree of `main` to the merged tree; a conflicting merge ends
+  the release with the passed-on `CONFLICT` and the detail `<branch>: <n> conflicting paths`, which names no path. For a
+  numbered collection only the paths of the entry are taken from the collection branch onto `main`, the only parent:
+  every file of the entry that differs or is new is put, every file of the entry the collection branch lacks is
+  deleted, and the files of other entries and the counter file stay as `main` has them. Without `main` the release
+  commit of a per-document collection has the working branch as its only parent and its tree, and that of a numbered
+  collection is a root commit holding the entry's files. The commit is written by `InCoreWriter`, unsigned and without
+  trailers, with the author and committer of <<GDR-STORE-8>>; one method of `DocumentRelease` builds its metadata, the
+  seam <<GDR-STORE-13>> extends with the identity trailers.
+* *Push order.* The local tag is written by a reference update that expects it absent and writes no reflog. Then `main`
+  is pushed with the lease of the fetched tip (the zero id when `main` is absent), and only after the remote accepted it
+  the local `main` moves and the tag is pushed against the zero-id lease. `RepositoryOperations.push` of `git-core`
+  pushes one reference per call, so the two pushes are not atomic; the transport lock keeps every other fetch of the
+  process out of the gap, so no pruning fetch deletes the local tag before its push. A local tag whose push never
+  happened, because the push of `main` was refused, is pruned by the next fetch, since the remote lacks it
+  (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); no tag on the remote is ever moved or deleted.
+* *Incomplete and its recovery.* When the remote accepted `main` and the push of the tag failed, the release is
+  `INCOMPLETE` with the detail `<tag>: not pushed (<outcome>)`. A repeated release finds the release commit by its
+  message and its shape: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, that carries the
+  message of `v<n>` and has the shape of a release of the document, is a release whose tag is missing; the release then
+  writes and pushes only the tag on that commit and merges nothing. The shape tells the release commit from a commit
+  of an ordinary save to a `MAIN` collection that uses the same message: for a per-document collection the commit has
+  two parents, the second reachable from the working branch, or, written onto an absent `main`, one parent reachable
+  from the working branch and the same tree as that parent; for a numbered collection it has at most one parent and
+  changes no path outside the entry. A commit with the message but without the shape is ordinary history, and the
+  release merges as usual.
+* *File modes.* Every put of a release keeps the mode the source tree gives the file (`TreeEdit.Mode` of
+  xref:git-core.adoc#GDR-CORE-4[GDR-CORE-4]): an executable file stays `100755`, a symbolic link `120000`, a mode change
+  alone is an edit, and every other file is a regular file.
+* *Rejected.* A lease refusal of the push of `main` starts the next attempt from the fetch, up to `save.max-attempts`;
+  after the last the release is the passed-on `REJECTED` with the detail
+  `refs/heads/main: lease refused on every attempt (<n>)`. A rejection of `main` by the remote, such as a protected
+  branch, is the passed-on `REJECTED` at once. Every other Git outcome, for example `UNREACHABLE`, is passed on.
+
+A completed release is logged as `GIT_STORE-5` with the tag and the commit, an incomplete one as `GIT_STORE-105`, and a
+release that put nothing on the remote as `GIT_STORE-106` with its outcome (`git-store/doc/LogMessages.adoc`). Every
+detail names a reference or a field, never a path, a content or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-7]
 == GDR-STORE-7: Draft Expiry
@@ -413,8 +510,58 @@ credentials (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). The save commit is the onl
 
 The consumer registers an index contributor per collection; the store calls it with the snapshot of `main` and of
 every working branch and collection branch. After a save only the changed documents are re-read.
-`snapshotIndex(tag | commit)` builds
-the index of a reporting date.
+`StoreIndex.snapshot(tag | commit)` builds the index of a reporting date.
+
+* *Contributor.* `IndexContributor<E>` is the consumer interface: for one `IndexContributor.Document` (the
+  `DocumentKey`, the source the document was read from, and the content of each of its files by path, grouped by the
+  document path convention of `DocumentPaths`, <<GDR-STORE-2>>) it returns the entry value, or `null` to leave the
+  document out. The index keeps only the returned value, never the files. `StoreIndex.open(writer, contributors)`
+  takes one contributor per `DocumentCollection` and returns a `StoreResult<StoreIndex<E>>`: `MALFORMED` for two
+  collections of one name, the passed-on `FAILED` with the detail `index: <exception class>` when the clone cannot be
+  read.
+* *Sources.* The index is built at its start from the branches of the clone: `refs/heads/main` holds the released
+  documents of every collection that has a contributor, a working branch `refs/heads/<collection>/<id>` of a
+  per-document collection holds the one document `<collection>/<id>`, and a collection branch
+  `refs/heads/<collection>` of a numbered collection holds its entries; the counter file is no document. Every other
+  branch, and every collection without a contributor, is not indexed. `entries(source, collection)` returns the current
+  entry values of one collection on one source by key, `sources()` the indexed branches and `commitId(source)` the
+  commit a source is indexed at.
+* *Refresh.* Every fetch, save and release of the writer hands the references it moved to the `StoreEvents` of the
+  writer once it released every lock of the store, and the index refreshes. A refresh reads the tips of the source
+  branches; a source whose tip did not move is kept, one whose tip moved re-reads only the documents with a path
+  changed between the indexed commit and the new tip (`RepositoryReader.changes` of `git-core`,
+  xref:git-core.adoc#GDR-CORE-9[GDR-CORE-9]), a new source is read in full and a gone one is dropped. When the changed
+  paths cannot be read, for example because the indexed commit is no longer in the clone, the source is read in full.
+* *Fetch.* `StoreWriter.fetch()` mirrors the remote into the clone with
+  `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, pruning, and the credentials of the technical user, under the
+  shared side of the maintenance lock and the transport lock (<<GDR-STORE-3>>), and returns `OK` with the full names of
+  the references it moved, sorted, or the passed-on Git outcome. `StoreWriter.fetchPeriodically(executor)` schedules
+  that fetch on the caller's `ScheduledExecutorService` with a fixed delay of `fetch.interval`; the writer starts no
+  thread of its own, and the caller ends the schedule by cancelling the returned `FetchSchedule` or shutting its
+  executor down. `FetchSchedule` wraps the `ScheduledFuture<?>` of
+  `ScheduledExecutorService.scheduleWithFixedDelay` (Java SE 21 API) so that no public signature carries a wildcard
+  type; it offers `cancel()`, which starts no further fetch and lets a running one complete, and `isDone()`. A failed periodic fetch, an outcome or an exception, is logged and never ends the schedule.
+* *Snapshot.* `snapshot(tagOrCommit)` takes a tag, by its full name or its name below `refs/tags/`, or a full commit
+  id, and builds a separate `StoreIndex.Snapshot` of that commit, indexed as `main` is; the current index is not
+  changed. A tag or commit the clone does not hold is the passed-on `NOT_FOUND` of `RepositoryReader.snapshot`, whose
+  detail names the field `revision`.
+* *Contributor failure.* A contributor that throws a `RuntimeException` leaves its document out; the failure is logged
+  with the class of the exception only, no throwable attached, and the refresh goes on with the next document.
+* *Index lock.* A refresh reads the references and then publishes a new index, so two refreshes, one after a save and
+  one after a fetch, could publish out of order. Refreshes are therefore serialised by one lock of the index and always
+  rebuild from the tips read under that lock; the published index is an immutable value swapped atomically, so a
+  reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
+  operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
+  A refresh that fails to read the clone keeps the previous index and marks it stale: an operation that moved no
+  reference, such as a fetch that found the clone current, tells the index so (`StoreEvents.Observer.unchanged`), and a
+  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. A
+  snapshot calls the contributors under the same lock, so the contributors of one index are never called by two
+  threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
+  documents changed.
+
+A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, a throwing contributor as
+`GIT_STORE-108` with the alias, the collection and the class of the exception (`git-store/doc/LogMessages.adoc`). No
+message names a path, a content, an id or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-10]
 == GDR-STORE-10: Post-Commit Listeners
@@ -426,6 +573,47 @@ the index of a reporting date.
   start, as the anchoring derives its pending subjects from its notes (<<GDR-STORE-17>>).
 
 image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source of truth: listeners feed the derived and assuring stores; complementary systems are referenced by id",align=center]
+
+* *Subscription.* `StoreWriter.subscribe(branch, listener)` subscribes a `CommitListener` to one branch, by its full
+  name or its name below `refs/heads/`, and returns a `CommitListener.Subscription`, an `AutoCloseable` whose `close`
+  unsubscribes and throws nothing. `close` takes the lock of the subscription, so a call in progress on another thread
+  ends first and no call starts after `close` returned; a listener may close its own subscription, and a `close` from
+  within a listener of another subscription does not wait, so it cannot deadlock, and stops the calls not yet started.
+  The listener is called with the full name of the branch and the full id of each new commit.
+* *Triggers.* The listener dispatch is the last observer of the `StoreEvents` of the writer (<<GDR-STORE-9>>): after a
+  save that pushed onto the branch, after a release that pushed `main`, and after a fetch that moved the branch, it is
+  called on the thread of that operation once the operation released every lock of the store and every index over the
+  writer was refreshed, or on the thread of a concurrent trigger that was delivering to the subscription already. A listener may therefore call the store, a save included, without a deadlock.
+* *Oldest first, exactly once.* What is new is derived from the Git state, never from the old id of an event: the events
+  of two operations are emitted by their own threads once their locks are free, so they may arrive in either order,
+  and the old id of an update may already be history another operation moved past (a release that merged a saved
+  commit into `main` before the save emitted its event, for example). Every subscription keeps a fixed *start*, the
+  tip the branch has in the clone when it is subscribed, or the tip of every branch of the clone for a branch that does
+  not exist yet, and its *delivered tips*, the new ids it walked, an ancestor of a later one dropped. For each move of
+  the branch the dispatch walks the commits reachable from the new id and from neither the start nor a delivered tip,
+  oldest first (JGit 7.8.0 `RevWalk` with `RevSort.TOPO` and `RevSort.REVERSE`). So every commit reachable from the
+  branch that was not reachable from the start reaches the listener exactly once, oldest first, whatever the order of
+  the events: a fetch that moved the branch by several commits delivers each of them in order, a later move dispatched
+  first delivers the earlier commits with it and the earlier move then finds them delivered, and a branch created
+  after the subscription delivers its own commits together with the history it forked from that was not in the clone
+  when the subscription started, but nothing older.
+* *In-memory state.* Start and delivered tips are never written anywhere: they only keep one subscription from
+  delivering a commit twice, and a new writer over the same clone starts its subscriptions at the current tips and
+  delivers nothing older. That is no kept progress: work that must not be lost is derived from the Git state at start.
+* *Serial delivery without deadlock.* The delivery of one subscription is serialised by its lock, so the calls of one
+  subscription never overlap. A thread inside a listener call never waits for the lock of a subscription: the move it
+  caused is queued, walked after the listener returned when it belongs to the listener's own subscription, walked at
+  once when the other subscription is free, and otherwise walked by the thread that holds that subscription, which
+  drains the queue before it lets go of the lock. Two listeners on two branches that save onto each other's branch on
+  two threads therefore never deadlock, and a listener that re-enters the store gets its own new commits after it
+  returned.
+* *Failure isolation.* A `RuntimeException` of a listener is caught and logged with the class of the exception only, no
+  throwable attached; the commit counts as delivered, and the save, release or fetch that triggered the call keeps its
+  result.
+
+A failing listener is logged as `GIT_STORE-109` with the alias, the branch and the class of the exception
+(`git-store/doc/LogMessages.adoc`); no message names a path, a content or a pseudonym
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-11]
 == GDR-STORE-11: Deterministic Content through Codecs
