@@ -76,7 +76,10 @@ Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this
    PLAN-20 deliverable 4): `ConcurrentWritersTest.tenWritersWithOwnClones`
    (a `DirectoryNotEmptyException` on `objects/pack` when the fixture deletes the temporary remote, twice, and a lost lease on
    all ten attempts once: make the fixture's cleanup wait for or retry the deletion, and reproduce the lost lease with a
-   barrier); (j) the private duplicates PLAN-09 left in `git-store`: three byte-identical copies of `name(StoreResult.Outcome)`
+   barrier; PLAN-12's run saw it again on four CI runs with four different errors, one of them "Failed to close extension
+   context", and a red build the pre-push gate accepted; lessons `2026-11-22-21-001` and `-004`: log the four errors verbatim,
+   check how the writers start (a barrier or latch, not sleeps), whether each has its own repository handle, and whether the
+   compare-and-swap loser may retry, then fix it in its own change); (j) the private duplicates PLAN-09 left in `git-store`: three byte-identical copies of `name(StoreResult.Outcome)`
    (`DocumentRelease`, `StoreWriter`, `ExplicitSave`) and new private copies of `HEADS` and `ORIGIN` beside
    `StoreReferences.HEADS` and `ExplicitSave.ORIGIN` (a fourth copy of `name` now sits in `StoreClone` 203): one shared home
    each, package-private; the measurement scope of `IndexFootprintTest` (it also walks the repository the index reads) is item

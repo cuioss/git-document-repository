@@ -97,9 +97,12 @@ owner decides inside this plan.
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-12; PLAN-09 (release, and its deliverable 5, the per-attempt save step this plan regenerates output
-  through: the hypothesis of the Claim Labels was contradicted at `c1e02fc` — PLAN-08's `StoreWriter.save` has no such
-  step — and the gap was folded into PLAN-09 on 2026-11-21) and PLAN-10 (trailers carrying `Auth-Context` / `Auth-Time`).
+- Depends on: PLAN-12 (shipped, PR #54, `8d09629`) and PLAN-23 (`git-forms` hardening, 2026-11-22: the nesting-depth and
+  decimal-exponent defects of PLAN-12's `DataNode`, reader and codec, which this plan's generated output and transitions build on,
+  and the codec key order and `format` limits it must know); PLAN-09 (release, and its deliverable 5, the per-attempt save step
+  this plan regenerates output through: the hypothesis of the Claim Labels was contradicted at `c1e02fc` — PLAN-08's
+  `StoreWriter.save` has no such step — and the gap was folded into PLAN-09 on 2026-11-21, shipped at `4a5eed5`) and PLAN-10
+  (trailers carrying `Auth-Context` / `Auth-Time`).
 - Overlaps with: WS-03 plans — strictly sequential.
 - Adjacent to: deadlines (GDR-FORMS-6) — parsed here, evaluated in PLAN-14.
 

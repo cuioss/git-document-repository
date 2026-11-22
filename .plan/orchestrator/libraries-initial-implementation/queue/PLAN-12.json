@@ -2,10 +2,10 @@
   "id": "PLAN-12",
   "slug": "forms-kinds-schema-layout",
   "workstream": "WS-03",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "plan-12-forms-kinds-schema-layout",
+  "pr": "54",
+  "landing": "landings/PLAN-12.md",
   "seq": 12
 }
