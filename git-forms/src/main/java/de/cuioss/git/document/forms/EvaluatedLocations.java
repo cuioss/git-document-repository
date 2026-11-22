@@ -40,7 +40,8 @@ import org.jspecify.annotations.Nullable;
  * itself, and by those keywords and {@code unevaluatedProperties} of every schema applied in place to the same value
  * that the value satisfies: a sub-schema of {@code allOf}, {@code anyOf} and {@code oneOf}, {@code if} and the branch
  * {@code then} or {@code else} it selects, the schema of an entry of {@code dependentSchemas} whose property the value
- * holds, and the target of a {@code $ref} or {@code $dynamicRef}. An item is evaluated likewise by {@code prefixItems}
+ * holds, and each target of a {@code $ref} or {@code $dynamicRef} ({@link FormSchema#targets(SchemaResources, Map)}),
+ * those of the dynamic scope of a {@code $dynamicRef} included. An item is evaluated likewise by {@code prefixItems}
  * (the leading items), {@code items} (all), {@code contains} (each item it matches) and {@code unevaluatedItems} of an
  * applied schema. The annotations of {@code not} are never collected. Whether a value satisfies an applied schema is
  * decided by {@code dev.harrel:json-schema} 1.9.1 with the schema without {@code required}, as

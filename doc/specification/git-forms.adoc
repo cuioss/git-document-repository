@@ -124,16 +124,32 @@ refused with that reason. A reference must not select an object inside the value
 `examples` of a schema (`{"$ref": "#/$defs/h/const", "$defs": {"h": {"const": {}}}}`), otherwise the reason is
 `$ref: a reference into the value of const, enum, default or examples`: the object would become a schema whose
 `required` `validate` removes, so validation would compare the data with a literal other than the one written; values
-under these keywords are therefore never rewritten. A fragment must not hold a `+`, otherwise
+under these keywords are therefore never rewritten. For the same reason a reference must not select the value of
+`dependentRequired` or `$vocabulary` or an object inside it, nor the map of `properties`, `patternProperties`, `$defs`,
+`definitions` or `dependentSchemas` itself, whose values are schemas but which is none: in
+`{"properties": {"p": {"$ref": "#/$defs/h"}, "q": {"$ref": "#/$defs/h/dependentRequired"}}, "$defs": {"h":
+{"dependentRequired": {"required": ["x"]}}}}` the reference of `q` would make the map of `dependentRequired` a schema,
+`validate` would remove its entry `required`, and `{"p": {"required": true}, "q": {}}` would be valid although `h`
+requires `x` together with `required`. Such a schema is refused with the reason
+`$ref: a reference into the value of dependentRequired or $vocabulary, or to a map of named sub-schemas`; the
+reference of `p` to the schema `h` that holds the keyword stays valid. These are the keywords of Draft 2020-12 that
+`dev.harrel:json-schema` 1.9.1 defines
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Keyword.java[json-schema
+1.9.1, `Keyword`]) whose value may be an object that is no schema; an array or a string, such as the value of
+`required` or `type`, or a list of `dependentRequired`, selects no schema and is refused with that reason. Both
+refusals cover every object a `$dynamicRef` may be bound to through its dynamic scope as well. A fragment must not hold
+a `+`, otherwise
 the reason is `$ref: a fragment with a plus sign, which the validator decodes as a space`: `dev.harrel:json-schema`
 1.9.1 decodes a fragment with `java.net.URLDecoder`, which form-decodes `+` to a space, unlike the percent-decoding of
 RFC 3986 that RFC 6901 relies on
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/UriUtil.java[json-schema
 1.9.1, `UriUtil`]); `git-forms` decodes the same way, so that both follow the same target, and refuses the one case in
 which that target differs from the standard one. A `+` encoded as `%2B` is accepted and stays a `+`. These rules, and those on `required` below,
-hold for every schema of the file a validator may apply: the root, every sub-schema, and every object a `$ref` or
-`$dynamicRef` selects, wherever it sits, also under a keyword the dialect does not define (`{"$ref": "#/x-contact",
-"x-contact": {"required": ["name"]}}`). A schema whose references apply a schema to the
+hold for every schema of the file a validator may apply: the root, every sub-schema, every object a `$ref` or
+`$dynamicRef` selects, and every object the dynamic scope of a `$dynamicRef` may bind it to (see below), wherever it
+sits, also under a keyword the dialect does not define (`{"$ref": "#/x-contact", "x-contact": {"required":
+["name"]}}`). The checks, the search for cycles below, `validate` and `required` therefore all see the same schemas. A
+schema whose references apply a schema to the
 same value again without descending into a child value, for example `{"allOf": [{"$ref": "#"}]}`, is refused with the
 reason `a reference cycle that returns to the same value without descending into a child value`, because evaluating it
 never ends: `dev.harrel:json-schema` 1.9.1 resolves the reference and validates the same value again without a repeat
@@ -197,8 +213,11 @@ loses precision) underflows to zero, so `multipleOf` accepts such
 a number, `1e-400` under `"multipleOf": 1` for example. `git-forms` accepts this gap of the library and adds no check of
 its own.
 `SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema, every
-sub-schema (`contentSchema` included) and every schema a reference selects, also under an unknown keyword, so that the
-example `x-contact` above validates `{}` as `Valid` while `required` reports `/name`; a key named `required` in any other
+sub-schema (`contentSchema` included) and every schema a reference selects, also under an unknown keyword and through
+the dynamic scope of a `$dynamicRef`, so that the example `x-contact` above validates `{}` as `Valid` while `required`
+reports `/name`, and so does `{"$id": "https://example.invalid/a", "$ref": "b", "x": {"$dynamicAnchor": "node",
+"required": ["name"]}, "$defs": {"b": {"$id": "b", "$dynamicRef": "c#node"}, "c": {"$id": "c", "$dynamicAnchor":
+"node"}}}`, whose `$dynamicRef` the validator may bind to `x`; a key named `required` in any other
 object, the value of `const` for example, is data and stays. It returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
 `SchemaValidator.required` checks `required` alone and applies the sub-schemas as Draft 2020-12 applies them
 (link:https://json-schema.org/draft/2020-12[JSON Schema, Draft 2020-12], Core, section 10, "A Vocabulary for Applying
@@ -208,13 +227,14 @@ that of every pattern of `patternProperties` that matches its name, and in `addi
 its position and in `items` only for the items after those of `prefixItems`, so an item the array does not hold is
 never required; in every sub-schema of `allOf`; in the schema of every entry of `dependentSchemas` whose property the
 data holds, applied to the same object; in every schema a `$ref` or `$dynamicRef` references within the file (see the
-resolution below; a `$dynamicRef` is resolved like a `$ref`, its dynamic scope not considered); and in the sub-schema of `unevaluatedProperties` and of `unevaluatedItems` for exactly the
+resolution below; a `$dynamicRef` also in every schema object of the file that declares a `$dynamicAnchor` of the name
+in its fragment, the over-approximation of its dynamic scope that the search for cycles uses); and in the sub-schema of `unevaluatedProperties` and of `unevaluatedItems` for exactly the
 properties and items that Draft 2020-12 treats as unevaluated at its location (Core, section 11, "A Vocabulary for
 Unevaluated Locations"). A property is evaluated there by `properties`, `patternProperties` and `additionalProperties`
 of the same schema, and by these keywords and `unevaluatedProperties` of every schema applied in place to the same
 value that the value satisfies: a sub-schema of `allOf`, `anyOf` and `oneOf`, `if` and the branch `then` or `else` it
-selects, the schema of an entry of `dependentSchemas` whose property the object holds, and the target of a `$ref` or
-`$dynamicRef`; an item likewise by `prefixItems` (the leading items), `items` (every item), `contains` (each item it
+selects, the schema of an entry of `dependentSchemas` whose property the object holds, and each target of a `$ref` or
+`$dynamicRef`, those of its dynamic scope included; an item likewise by `prefixItems` (the leading items), `items` (every item), `contains` (each item it
 matches) and `unevaluatedItems` of an applied schema; the annotations of `not` are never collected. Whether a value
 satisfies an applied schema is decided by the validator with the schema without `required`, as `validate` evaluates it,
 so `{"unevaluatedProperties": {"required": ["name"]}}` with the data `{"entry": {}}` reports `/entry/name`, while the

@@ -85,7 +85,8 @@ public final class SchemaValidator {
      * {@code prefixItems} at its position and in {@code items} for the items after those of {@code prefixItems}; in every
      * sub-schema of {@code allOf}; in the schema of every entry of {@code dependentSchemas} whose property the data
      * holds; in every schema a {@code $ref} or {@code $dynamicRef} references within the schema file, for example
-     * {@code #/$defs/contact}; and in the sub-schema of {@code unevaluatedProperties} and {@code unevaluatedItems} for
+     * {@code #/$defs/contact}, and for a {@code $dynamicRef} in every schema its dynamic scope may bind it to; and in the
+     * sub-schema of {@code unevaluatedProperties} and {@code unevaluatedItems} for
      * exactly the properties and items that Draft 2020-12 treats as unevaluated at its location, where an applied schema
      * evaluates only if the value satisfies it as {@link #validate(FormSchema, Map)} evaluates it. A schema applied a
      * second time to the same value is not walked again; a schema whose references apply a schema to the same value

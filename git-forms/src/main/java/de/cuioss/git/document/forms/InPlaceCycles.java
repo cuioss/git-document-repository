@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
  * {@code allOf}, {@code anyOf} and {@code oneOf}, the sub-schema of {@code not}, {@code if}, {@code then} and
  * {@code else}, the schema of an entry of {@code dependentSchemas}, the target of a {@code $ref} or
  * {@code $dynamicRef} within the file, resolved through {@link SchemaResources}, and, for a {@code $dynamicRef}, every
- * schema object of the file its dynamic scope may bind it to ({@link SchemaResources#dynamicScopeTargets(String)}): the
+ * schema object of the file its dynamic scope may bind it to ({@link SchemaResources#targets(Map, String)}): the
  * validator resolves a {@code $dynamicRef} through the resources being evaluated, outermost first, so it can return to
  * an outer schema that no static target shows, and taking every candidate finds each cycle some scope could produce.
  * The keywords that descend into a child value ({@code properties}, {@code items}, {@code unevaluatedProperties} and
@@ -51,8 +51,6 @@ final class InPlaceCycles {
     /** The keywords whose sub-schemas are applied to the same value; the references are added separately. */
     private static final List<String> IN_PLACE = List.of("allOf", "anyOf", "oneOf", "not", "if", "then", "else",
             "dependentSchemas");
-
-    private static final String DYNAMIC_REF = "$dynamicRef";
 
     private final SchemaResources resources;
 
@@ -115,9 +113,6 @@ final class InPlaceCycles {
             edges.addAll(FormSchema.subSchemas(keyword, schema.get(keyword)));
         }
         edges.addAll(FormSchema.targets(resources, schema));
-        if (schema.get(DYNAMIC_REF) instanceof String reference) {
-            edges.addAll(resources.dynamicScopeTargets(reference));
-        }
         return edges;
     }
 

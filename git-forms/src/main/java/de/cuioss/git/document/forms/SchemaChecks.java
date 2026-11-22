@@ -28,7 +28,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * The checks of {@link FormSchema#parse(String, byte[])} that refuse a schema before the validator sees it: a cycle of
  * schemas applied to the same value ({@link InPlaceCycles}), a reference that leaves the file or selects no schema,
- * a reference into the literal value of {@code const}, {@code enum}, {@code default} or {@code examples},
+ * a reference to an object that is no schema (inside the literal value of {@code const}, {@code enum}, {@code default}
+ * or {@code examples}, the value of {@code dependentRequired} or {@code $vocabulary}, or a map of named sub-schemas),
  * {@value FormSchema#SPLIT} that is not a boolean on a top-level property of type {@code object}, {@code required} that
  * is not an array of unique strings, and {@code required} under a keyword that decides between alternatives or
  * conditions. The checks reach every schema of the file a validator may apply, those that only a reference selects
@@ -41,6 +42,16 @@ final class SchemaChecks {
 
     /** The keywords whose value is a literal JSON value, never a schema. */
     private static final List<String> LITERALS = List.of("const", "enum", "default", "examples");
+
+    /**
+     * The keywords whose value is an object of names to values that are no schema: to arrays of property names
+     * ({@code dependentRequired}) and to booleans ({@code $vocabulary}). Among the keywords of Draft 2020-12 that
+     * {@code dev.harrel:json-schema} 1.9.1 defines ({@code Keyword}), these and {@link #LITERALS} are the ones whose
+     * value may be an object that is no schema; every other one holds a schema, a map or list of schemas, a string, a
+     * number, a boolean or an array of strings. {@code dependencies} of Draft-07 is not evaluated under Draft 2020-12
+     * and counts as a keyword the dialect does not define.
+     */
+    private static final List<String> VALUE_MAPS = List.of("dependentRequired", "$vocabulary");
 
     /** The reason of a schema that applies itself to the same value without end. */
     static final String IN_PLACE_CYCLE =
@@ -60,7 +71,7 @@ final class SchemaChecks {
 
     /**
      * Checks a schema file: first for a cycle of schemas applied to the same value, then the root and its sub-schemas,
-     * then the schemas only a reference selects.
+     * then for a reference to an object that is no schema, then the schemas only a reference selects.
      *
      * @param resources the resources of the file, against which references are resolved
      * @param root      the root of the schema file
@@ -72,14 +83,14 @@ final class SchemaChecks {
             return IN_PLACE_CYCLE;
         }
         @Nullable String problem = checkSubSchemas(resources, root, false, true);
+        if (problem == null) {
+            problem = checkValueTargets(resources, schemas);
+        }
         Set<Object> topLevelProperties = FormSchema.identitySet();
         topLevelProperties.addAll(FormSchema.subSchemas(PROPERTIES, root.get(PROPERTIES)));
         for (int index = 0; problem == null && index < schemas.size(); index++) {
             Map<?, ?> schema = schemas.get(index);
             problem = checkReferenced(resources, schema, topLevelProperties.contains(schema));
-        }
-        if (problem == null) {
-            problem = checkLiteralTargets(resources, schemas);
         }
         return problem;
     }
@@ -200,40 +211,62 @@ final class SchemaChecks {
     }
 
     /**
-     * Refuses a reference whose target is an object inside the value of {@code const}, {@code enum}, {@code default} or
-     * {@code examples} of a schema: the target would become a schema object, from which {@code required} is removed
-     * for {@link SchemaValidator#validate(FormSchema, Map)}, so validation would compare the data with a literal that
-     * differs from the schema as written. Refusing it keeps every literal as written.
+     * Refuses a reference that may select an object that is no schema in the file as written: an object inside the
+     * value of {@code const}, {@code enum}, {@code default} or {@code examples} ({@link #LITERALS}), the value of
+     * {@code dependentRequired} or {@code $vocabulary} or an object inside it ({@link #VALUE_MAPS}), or the map of a
+     * keyword of {@link FormSchema#SCHEMA_MAPS} itself, whose values are schemas but which is none. Each target of
+     * {@link SchemaResources#targets(Map, String)} counts, those of the dynamic scope of a {@code $dynamicRef} included.
+     * The target would become a schema object, from which {@code required} is removed for
+     * {@link SchemaValidator#validate(FormSchema, Map)}, so validation would read a literal, the names a property
+     * requires, a vocabulary or the sub-schemas of a keyword other than as written. Refusing it keeps each as written;
+     * a reference to the schema that holds the keyword stays valid. Every array and string such a reference could
+     * select instead is already refused as no schema by {@link #checkReferences}.
      */
-    private static @Nullable String checkLiteralTargets(SchemaResources resources, List<Map<?, ?>> schemas) {
-        Set<Object> literals = literalObjects(schemas);
+    private static @Nullable String checkValueTargets(SchemaResources resources, List<Map<?, ?>> schemas) {
+        Set<Object> literals = valueObjects(schemas, LITERALS);
+        Set<Object> keywordValues = valueObjects(schemas, VALUE_MAPS);
+        for (Map<?, ?> schema : schemas) {
+            for (String keyword : FormSchema.SCHEMA_MAPS) {
+                if (schema.get(keyword) instanceof Map<?, ?> named) {
+                    keywordValues.add(named);
+                }
+            }
+        }
         for (Map<?, ?> schema : schemas) {
             for (String reference : FormSchema.REFERENCES) {
-                if (schema.get(reference) instanceof String target
-                        && literals.contains(resources.resolve(schema, target))) {
-                    return reference + ": a reference into the value of const, enum, default or examples";
+                for (Map<?, ?> target : resources.targets(schema, reference)) {
+                    if (literals.contains(target)) {
+                        return reference + ": a reference into the value of const, enum, default or examples";
+                    }
+                    if (keywordValues.contains(target)) {
+                        return reference + ": a reference into the value of dependentRequired or $vocabulary, "
+                                + "or to a map of named sub-schemas";
+                    }
                 }
             }
         }
         return null;
     }
 
-    /** Every object within a literal value of a schema, compared by identity; walked with an explicit stack. */
-    private static Set<Object> literalObjects(List<Map<?, ?>> schemas) {
-        Set<Object> literals = FormSchema.identitySet();
+    /**
+     * Every object within the value of one of the keywords of a schema, compared by identity; walked with an explicit
+     * stack.
+     */
+    private static Set<Object> valueObjects(List<Map<?, ?>> schemas, List<String> keywords) {
+        Set<Object> found = FormSchema.identitySet();
         Deque<Object> pending = new ArrayDeque<>();
         for (Map<?, ?> schema : schemas) {
-            LITERALS.forEach(keyword -> pushContainer(pending, schema.get(keyword)));
+            keywords.forEach(keyword -> pushContainer(pending, schema.get(keyword)));
         }
         while (!pending.isEmpty()) {
             Object value = pending.pop();
-            if (value instanceof Map<?, ?> map && literals.add(map)) {
+            if (value instanceof Map<?, ?> map && found.add(map)) {
                 map.values().forEach(child -> pushContainer(pending, child));
             } else if (value instanceof List<?> list) {
                 list.forEach(child -> pushContainer(pending, child));
             }
         }
-        return literals;
+        return found;
     }
 
     /** Pushes a value that is an object or an array; a scalar and {@code null} hold no object. */

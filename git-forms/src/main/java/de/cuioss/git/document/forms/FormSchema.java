@@ -44,7 +44,9 @@ import org.jspecify.annotations.Nullable;
  * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
  * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it
  * (an array index of a JSON Pointer only in its canonical form, {@code 0} or without leading zeros), or that selects an
- * object inside the literal value of {@code const}, {@code enum}, {@code default} or {@code examples}, a cycle of
+ * object inside the literal value of {@code const}, {@code enum}, {@code default} or {@code examples}, the value of
+ * {@code dependentRequired} or {@code $vocabulary} or an object inside it, or the map of {@code properties},
+ * {@code patternProperties}, {@code $defs}, {@code definitions} or {@code dependentSchemas} itself, a cycle of
  * schemas applied to the same value without descending into a child value (for example
  * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
  * on a top-level property of type {@code object} (also in a schema only a reference selects), {@code required} that is
@@ -173,15 +175,14 @@ public final class FormSchema {
     }
 
     /**
-     * The schemas within the file that the references of a schema resolve to, each against the base URI of the resource
-     * that contains the schema ({@link SchemaResources}).
+     * The schemas within the file that the references of a schema may select, {@link SchemaResources#targets(Map,
+     * String)} of {@code $ref} and {@code $dynamicRef} together: for a {@code $dynamicRef} also every object its dynamic
+     * scope may bind it to, so that every walk over the schema follows each candidate the validator may apply.
      */
     static List<Map<?, ?>> targets(SchemaResources resources, Map<?, ?> schema) {
         List<Map<?, ?>> targets = new ArrayList<>();
         for (String reference : REFERENCES) {
-            if (schema.get(reference) instanceof String target) {
-                addSchema(targets, resources.resolve(schema, target));
-            }
+            targets.addAll(resources.targets(schema, reference));
         }
         return targets;
     }
@@ -226,11 +227,12 @@ public final class FormSchema {
 
     /**
      * A copy of the schema file without the keyword {@code required} in every schema object a validator may apply
-     * ({@link SchemaResources#schemaObjects()}): the root, every sub-schema, and every object a reference selects,
-     * wherever it sits, also under a keyword the dialect does not define. Any other object keeps a key named
-     * {@code required}; a value under {@code const}, {@code enum}, {@code default} or {@code examples} is never
-     * rewritten, because {@link #parse(String, byte[])} refuses a reference that selects an object inside it, so no
-     * such object is a schema object and validation compares the data with the literal as written.
+     * ({@link SchemaResources#schemaObjects()}): the root, every sub-schema, and every object a reference selects, also
+     * through the dynamic scope of a {@code $dynamicRef}, wherever it sits, also under a keyword the dialect does not
+     * define. Any other object keeps a key named {@code required}; a value under {@code const}, {@code enum},
+     * {@code default}, {@code examples}, {@code dependentRequired} or {@code $vocabulary} and a map of named
+     * sub-schemas are never rewritten, because {@link #parse(String, byte[])} refuses a reference that selects such an
+     * object, so none of them is a schema object and validation reads each as written.
      *
      * @param schemas the schema objects, compared by identity
      */

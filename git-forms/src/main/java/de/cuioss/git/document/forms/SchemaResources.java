@@ -47,8 +47,8 @@ import org.jspecify.annotations.Nullable;
  * (RFC 6901) from the root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared
  * within that resource. A
  * {@code $dynamicRef} is resolved like a {@code $ref} by {@link #resolve(Map, String)}; the schemas its dynamic scope
- * may bind it to at validation time are given separately by {@link #dynamicScopeTargets(String)}. An instance is
- * immutable.
+ * may bind it to at validation time are given separately by {@link #dynamicScopeTargets(String)}, and both together by
+ * {@link #targets(Map, String)}. An instance is immutable.
  */
 final class SchemaResources {
 
@@ -58,6 +58,7 @@ final class SchemaResources {
     static final URI BASE = URI.create("https://gdr.invalid/schema");
 
     private static final String ID = "$id";
+    private static final String DYNAMIC_REF = "$dynamicRef";
 
     /** The canonical form of an array index in a JSON Pointer (RFC 6901, section 4). */
     private static final Pattern CANONICAL_INDEX = Pattern.compile("0|[1-9][0-9]*");
@@ -132,10 +133,12 @@ final class SchemaResources {
 
     /**
      * The schema objects of the file that a validator may apply: the root, every object at a keyword that holds a
-     * sub-schema, and every object a {@code $ref} or {@code $dynamicRef} selects, wherever it sits in the file (also
+     * sub-schema, and every object a {@code $ref} or {@code $dynamicRef} may select ({@link #targets(Map, String)}),
+     * the objects the dynamic scope of a {@code $dynamicRef} may bind it to included, wherever it sits in the file (also
      * under a keyword the dialect does not define, such as {@code x-contact}), with their sub-schemas and targets in
-     * turn. Each object is listed once, compared by identity; the walk uses an explicit stack, so a deeply nested schema
-     * cannot overflow it.
+     * turn. The schema checks, the search for in-place cycles, the check of {@code required} and the removal of
+     * {@code required} for validation therefore see the same schemas. Each object is listed once, compared by identity;
+     * the walk uses an explicit stack, so a deeply nested schema cannot overflow it.
      *
      * @return the schema objects, the root first
      */
@@ -205,6 +208,26 @@ final class SchemaResources {
         }
         @Nullable Map<?, ?> anchored = anchors.getOrDefault(target, Map.of()).get(fragment);
         return anchored != null ? anchored : dynamicAnchors.getOrDefault(target, Map.of()).get(fragment);
+    }
+
+    /**
+     * The schema objects that one reference keyword of a schema may select: the object its value resolves to
+     * ({@link #resolve(Map, String)}), and for {@code $dynamicRef} also every object its dynamic scope may bind it to
+     * ({@link #dynamicScopeTargets(String)}). A boolean schema and any other value are not listed.
+     *
+     * @param containing the schema that holds the reference
+     * @param keyword    {@code $ref} or {@code $dynamicRef}
+     * @return the objects, empty when the schema holds no such reference or it selects no object
+     */
+    List<Map<?, ?>> targets(Map<?, ?> containing, String keyword) {
+        List<Map<?, ?>> targets = new ArrayList<>();
+        if (containing.get(keyword) instanceof String reference) {
+            FormSchema.addSchema(targets, resolve(containing, reference));
+            if (DYNAMIC_REF.equals(keyword)) {
+                targets.addAll(dynamicScopeTargets(reference));
+            }
+        }
+        return targets;
     }
 
     /**
