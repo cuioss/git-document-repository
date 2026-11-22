@@ -31,10 +31,10 @@ pages:
 github-automation:
   auto-merge-build-versions: true
 
-# TrailHand pins all libraries of this reactor with the single property version.git-document-repository.
+# Audit-Notary pins all libraries of this reactor with the single property version.git-document-repository.
 # They are released together at one version, so git-core stands for the lot when waiting for Maven Central.
 consumers:
-  - TrailHand:version.git-document-repository
+  - Audit-Notary:version.git-document-repository
 
 dependency-propagation:
   group-id: de.cuioss
