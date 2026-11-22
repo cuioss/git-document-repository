@@ -115,7 +115,7 @@ public final class SchemaValidator {
             prepare(schema);
             return true;
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             // the library signals a schema it refuses by an exception whose message may quote the schema
             return false;
