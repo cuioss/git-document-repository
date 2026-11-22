@@ -26,6 +26,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 
 import dev.harrel.jsonschema.JsonNode;
@@ -57,6 +58,9 @@ final class SchemaResources {
     static final URI BASE = URI.create("https://gdr.invalid/schema");
 
     private static final String ID = "$id";
+
+    /** The canonical form of an array index in a JSON Pointer (RFC 6901, section 4). */
+    private static final Pattern CANONICAL_INDEX = Pattern.compile("0|[1-9][0-9]*");
 
     private final Map<URI, Map<?, ?>> resources = new HashMap<>();
     private final Map<URI, Map<String, Map<?, ?>>> anchors = new HashMap<>();
@@ -293,7 +297,16 @@ final class SchemaResources {
         return node;
     }
 
+    /**
+     * The item of an array at a segment of a JSON Pointer. Only the canonical form of RFC 6901, section 4, selects an
+     * item, {@code 0} or a digit from 1 to 9 followed by digits, because the validator registers each sub-schema under
+     * its exact pointer ({@code SchemaRegistry} of {@code dev.harrel:json-schema} 1.9.1): {@code /allOf/00} or
+     * {@code /allOf/+1} would otherwise select an item here that the validator does not find.
+     */
     private static @Nullable Object index(List<?> list, String segment) {
+        if (!CANONICAL_INDEX.matcher(segment).matches()) {
+            return null;
+        }
         try {
             int index = Integer.parseInt(segment);
             return index >= 0 && index < list.size() ? list.get(index) : null;

@@ -15,6 +15,8 @@
  */
 package de.cuioss.git.document.forms;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * The checks of {@link FormSchema#parse(String, byte[])} that refuse a schema before the validator sees it: a cycle of
  * schemas applied to the same value ({@link InPlaceCycles}), a reference that leaves the file or selects no schema,
+ * a reference into the literal value of {@code const}, {@code enum}, {@code default} or {@code examples},
  * {@value FormSchema#SPLIT} that is not a boolean on a top-level property of type {@code object}, {@code required} that
  * is not an array of unique strings, and {@code required} under a keyword that decides between alternatives or
  * conditions. The checks reach every schema of the file a validator may apply, those that only a reference selects
@@ -34,6 +37,10 @@ import org.jspecify.annotations.Nullable;
 final class SchemaChecks {
 
     private static final String REQUIRED = "required";
+    private static final String PROPERTIES = "properties";
+
+    /** The keywords whose value is a literal JSON value, never a schema. */
+    private static final List<String> LITERALS = List.of("const", "enum", "default", "examples");
 
     /** The reason of a schema that applies itself to the same value without end. */
     static final String IN_PLACE_CYCLE =
@@ -65,8 +72,14 @@ final class SchemaChecks {
             return IN_PLACE_CYCLE;
         }
         @Nullable String problem = checkSubSchemas(resources, root, false, true);
+        Set<Object> topLevelProperties = FormSchema.identitySet();
+        topLevelProperties.addAll(FormSchema.subSchemas(PROPERTIES, root.get(PROPERTIES)));
         for (int index = 0; problem == null && index < schemas.size(); index++) {
-            problem = checkReferenced(resources, schemas.get(index));
+            Map<?, ?> schema = schemas.get(index);
+            problem = checkReferenced(resources, schema, topLevelProperties.contains(schema));
+        }
+        if (problem == null) {
+            problem = checkLiteralTargets(resources, schemas);
         }
         return problem;
     }
@@ -92,7 +105,7 @@ final class SchemaChecks {
         for (Map.Entry<?, ?> entry : schema.entrySet()) {
             Object keyword = entry.getKey();
             for (Map<?, ?> subSchema : FormSchema.subSchemas(keyword, entry.getValue())) {
-                problem = checkSubSchemas(resources, subSchema, root && "properties".equals(keyword), false);
+                problem = checkSubSchemas(resources, subSchema, root && PROPERTIES.equals(keyword), false);
                 if (problem == null) {
                     problem = checkConditional(resources, keyword, subSchema);
                 }
@@ -106,12 +119,19 @@ final class SchemaChecks {
 
     /**
      * Checks one schema object of the file as {@link #checkSubSchemas} checks a sub-schema, without descending: its
-     * references, its {@code required} and the {@code required} of its conditional sub-schemas. A schema that only a
-     * reference selects is reached this way; {@value FormSchema#SPLIT} applies to the top-level properties only and is
-     * not checked here.
+     * references, {@value FormSchema#SPLIT}, its {@code required} and the {@code required} of its conditional
+     * sub-schemas. A schema that only a reference selects is reached this way, also one under a keyword the dialect
+     * does not define, so that {@value FormSchema#SPLIT} cannot escape its check there.
+     *
+     * @param topLevelProperty whether the schema is the schema of a top-level property, where {@value FormSchema#SPLIT}
+     *                         {@code true} is allowed
      */
-    private static @Nullable String checkReferenced(SchemaResources resources, Map<?, ?> schema) {
+    private static @Nullable String checkReferenced(SchemaResources resources, Map<?, ?> schema,
+            boolean topLevelProperty) {
         @Nullable String problem = checkReferences(resources, schema);
+        if (problem == null) {
+            problem = checkSplit(schema, topLevelProperty);
+        }
         if (problem == null) {
             problem = checkRequired(schema);
         }
@@ -177,6 +197,52 @@ final class SchemaChecks {
             }
         }
         return null;
+    }
+
+    /**
+     * Refuses a reference whose target is an object inside the value of {@code const}, {@code enum}, {@code default} or
+     * {@code examples} of a schema: the target would become a schema object, from which {@code required} is removed
+     * for {@link SchemaValidator#validate(FormSchema, Map)}, so validation would compare the data with a literal that
+     * differs from the schema as written. Refusing it keeps every literal as written.
+     */
+    private static @Nullable String checkLiteralTargets(SchemaResources resources, List<Map<?, ?>> schemas) {
+        Set<Object> literals = literalObjects(schemas);
+        for (Map<?, ?> schema : schemas) {
+            for (String reference : FormSchema.REFERENCES) {
+                if (schema.get(reference) instanceof String target
+                        && literals.contains(resources.resolve(schema, target))) {
+                    return reference + ": a reference into the value of const, enum, default or examples";
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Every object within a literal value of a schema, compared by identity; walked with an explicit stack. */
+    private static Set<Object> literalObjects(List<Map<?, ?>> schemas) {
+        Set<Object> literals = FormSchema.identitySet();
+        Deque<Object> pending = new ArrayDeque<>();
+        for (Map<?, ?> schema : schemas) {
+            LITERALS.forEach(keyword -> pushContainer(pending, schema.get(keyword)));
+        }
+        while (!pending.isEmpty()) {
+            Object value = pending.pop();
+            if (value instanceof Map<?, ?> map && literals.add(map)) {
+                map.values().forEach(child -> pushContainer(pending, child));
+            } else if (value instanceof List<?> list) {
+                list.forEach(child -> pushContainer(pending, child));
+            }
+        }
+        return literals;
+    }
+
+    /** Pushes a value that is an object or an array; a scalar and {@code null} hold no object. */
+    private static void pushContainer(Deque<Object> pending, @Nullable Object value) {
+        if (value instanceof Map<?, ?> map) {
+            pending.push(map);
+        } else if (value instanceof List<?> list) {
+            pending.push(list);
+        }
     }
 
     private static @Nullable String checkSplit(Map<?, ?> schema, boolean topLevelProperty) {

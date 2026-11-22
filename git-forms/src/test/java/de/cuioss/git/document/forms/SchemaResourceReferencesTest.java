@@ -39,7 +39,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * The resolution of a reference against the base URI of the schema resource that contains it (GDR-FORMS-2): a sub-schema
  * that declares an {@code $id} is an embedded resource, a reference within it resolves inside it, and
  * {@link SchemaValidator#required(FormSchema, Map)} follows the same target as
- * {@link SchemaValidator#validate(FormSchema, Map)}; a reference that selects no resource of the file stays refused.
+ * {@link SchemaValidator#validate(FormSchema, Map)}; a reference that selects no resource of the file stays refused,
+ * as do a noncanonical array index, a reference into a literal value, a reference cycle applied to the same value, and
+ * a misplaced split annotation in a schema only a reference selects.
  * <p>
  * The schemas are literals, being the contract.
  */
@@ -204,7 +206,65 @@ class SchemaResourceReferencesTest {
                         "$ref: a fragment with a plus sign, which the validator decodes as a space"),
                 Arguments.of("a $dynamicRef whose fragment holds a plus sign",
                         "{ \"$dynamicRef\": \"#secret+anchor\", \"$defs\": { \"a\": { \"$anchor\": \"secret anchor\" } } }",
-                        "$dynamicRef: a fragment with a plus sign, which the validator decodes as a space"));
+                        "$dynamicRef: a fragment with a plus sign, which the validator decodes as a space"),
+                Arguments.of("a split annotation that is no boolean in a target under an unknown keyword",
+                        "{ \"$ref\": \"#/x\", \"x\": { \"gdr-split\": \"secret\" } }", "gdr-split: not a boolean"),
+                Arguments.of("a split annotation in a target under an unknown keyword",
+                        "{ \"$ref\": \"#/x\", \"x\": { \"type\": \"object\", \"gdr-split\": true } }",
+                        "gdr-split: only on a top-level property of type object"),
+                Arguments.of("a $ref with an array index that has a leading zero",
+                        "{ \"$ref\": \"#/allOf/00\", \"allOf\": [ {} ] }",
+                        "$ref: a reference that selects no schema of the file"),
+                Arguments.of("a $ref with an array index that has a minus sign",
+                        "{ \"$ref\": \"#/allOf/-0\", \"allOf\": [ {} ] }",
+                        "$ref: a reference that selects no schema of the file"),
+                Arguments.of("a $ref into the value of const",
+                        "{ \"properties\": { \"q\": { \"$ref\": \"#/$defs/h/const\" } }, "
+                                + "\"$defs\": { \"h\": { \"const\": { \"secret\": 1 } } } }",
+                        "$ref: a reference into the value of const, enum, default or examples"),
+                Arguments.of("a $dynamicRef into an object nested in the value of enum",
+                        "{ \"$dynamicRef\": \"#/$defs/h/enum/0/secret\", "
+                                + "\"$defs\": { \"h\": { \"enum\": [ { \"secret\": {} } ] } } }",
+                        "$dynamicRef: a reference into the value of const, enum, default or examples"));
+    }
+
+    static Stream<Arguments> acceptedNeighbours() {
+        return Stream.of(
+                Arguments.of("a split annotation on a top-level property of type object",
+                        "{ \"properties\": { \"part\": { \"type\": \"object\", \"gdr-split\": true } } }",
+                        List.of("part")),
+                Arguments.of("a $ref with the canonical array index 0",
+                        "{ \"$ref\": \"#/allOf/0\", \"allOf\": [ { \"type\": \"object\" } ] }", List.of()),
+                Arguments.of("a $ref with the canonical array index 10",
+                        "{ \"$ref\": \"#/prefixItems/10\", \"prefixItems\": [ {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, "
+                                + "{ \"type\": \"object\" } ] }",
+                        List.of()));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-2: {0} stays accepted")
+    @MethodSource("acceptedNeighbours")
+    void acceptedNeighbour(String description, String text, List<String> splitProperties) {
+        var schema = schema(text);
+
+        assertAll(
+                () -> assertEquals(splitProperties, schema.splitProperties(), "the split properties as declared"),
+                () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, Map.of()),
+                        "validate follows the reference"));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-2: a const that no reference selects is compared as written")
+    void constNoReferenceSelects() {
+        var schema = schema("{ \"properties\": { \"q\": { \"$ref\": \"#/$defs/h\" } }, "
+                + "\"$defs\": { \"h\": { \"const\": {} } } }");
+
+        assertAll(
+                () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, Map.of("q", Map.of())),
+                        "the empty object equals the literal"),
+                () -> assertEquals(new ValidationResult.Invalid(
+                                List.of(new Violation("/q", "must be the value the schema prescribes"))),
+                        validator.validate(schema, Map.of("q", Map.of("required", List.of("x")))),
+                        "an object with a key named required differs from it"));
     }
 
     static Stream<Arguments> percentEncodedFragments() {

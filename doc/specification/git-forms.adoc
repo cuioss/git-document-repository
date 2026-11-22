@@ -115,7 +115,16 @@ of `git-store`.
 select a schema resource of the same file, otherwise the schema is refused with the reason
 `$ref: a reference outside the schema file` (or `$dynamicRef: …`), and its fragment must select an object or boolean
 schema within that resource, otherwise the reason is `$ref: a reference that selects no schema of the file` (for
-`#/$defs/missing`, a pointer to a string or an anchor no schema declares). A fragment must not hold a `+`, otherwise
+`#/$defs/missing`, a pointer to a string or an anchor no schema declares). An array index in a JSON Pointer selects an
+item only in the canonical form of RFC 6901, section 4, `0` or a digit from 1 to 9 followed by digits, because
+`dev.harrel:json-schema` 1.9.1 registers every sub-schema under its exact pointer
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SchemaRegistry.java[json-schema
+1.9.1, `SchemaRegistry`]): `#/allOf/0` is accepted, `#/allOf/00` or `#/allOf/-0` selects no schema of the file and is
+refused with that reason. A reference must not select an object inside the value of `const`, `enum`, `default` or
+`examples` of a schema (`{"$ref": "#/$defs/h/const", "$defs": {"h": {"const": {}}}}`), otherwise the reason is
+`$ref: a reference into the value of const, enum, default or examples`: the object would become a schema whose
+`required` `validate` removes, so validation would compare the data with a literal other than the one written; values
+under these keywords are therefore never rewritten. A fragment must not hold a `+`, otherwise
 the reason is `$ref: a fragment with a plus sign, which the validator decodes as a space`: `dev.harrel:json-schema`
 1.9.1 decodes a fragment with `java.net.URLDecoder`, which form-decodes `+` to a space, unlike the percent-decoding of
 RFC 3986 that RFC 6901 relies on
@@ -261,7 +270,8 @@ schema declares the split.
 The schema declares the split with the annotation keyword `gdr-split`: `"gdr-split": true` on a top-level property of
 `"type": "object"` stores that property as the part `<collection>/<ulid>/<property>.yaml`. A validator outside the
 library ignores the unknown keyword, so the schema stays plain JSON Schema; `gdr-split` anywhere else, or with a value
-that is not a boolean, makes the schema `MALFORMED`. `DocumentLayout` gives the paths of a kind (`document`,
+that is not a boolean, makes the schema `MALFORMED`, also in a schema that only a reference selects
+(`{"$ref": "#/x", "x": {"gdr-split": "yes"}}` is refused with `gdr-split: not a boolean`). `DocumentLayout` gives the paths of a kind (`document`,
 `narrative`, `part`, `entry`, `counter`) and splits the data of a document into `document.yaml` and its parts and joins
 them back; a ULID, a fragment name or a running number that is empty, holds a `/` or starts with `.` is refused as
 `INVALID`, naming the argument, never its value. Creating a layout refuses, with an `IllegalArgumentException` that

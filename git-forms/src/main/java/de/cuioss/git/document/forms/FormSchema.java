@@ -42,11 +42,13 @@ import org.jspecify.annotations.Nullable;
  * A schema the library does not accept is the passed-on {@link StoreOutcome#MALFORMED}, its detail naming the schema
  * file and the problem, never content of the schema (GDR-NFR-3): text that is not UTF-8 or not JSON within the JSON
  * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
- * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it,
- * a cycle of schemas applied to the same value without descending into a child value (for example
+ * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it
+ * (an array index of a JSON Pointer only in its canonical form, {@code 0} or without leading zeros), or that selects an
+ * object inside the literal value of {@code const}, {@code enum}, {@code default} or {@code examples}, a cycle of
+ * schemas applied to the same value without descending into a child value (for example
  * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
- * on a top-level property of type {@code object}, {@code required} that is not an array of unique strings,
- * {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not}, {@code if}, {@code then},
+ * on a top-level property of type {@code object} (also in a schema only a reference selects), {@code required} that is
+ * not an array of unique strings, {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not}, {@code if}, {@code then},
  * {@code else} or {@code contains} (also in a schema such a sub-schema references), where deferring it to
  * {@link SchemaValidator#required(FormSchema, Map)} would change which alternative or condition holds, and a schema the
  * validator {@code dev.harrel:json-schema} refuses, for example one that does not conform to the meta-schema of the
@@ -224,8 +226,10 @@ public final class FormSchema {
     /**
      * A copy of the schema file without the keyword {@code required} in every schema object a validator may apply
      * ({@link SchemaResources#schemaObjects()}): the root, every sub-schema, and every object a reference selects,
-     * wherever it sits, also under a keyword the dialect does not define. Any other object, the value of {@code const}
-     * or {@code enum} for example, keeps a key named {@code required}.
+     * wherever it sits, also under a keyword the dialect does not define. Any other object keeps a key named
+     * {@code required}; a value under {@code const}, {@code enum}, {@code default} or {@code examples} is never
+     * rewritten, because {@link #parse(String, byte[])} refuses a reference that selects an object inside it, so no
+     * such object is a schema object and validation compares the data with the literal as written.
      *
      * @param schemas the schema objects, compared by identity
      */
