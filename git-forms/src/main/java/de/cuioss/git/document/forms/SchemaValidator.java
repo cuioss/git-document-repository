@@ -127,7 +127,7 @@ public final class SchemaValidator {
                 .withJsonNodeFactory(DataNode.FACTORY)
                 .withMessageProvider(KEY_ONLY)
                 .createValidator();
-        URI uri = validator.registerSchema(DataNode.root(schema.withoutRequired()));
+        URI uri = validator.registerSchema(SchemaResources.BASE, DataNode.root(schema.withoutRequired()));
         return new Prepared(validator, uri);
     }
 
@@ -148,7 +148,7 @@ public final class SchemaValidator {
         } catch (IllegalArgumentException e) {
             return null;
         }
-        @Nullable Object node = FormSchema.pointer(schema, fragment == null ? "" : fragment);
+        @Nullable Object node = SchemaResources.pointer(schema, fragment == null ? "" : fragment);
         return node instanceof Map<?, ?> map ? map.get(keyword) : null;
     }
 

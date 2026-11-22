@@ -1,0 +1,224 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.forms;
+
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+
+
+import dev.harrel.jsonschema.JsonNode;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The schema resources of one schema file and the resolution of the references within it, as JSON Schema Draft 2020-12
+ * resolves them (Core, section 8.2), checked against the source of {@code dev.harrel:json-schema} 1.9.1
+ * ({@code JsonParser}, {@code SchemaRegistry}, {@code UriUtil}).
+ * <p>
+ * The root is a resource under {@link #BASE}, and under its {@code $id} resolved against {@link #BASE} when it declares
+ * one. Every object within the file that declares an {@code $id} is an embedded resource, its URI the {@code $id}
+ * resolved against the URI of the resource that contains it; like the validator, every object of the file counts, not
+ * only those at a keyword that holds a schema. A reference is resolved against the URI of the resource that contains the
+ * schema holding it (for a schema that declares an {@code $id} itself, its own): the part before {@code #} selects a
+ * resource of the file, the fragment, URL-decoded, is empty for the resource itself, a JSON Pointer (RFC 6901) from the
+ * root of that resource, or the name of an {@code $anchor} or {@code $dynamicAnchor} declared within that resource. A
+ * {@code $dynamicRef} is resolved like a {@code $ref}; its dynamic scope is not considered. An instance is immutable.
+ */
+final class SchemaResources {
+
+    /**
+     * The base URI of a schema file; the validator registers the schema under it, so both resolve the same way.
+     */
+    static final URI BASE = URI.create("https://gdr.invalid/schema");
+
+    private static final String ID = "$id";
+
+    private final Map<URI, Map<?, ?>> resources = new HashMap<>();
+    private final Map<URI, Map<String, Map<?, ?>>> anchors = new HashMap<>();
+    private final Map<URI, Map<String, Map<?, ?>>> dynamicAnchors = new HashMap<>();
+    private final Map<Object, URI> baseOf = new IdentityHashMap<>();
+    private final Map<Object, String> pointerOf = new IdentityHashMap<>();
+    private final URI root;
+
+    private SchemaResources(Map<?, ?> document) {
+        URI rootUri = BASE;
+        if (document.get(ID) instanceof String id) {
+            @Nullable URI declared = resolveUri(BASE, id);
+            if (declared != null) {
+                rootUri = declared;
+            }
+        }
+        this.root = rootUri;
+        resources.put(BASE, document);
+        resources.put(root, document);
+        index(document, root, "", true);
+    }
+
+    /**
+     * Indexes the resources of a schema file.
+     *
+     * @param document the schema as read
+     * @return the resources of the file
+     */
+    static SchemaResources of(Map<?, ?> document) {
+        return new SchemaResources(document);
+    }
+
+    private void index(@Nullable Object node, URI base, String pointer, boolean isRoot) {
+        if (node instanceof Map<?, ?> map) {
+            URI own = base;
+            if (!isRoot && map.get(ID) instanceof String id) {
+                @Nullable URI embedded = resolveUri(base, id);
+                if (embedded != null) {
+                    own = embedded;
+                    resources.putIfAbsent(own, map);
+                }
+            }
+            baseOf.put(map, own);
+            pointerOf.put(map, pointer);
+            addAnchor(anchors, own, map.get("$anchor"), map);
+            addAnchor(dynamicAnchors, own, map.get("$dynamicAnchor"), map);
+            URI childBase = own;
+            map.forEach((key, value) -> index(value, childBase, pointer + "/" + JsonNode.encodeJsonPointer((String) key),
+                    false));
+        } else if (node instanceof List<?> list) {
+            for (int index = 0; index < list.size(); index++) {
+                index(list.get(index), base, pointer + "/" + index, false);
+            }
+        }
+    }
+
+    private static void addAnchor(Map<URI, Map<String, Map<?, ?>>> byResource, URI resource, @Nullable Object name,
+            Map<?, ?> schema) {
+        if (name instanceof String anchor) {
+            byResource.computeIfAbsent(resource, key -> new HashMap<>()).putIfAbsent(anchor, schema);
+        }
+    }
+
+    /** A URI resolved against a base, without its fragment, or {@code null} when it is no URI. */
+    private static @Nullable URI resolveUri(URI base, String reference) {
+        int hash = reference.indexOf('#');
+        String uri = hash < 0 ? reference : reference.substring(0, hash);
+        if (uri.isEmpty()) {
+            return base;
+        }
+        try {
+            return base.resolve(URI.create(uri));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Tells whether a reference selects a resource of the file; its fragment is not looked at.
+     *
+     * @param containing the schema that holds the reference
+     * @param reference  the value of {@code $ref} or {@code $dynamicRef}
+     * @return {@code true} when the reference stays within the file
+     */
+    boolean withinFile(Map<?, ?> containing, String reference) {
+        @Nullable URI target = resolveUri(baseOf(containing), reference);
+        return target != null && resources.containsKey(target);
+    }
+
+    /**
+     * Resolves a reference within the file.
+     *
+     * @param containing the schema that holds the reference
+     * @param reference  the value of {@code $ref} or {@code $dynamicRef}
+     * @return the referenced value, or {@code null} when the reference leaves the file or finds nothing
+     */
+    @Nullable
+    Object resolve(Map<?, ?> containing, String reference) {
+        URI base = baseOf(containing);
+        @Nullable URI target = resolveUri(base, reference);
+        @Nullable Map<?, ?> resource = target == null ? null : resources.get(target);
+        if (resource == null) {
+            return null;
+        }
+        int hash = reference.indexOf('#');
+        String fragment;
+        try {
+            fragment = hash < 0 ? "" : URLDecoder.decode(fragmentOf(reference, hash), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (fragment.isEmpty()) {
+            return resource;
+        }
+        if (fragment.startsWith("/")) {
+            return pointer(resource, fragment);
+        }
+        @Nullable Map<?, ?> anchored = anchors.getOrDefault(target, Map.of()).get(fragment);
+        return anchored != null ? anchored : dynamicAnchors.getOrDefault(target, Map.of()).get(fragment);
+    }
+
+    /** The fragment of a reference up to a further {@code #}, as the validator splits it. */
+    private static String fragmentOf(String reference, int hash) {
+        int next = reference.indexOf('#', hash + 1);
+        return next < 0 ? reference.substring(hash + 1) : reference.substring(hash + 1, next);
+    }
+
+    private URI baseOf(Map<?, ?> schema) {
+        return baseOf.getOrDefault(schema, root);
+    }
+
+    /**
+     * The JSON Pointer of an object within the file, from the root, as the validator registers it.
+     *
+     * @param schema an object of the file
+     * @return the pointer, or {@code null} for an object that is not part of the file
+     */
+    @Nullable
+    String pointerOf(Map<?, ?> schema) {
+        return pointerOf.get(schema);
+    }
+
+    /**
+     * The value at a JSON Pointer (RFC 6901) within a schema.
+     *
+     * @param pointer the pointer, empty or starting with {@code /}, its escapes not yet resolved
+     * @return the value, or {@code null} when the pointer finds nothing
+     */
+    static @Nullable Object pointer(Map<?, ?> schema, String pointer) {
+        @Nullable Object node = schema;
+        if (pointer.isEmpty()) {
+            return node;
+        }
+        for (String segment : pointer.substring(1).split("/", -1)) {
+            String name = segment.replace("~1", "/").replace("~0", "~");
+            node = switch (node) {
+                case Map<?, ?> map -> map.get(name);
+                case List<?> list -> index(list, name);
+                case null, default -> null;
+            };
+        }
+        return node;
+    }
+
+    private static @Nullable Object index(List<?> list, String segment) {
+        try {
+            int index = Integer.parseInt(segment);
+            return index >= 0 && index < list.size() ? list.get(index) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+}

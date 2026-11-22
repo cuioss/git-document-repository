@@ -112,7 +112,8 @@ of `git-store`.
 
 `FormSchema.parse` reads the schema file of a kind as JSON within the JSON data model of ADR-0008 (through the
 `YamlReader` of <<GDR-FORMS-1>>). `$schema` must be absent or the URI of Draft 2020-12; a `$ref` or `$dynamicRef` must
-point into the same file (`#…`); `required` must be an array of unique strings, in the schema and every sub-schema,
+select a schema resource of the same file, otherwise the schema is refused with the reason
+`$ref: a reference outside the schema file` (or `$dynamicRef: …`); `required` must be an array of unique strings, in the schema and every sub-schema,
 because the validator evaluates the schema without it and so never checks its form. `required` must not occur in a
 sub-schema of `oneOf`, `anyOf`, `not`, `if`, `then`, `else` or `contains`, nor in a schema such a sub-schema references
 within the file: these keywords decide between alternatives or conditions, and removing `required` for `validate` would
@@ -152,9 +153,8 @@ that of every pattern of `patternProperties` that matches its name, and in `addi
 `properties` nor a pattern of the same schema selects it; for every item of an array, in the entry of `prefixItems` at
 its position and in `items` only for the items after those of `prefixItems`, so an item the array does not hold is
 never required; in every sub-schema of `allOf`; in the schema of every entry of `dependentSchemas` whose property the
-data holds, applied to the same object; and in every schema a `$ref` or `$dynamicRef` references within the file (`#`,
-a JSON Pointer fragment such as `#/$defs/contact`, or the name of an `$anchor` or `$dynamicAnchor`; a `$dynamicRef` is
-resolved like a `$ref`); and in the sub-schema of `unevaluatedProperties` and of `unevaluatedItems` for exactly the
+data holds, applied to the same object; in every schema a `$ref` or `$dynamicRef` references within the file (see the
+resolution below; a `$dynamicRef` is resolved like a `$ref`, its dynamic scope not considered); and in the sub-schema of `unevaluatedProperties` and of `unevaluatedItems` for exactly the
 properties and items that Draft 2020-12 treats as unevaluated at its location (Core, section 11, "A Vocabulary for
 Unevaluated Locations"). A property is evaluated there by `properties`, `patternProperties` and `additionalProperties`
 of the same schema, and by these keywords and `unevaluatedProperties` of every schema applied in place to the same
@@ -168,7 +168,20 @@ data `{}` is complete. The evaluation is computed only for an `unevaluatedProper
 sub-schema holds `required`. A pattern is a Java regular expression found anywhere in the name, not anchored, as
 `dev.harrel:json-schema` 1.9.1 matches it (`Pattern.compile` and `Matcher.find`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Applicators.java[json-schema
-1.9.1, `Applicators`]). `required` under `oneOf`, `anyOf`, `not`, `if`, `then`, `else` and `contains` stays refused
+1.9.1, `Applicators`]). A reference is resolved per schema resource, as Draft 2020-12 resolves it (Core, section 8.2,
+"Base URI, Anchors, and Dereferencing") and as `dev.harrel:json-schema` 1.9.1 does
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/JsonParser.java[json-schema
+1.9.1, `JsonParser`];
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SchemaRegistry.java[json-schema
+1.9.1, `SchemaRegistry`]), so that `validate` and `required` follow the same target: the root is a resource under the
+base URI `https://gdr.invalid/schema`, under which `git-forms` also registers the schema with the validator, and under
+its `$id` resolved against that base; every object of the file that declares an `$id` is an embedded resource, its URI
+the `$id` resolved against the URI of the resource that contains it. A reference is resolved against the URI of the
+resource that contains the schema holding it (its own, when that schema declares the `$id`): the part before `#`
+selects a resource of the file, and the fragment, URL-decoded, is empty for the resource itself, a JSON Pointer from the
+root of that resource, or the name of an `$anchor` or `$dynamicAnchor` declared within it. So `#/$defs/contact` inside an
+embedded resource names the definition of that resource, not one of the root, and a reference back to the root or to
+another embedded resource by its `$id` is followed, as long as it stays within the file. `required` under `oneOf`, `anyOf`, `not`, `if`, `then`, `else` and `contains` stays refused
 by `FormSchema.parse`. The result is `Valid` or `MandatoryFieldsMissing` with the JSON Pointers of the missing fields,
 those of a referenced definition exactly as those of an inline schema. A reference cycle ends at the first schema applied a second
 time to the same value, so each missing field is named once; a recursive schema is checked as deep as the data goes. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is

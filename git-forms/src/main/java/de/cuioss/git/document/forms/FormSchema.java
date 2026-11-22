@@ -15,7 +15,6 @@
  */
 package de.cuioss.git.document.forms;
 
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -93,18 +92,18 @@ public final class FormSchema {
     /** The keywords that only hold sub-schemas for references; not part of the schema they are declared in. */
     private static final Set<String> DEFINITIONS = Set.of("$defs", "definitions");
 
-    /** The keywords that name a schema as the target of a reference by name. */
-    private static final Set<String> ANCHORS = Set.of("$anchor", "$dynamicAnchor");
-
     private final String path;
     private final Map<String, @Nullable Object> withoutRequired;
     private final Map<String, @Nullable Object> schema;
     private final Shape shape;
     private final List<String> splitProperties;
+    private final SchemaResources resources;
 
-    private FormSchema(String path, Map<String, @Nullable Object> schema, List<String> splitProperties) {
+    private FormSchema(String path, Map<String, @Nullable Object> schema, SchemaResources resources,
+            List<String> splitProperties) {
         this.path = path;
         this.schema = schema;
+        this.resources = resources;
         this.withoutRequired = withoutRequired(schema);
         this.shape = Shape.of(schema);
         this.splitProperties = List.copyOf(splitProperties);
@@ -139,11 +138,12 @@ public final class FormSchema {
         if (schema.containsKey("$schema") && !DIALECT.equals(dialect)) {
             return malformed(path, "$schema: not the dialect Draft 2020-12");
         }
-        @Nullable String problem = checkSubSchemas(schema, schema, false, true);
+        SchemaResources resources = SchemaResources.of(schema);
+        @Nullable String problem = checkSubSchemas(resources, schema, false, true);
         if (problem != null) {
             return malformed(path, problem);
         }
-        var formSchema = new FormSchema(path, schema, splitProperties(schema));
+        var formSchema = new FormSchema(path, schema, resources, splitProperties(schema));
         if (!SchemaValidator.accepts(formSchema)) {
             return malformed(path, "not a JSON Schema the validator accepts");
         }
@@ -155,20 +155,20 @@ public final class FormSchema {
      * top-level property of type {@code object}, {@code required} only as an array of unique strings and never in a
      * sub-schema of a {@linkplain #CONDITIONAL conditional keyword}, also not through a reference.
      *
-     * @param document the whole schema, against which references are resolved
+     * @param resources the resources of the file, against which references are resolved
      * @return the problem, or {@code null} when there is none
      */
-    private static @Nullable String checkSubSchemas(Map<?, ?> document, Map<?, ?> schema, boolean topLevelProperty,
-            boolean root) {
-        @Nullable String problem = checkKeywords(schema, topLevelProperty);
+    private static @Nullable String checkSubSchemas(SchemaResources resources, Map<?, ?> schema,
+            boolean topLevelProperty, boolean root) {
+        @Nullable String problem = checkKeywords(resources, schema, topLevelProperty);
         if (problem != null) {
             return problem;
         }
         for (Map.Entry<?, ?> entry : schema.entrySet()) {
             Object keyword = entry.getKey();
             for (Map<?, ?> subSchema : subSchemas(keyword, entry.getValue())) {
-                problem = checkSubSchemas(document, subSchema, root && PROPERTIES.equals(keyword), false);
-                if (problem == null && CONDITIONAL.contains(keyword) && holdsRequired(document, subSchema,
+                problem = checkSubSchemas(resources, subSchema, root && PROPERTIES.equals(keyword), false);
+                if (problem == null && CONDITIONAL.contains(keyword) && holdsRequired(resources, subSchema,
                         identitySet())) {
                     problem = REQUIRED + ": not allowed under " + keyword + ", where it cannot be deferred";
                 }
@@ -186,7 +186,7 @@ public final class FormSchema {
      *
      * @param visited the schemas already looked at, compared by identity, so that a reference cycle ends
      */
-    private static boolean holdsRequired(Map<?, ?> document, Map<?, ?> schema, Set<Object> visited) {
+    private static boolean holdsRequired(SchemaResources resources, Map<?, ?> schema, Set<Object> visited) {
         if (!visited.add(schema)) {
             return false;
         }
@@ -195,96 +195,26 @@ public final class FormSchema {
         }
         for (Map.Entry<?, ?> entry : schema.entrySet()) {
             if (!DEFINITIONS.contains(entry.getKey()) && subSchemas(entry.getKey(), entry.getValue()).stream()
-                    .anyMatch(subSchema -> holdsRequired(document, subSchema, visited))) {
+                    .anyMatch(subSchema -> holdsRequired(resources, subSchema, visited))) {
                 return true;
             }
         }
-        return targets(document, schema).stream()
-                .anyMatch(target -> holdsRequired(document, target, visited));
+        return targets(resources, schema).stream()
+                .anyMatch(target -> holdsRequired(resources, target, visited));
     }
 
-    /** The schemas within the file that the references of a schema resolve to. */
-    private static List<Map<?, ?>> targets(Map<?, ?> document, Map<?, ?> schema) {
+    /**
+     * The schemas within the file that the references of a schema resolve to, each against the base URI of the resource
+     * that contains the schema ({@link SchemaResources}).
+     */
+    private static List<Map<?, ?>> targets(SchemaResources resources, Map<?, ?> schema) {
         List<Map<?, ?>> targets = new ArrayList<>();
         for (String reference : REFERENCES) {
             if (schema.get(reference) instanceof String target) {
-                addSchema(targets, resolve(document, target));
+                addSchema(targets, resources.resolve(schema, target));
             }
         }
         return targets;
-    }
-
-    /**
-     * Resolves a reference within the file: {@code #} for the whole schema, a JSON Pointer fragment such as
-     * {@code #/$defs/contact} (RFC 6901), or the name of an {@code $anchor} or {@code $dynamicAnchor}. A
-     * {@code $dynamicRef} is resolved like a {@code $ref}, to the schema its fragment names; its dynamic scope is not
-     * considered.
-     *
-     * @return the referenced value, or {@code null} when the reference leaves the file or finds nothing
-     */
-    private static @Nullable Object resolve(Map<?, ?> document, String reference) {
-        if (!reference.startsWith("#")) {
-            return null;
-        }
-        String fragment;
-        try {
-            fragment = URI.create(reference).getFragment();
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        if (fragment == null || fragment.isEmpty()) {
-            return document;
-        }
-        return fragment.startsWith("/") ? pointer(document, fragment) : anchor(document, fragment);
-    }
-
-    /**
-     * The value at a JSON Pointer (RFC 6901) within a schema.
-     *
-     * @param pointer the pointer, empty or starting with {@code /}, its escapes not yet resolved
-     * @return the value, or {@code null} when the pointer finds nothing
-     */
-    static @Nullable Object pointer(Map<?, ?> schema, String pointer) {
-        @Nullable Object node = schema;
-        if (pointer.isEmpty()) {
-            return node;
-        }
-        for (String segment : pointer.substring(1).split("/", -1)) {
-            String name = segment.replace("~1", "/").replace("~0", "~");
-            node = switch (node) {
-                case Map<?, ?> map -> map.get(name);
-                case List<?> list -> index(list, name);
-                case null, default -> null;
-            };
-        }
-        return node;
-    }
-
-    private static @Nullable Object index(List<?> list, String segment) {
-        try {
-            int index = Integer.parseInt(segment);
-            return index >= 0 && index < list.size() ? list.get(index) : null;
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /** The first schema, in declaration order, whose {@code $anchor} or {@code $dynamicAnchor} is the name. */
-    private static @Nullable Map<?, ?> anchor(Map<?, ?> schema, String name) {
-        for (String keyword : ANCHORS) {
-            if (name.equals(schema.get(keyword))) {
-                return schema;
-            }
-        }
-        for (Map.Entry<?, ?> entry : schema.entrySet()) {
-            for (Map<?, ?> subSchema : subSchemas(entry.getKey(), entry.getValue())) {
-                @Nullable Map<?, ?> found = anchor(subSchema, name);
-                if (found != null) {
-                    return found;
-                }
-            }
-        }
-        return null;
     }
 
     /** A set that compares its elements by identity, for the schemas a walk has already looked at. */
@@ -293,8 +223,9 @@ public final class FormSchema {
     }
 
     /** Checks the keywords of one schema, not its sub-schemas; the problem, or {@code null}. */
-    private static @Nullable String checkKeywords(Map<?, ?> schema, boolean topLevelProperty) {
-        @Nullable String problem = checkReferences(schema);
+    private static @Nullable String checkKeywords(SchemaResources resources, Map<?, ?> schema,
+            boolean topLevelProperty) {
+        @Nullable String problem = checkReferences(resources, schema);
         if (problem == null) {
             problem = checkSplit(schema, topLevelProperty);
         }
@@ -304,9 +235,10 @@ public final class FormSchema {
         return problem;
     }
 
-    private static @Nullable String checkReferences(Map<?, ?> schema) {
+    /** Refuses a reference that selects no resource of the file, whatever its fragment. */
+    private static @Nullable String checkReferences(SchemaResources resources, Map<?, ?> schema) {
         for (String reference : REFERENCES) {
-            if (schema.get(reference) instanceof String target && !target.startsWith("#")) {
+            if (schema.get(reference) instanceof String target && !resources.withinFile(schema, target)) {
                 return reference + ": a reference outside the schema file";
             }
         }
@@ -444,7 +376,7 @@ public final class FormSchema {
 
     /** The schemas within this schema that the references of one of its sub-schemas resolve to. */
     List<Map<?, ?>> referencedSchemas(Map<?, ?> subSchema) {
-        return targets(schema, subSchema);
+        return targets(resources, subSchema);
     }
 
     /**
@@ -452,7 +384,12 @@ public final class FormSchema {
      * references within this schema.
      */
     boolean holdsRequired(Map<?, ?> subSchema) {
-        return holdsRequired(schema, subSchema, identitySet());
+        return holdsRequired(resources, subSchema, identitySet());
+    }
+
+    /** The resources of the schema file, against which references are resolved. */
+    SchemaResources resources() {
+        return resources;
     }
 
     /** The schema without the keyword {@code required}, which validation evaluates. */

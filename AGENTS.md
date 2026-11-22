@@ -74,7 +74,9 @@ configuration: `KindConfiguration` (loads `kinds.yaml` from a directory or a com
 `org.snakeyaml:snakeyaml-engine`), and with schema validation, data layout and codec: `FormSchema` (a JSON Schema of
 Draft 2020-12, its declaration order and the split keyword `gdr-split`), `SchemaValidator` (on `dev.harrel:json-schema`,
 `required` checked separately) with the sealed `ValidationResult` and `Violation`, `DocumentLayout`, `YamlDocumentCodec`
-and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNode` over the data model) and
+and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNode` over the data model),
+`SchemaResources` (the schema resources of a file and the resolution of references), `MandatoryFields` and
+`EvaluatedLocations` (the check of `required`) and
 `YamlWriter` (the canonical emitter); its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.

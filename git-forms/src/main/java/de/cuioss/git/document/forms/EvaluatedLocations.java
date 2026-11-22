@@ -29,7 +29,6 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 
-import dev.harrel.jsonschema.JsonNode;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -68,7 +67,6 @@ final class EvaluatedLocations {
     private static final String APPLIED = "https://gdr.invalid/applied/";
 
     private final FormSchema schema;
-    private final Map<Object, String> pointers = new IdentityHashMap<>();
     private final Map<String, URI> references = new HashMap<>();
     private final Map<Object, Map<Object, Boolean>> satisfied = new IdentityHashMap<>();
     private SchemaValidator.@Nullable Prepared prepared;
@@ -80,7 +78,6 @@ final class EvaluatedLocations {
      */
     EvaluatedLocations(FormSchema schema) {
         this.schema = schema;
-        index(schema.schema(), "");
     }
 
     /**
@@ -192,10 +189,10 @@ final class EvaluatedLocations {
         if (subSchema instanceof Boolean bool) {
             return bool;
         }
-        if (!(subSchema instanceof Map<?, ?>)) {
+        if (!(subSchema instanceof Map<?, ?> map)) {
             return false;
         }
-        @Nullable String pointer = pointers.get(subSchema);
+        @Nullable String pointer = schema.resources().pointerOf(map);
         if (pointer == null) {
             return false;
         }
@@ -226,21 +223,6 @@ final class EvaluatedLocations {
             prepared = SchemaValidator.prepare(schema);
         }
         return prepared;
-    }
-
-    /**
-     * Indexes the JSON Pointer of every object within the schema, as the validator registers every object it parses under
-     * its pointer from the root.
-     */
-    private void index(@Nullable Object node, String pointer) {
-        if (node instanceof Map<?, ?> map) {
-            pointers.put(map, pointer);
-            map.forEach((key, value) -> index(value, pointer + "/" + JsonNode.encodeJsonPointer((String) key)));
-        } else if (node instanceof List<?> list) {
-            for (int index = 0; index < list.size(); index++) {
-                index(list.get(index), pointer + "/" + index);
-            }
-        }
     }
 
     /**
