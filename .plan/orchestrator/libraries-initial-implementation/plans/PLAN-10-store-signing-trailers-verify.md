@@ -83,6 +83,22 @@ file with validity periods, runnable from CI without the application (GDR-STORE-
 - The commit path PLAN-08 shipped is `ExplicitSave` with `CommitIdentities` (author pseudonym, technical-user committer,
   `commit.email`); signature and trailers are added on that path, not beside it, and `git-core` stays read-only (PLAN-08
   edited it against its outline; report a `git-core` gap instead).
+- PLAN-09 shipped (PR #52, `4a5eed5`) the release commit (`DocumentRelease`, the fixed message `Release <collection>/<id> v<n>`)
+  and the per-attempt `SaveStep`: signature and trailers go on every commit path of `ExplicitSave` (the commit a step's edits
+  join included) and of `DocumentRelease`, which PLAN-09 left a hook point for. Its incomplete-release recovery must not start
+  to recognise a release by trailer text a caller can write; see the next constraint.
+- Review lessons of PLAN-09 (`landings/PLAN-09.md`; again many valid bot findings after a green build, mostly races): a recovery
+  or repair guard identifies its target by data only the guarded operation can produce (release metadata, plus document and
+  version), never by free text the caller controls, and is tested with a crafted input that imitates the scenario; the
+  conflict check runs on the final merged edit set right before `apply`, every source of edits (draft, step, recovery)
+  passing the same check, a file-versus-directory overlap included; a boundary that event delivery depends on is captured
+  while the lock that made the change is held and carried in the event; a callback never blocks on a lock another callback
+  may hold; a check-then-act on a closed flag happens under the lock `close()` takes; where a callback interface documents
+  sequential calls, every call site goes through the same serialization point; a reference name or path contains the
+  document id, so log only the alias and the outcome, DEBUG and fallback records included; recovery of a failed derived
+  state is not gated on the next change event; a test of a tree-producing operation compares file modes as well as bytes; a
+  Sonar S6539 fix lowers the count of every class it touches, and a deliberate `catch (RuntimeException ...)` carries its
+  justification in the form the OpenRewrite recipe accepts, so no `java:S1135` placeholder reaches new code.
 
 ## Done when
 
