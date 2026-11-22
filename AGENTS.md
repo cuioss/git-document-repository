@@ -28,8 +28,9 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners | `git-core` |
+| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec | `git-store` |
 
-Planned but not yet created: `git-forms`, `git-timestamp`, `git-directory` (see
+Planned but not yet created: `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
@@ -65,17 +66,31 @@ collection, over the package-private `DraftReferences`, `ExplicitSave`, `Documen
 `DraftExpiry`, `StoreEvents`, `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`; the commits it writes are
 unsigned and carry no trailers until GDR-STORE-12/13. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
 `git-store` only, for `IndexFootprintTest` (GDR-NFR-1). Its tests run on the class path against
-the `git-testing` fixtures. Add an `exports` directive together with the first
+the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
+`FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as
+`FormsResult.PassedOn`) and the `LogRecord` holder `GitFormsLogMessages`, and with the kinds of documents as
+configuration: `KindConfiguration` (loads `kinds.yaml` from a directory or a commit of a configuration repository) with
+`Kind` and `Numbering`, over the package-private `YamlReader` (YAML within the JSON data model, on
+`org.snakeyaml:snakeyaml-engine`), and with schema validation, data layout and codec: `FormSchema` (a JSON Schema of
+Draft 2020-12, its declaration order and the split keyword `gdr-split`), `SchemaValidator` (on `dev.harrel:json-schema`,
+`required` checked separately) with the sealed `ValidationResult` and `Violation`, `DocumentLayout`, `YamlDocumentCodec`
+and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNode` over the data model),
+`SchemaResources` (the schema resources of a file and the resolution of references), `SchemaChecks` (the refusals of
+a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to the same value), `MandatoryFields` and
+`EvaluatedLocations` (the check of `required`) and
+`YamlWriter` (the canonical emitter); its tests run on the class path as well.
+Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph (`git-store` is the only module that appends an edge, `git-core`), and the execution `consumer-isolation` of
+graph (`git-store` appends the edge `git-core`, `git-forms` the edge `git-store`), and the execution `consumer-isolation` of
 `git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
-`DomainTermAbsenceTest` in each module (`git-core`, `git-testing` and `git-store`) asserts that no public type carries
+`DomainTermAbsenceTest` in each module (`git-core`, `git-testing`, `git-store` and `git-forms`) asserts that no public type carries
 a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
 `META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
-reaches, its worktrees package included; `git-store` ships none and relies on that of `git-core` (GDR-NFR-4).
+reaches, its worktrees package included; `git-store` ships none and relies on that of `git-core`; `git-forms` ships
+`resource-config.json` only, for the bundle and the meta-schema its JSON Schema validator loads (GDR-NFR-4).
 
 ## Build
 

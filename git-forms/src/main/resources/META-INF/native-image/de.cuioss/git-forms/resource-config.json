@@ -1,0 +1,14 @@
+{
+  "resources": {
+    "includes": [
+      {
+        "pattern": "\\Qdraft2020-12.json\\E"
+      }
+    ]
+  },
+  "bundles": [
+    {
+      "name": "dev.harrel.jsonschema.messages"
+    }
+  ]
+}
