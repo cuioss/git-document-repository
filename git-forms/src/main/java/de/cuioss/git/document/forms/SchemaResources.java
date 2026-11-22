@@ -244,7 +244,7 @@ final class SchemaResources {
      * @return the objects that declare a {@code $dynamicAnchor} named by the fragment; empty
      *         for a fragment that is empty, a JSON Pointer, or not decodable
      */
-    List<Map<?, ?>> dynamicScopeTargets(String reference) {
+    private List<Map<?, ?>> dynamicScopeTargets(String reference) {
         @Nullable String fragment = decodedFragment(reference);
         if (fragment == null || fragment.isEmpty() || fragment.startsWith("/")) {
             return List.of();
