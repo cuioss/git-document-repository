@@ -225,23 +225,36 @@ final class SchemaChecks {
     private static @Nullable String checkValueTargets(SchemaResources resources, List<Map<?, ?>> schemas) {
         Set<Object> literals = valueObjects(schemas, LITERALS);
         Set<Object> keywordValues = valueObjects(schemas, VALUE_MAPS);
+        schemas.forEach(schema -> addSchemaMaps(keywordValues, schema));
         for (Map<?, ?> schema : schemas) {
-            for (String keyword : FormSchema.SCHEMA_MAPS) {
-                if (schema.get(keyword) instanceof Map<?, ?> named) {
-                    keywordValues.add(named);
-                }
+            @Nullable String refused = valueTargetReason(resources, schema, literals, keywordValues);
+            if (refused != null) {
+                return refused;
             }
         }
-        for (Map<?, ?> schema : schemas) {
-            for (String reference : FormSchema.REFERENCES) {
-                for (Map<?, ?> target : resources.targets(schema, reference)) {
-                    if (literals.contains(target)) {
-                        return reference + ": a reference into the value of const, enum, default or examples";
-                    }
-                    if (keywordValues.contains(target)) {
-                        return reference + ": a reference into the value of dependentRequired or $vocabulary, "
-                                + "or to a map of named sub-schemas";
-                    }
+        return null;
+    }
+
+    /** Adds the map of each keyword of {@link FormSchema#SCHEMA_MAPS} that the schema holds. */
+    private static void addSchemaMaps(Set<Object> keywordValues, Map<?, ?> schema) {
+        for (String keyword : FormSchema.SCHEMA_MAPS) {
+            if (schema.get(keyword) instanceof Map<?, ?> named) {
+                keywordValues.add(named);
+            }
+        }
+    }
+
+    /** The reason to refuse a reference of the schema that selects a literal or a keyword value, or {@code null}. */
+    private static @Nullable String valueTargetReason(SchemaResources resources, Map<?, ?> schema,
+            Set<Object> literals, Set<Object> keywordValues) {
+        for (String reference : FormSchema.REFERENCES) {
+            for (Map<?, ?> target : resources.targets(schema, reference)) {
+                if (literals.contains(target)) {
+                    return reference + ": a reference into the value of const, enum, default or examples";
+                }
+                if (keywordValues.contains(target)) {
+                    return reference + ": a reference into the value of dependentRequired or $vocabulary, "
+                            + "or to a map of named sub-schemas";
                 }
             }
         }

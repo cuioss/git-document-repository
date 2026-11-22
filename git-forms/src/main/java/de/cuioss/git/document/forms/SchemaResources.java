@@ -61,7 +61,7 @@ final class SchemaResources {
     private static final String DYNAMIC_REF = "$dynamicRef";
 
     /** The canonical form of an array index in a JSON Pointer (RFC 6901, section 4). */
-    private static final Pattern CANONICAL_INDEX = Pattern.compile("0|[1-9][0-9]*");
+    private static final Pattern CANONICAL_INDEX = Pattern.compile("0|[1-9]\\d*");
 
     private final Map<URI, Map<?, ?>> resources = new HashMap<>();
     private final Map<URI, Map<String, Map<?, ?>>> anchors = new HashMap<>();
