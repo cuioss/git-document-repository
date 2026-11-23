@@ -324,7 +324,8 @@ The outcome list of `git-directory`:
 An unexpected I/O failure, an invalid configuration value an operation reads, and a stored tree JGit cannot take in
 are the outcome `FAILED` of `GitOutcome`, not an exception. Exceptions remain for programming errors (violated
 preconditions, such as a `null` argument) and for the caller's own code (a `TreeOperation`, a `Signer`), whose
-exceptions propagate unchanged; they are never used for the outcomes above.
+unchecked exceptions propagate unchanged, except that a `Signer` which throws an `IOException`, a `GitAPIException` or
+a `JGitInternalException` ends the write as the outcome `FAILED`; they are never used for the outcomes above.
 
 [#GDR-GEN-4]
 == GDR-GEN-4: Logging

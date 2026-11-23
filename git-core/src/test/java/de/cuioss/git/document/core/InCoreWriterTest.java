@@ -752,7 +752,7 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: an invalid gpg.format of a signed commit is a failure, and the signer is not called")
-        void invalidGpgFormat(@InMemory Repository repository) throws Exception {
+        void invalidGpgFormat(@InMemory Repository repository) {
             repository.getConfig().setString(ConfigConstants.CONFIG_GPG_SECTION, null,
                     ConfigConstants.CONFIG_KEY_FORMAT, "bogus-" + TestCommits.name());
             var signer = TestSigner.signing();

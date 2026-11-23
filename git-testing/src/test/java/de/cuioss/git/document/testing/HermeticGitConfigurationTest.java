@@ -130,7 +130,7 @@ class HermeticGitConfigurationTest {
 
         @Test
         @DisplayName("Should run the test and its @BeforeEach methods with empty user, system and JGit configurations")
-        void shouldRunWithEmptyConfigurations() throws Exception {
+        void shouldRunWithEmptyConfigurations() {
             var reader = SystemReader.getInstance();
 
             assertAll("annotated test",

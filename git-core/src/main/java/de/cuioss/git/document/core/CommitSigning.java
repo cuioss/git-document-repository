@@ -36,7 +36,9 @@ import org.jspecify.annotations.Nullable;
  * {@link IllegalArgumentException}, and the signer is not called. The signer itself is the caller's code and runs on
  * the caller's contract: a checked exception it throws ({@code IOException} or a JGit {@code GitAPIException}) and a
  * {@code JGitInternalException} end the write as {@link GitOutcome#FAILED} with the class name; any other unchecked
- * exception propagates out of the writer unchanged, and nothing is inserted.
+ * exception propagates out of the writer unchanged, and no commit is inserted. The blobs and the tree the writer
+ * inserted before it called the signer are not removed: a file-backed repository keeps them as unreferenced loose
+ * objects.
  * <p>
  * {@link #toString()} renders neither the signing key nor the credentials (GDR-NFR-3).
  *
