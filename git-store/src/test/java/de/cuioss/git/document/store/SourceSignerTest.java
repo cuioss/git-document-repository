@@ -215,7 +215,7 @@ class SourceSignerTest {
 
     @Test
     @DisplayName("GDR-STORE-12: a signature made with another key than the public key line is REFUSED and writes nothing")
-    void replacedKey(@InMemory Repository repository) throws Exception {
+    void replacedKey(@InMemory Repository repository) {
         var announced = TestKeys.ed25519();
         var replacement = TestKeys.ed25519();
         var source = new SigningWith(replacement, announced.publicKeyLine());

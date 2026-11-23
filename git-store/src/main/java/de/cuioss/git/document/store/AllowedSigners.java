@@ -262,36 +262,42 @@ public final class AllowedSigners {
         return Set.copyOf(names);
     }
 
-    /**
-     * A timestamp of {@code valid-after} or {@code valid-before}, resolved strictly, so that a date the calendar lacks
-     * is malformed.
-     *
-     * @return the instant, or {@code null} for a malformed timestamp
-     */
-    private static @Nullable Instant timestamp(String value) {
-        boolean utc = value.endsWith("Z") || value.endsWith("z");
-        String digits = utc ? value.substring(0, value.length() - 1) : value;
-        ZoneId zone = utc ? ZoneOffset.UTC : ZoneId.systemDefault();
-        try {
-            if (DATE.matcher(digits).matches()) {
-                return LocalDate.parse(digits, DAY).atStartOfDay(zone).toInstant();
-            }
-            if (DATE_TIME.matcher(digits).matches()) {
-                var format = digits.length() == 12 ? MINUTE : SECOND;
-                return LocalDateTime.parse(digits, format).atZone(zone).toInstant();
-            }
-        } catch (DateTimeException e) {
-            return null;
-        }
-        return null;
-    }
-
     /** The options of one line, read one at a time. */
     private static final class Options {
 
         private @Nullable Instant validAfter;
         private @Nullable Instant validBefore;
         private @Nullable Set<String> namespaces;
+
+        /**
+         * A timestamp of {@code valid-after} or {@code valid-before}, resolved strictly, so that a date the calendar
+         * lacks is malformed.
+         *
+         * @return the instant, or {@code null} for a malformed timestamp
+         */
+        private static @Nullable Instant timestamp(String value) {
+            boolean utc = value.endsWith("Z") || value.endsWith("z");
+            String digits = utc ? value.substring(0, value.length() - 1) : value;
+            ZoneId zone = utc ? ZoneOffset.UTC : ZoneId.systemDefault();
+            try {
+                if (DATE.matcher(digits).matches()) {
+                    return LocalDate.parse(digits, DAY).atStartOfDay(zone).toInstant();
+                }
+                if (DATE_TIME.matcher(digits).matches()) {
+                    var format = digits.length() == 12 ? MINUTE : SECOND;
+                    return LocalDateTime.parse(digits, format).atZone(zone).toInstant();
+                }
+            } catch (DateTimeException e) {
+                return null;
+            }
+            return null;
+        }
+
+        private static String unquote(String value) {
+            return value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")
+                    ? value.substring(1, value.length() - 1)
+                    : value;
+        }
 
         /**
          * Reads one option.
@@ -318,12 +324,6 @@ public final class AllowedSigners {
             }
             return "option not supported";
         }
-    }
-
-    private static String unquote(String value) {
-        return value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")
-                ? value.substring(1, value.length() - 1)
-                : value;
     }
 
     /** The whitespace-separated fields of a line, a quoted part kept in one field; {@code null} for an open quote. */
