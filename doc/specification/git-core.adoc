@@ -268,10 +268,13 @@ the checks of the running platform only
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java[JGit
 7.8.0 `SystemReader`]), so a tree written on a Linux server could hold a path a client on Windows or macOS cannot check
 out; one strictness for every host keeps every tree the library writes portable, at the cost of refusing on Linux a
-name Linux would store. The edits are also checked against each other, compared without case: two edits of the same
-path are refused (`edits: duplicate path`), and so are two edits of which one names a directory of the other's path,
-such as `a` and `a/b` (`edits: overlapping path`), because JGit 7.8.0 `DirCacheEditor` keeps only one of them
-(`deleteOverlappingSubtree`) and the caller's other edit would be lost without a word.
+name Linux would store. The edits are also checked against each other, compared after Unicode normalization to form
+NFC and without case: two edits of the same path are refused (`edits: duplicate path`), and so are two edits of which
+one names a directory of the other's path, such as `a` and `a/b` (`edits: overlapping path`), because JGit 7.8.0
+`DirCacheEditor` keeps only one of them (`deleteOverlappingSubtree`) and the caller's other edit would be lost without
+a word. The normalization makes the composed and the decomposed spelling of one name, such as `é.txt` as one code point
+and as `e` with a combining accent, one path: both are distinct names to Git, but HFS+ stores names decomposed, so a
+tree holding both cannot be checked out on it. The edit itself keeps the path as the caller spelled it.
 
 With a `CommitSigning` (a JGit `org.eclipse.jgit.lib.Signer`, the signing key and a `CredentialsProvider`), the commit
 is signed before it is inserted through
@@ -468,8 +471,10 @@ entry (object id or file mode) differs from the base on both sides and differs b
   a tree included), the detail naming the field `ours` or `theirs`; `CONFLICT` with the detail
   `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, and for a tree of
   the merge base or a tip that holds a path JGit refuses, such as `.GIT` or `git~1` (`StrategySimpleTwoWayInCore`
-  builds a `DirCacheEntry` per entry it takes, whose check throws an `InvalidPathException`), the detail naming the
-  exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
+  builds a `DirCacheEntry` per entry it takes, whose check throws an `InvalidPathException`), and for a tree too large
+  to be read in one piece (`CanonicalTreeParser.reset` reads a tree through `ObjectLoader.getCachedBytes()`, which
+  throws a `LargeObjectException` above the streaming threshold, as for <<GDR-CORE-4>> and <<GDR-CORE-10>>), the
+  detail naming the exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
   detail `merge: no conflicting path`, because a `Conflicting` without a path would contradict its own contract.
 
 `MergeResult` composes the shape of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] (an outcome of the closed `GitOutcome` list

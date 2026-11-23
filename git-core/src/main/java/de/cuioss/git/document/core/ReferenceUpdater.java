@@ -225,44 +225,78 @@ public final class ReferenceUpdater {
         }
         try {
             for (int attempt = 0; attempt < attempts; attempt++) {
-                Ref current = repository.exactRef(refName);
-                if (current == null && isNameConflicting(repository, refName)) {
-                    return nameConflict();
+                GitResult<AttemptStart> start = attemptStart(repository, refName);
+                if (!start.isOk()) {
+                    return JGitRepositoryOperations.withoutValue(start);
                 }
-                @Nullable ObjectId expected = current == null ? null : current.getObjectId();
-                @Nullable RevCommit parent = null;
-                if (expected != null) {
-                    Optional<RevCommit> commit = parseCommit(repository, expected);
-                    if (commit.isEmpty()) {
-                        return GitResult.of(GitOutcome.REJECTED, refName + ": points at no commit");
-                    }
-                    parent = commit.get();
-                }
-                GitResult<String> written = next.write(parent);
+                AttemptStart from = Objects.requireNonNull(start.value());
+                GitResult<String> written = next.write(from.parent());
                 if (!written.isOk()) {
                     return written;
                 }
                 ObjectId commit = ObjectId.fromString(Objects.requireNonNull(written.value()));
-                RefUpdate.Result result = update(repository, refName, detach, expected, commit);
-                switch (result) {
-                    case NEW, FAST_FORWARD -> {
-                        return GitResult.ok(commit.name());
-                    }
-                    case LOCK_FAILURE -> LOGGER.debug("Compare-and-swap of %s lost its race, attempt %s of %s",
-                            refName, attempt + 1, attempts);
-                    case IO_FAILURE -> {
-                        return GitResult.of(GitOutcome.FAILED, refName + ": " + result);
-                    }
-                    default -> {
-                        return GitResult.of(GitOutcome.REJECTED, refName + ": " + result);
-                    }
+                RefUpdate.Result result = update(repository, refName, detach, from.expected(), commit);
+                Optional<GitResult<String>> settled = settled(refName, result, commit);
+                if (settled.isPresent()) {
+                    return settled.get();
                 }
+                LOGGER.debug("Compare-and-swap of %s lost its race, attempt %s of %s", refName, attempt + 1,
+                        attempts);
             }
             return GitResult.of(GitOutcome.CONFLICT,
                     refName + ": " + RefUpdate.Result.LOCK_FAILURE + " on every attempt (" + attempts + ")");
         } catch (IOException e) {
             return JGitRepositoryOperations.failure(e);
         }
+    }
+
+    /**
+     * What one compare-and-swap attempt starts from.
+     *
+     * @param expected the id the reference points at, {@code null} when it does not exist or has no id
+     * @param parent   the commit at that id, the parent of the next commit; {@code null} without an id
+     */
+    private record AttemptStart(@Nullable ObjectId expected, @Nullable RevCommit parent) {
+    }
+
+    /**
+     * Reads the reference exactly at the start of an attempt: a reference read as absent whose name conflicts with an
+     * existing one is refused, and the commit it points at is parsed as it is.
+     *
+     * @return the start of the attempt, or {@link GitOutcome#REJECTED} for a name conflict or a reference that points
+     *         at no commit
+     * @throws IOException if the reference or its object cannot be read
+     */
+    private static GitResult<AttemptStart> attemptStart(Repository repository, String refName) throws IOException {
+        Ref current = repository.exactRef(refName);
+        if (current == null && isNameConflicting(repository, refName)) {
+            return nameConflict();
+        }
+        @Nullable ObjectId expected = current == null ? null : current.getObjectId();
+        if (expected == null) {
+            return GitResult.ok(new AttemptStart(null, null));
+        }
+        Optional<RevCommit> commit = parseCommit(repository, expected);
+        if (commit.isEmpty()) {
+            return GitResult.of(GitOutcome.REJECTED, refName + ": points at no commit");
+        }
+        return GitResult.ok(new AttemptStart(expected, commit.get()));
+    }
+
+    /**
+     * Maps the result of an attempt's update: {@code NEW} and {@code FAST_FORWARD} are the moved reference,
+     * {@code IO_FAILURE} is {@link GitOutcome#FAILED}, any other result but {@code LOCK_FAILURE} is
+     * {@link GitOutcome#REJECTED}, its detail naming the result.
+     *
+     * @return the result of the call, empty for a {@code LOCK_FAILURE}, a lost race that is retried
+     */
+    private static Optional<GitResult<String>> settled(String refName, RefUpdate.Result result, ObjectId commit) {
+        return switch (result) {
+            case NEW, FAST_FORWARD -> Optional.of(GitResult.ok(commit.name()));
+            case LOCK_FAILURE -> Optional.empty();
+            case IO_FAILURE -> Optional.of(GitResult.of(GitOutcome.FAILED, refName + ": " + result));
+            default -> Optional.of(GitResult.of(GitOutcome.REJECTED, refName + ": " + result));
+        };
     }
 
     /**
@@ -408,7 +442,7 @@ public final class ReferenceUpdater {
     }
 
     /** The result of a reference name that conflicts with an existing reference. */
-    private static GitResult<String> nameConflict() {
+    private static <V> GitResult<V> nameConflict() {
         return GitResult.of(GitOutcome.REJECTED, REF_NAME + ": name conflict");
     }
 

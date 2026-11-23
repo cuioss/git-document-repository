@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.DeflaterOutputStream;
 
 
 import de.cuioss.git.document.testing.GitGenerators;
@@ -501,6 +502,29 @@ class InCoreMergerTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-6: a tip whose tree is too large to read in one piece is a failure naming the class")
+        void largeTreeInATip(@LocalRepository Repository repository) throws Exception {
+            var base = commit(repository, Map.of(TestCommits.name(), file()));
+            var theirs = commit(repository, Map.of(TestCommits.name(), file()), base);
+            ObjectId ours;
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var commit = new CommitBuilder();
+                commit.setTreeId(largeLooseTree(repository));
+                commit.setParentIds(base);
+                commit.setAuthor(person());
+                commit.setCommitter(person());
+                commit.setMessage(InCoreWriterTest.message());
+                ours = inserter.insert(commit);
+                inserter.flush();
+            }
+
+            var result = merge(repository, ours, theirs);
+
+            assertEquals(new MergeResult.NotMerged(GitOutcome.FAILED, "LargeObjectException"), result,
+                    "the large tree is a failure, the detail naming the exception class only");
+        }
+
+        @Test
         @DisplayName("a null argument is rejected")
         void nullArguments(@InMemory Repository repository) throws Exception {
             var commit = commit(repository, Map.of(TestCommits.name(), file())).name();
@@ -511,6 +535,31 @@ class InCoreMergerTest {
                     () -> merger.merge(repository, commit, nullValue()))
                     .<Executable>map(call -> () -> assertThrows(NullPointerException.class, call, "null is rejected")));
         }
+    }
+
+    /**
+     * Writes a loose tree object whose header announces {@link Integer#MAX_VALUE} bytes, followed by a few bytes only.
+     * JGit 7.8.0 {@code UnpackedObject.open} returns a loose object of a file-backed repository at or above the
+     * streaming threshold as a {@code LargeObject} without reading its content, and its {@code getCachedBytes()} throws
+     * a {@code LargeObjectException}; no threshold is above {@code Integer.MAX_VALUE}, so the object is large whatever
+     * the process-wide {@code WindowCacheConfig} says.
+     *
+     * @return the id of the tree
+     */
+    static ObjectId largeLooseTree(Repository repository) throws IOException {
+        var stub = content().getBytes(UTF_8);
+        ObjectId id;
+        try (var formatter = new ObjectInserter.Formatter()) {
+            id = formatter.idFor(Constants.OBJ_TREE, stub);
+        }
+        Path loose = repository.getDirectory().toPath().resolve("objects").resolve(id.name().substring(0, 2))
+                .resolve(id.name().substring(2));
+        Files.createDirectories(loose.getParent());
+        try (var out = new DeflaterOutputStream(Files.newOutputStream(loose))) {
+            out.write((Constants.TYPE_TREE + " " + Integer.MAX_VALUE + "\0").getBytes(UTF_8));
+            out.write(stub);
+        }
+        return id;
     }
 
     static ObjectId annotatedTag(Repository repository, ObjectId commit) throws IOException {

@@ -684,6 +684,51 @@ class InCoreWriterTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-4: the composed and the decomposed spelling of one name are a duplicate")
+        void normalizedDuplicate(@InMemory Repository repository) {
+            var prefix = TestCommits.name();
+            // e with acute accent: one code point (NFC) and e followed by the combining acute accent (NFD)
+            var composed = prefix + "é.txt";
+            var decomposed = prefix + "é.txt";
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(composed, content), put(decomposed, "decomposed-" + content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: duplicate path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a directory in one spelling and a path below it in the other overlap")
+        void normalizedOverlap(@InMemory Repository repository) {
+            var prefix = TestCommits.name();
+            var directory = prefix + "é";
+            var below = prefix + "é/" + TestCommits.name();
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(directory, content), put(below, content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: overlapping path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: distinct names are written, a decomposed one as the caller spelled it")
+        void distinctNamesWritten(@InMemory Repository repository) throws Exception {
+            var decomposed = TestCommits.name() + "é.txt";
+            var nested = TestCommits.name() + "/" + TestCommits.name() + ".txt";
+            var first = "first-" + content();
+            var second = "second-" + content();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(decomposed, first), put(nested, second)));
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            assertEquals(Map.of(decomposed, first, nested, second), files(repository, commit),
+                    "both paths are written, the decomposed name unnormalized");
+        }
+
+        @Test
         @DisplayName("GDR-CORE-4: a path that is a directory of another edit's path is refused, nothing is written")
         void overlappingPaths(@InMemory Repository repository) {
             var directory = TestCommits.name();

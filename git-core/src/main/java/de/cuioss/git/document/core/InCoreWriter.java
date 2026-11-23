@@ -16,6 +16,7 @@
 package de.cuioss.git.document.core;
 
 import java.io.IOException;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -70,8 +71,11 @@ import org.jspecify.annotations.Nullable;
  * The paths of the edits are checked with one strictness on every host: a JGit {@link ObjectChecker} with
  * {@code setSafeForWindows(true)} and {@code setSafeForMacOS(true)}, whatever the platform the library runs on, so a
  * tree written on Linux checks out on Windows and macOS too; JGit 7.8.0 {@code SystemReader.checkPath} would apply the
- * checks of the running platform only. Two edits whose paths are equal when compared without case, or of which one
- * is a directory of the other's path, are refused, because JGit 7.8.0 {@code DirCacheEditor} keeps only one of them.
+ * checks of the running platform only. Two edits whose paths are equal when compared after Unicode normalization
+ * (form NFC) and without case, or of which one is a directory of the other's path, are refused: JGit 7.8.0
+ * {@code DirCacheEditor} keeps only one of two equal paths, and a tree holding two names that differ in case or only
+ * in their composition cannot be checked out on a file system that folds them, such as HFS+, which stores names
+ * decomposed.
  * <p>
  * Code of the caller runs on the caller's contract: an unchecked exception of the {@link CommitSigning#signer()}
  * other than a {@link JGitInternalException} propagates unchanged, as does a {@code null} the caller passes.
@@ -103,8 +107,8 @@ public final class InCoreWriter {
      * <li>{@link GitOutcome#NOT_FOUND}: a parent is no full commit id or no commit of the repository (the id of an
      * annotated tag included, even one that points at a commit), or an edit names an invalid path on any of Linux,
      * Windows and macOS (detail {@code edits: invalid path}), a path another edit names too, also when compared
-     * without case ({@code edits: duplicate path}), or a path of which another edit's path is a directory
-     * ({@code edits: overlapping path}); the detail names the field ({@code parents} or {@code edits}) and the
+     * after Unicode normalization (form NFC) and without case ({@code edits: duplicate path}), or a path of which
+     * another edit's path is a directory, compared the same way ({@code edits: overlapping path}); the detail names the field ({@code parents} or {@code edits}) and the
      * reason. Nothing is written;</li>
      * <li>{@link GitOutcome#FAILED}: an I/O or a signing failure, a tree of the first parent holding a path JGit
      * refuses ({@code InvalidPathException}, e.g. {@code .GIT} or {@code git~1}), a tree too large to be read in one
@@ -192,12 +196,12 @@ public final class InCoreWriter {
                 parentCommits.add(parent.get());
             }
             @Nullable ObjectId firstParentTree = parentCommits.isEmpty() ? null : parentCommits.getFirst().getTree();
-            CommitBuilder commit = new CommitBuilder();
-            try {
-                commit.setTreeId(source.write(reader, inserter, firstParentTree));
-            } catch (InvalidPathException | LargeObjectException e) {
-                return JGitRepositoryOperations.failure(e);
+            GitResult<ObjectId> tree = sourceTree(source, reader, inserter, firstParentTree);
+            if (!tree.isOk()) {
+                return JGitRepositoryOperations.withoutValue(tree);
             }
+            CommitBuilder commit = new CommitBuilder();
+            commit.setTreeId(Objects.requireNonNull(tree.value()));
             commit.setParentIds(parentCommits);
             commit.setAuthor(metadata.author());
             commit.setCommitter(metadata.committer());
@@ -215,9 +219,28 @@ public final class InCoreWriter {
     }
 
     /**
+     * Calls the source for the commit's tree. An {@link InvalidPathException} or a {@link LargeObjectException} of the
+     * source is {@link GitOutcome#FAILED}, its detail the exception class only; an {@link IOException} and every other
+     * unchecked exception propagate to the caller.
+     *
+     * @return the id of the inserted tree, or the failure
+     * @throws IOException if the source fails to read or insert an object
+     */
+    private static GitResult<ObjectId> sourceTree(TreeSource source, ObjectReader reader, ObjectInserter inserter,
+            @Nullable ObjectId firstParentTree) throws IOException {
+        try {
+            return GitResult.ok(source.write(reader, inserter, firstParentTree));
+        } catch (InvalidPathException | LargeObjectException e) {
+            return JGitRepositoryOperations.failure(e);
+        }
+    }
+
+    /**
      * Checks every path of the edits before anything is written: each path with a strict {@link ObjectChecker}, the
-     * checks for Windows and macOS included on every host, and the paths against each other, compared without case: a
-     * path named twice, or a path that is a directory of another edit's path, is refused.
+     * checks for Windows and macOS included on every host, and the paths against each other, compared after Unicode
+     * normalization and without case: a path named twice, or a path that is a directory of another edit's path, is
+     * refused. The comparison key is the path in normalization form NFC, then in lower case, so the NFC and the NFD
+     * spelling of one name collide as they do on HFS+, which stores names decomposed; the edit keeps its own path.
      */
     private static Optional<String> checkPaths(List<TreeEdit> edits) {
         ObjectChecker checker = new ObjectChecker().setSafeForWindows(true).setSafeForMacOS(true);
@@ -228,7 +251,7 @@ public final class InCoreWriter {
             } catch (CorruptObjectException e) {
                 return Optional.of(EDITS + ": invalid path");
             }
-            if (!seen.add(edit.path().toLowerCase(Locale.ROOT))) {
+            if (!seen.add(comparisonKey(edit.path()))) {
                 return Optional.of(EDITS + ": duplicate path");
             }
         }
@@ -240,6 +263,11 @@ public final class InCoreWriter {
             }
         }
         return Optional.empty();
+    }
+
+    /** The key two edit paths are compared by: normalization form NFC, then lower case. */
+    private static String comparisonKey(String path) {
+        return Normalizer.normalize(path, Normalizer.Form.NFC).toLowerCase(Locale.ROOT);
     }
 
     /**
