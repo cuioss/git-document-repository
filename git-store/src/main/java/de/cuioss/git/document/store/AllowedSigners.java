@@ -224,7 +224,7 @@ public final class AllowedSigners {
         }
         if (!(SshSignatures.parsePublicKeyLine(fields.get(keyType) + " " + fields.get(keyType + 1))
                 instanceof SshSignatures.AcceptedKey(var key))) {
-            return new Line.Refused("key malformed");
+            return new Line.Refused(SshSignatures.KEY_MALFORMED);
         }
         return options == null ? new Line.Parsed(new Entry(key, null, null, null))
                 : parseOptions(options, key);
