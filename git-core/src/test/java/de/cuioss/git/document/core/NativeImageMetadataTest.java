@@ -153,11 +153,20 @@ class NativeImageMetadataTest {
 
         @ParameterizedTest(name = "refuses {0}")
         @ValueSource(strings = {"", "[", "{", "[1,]", "{\"a\":1,}", "{\"a\" 1}", "{a:1}", "[1 2]", "\"open",
-                "[\"a\"] trailing", "{\"a\":1}{}", "tru", "[01]", "{\"a\":1,\"a\":2}", "\"bad\\q\"", "null"})
+                "[\"a\"] trailing", "{\"a\":1}{}", "tru", "[01]", "{\"a\":1,\"a\":2}", "\"bad\\q\"", "null",
+                "\"\\u+06f\"", "\"\\u-06f\"", "\"\\u00g1\"", "\"\\u06f\""})
         @DisplayName("Should refuse malformed input")
         void shouldRefuseMalformedInput(String input) {
             assertThrows(IllegalArgumentException.class, () -> MinimalJson.parse(input),
                     "Malformed input is refused: " + input);
+        }
+
+        @Test
+        @DisplayName("Should read a unicode escape of four hexadecimal digits of either case")
+        void shouldReadUnicodeEscape() {
+            assertAll(
+                    () -> assertEquals("o", MinimalJson.parse("\"\\u006f\""), "lower-case digits"),
+                    () -> assertEquals("O", MinimalJson.parse("\"\\u004F\""), "upper-case digits"));
         }
     }
 
@@ -277,17 +286,23 @@ class NativeImageMetadataTest {
                         if (position + 4 > text.length()) {
                             throw failure("an incomplete unicode escape");
                         }
-                        try {
-                            result.append((char) Integer.parseInt(text.substring(position, position + 4), 16));
-                        } catch (NumberFormatException e) {
+                        var digits = text.substring(position, position + 4);
+                        // JSON requires exactly four hexadecimal digits; Integer.parseInt would accept a sign
+                        if (!digits.chars().allMatch(MinimalJson::isHexDigit)) {
                             throw failure("an invalid unicode escape");
                         }
+                        result.append((char) Integer.parseInt(digits, 16));
                         position += 4;
                     }
                     default -> throw failure("an invalid escape \\" + escaped);
                 }
             }
             throw failure("an unterminated string");
+        }
+
+        /** Whether a character is an ASCII hexadecimal digit: {@code 0-9}, {@code a-f} or {@code A-F}. */
+        private static boolean isHexDigit(int c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
         }
 
         private Boolean literal(String word, Boolean value) {

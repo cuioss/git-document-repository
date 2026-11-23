@@ -86,6 +86,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -1333,15 +1334,26 @@ class JGitWorktreeOperationsTest {
      * records a path given through a link. Skips the test where the file system creates no symbolic links.
      */
     private Path registerThroughSymlink(MainTree main, Worktree worktree) throws IOException {
-        var link = temp.resolve(name());
-        try {
-            Files.createSymbolicLink(link, worktree.path());
-        } catch (UnsupportedOperationException | IOException e) {
-            assumeTrue(false, "The file system creates symbolic links");
-        }
+        var link = symbolicLink(temp.resolve(name()), worktree.path());
         Files.writeString(main.admin(Objects.requireNonNull(worktree.name())).resolve(Constants.GITDIR_FILE),
                 link.resolve(Constants.DOT_GIT) + "\n");
         return link;
+    }
+
+    /**
+     * Creates a symbolic link, or skips the test through an assumption where the file system creates none, as
+     * {@code git-testing.adoc} states for every symlink-dependent test.
+     *
+     * @param link   the path of the link
+     * @param target the path the link points to
+     * @return the link
+     */
+    private static Path symbolicLink(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException e) {
+            return Assumptions.abort("The file system creates no symbolic links: " + e.getClass().getSimpleName());
+        }
     }
 
     @Nested
@@ -1408,7 +1420,7 @@ class JGitWorktreeOperationsTest {
         @DisplayName("GDR-CORE-12: a prunable working tree added and removed through a symbolic link of its ancestor is found")
         void prunableRemovedThroughSymlinkedAncestor(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
-            var alias = Files.createSymbolicLink(temp.resolve(name()), main.root());
+            var alias = symbolicLink(temp.resolve(name()), main.root());
             var throughAlias = alias.resolve(name());
             var added = operations.worktreeAdd(WorktreeAddInput.builder().root(alias).path(throughAlias)
                     .branch(name()).createBranch(true).startPoint(Constants.HEAD).build());
