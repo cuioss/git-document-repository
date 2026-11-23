@@ -223,7 +223,7 @@ final class SshSignatures {
             return new Decoding.Malformed("base64 malformed");
         }
         var reader = new Reader(blob);
-        if (!reader.magic()) {
+        if (!reader.expect(MAGIC)) {
             return new Decoding.Malformed("preamble missing");
         }
         Integer version = reader.uint32();
@@ -437,24 +437,43 @@ final class SshSignatures {
         }
     }
 
-    /** A bounds-checked reader of the SSH wire format; every read past the end yields {@code null}. */
-    private static final class Reader {
+    /**
+     * A bounds-checked reader of the SSH wire format (RFC 4251, section 5); every read past the end yields
+     * {@code null} or {@code false}, never an exception.
+     */
+    static final class Reader {
 
         private final ByteBuffer buffer;
 
+        /**
+         * Creates a reader over bytes, without copying them.
+         *
+         * @param data the bytes to read
+         */
         Reader(byte[] data) {
             this.buffer = ByteBuffer.wrap(data);
         }
 
-        boolean magic() {
-            if (buffer.remaining() < MAGIC.length) {
+        /**
+         * Reads a fixed, not length-prefixed preamble.
+         *
+         * @param preamble the expected bytes
+         * @return whether the next bytes equal the preamble; they are consumed either way
+         */
+        boolean expect(byte[] preamble) {
+            if (buffer.remaining() < preamble.length) {
                 return false;
             }
-            byte[] read = new byte[MAGIC.length];
+            byte[] read = new byte[preamble.length];
             buffer.get(read);
-            return Arrays.equals(read, MAGIC);
+            return Arrays.equals(read, preamble);
         }
 
+        /**
+         * Reads a {@code uint32}.
+         *
+         * @return the value, or {@code null} past the end
+         */
         @Nullable
         Integer uint32() {
             if (buffer.remaining() < Integer.BYTES) {
@@ -463,6 +482,11 @@ final class SshSignatures {
             return buffer.getInt();
         }
 
+        /**
+         * Reads a {@code string}: a {@code uint32} length followed by that many bytes.
+         *
+         * @return the bytes, or {@code null} when the length or the bytes run past the end
+         */
         byte @Nullable [] string() {
             Integer length = uint32();
             if (length == null || length < 0 || length > buffer.remaining()) {
@@ -473,6 +497,22 @@ final class SshSignatures {
             return value;
         }
 
+        /**
+         * Reads every remaining byte.
+         *
+         * @return the remaining bytes, possibly none
+         */
+        byte[] rest() {
+            byte[] value = new byte[buffer.remaining()];
+            buffer.get(value);
+            return value;
+        }
+
+        /**
+         * Tells whether every byte was read.
+         *
+         * @return whether nothing remains
+         */
         boolean atEnd() {
             return !buffer.hasRemaining();
         }
