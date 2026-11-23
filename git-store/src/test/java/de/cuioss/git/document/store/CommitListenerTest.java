@@ -97,6 +97,10 @@ class CommitListenerTest {
      */
     private static final String SCRATCH = "refs/scratch/commits";
 
+    /** The fixed claims of every save and release. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
+            Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
+
     @TempDir
     Path temp;
 
@@ -122,6 +126,7 @@ class CommitListenerTest {
         tree.put("save", Map.of("max-attempts", ATTEMPTS));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
 
@@ -232,8 +237,8 @@ class CommitListenerTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), new ScriptedRepositoryOperations(),
-                Clock.fixed(now, ZoneOffset.UTC)));
+        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), TestKeys.ed25519().source(),
+                new ScriptedRepositoryOperations(), Clock.fixed(now, ZoneOffset.UTC)));
     }
 
     private StoreWriter open(LocalRemote remote) {
@@ -244,7 +249,7 @@ class CommitListenerTest {
     private static SaveResult save(StoreWriter writer, Author author, DocumentKey key, String path, String text) {
         value(writer.draft(author, key, List.of(new TreeEdit.Put(path, text.getBytes(StandardCharsets.UTF_8))),
                 word()));
-        return writer.save(author, key, Map.of(), word());
+        return writer.save(author, CLAIMS, key, Map.of(), word());
     }
 
     private static String saved(SaveResult result) {
@@ -263,7 +268,7 @@ class CommitListenerTest {
         try (var writer = open(remote); var working = writer.subscribe(layout.working(), onWorking);
              var main = writer.subscribe("main", onMain)) {
             var commit = saved(save(writer, author, layout.key(), layout.file(), text));
-            var release = value(writer.release(author, layout.key()));
+            var release = value(writer.release(author, CLAIMS, layout.key()));
 
             List<String> mainCommits = onMain.commits();
             assertAll(
@@ -338,7 +343,7 @@ class CommitListenerTest {
              var onMain = writer.subscribe(StoreReferences.MAIN, throwing);
              var second = writer.subscribe(layout.working(), after)) {
             var saveResult = save(writer, author, layout.key(), layout.file(), content());
-            var release = writer.release(author, layout.key());
+            var release = writer.release(author, CLAIMS, layout.key());
             Map<String, String> tree = new TreeMap<>(layout.workingTree());
             tree.put(layout.file(), content());
             var outside = commit(remote.repository(), layout.working(), tree,

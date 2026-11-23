@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,6 +32,7 @@ import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +78,10 @@ import org.junit.jupiter.api.io.TempDir;
  * exception message or commit message carries the password or the user name of the technical user's credentials, an
  * e-mail address, or a person name that travels in the document content. With the default {@code commit.email}
  * {@code false} the e-mail fields of author and committer of every written commit stay empty although addresses are
- * supplied; with {@code commit.email} {@code true} the supplied addresses appear in those fields and nowhere else.
+ * supplied; with {@code commit.email} {@code true} the supplied addresses appear in those fields and nowhere else. No
+ * log record, result detail, commit message or further commit header carries the key path of {@code signing.key}, the
+ * key bytes or the detail of a refusing or unavailable signing key source, and no log record on the signing path
+ * carries a throwable (GDR-STORE-12).
  * <p>
  * Credentials, addresses, the person name, pseudonyms, paths and contents are generated; the configuration keys are the
  * specified vocabulary and kept as literals.
@@ -116,11 +121,12 @@ class WritePathSecretsTest {
         return value(DocumentKey.of(collection, Ulid.next()));
     }
 
-    private static StoreConfiguration configuration(@Nullable Boolean email) {
+    private static StoreConfiguration configuration(@Nullable Boolean email, String keyReference) {
         Map<String, Object> tree = new LinkedHashMap<>();
         tree.put("save", Map.of("max-attempts", Generators.integers(1, 10).next()));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", keyReference));
         if (email != null) {
             tree.put("commit", Map.of("email", email));
         }
@@ -178,12 +184,64 @@ class WritePathSecretsTest {
         return texts;
     }
 
-    /** The secrets of a run and the commit identities it expects. */
+    /**
+     * The secrets of a run and the commit identities it expects; the key reference is a key path, the public key the
+     * base64 of the signing key's public key bytes.
+     */
     private record Secrets(String userName, String password, String personName, String authorAddress,
-    String otherAddress, String userAddress) {
+    String otherAddress, String userAddress, String keyReference, String publicKey) {
 
         List<String> all() {
-            return List.of(userName, password, personName, authorAddress, otherAddress, userAddress);
+            return List.of(userName, password, personName, authorAddress, otherAddress, userAddress, keyReference,
+                    publicKey);
+        }
+    }
+
+    /** A key path long and random enough to appear nowhere by chance. */
+    private static String keyPath() {
+        return "/" + secret() + "/" + secret() + "/id_ed25519";
+    }
+
+    /** The claims of a save; the issuer carries no secret, the claims carry no {@code sub}, {@code sid} or address. */
+    private static IdentityClaims claims() {
+        return new IdentityClaims("https://issuer.example/realms/" + word(), Instant.parse("2026-03-01T08:15:30Z"),
+                "urn:example:acr:mfa", List.of("pwd", "otp"));
+    }
+
+    /**
+     * A signing key source that hands out the public key of a test key, or refuses or is unavailable with a detail that
+     * carries a secret, for the public key or for the signature.
+     */
+    private static final class SecretDetailSource implements SigningKeySource {
+
+        private final TestKeys.Source keys;
+        private final StoreOutcome publicKeyOutcome;
+        private final StoreOutcome signOutcome;
+        private final String detail;
+
+        SecretDetailSource(TestKeys.Source keys, StoreOutcome publicKeyOutcome, StoreOutcome signOutcome,
+                String detail) {
+            this.keys = keys;
+            this.publicKeyOutcome = publicKeyOutcome;
+            this.signOutcome = signOutcome;
+            this.detail = detail;
+        }
+
+        @Override
+        public String id() {
+            return "secret-detail";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return signOutcome == StoreOutcome.OK ? keys.sign(keyReference, data)
+                    : StoreResult.of(signOutcome, detail + " " + keyReference);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return publicKeyOutcome == StoreOutcome.OK ? keys.publicKey(keyReference)
+                    : StoreResult.of(publicKeyOutcome, detail + " " + keyReference);
         }
     }
 
@@ -199,7 +257,8 @@ class WritePathSecretsTest {
      * Runs drafts, the listing, a save, a conflict, rejections and the expiry, and collects every result detail and
      * rendering, every exception message and every commit written.
      */
-    private Run run(LocalRemote remote, @Nullable Boolean email, Secrets secrets) throws IOException {
+    private Run run(LocalRemote remote, @Nullable Boolean email, Secrets secrets, SigningKeySource signing)
+            throws IOException {
         var key = key();
         var target = StoreReferences.target(key);
         var path = word();
@@ -217,7 +276,10 @@ class WritePathSecretsTest {
         Map<ObjectId, String> authorNames = new LinkedHashMap<>();
         List<ObjectId> written = new ArrayList<>();
 
-        try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(email),
+        var claims = claims();
+
+        try (var writer = value(StoreWriter.open(storeRepository, gitDir, user,
+                     configuration(email, secrets.keyReference()), signing,
                      new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)))) {
             var draft = writer.draft(author, key, put(path, secrets.personName() + " " + word()), word());
             rendered.add(draft);
@@ -225,7 +287,7 @@ class WritePathSecretsTest {
             authorAddresses.put(written.getLast(), secrets.authorAddress());
             authorNames.put(written.getLast(), author.pseudonym());
             rendered.add(writer.drafts(author.pseudonym()));
-            var saved = writer.save(author, key, Map.of(path, blob(loaded)), word());
+            var saved = writer.save(author, claims, key, Map.of(path, blob(loaded)), word());
             rendered.add(saved);
             written.add(ObjectId.fromString(assertInstanceOf(SaveResult.Saved.class, saved).commitId()));
             authorAddresses.put(written.getLast(), secrets.authorAddress());
@@ -236,19 +298,19 @@ class WritePathSecretsTest {
             written.add(ObjectId.fromString(value(otherDraft)));
             authorAddresses.put(written.getLast(), secrets.otherAddress());
             authorNames.put(written.getLast(), other.pseudonym());
-            var conflict = writer.save(other, key, Map.of(path, blob(loaded)), word());
+            var conflict = writer.save(other, claims, key, Map.of(path, blob(loaded)), word());
             rendered.add(assertInstanceOf(SaveResult.Conflicting.class, conflict));
             rendered.add(conflict.toResult());
 
-            var missing = writer.save(new Author(pseudonym(), address()), key, Map.of(), word());
+            var missing = writer.save(new Author(pseudonym(), address()), claims, key, Map.of(), word());
             assertEquals(new StoreResult.PassedOn(GitOutcome.NOT_FOUND), missing.outcome(), "a missing draft");
             rendered.add(missing);
             var malformed = writer.draft(new Author(word() + "/" + word(), secrets.authorAddress()), key,
                     put(path, secrets.personName()), word());
             assertEquals(StoreOutcome.MALFORMED, malformed.outcome(), "an invalid pseudonym");
             rendered.add(malformed);
-            rendered.add(writer.save(new Author(word() + "/" + word(), secrets.authorAddress()), key, Map.of(),
-                    word()));
+            rendered.add(writer.save(new Author(word() + "/" + word(), secrets.authorAddress()), claims, key,
+                    Map.of(), word()));
 
             List<RevCommit> commits = new ArrayList<>();
             try (Repository clone = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();
@@ -286,14 +348,47 @@ class WritePathSecretsTest {
                     () -> new TechnicalUser(refusedName, refusedUserAddress, refusedCredentials)).getMessage());
             for (RevCommit commit : commits) {
                 texts.add(commit.getFullMessage());
+                texts.add(headers(commit));
             }
             texts.addAll(logTexts());
             return new Run(texts, commits, authorAddresses, authorNames, user.name());
         }
     }
 
-    private static Secrets secrets() {
-        return new Secrets("u" + secret(), secret(), new FullNameGenerator().next(), address(), address(), address());
+    private static Secrets secrets(TestKeys.Source signing) {
+        return new Secrets("u" + secret(), secret(), new FullNameGenerator().next(), address(), address(), address(),
+                keyPath(), Base64.getEncoder().encodeToString(signing.key().publicKey()));
+    }
+
+    /**
+     * The header lines of a commit other than its author and committer, whose e-mail fields a test checks separately,
+     * and its {@code gpgsig} header, which carries the signature: a claim or a key reference in any further header
+     * would surface here.
+     */
+    private static String headers(RevCommit commit) {
+        String raw = new String(commit.getRawBuffer(), StandardCharsets.ISO_8859_1);
+        int end = raw.indexOf("\n\n");
+        var kept = new StringBuilder();
+        boolean signature = false;
+        for (String line : (end < 0 ? raw : raw.substring(0, end)).split("\n")) {
+            if (line.startsWith(" ")) {
+                if (!signature) {
+                    kept.append(line).append('\n');
+                }
+                continue;
+            }
+            signature = line.startsWith("gpgsig ");
+            if (!signature && !line.startsWith("author ") && !line.startsWith("committer ")) {
+                kept.append(line).append('\n');
+            }
+        }
+        return kept.toString();
+    }
+
+    /** The captured log records from the given index on. */
+    private static List<LogRecord> recordsFrom(int index) {
+        List<LogRecord> records = TestLoggerFactory.getTestHandler().getRecords();
+        return List.copyOf(records.subList(index, records.size()));
     }
 
     private static void assertNoSecret(Run run, Secrets secrets) {
@@ -307,13 +402,15 @@ class WritePathSecretsTest {
     @Test
     @DisplayName("GDR-NFR-3: by default no secret is rendered and every commit has empty e-mail fields")
     void defaultCarriesNoSecretAndNoAddress(@Remote LocalRemote remote) throws Exception {
-        var secrets = secrets();
+        var signing = TestKeys.ed25519().source();
+        var secrets = secrets(signing);
 
-        var run = run(remote, null, secrets);
+        var run = run(remote, null, secrets, signing);
 
         assertNoSecret(run, secrets);
         assertAll(
                 () -> assertEquals(3, run.commits().size(), "two drafts and a save were written"),
+                () -> assertEquals(1, signing.signCalls(), "the save commit was signed"),
                 () -> assertFalse(TestLoggerFactory.getTestHandler().getRecords().isEmpty(), "log records captured"),
                 () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
                         GitStoreLogMessages.INFO.SAVED.resolveIdentifierString()),
@@ -338,9 +435,10 @@ class WritePathSecretsTest {
     @Test
     @DisplayName("GDR-NFR-3: with commit.email true the addresses appear only in the e-mail fields of the commits")
     void withEmailAddressesOnlyInEmailFields(@Remote LocalRemote remote) throws Exception {
-        var secrets = secrets();
+        var signing = TestKeys.ed25519().source();
+        var secrets = secrets(signing);
 
-        var run = run(remote, true, secrets);
+        var run = run(remote, true, secrets, signing);
 
         assertNoSecret(run, secrets);
         for (RevCommit commit : run.commits()) {
@@ -354,5 +452,77 @@ class WritePathSecretsTest {
                             || committer.getName().contains(secret)), "no secret in the names"));
         }
         assertExactNames(run);
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a refusing or unavailable signing key source leaks no key path, key byte or its detail")
+    void signingFailureCarriesNoSecretAndNoThrowable(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var path = word();
+        commit(remote.repository(), target, path, word());
+        var tipBefore = Objects.requireNonNull(remote.repository().exactRef(target), "the target").getObjectId();
+        var keys = TestKeys.ed25519().source();
+        var keyReference = keyPath();
+        var sourceDetail = secret();
+        var authorAddress = address();
+        List<String> secrets = List.of(keyReference, sourceDetail, authorAddress,
+                Base64.getEncoder().encodeToString(keys.key().publicKey()));
+        List<SigningKeySource> sources = List.of(
+                new SecretDetailSource(keys, StoreOutcome.REFUSED, StoreOutcome.OK, sourceDetail),
+                new SecretDetailSource(keys, StoreOutcome.UNAVAILABLE, StoreOutcome.OK, sourceDetail),
+                new SecretDetailSource(keys, StoreOutcome.OK, StoreOutcome.REFUSED, sourceDetail),
+                new SecretDetailSource(keys, StoreOutcome.OK, StoreOutcome.UNAVAILABLE, sourceDetail));
+        int firstRecord = TestLoggerFactory.getTestHandler().getRecords().size();
+        List<String> texts = new ArrayList<>();
+        var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
+        var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
+
+        for (SigningKeySource source : sources) {
+            var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+            try (var writer = value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user,
+                         configuration(null, keyReference), source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                         Clock.fixed(now, ZoneOffset.UTC)))) {
+                var author = new Author(pseudonym(), authorAddress);
+                value(writer.draft(author, key, put(word() + "x", word()), word()));
+                var saved = writer.save(author, claims(), key, Map.of(), word());
+                var released = writer.release(author, claims(), key);
+                assertAll(
+                        () -> assertInstanceOf(SaveResult.NotSaved.class, saved, "the save is not saved"),
+                        () -> assertTrue(saved.outcome() == StoreOutcome.REFUSED
+                                || saved.outcome() == StoreOutcome.UNAVAILABLE, "the outcome of the source"),
+                        () -> assertTrue(released.outcome() == StoreOutcome.REFUSED
+                                || released.outcome() == StoreOutcome.UNAVAILABLE, "the outcome of the source"));
+                texts.add(String.valueOf(saved));
+                saved.detail().ifPresent(texts::add);
+                texts.add(String.valueOf(released));
+                texts.add(String.valueOf(released.detail()));
+                texts.add(String.valueOf(source));
+            }
+        }
+
+        var records = recordsFrom(firstRecord);
+        for (LogRecord logRecord : records) {
+            texts.add(String.valueOf(logRecord.getMessage()));
+            Object[] parameters = logRecord.getParameters();
+            if (parameters != null) {
+                for (Object parameter : parameters) {
+                    texts.add(String.valueOf(parameter));
+                }
+            }
+        }
+        for (String secret : secrets) {
+            for (String text : texts) {
+                assertFalse(text.contains(secret), () -> "a rendered text carries a secret: " + text);
+            }
+        }
+        assertAll(
+                () -> assertTrue(records.stream().noneMatch(logRecord -> logRecord.getThrown() != null),
+                        "no log record on the signing path carries a throwable"),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                        GitStoreLogMessages.WARN.SIGNING_FAILED.resolveIdentifierString()),
+                () -> assertEquals(tipBefore, Objects.requireNonNull(remote.repository().exactRef(target))
+                        .getObjectId(), "nothing was pushed"),
+                () -> assertNull(remote.repository().exactRef(StoreReferences.MAIN), "no release on main"));
     }
 }

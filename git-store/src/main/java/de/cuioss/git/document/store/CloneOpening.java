@@ -37,7 +37,8 @@ import org.eclipse.jgit.transport.URIish;
 /**
  * Opens the bare clone of one {@link StoreWriter}: clones the remote if the clone does not exist yet, opens the clone
  * on a {@link RefusingFS}, refuses a clone whose {@code origin} is not the registered remote, and builds the parts
- * that work on the opened clone into a {@link StoreClone}.
+ * that work on the opened clone into a {@link StoreClone}: among them one {@link CommitSignatures} per clone over the
+ * active signing key source and {@code signing.key}, whose presence is checked before anything is cloned.
  */
 final class CloneOpening {
 
@@ -52,12 +53,17 @@ final class CloneOpening {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user
      * @param configuration   the configuration of the store
+     * @param signing         the active signing key source
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return the results of {@link StoreWriter#open}, with the clone as the value
      */
     static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations, Clock clock) {
+        String keyReference = configuration.signing().key();
+        if (keyReference == null) {
+            return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.SIGNING_KEY_MISSING);
+        }
         var cloned = operations.cloneIfMissing(RepositoryOperations.CloneInput.builder()
                 .gitDir(gitDir)
                 .url(storeRepository.remote())
@@ -87,10 +93,12 @@ final class CloneOpening {
         var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, gitDirectory, guard);
         var listeners = new ListenerDispatch(storeRepository.alias(), repository);
         var events = new StoreEvents(listeners);
+        var signatures = new CommitSignatures(storeRepository.alias(), signing, keyReference);
+        var committing = new ExplicitSave.Committing(identities, signatures, clock);
         var parts = new StoreClone.Parts(events, listeners,
                 new DraftReferences(repository, updater, identities, clock, attempts),
-                new ExplicitSave(bareClone, operations, user, identities, clock, attempts, events),
-                new DocumentRelease(bareClone, operations, user, identities, clock, attempts, events),
+                new ExplicitSave(bareClone, operations, user, committing, attempts, events),
+                new DocumentRelease(bareClone, operations, user, committing, attempts, events),
                 new DraftExpiry(storeRepository.alias(), repository, guard, updater, configuration.drafts().expiry(),
                         attempts));
         return StoreResult.ok(new StoreClone(bareClone,

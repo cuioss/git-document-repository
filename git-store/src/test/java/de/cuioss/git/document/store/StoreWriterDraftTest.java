@@ -84,7 +84,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The drafts of GDR-STORE-2 against a {@code git-testing} local remote: an intermediate save is a commit on the draft
- * reference whose parent is the tip of the target branch (else {@code main}, else none), a second save stacks on the
+ * reference whose parent is the tip of the target branch (else {@code main}, else none), unsigned and without identity
+ * trailers (GDR-STORE-12, GDR-STORE-13), a second save stacks on the
  * first, the listing returns the drafts of one user only, a push of every reference through the configured push
  * reference specifications never carries {@code refs/drafts/*}, and the commit identities follow {@code commit.email}
  * (GDR-NFR-3). A draft deleted beneath a write, or whose publication met a held lock, is written again on its base
@@ -103,6 +104,10 @@ class StoreWriterDraftTest {
 
     /** The time a race scenario may take before it counts as hanging. */
     private static final long TIMEOUT_SECONDS = 60;
+
+    /** The fixed claims of the saves. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
+            Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
 
     @TempDir
     Path temp;
@@ -144,6 +149,7 @@ class StoreWriterDraftTest {
         tree.put("save", Map.of("max-attempts", Generators.integers(1, 10).next()));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         if (email != null) {
             tree.put("commit", Map.of("email", email));
         }
@@ -344,7 +350,7 @@ class StoreWriterDraftTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var gitDir = temp.resolve(word() + ".git");
         var now = time();
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration,
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, TestKeys.ed25519().source(),
                 new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, user, now);
     }
@@ -393,7 +399,9 @@ class StoreWriterDraftTest {
                                     "the draft reference points at the commit"),
                             () -> assertEquals(List.of(target), List.of(commit.getParents()),
                                     "the parent is the tip of the target branch"),
-                            () -> assertEquals(message, commit.getFullMessage(), "the message"),
+                            () -> assertEquals(message, commit.getFullMessage(),
+                                    "the message as given, without identity trailers"),
+                            () -> assertNull(commit.getRawGpgSignature(), "a draft commit is unsigned"),
                             () -> assertEquals(blobId(content), fixture.blobAt(commitId, path),
                                     "the edit is applied with its content"),
                             () -> assertEquals(baseBlob, fixture.blobAt(commitId, baseFile),
@@ -639,10 +647,12 @@ class StoreWriterDraftTest {
             var configuration = configuration(null);
             var user = user(null);
             var mine = registered(remote);
-            value(StoreWriter.open(registered(other), gitDir, user, configuration, operations, clock)).close();
+            var signing = TestKeys.ed25519().source();
+            value(StoreWriter.open(registered(other), gitDir, user, configuration, signing, operations, clock))
+                    .close();
 
-            var refused = StoreWriter.open(mine, gitDir, user, configuration, operations, clock);
-            var reused = StoreWriter.open(registered(other), gitDir, user, configuration, operations, clock);
+            var refused = StoreWriter.open(mine, gitDir, user, configuration, signing, operations, clock);
+            var reused = StoreWriter.open(registered(other), gitDir, user, configuration, signing, operations, clock);
 
             try {
                 var detail = Objects.requireNonNull(refused.detail(), "a refusal carries a detail");
@@ -678,8 +688,11 @@ class StoreWriterDraftTest {
             AtomicReference<StoreResult<List<String>>> expired = new AtomicReference<>();
             AtomicReference<Thread> expiryRun = new AtomicReference<>();
 
-            try (var saving = value(StoreWriter.open(storeRepository, gitDir, user, configuration, scripted, clock));
-                 var expiring = value(StoreWriter.open(storeRepository, gitDir, user, configuration,
+            var signing = TestKeys.ed25519().source();
+
+            try (var saving = value(StoreWriter.open(storeRepository, gitDir, user, configuration, signing, scripted,
+                         clock));
+                 var expiring = value(StoreWriter.open(storeRepository, gitDir, user, configuration, signing,
                          new JGitRepositoryOperations(RemotePolicy.localOnly()), clock))) {
                 value(saving.draft(author, key, put(word()), word()));
                 scripted.beforeNextPush(() -> {
@@ -694,7 +707,7 @@ class StoreWriterDraftTest {
                     }
                 });
 
-                var result = saving.save(author, key, Map.of(), word());
+                var result = saving.save(author, CLAIMS, key, Map.of(), word());
 
                 var run = Objects.requireNonNull(expiryRun.get(), "the expiry ran during the save");
                 run.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));

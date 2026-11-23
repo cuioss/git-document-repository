@@ -49,6 +49,14 @@ import org.eclipse.jgit.lib.Repository;
  * a clone of another repository at the path is refused. Every commit identity comes from the section {@code commit}
  * of the configuration and the technical user.
  * <p>
+ * Every save commit and every release commit is signed in the SSH signature format through the active
+ * {@link SigningKeySource} under the key reference {@code signing.key} (GDR-STORE-12), and carries the identity
+ * trailers {@code Actor}, {@code Actor-Issuer}, {@code Auth-Time} and {@code Auth-Context} built from the author's
+ * pseudonym and the {@link IdentityClaims} of the call (GDR-STORE-13). The public key is fetched once per save or
+ * release, before its first attempt. A source that refuses or cannot be reached ends the save or release with
+ * {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE}, nothing pushed. Draft commits stay unsigned and
+ * carry no trailers.
+ * <p>
  * Every expected non-success is a {@link StoreResult} or a {@link SaveResult}; a Git outcome is passed on. Draft writes,
  * saves and releases take the shared side of the clone's maintenance lock, every save the lock of its draft, so the
  * saves of one draft run one after the other, and every save or release attempt and every fetch the transport lock;
@@ -68,6 +76,9 @@ public final class StoreWriter implements AutoCloseable {
     /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */
     static final String FOREIGN_CLONE = "clone: remote does not match the registry";
 
+    /** The detail of a configuration without the key reference of the commit signature. */
+    static final String SIGNING_KEY_MISSING = "signing.key is missing";
+
     /** The prefix of every branch. */
     private static final String HEADS = "refs/heads/";
 
@@ -84,25 +95,31 @@ public final class StoreWriter implements AutoCloseable {
      * @param storeRepository the repository of the registry
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user: committer and holder of the transport credentials
-     * @param configuration   the configuration of the store
+     * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param signing         the active signing key source ({@link StoreProviders#signing()}), which signs every save
+     *                        and release commit under {@code signing.key}
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
-     * @return {@link StoreOutcome#OK} with the writer, or the passed-on Git outcome of the clone or of opening it, for
-     *         example {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
+     * @return {@link StoreOutcome#OK} with the writer; {@link StoreOutcome#MALFORMED} with the detail
+     *         {@code signing.key is missing} for a configuration without the key reference, checked before anything is
+     *         cloned; or the passed-on Git outcome of the clone or of opening it, for example
+     *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
      *         {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#FAILED}, or {@link GitOutcome#NOT_A_REPOSITORY}
      *         with the detail {@code <alias>: clone: remote does not match the registry} for an existing clone whose
-     *         remote is not the registered one; no detail names a URL, a credential or a path
+     *         remote is not the registered one; no detail names a URL, a credential, a key reference or a path
      * @throws NullPointerException if an argument is {@code null}
      */
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations,
+            Clock clock) {
         Objects.requireNonNull(storeRepository, "storeRepository");
         Objects.requireNonNull(gitDir, "gitDir");
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(configuration, "configuration");
+        Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, operations, clock);
+        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, signing, operations, clock);
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
@@ -121,7 +138,7 @@ public final class StoreWriter implements AutoCloseable {
     /**
      * Writes an intermediate save: the next commit of {@code refs/drafts/<pseudonym>/<collection>/<id>}, created at
      * the tip of the local target branch (else {@code main}) when the user has no draft of the document yet
-     * (GDR-STORE-2). The draft stays in the clone and is never pushed.
+     * (GDR-STORE-2). The draft stays in the clone and is never pushed; its commit is unsigned and carries no trailers.
      *
      * @param author  the author, whose pseudonym names the draft reference
      * @param key     the document or entry
@@ -158,40 +175,54 @@ public final class StoreWriter implements AutoCloseable {
      * {@code save.max-attempts}; then the local target branch moves and the draft is deleted by compare-and-delete.
      * Every changed path with an expected blob id that differs on the fetched tip is a conflict (GDR-STORE-4,
      * GDR-STORE-5); a changed path without one overwrites a concurrent change.
+     * <p>
+     * The save commit is signed through the active signing key source (GDR-STORE-12) and its message is the given
+     * message followed by the identity trailers of the author's pseudonym and the claims (GDR-STORE-13). The public key
+     * is fetched once, before the first attempt; a source that refuses or cannot be reached ends the save with nothing
+     * written or pushed.
      *
-     * @param author          the author, whose pseudonym names the draft reference and the commit's author
+     * @param author          the author, whose pseudonym names the draft reference, the commit's author and the
+     *                        trailer {@code Actor}
+     * @param claims          the claims of the author's authentication, written as identity trailers
      * @param key             the document or entry
      * @param expectedBlobIds the full blob id the caller loaded per repository-relative path; the zero id expects the
      *                        path to be absent; empty for no check
-     * @param message         the commit message
+     * @param message         the commit message, before the trailers
      * @return {@link SaveResult.Saved} with the commit the target branch points at, {@link SaveResult.Conflicting}
      *         with every conflicting path, or {@link SaveResult.NotSaved} with the outcome that prevented the save, for
-     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym,
+     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym, {@link StoreOutcome#REFUSED} for a
+     *         signing key source that refuses or a key of another type than Ed25519,
+     *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that cannot be reached,
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing draft,
      *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt,
      *         {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE} or
      *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
-    public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message) {
-        return clone.save(author, key, expectedBlobIds, message, null);
+    public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
+            String message) {
+        return clone.save(author, claims, key, expectedBlobIds, message, null);
     }
 
     /**
      * Saves the draft of the author for the document onto its target branch like
-     * {@link #save(Author, DocumentKey, Map, String)}, with a per-attempt step (GDR-STORE-3). The step runs on every
+     * {@link #save(Author, IdentityClaims, DocumentKey, Map, String)}, with a per-attempt step (GDR-STORE-3); the
+     * commit that carries the step's edits is signed and carries the identity trailers. The step runs on every
      * attempt, the first and each re-application onto a new tip, after the conflict check; it sees the tip and the tree
      * the draft's changes produce on it through a read-only {@link SaveStep.Attempt}. Its {@link SaveStep.Edits} are
      * written into the same single save commit, whose only parent stays the tip, an edit on a path the draft also
      * changed replacing the draft's edit. A draft without changes writes no commit and calls no step.
      *
-     * @param author          the author, whose pseudonym names the draft reference and the commit's author
+     * @param author          the author, whose pseudonym names the draft reference, the commit's author and the
+     *                        trailer {@code Actor}
+     * @param claims          the claims of the author's authentication, written as identity trailers
      * @param key             the document or entry
      * @param expectedBlobIds the full blob id the caller loaded per repository-relative path; the zero id expects the
      *                        path to be absent; empty for no check
-     * @param message         the commit message
+     * @param message         the commit message, before the trailers
      * @param step            the per-attempt step
-     * @return the results of {@link #save(Author, DocumentKey, Map, String)}, and {@link SaveResult.NotSaved} with
+     * @return the results of {@link #save(Author, IdentityClaims, DocumentKey, Map, String)}, and
+     *         {@link SaveResult.NotSaved} with
      *         {@link StoreOutcome#REFUSED} and the detail {@code <target>: step: refused} for a {@link SaveStep.Refusal},
      *         or with the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} and the detail
      *         {@code <target>: step: <simple class name of the exception>} for a step that threw a
@@ -199,9 +230,9 @@ public final class StoreWriter implements AutoCloseable {
      *         branch stay unchanged
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
-    public SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
-            SaveStep step) {
-        return clone.save(author, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
+    public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
+            String message, SaveStep step) {
+        return clone.save(author, claims, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
     }
 
     /**
@@ -210,18 +241,24 @@ public final class StoreWriter implements AutoCloseable {
      * document from 1, and pushes {@code main} with lease and then the tag. For a per-document collection the release
      * commit merges the working branch into {@code main}, with both tips as its parents; for a numbered collection it
      * takes only the entry's paths from the collection branch onto {@code main}, its only parent. Its message is
-     * {@code Release <collection>/<id> v<n>}, composed by the store; its author is the user who releases.
+     * {@code Release <collection>/<id> v<n>}, composed by the store, followed by the identity trailers of the user who
+     * releases (GDR-STORE-13); its author is that user, and it is signed through the active signing key source
+     * (GDR-STORE-12), whose public key is fetched once before the first attempt.
      * <p>
      * The release runs under the shared side of the clone's maintenance lock, each attempt, from the fetch to the push
      * of the tag, under its transport lock. When {@code main} moved on the remote and the tag is missing there, a
      * repeated release creates and pushes the missing tag on the release commit instead of merging again. A release
      * tag on the remote is never moved or deleted.
      *
-     * @param author the user who releases, author of the release commit
+     * @param author the user who releases, author of the release commit and its trailer {@code Actor}
+     * @param claims the claims of that user's authentication, written as identity trailers
      * @param key    the document or numbered entry
      * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} with the detail
      *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed;
-     *         {@link StoreOutcome#MALFORMED} for content without release; the passed-on
+     *         {@link StoreOutcome#MALFORMED} for content without release or a pseudonym outside
+     *         {@code [A-Za-z0-9-]+}; {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} for a signing key
+     *         source that refuses or cannot be reached, or {@link StoreOutcome#REFUSED} for a key of another type than
+     *         Ed25519, nothing pushed; the passed-on
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing working or collection branch,
      *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} with the number of conflicting paths for a
      *         conflicting merge, {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
@@ -230,8 +267,8 @@ public final class StoreWriter implements AutoCloseable {
      *         a pseudonym
      * @throws NullPointerException if an argument is {@code null}
      */
-    public StoreResult<Release> release(Author author, DocumentKey key) {
-        return clone.release(author, key);
+    public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
+        return clone.release(author, claims, key);
     }
 
     /**

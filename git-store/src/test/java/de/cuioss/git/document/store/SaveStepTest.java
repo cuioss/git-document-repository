@@ -79,7 +79,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The per-attempt step of an explicit save against a {@code git-testing} local remote (GDR-STORE-3): the step runs on
- * every attempt and sees the new tip on a re-application, its edits land in the one save commit, its refusal pushes
+ * every attempt and sees the new tip on a re-application, its edits land in the one signed, trailer-carrying save
+ * commit (GDR-STORE-12, GDR-STORE-13), its refusal pushes
  * nothing, and a step that throws ends the save after one attempt with the class name only. With every log record
  * captured down to trace, no path, content or pseudonym reaches a log record or a detail (GDR-NFR-3).
  * {@link ScriptedRepositoryOperations} moves the remote between fetch and push, so the first attempt loses its lease.
@@ -94,6 +95,10 @@ class SaveStepTest {
 
     /** The attempts of every test: enough for one lost lease. */
     private static final int ATTEMPTS = 3;
+
+    /** The fixed claims of every save. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
+            Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
 
     @TempDir
     Path temp;
@@ -127,6 +132,7 @@ class SaveStepTest {
         tree.put("save", Map.of("max-attempts", ATTEMPTS));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
 
@@ -184,7 +190,9 @@ class SaveStepTest {
 
     private static RevCommit parse(Repository repository, ObjectId id) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
-            return walk.parseCommit(id);
+            RevCommit commit = walk.parseCommit(id);
+            walk.parseBody(commit);
+            return commit;
         }
     }
 
@@ -253,7 +261,7 @@ class SaveStepTest {
         }
 
         SaveResult save(Author author, DocumentKey key, SaveStep step) {
-            return writer.save(author, key, Map.of(), word(), step);
+            return writer.save(author, CLAIMS, key, Map.of(), word(), step);
         }
 
         @Override
@@ -268,8 +276,8 @@ class SaveStepTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(),
+                TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, operations);
     }
 
@@ -310,7 +318,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: the step's edits land in the one save commit whose only parent is the tip")
-    void editsLandInTheSaveCommit(@Remote LocalRemote remote) {
+    void editsLandInTheSaveCommit(@Remote LocalRemote remote) throws Exception {
         var key = key();
         var target = StoreReferences.target(key);
         var kept = word() + "a";
@@ -332,10 +340,15 @@ class SaveStepTest {
                             new TreeEdit.Put(stepped, bytes(stepAdded))))));
 
             var commit = ObjectId.fromString(saved.commitId());
+            var written = parse(remote.repository(), commit);
             assertAll(
                     () -> assertEquals(commit, tip(remote.repository(), target), "the remote target moved"),
-                    () -> assertEquals(List.of(tipId), List.of(parse(remote.repository(), commit).getParents()),
-                            "the only parent is the tip"),
+                    () -> assertEquals(List.of(tipId), List.of(written.getParents()), "the only parent is the tip"),
+                    () -> assertTrue(new String(Objects.requireNonNull(written.getRawGpgSignature(),
+                            "the commit carrying the step's edits is signed"), StandardCharsets.US_ASCII)
+                            .startsWith("-----BEGIN SSH SIGNATURE-----"), "an SSH signature"),
+                    () -> assertTrue(written.getFullMessage().contains("\n\nActor: " + author.pseudonym() + "\n"),
+                            "the commit carrying the step's edits carries the identity trailers"),
                     () -> assertEquals(Map.of(kept, keptContent, replaced, stepReplaced, added, draftAdded, stepped,
                                     stepAdded), tree(remote.repository(), commit),
                             "the step's edit replaces the draft's edit of the same path, beside the draft's edits"),

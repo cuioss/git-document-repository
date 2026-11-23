@@ -96,6 +96,10 @@ class ConcurrentWritersTest {
     /** The time the teardown waits for the workers after the scenario ended or timed out. */
     private static final long TEARDOWN_SECONDS = 10;
 
+    /** The fixed claims of every save. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
+            Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
+
     @TempDir
     Path temp;
 
@@ -126,6 +130,7 @@ class ConcurrentWritersTest {
         tree.put("save", Map.of("max-attempts", ATTEMPTS));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
 
@@ -187,7 +192,7 @@ class ConcurrentWritersTest {
     private StoreWriter open(StoreRepository storeRepository, RepositoryOperations operations) {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(),
-                operations, Clock.fixed(Instant.now(), ZoneOffset.UTC)));
+                TestKeys.ed25519().source(), operations, Clock.fixed(Instant.now(), ZoneOffset.UTC)));
     }
 
     /** Waits until the thread parks on a lock or ends, from a callback that may not throw a checked exception. */
@@ -252,7 +257,7 @@ class ConcurrentWritersTest {
                 var content = text();
                 expected.put(path, content);
                 value(writer.draft(author, key, put(path, content), word()));
-                saves.add(() -> writer.save(author, key, Map.of(), word()));
+                saves.add(() -> writer.save(author, CLAIMS, key, Map.of(), word()));
             }
 
             var results = concurrently(saves);
@@ -285,7 +290,7 @@ class ConcurrentWritersTest {
                 var writer = writers.get(index);
                 var author = Author.of(pseudonym());
                 value(writer.draft(author, key, put(path, contents.get(index)), word()));
-                saves.add(() -> writer.save(author, key, expectedBlobIds, word()));
+                saves.add(() -> writer.save(author, CLAIMS, key, expectedBlobIds, word()));
             }
 
             var results = concurrently(saves);
@@ -315,13 +320,13 @@ class ConcurrentWritersTest {
 
         try (var writer = open(storeRepository, operations)) {
             value(writer.draft(author, key, put(word(), text()), word()));
-            var secondSave = new Thread(() -> second.set(writer.save(author, key, Map.of(), word())));
+            var secondSave = new Thread(() -> second.set(writer.save(author, CLAIMS, key, Map.of(), word())));
             operations.beforeNextPush(() -> {
                 secondSave.start();
                 awaitParked(secondSave);
             });
 
-            var first = writer.save(author, key, Map.of(), word());
+            var first = writer.save(author, CLAIMS, key, Map.of(), word());
             secondSave.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
 
             var tip = Objects.requireNonNull(remote.repository().exactRef(target), "the branch exists").getObjectId();
@@ -353,7 +358,7 @@ class ConcurrentWritersTest {
                 expected.put(path, content);
                 saves.add(() -> {
                     value(writer.draft(author, key, put(path, content), word()));
-                    return writer.save(author, key, Map.of(), word());
+                    return writer.save(author, CLAIMS, key, Map.of(), word());
                 });
             }
 

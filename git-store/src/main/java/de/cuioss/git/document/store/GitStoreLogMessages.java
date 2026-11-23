@@ -197,5 +197,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(109)
                 .build();
+
+        /**
+         * A save or release was refused because its commit could not be signed, nothing of it on the remote: the
+         * repository alias, the reference and the outcome, never the key reference, key material or the detail of the
+         * signing key source.
+         */
+        public static final LogRecord SIGNING_FAILED = LogRecordModel.builder()
+                .template("Did not sign the commit of repository %s, reference %s: %s")
+                .prefix(PREFIX)
+                .identifier(110)
+                .build();
     }
 }
