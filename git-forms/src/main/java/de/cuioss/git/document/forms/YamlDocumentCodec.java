@@ -36,8 +36,11 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The keys of an object are written in the declaration order of the {@code properties} of its schema, a nested object
  * and the items of an array by their sub-schema ({@code prefixItems} by position for the leading items, {@code items}
- * for the others); the keys the schema does not declare follow in lexicographic order. The text is the canonical form
- * of {@link YamlWriter}, so equal data yields byte-identical content, and for every value {@code encode} accepts,
+ * for the others); a property declared through a branch of {@code allOf} or a {@code $ref} within the schema file
+ * counts as declared, in the declaration order of the keywords that lead to it, each name at its first position, while
+ * {@code $dynamicRef}, {@code anyOf}, {@code oneOf} and the conditionals contribute nothing, because whether they apply
+ * depends on the data. The keys the schema does not declare follow in lexicographic order. The text is the canonical
+ * form of {@link YamlWriter}, so equal data yields byte-identical content, and for every value {@code encode} accepts,
  * {@code decode(encode(v))} succeeds and {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte;
  * {@code encode} refuses a value whose YAML would be longer than the reader takes. Decoding reads YAML within the JSON data
  * model of ADR-0008 through {@link YamlReader}: content that is not UTF-8, not YAML of that data model (an anchor, an

@@ -376,6 +376,104 @@ class YamlDocumentCodecTest {
         }
     }
 
+    @Nested
+    @DisplayName("Order through $ref and allOf")
+    class ThroughReferences {
+
+        private String encoded(String schema, Map<String, @Nullable Object> data) {
+            return text(new YamlDocumentCodec(SchemaValidatorTest.schema(schema)).encode(data));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: properties from a local $ref are written in the order of the definition")
+        void localReference() {
+            var schema = """
+                    { "type": "object",
+                      "properties": { "contact": { "$ref": "#/$defs/contact" } },
+                      "$defs": { "contact": { "type": "object",
+                                              "properties": { "zeta": {}, "alpha": {}, "mid": {} } } } }
+                    """;
+            var data = map("contact", map("alpha", 1L, "mid", 2L, "zeta", 3L));
+
+            assertEquals("""
+                    contact:
+                      zeta: 3
+                      alpha: 1
+                      mid: 2
+                    """, encoded(schema, data), "the order of the definition, not lexicographic");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: the branches of allOf contribute in their declaration order")
+        void allOfBranches() {
+            var schema = """
+                    { "allOf": [ { "properties": { "zeta": {}, "beta": {} } },
+                                 { "properties": { "alpha": {} } } ] }
+                    """;
+            var data = map("alpha", 1L, "extra", 4L, "beta", 2L, "zeta", 3L);
+
+            assertEquals("""
+                    zeta: 3
+                    beta: 2
+                    alpha: 1
+                    extra: 4
+                    """, encoded(schema, data), "branch one, then branch two, then the undeclared key");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a property declared inline and in allOf keeps its first position, its value merged")
+        void firstPositionWins() {
+            var inlineFirst = """
+                    { "properties": { "mid": {}, "zeta": { "properties": { "y": {} } } },
+                      "allOf": [ { "properties": { "alpha": {}, "zeta": { "properties": { "x": {} } } } } ] }
+                    """;
+            var allOfFirst = """
+                    { "allOf": [ { "properties": { "zeta": {} } } ],
+                      "properties": { "alpha": {}, "zeta": {} } }
+                    """;
+            var data = map("alpha", 1L, "mid", 2L, "zeta", map("x", 3L, "y", 4L));
+
+            assertAll(
+                    () -> assertEquals("""
+                            mid: 2
+                            zeta:
+                              y: 4
+                              x: 3
+                            alpha: 1
+                            """, encoded(inlineFirst, data), "inline first; the nested order merges both"),
+                    () -> assertEquals("""
+                            zeta:
+                              x: 3
+                              y: 4
+                            alpha: 1
+                            mid: 2
+                            """, encoded(allOfFirst, data), "allOf first, as its keyword is declared first"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a recursive tree of items that reference the root is ordered to the nesting limit")
+        void recursiveTreeToTheLimit() {
+            var schema = """
+                    { "properties": { "z": {}, "a": {}, "kids": { "type": "array", "items": { "$ref": "#" } } } }
+                    """;
+            // each level is a mapping and its sequence: 64 mappings, the innermost sequence at depth 128
+            int levels = DataNode.MAX_DEPTH / 2;
+            Map<String, @Nullable Object> node = map("kids", List.of(), "a", (long) levels - 1, "z", (long) levels - 1);
+            for (int level = levels - 2; level >= 0; level--) {
+                node = map("kids", List.of(node), "a", (long) level, "z", (long) level);
+            }
+            var expected = new StringBuilder();
+            for (int level = 0; level < levels; level++) {
+                String indent = " ".repeat(4 * level);
+                expected.append(level == 0 ? "" : " ".repeat(4 * level - 2) + "- ").append("z: ").append(level)
+                        .append('\n').append(indent).append("a: ").append(level).append('\n').append(indent)
+                        .append(level == levels - 1 ? "kids: []" : "kids:").append('\n');
+            }
+
+            assertEquals(expected.toString(), encoded(schema, node), "every level in schema order");
+        }
+    }
+
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
     @SuppressWarnings("unchecked")
     private static <T> T nullValue() {

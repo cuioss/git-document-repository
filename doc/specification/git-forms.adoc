@@ -330,7 +330,17 @@ the layout yet.
 `document.yaml`, an entry file and, through `part(property)`, a split part. It writes the keys of every object in the
 declaration order of the `properties` of its schema, nested objects and array items by their sub-schema (the leading
 items by `prefixItems`, position by position, the others by `items`), and the keys the schema does not declare after
-them in lexicographic order. The formatting is fixed by the package-private `YamlWriter`: block style, an indentation
+them in lexicographic order. The order is resolved through the schemas that apply to the same value without depending
+on the data: walking the keywords of each schema in their declaration order, `properties` contributes its names, every
+branch of `allOf` contributes in its declaration order, and a `$ref` within the file contributes its target; a name
+takes the first position at which it is found, and the sub-schemas of a property or an item from every such schema
+together order its value. So an object whose properties come from `{"$ref": "#/$defs/contact"}` is written in the order
+of the definition, and `{"allOf": [{"properties": {"b": {}}}, {"properties": {"a": {}}}]}` writes `b` before `a`.
+`$dynamicRef`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else` and `dependentSchemas` contribute nothing, because
+whether they apply depends on the data; the keys only they declare follow the declared ones in lexicographic order. A
+recursive schema such as `{"items": {"$ref": "#"}}` is resolved only as deep as the data goes, which the nesting limit
+of <<GDR-FORMS-2>> bounds. The change is breaking: until it, the keys a `$ref` or an `allOf` branch declares were
+written as undeclared keys, in lexicographic order, so the content written for such a schema differs. The formatting is fixed by the package-private `YamlWriter`: block style, an indentation
 of two spaces, `{}` and `[]` for an empty mapping and sequence, line feed line ends and one trailing line feed; a string
 is plain only when it is made of letters, digits and a few punctuation marks and reads back as a string under the YAML
 1.2 core schema, otherwise it is double-quoted with escapes; a key whose written form is longer than 1024 code points,
