@@ -60,7 +60,8 @@ public final class SchemaValidator {
      * @param data   the data of the document
      * @return {@link ValidationResult.Valid}, or {@link ValidationResult.Invalid} with every violation
      * @throws NullPointerException     if an argument is {@code null}
-     * @throws IllegalArgumentException if the data holds a value outside the JSON data model
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model or is nested deeper than
+     *                                  128 levels
      */
     public ValidationResult validate(FormSchema schema, Map<String, ?> data) {
         Objects.requireNonNull(schema, "schema");
@@ -100,12 +101,13 @@ public final class SchemaValidator {
      * @return {@link ValidationResult.Valid} when no mandatory field is missing, otherwise
      *         {@link ValidationResult.MandatoryFieldsMissing} with the JSON Pointers of the missing fields
      * @throws NullPointerException     if an argument is {@code null}
-     * @throws IllegalArgumentException if a value the check of an applied schema passes to the validator is outside the
-     *                                  JSON data model
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model or is nested deeper than
+     *                                  128 levels, checked before any schema is applied
      */
     public ValidationResult required(FormSchema schema, Map<String, ?> data) {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(data, "data");
+        DataNode.requireDataModel(data);
         List<String> missing = MandatoryFields.missing(schema, data);
         return missing.isEmpty() ? new ValidationResult.Valid() : new ValidationResult.MandatoryFieldsMissing(missing);
     }

@@ -45,8 +45,19 @@ import org.jspecify.annotations.Nullable;
  * ({@link SchemaResources#schemaObjects()}), those under {@code $defs} and {@code definitions} included, so that a cycle
  * declared but never referenced is refused as well. Both the enumeration of the schema objects and the search use an
  * explicit stack, so that the check cannot overflow on a deeply nested schema.
+ * <p>
+ * The same search bounds the longest chain of schemas applied to the same value at {@value #MAX_IN_PLACE_CHAIN}
+ * schemas, the first schema of the chain counting 1. A flat chain of references ({@code a0} referencing {@code a1},
+ * {@code a1} referencing {@code a2}, and so on, all side by side under {@code $defs}) is nested only a few levels deep,
+ * so no nesting limit bounds it; yet {@code SchemaChecks.holdsRequired}, {@code MandatoryFields.collect} and the
+ * {@code RefEvaluator} of the validator recurse once per link. The length of the longest chain from each schema object
+ * is its height in the graph of in-place edges, computed after its edges, as each object leaves the path; as the graph
+ * is acyclic once no cycle is found, every object is computed once, without recursion.
  */
 final class InPlaceCycles {
+
+    /** The most schemas a chain of schemas applied to the same value may hold, the first one counting 1. */
+    static final int MAX_IN_PLACE_CHAIN = 128;
 
     /** The keywords whose sub-schemas are applied to the same value; the references are added separately. */
     private static final List<String> IN_PLACE = List.of("allOf", "anyOf", "oneOf", "not", "if", "then", "else",
@@ -57,45 +68,71 @@ final class InPlaceCycles {
     /** The state of a schema object: absent while unvisited, {@code true} on the path, {@code false} done. */
     private final Map<Object, Boolean> onPath = new IdentityHashMap<>();
 
+    /** The length of the longest chain of in-place edges from each schema object that is done, itself included. */
+    private final Map<Object, Integer> chain = new IdentityHashMap<>();
+
+    private boolean chainTooLong;
+
     private InPlaceCycles(SchemaResources resources) {
         this.resources = resources;
     }
 
+    /** What the search over the in-place edges of a schema file found. */
+    enum Finding {
+
+        /** No cycle, and no chain longer than {@value InPlaceCycles#MAX_IN_PLACE_CHAIN} schemas. */
+        NONE,
+
+        /** Some schema object reaches itself through in-place edges only. */
+        CYCLE,
+
+        /**
+         * No cycle, but a chain of more than {@value InPlaceCycles#MAX_IN_PLACE_CHAIN} schemas applied to the same
+         * value.
+         */
+        CHAIN_TOO_LONG
+    }
+
     /**
-     * Tells whether a schema file holds a cycle of in-place edges.
+     * Searches a schema file for a cycle of in-place edges and for a chain of them longer than
+     * {@value #MAX_IN_PLACE_CHAIN} schemas; a cycle takes precedence.
      *
      * @param resources the resources of the file, against which references are resolved
      * @param schemas   the schema objects of the file, {@link SchemaResources#schemaObjects()}, each a start
-     * @return {@code true} when some schema object of the file reaches itself through in-place edges only
+     * @return what the search found
      */
-    static boolean present(SchemaResources resources, List<Map<?, ?>> schemas) {
+    static Finding find(SchemaResources resources, List<Map<?, ?>> schemas) {
         var search = new InPlaceCycles(resources);
         for (Map<?, ?> start : schemas) {
             if (!search.onPath.containsKey(start) && search.cycleFrom(start)) {
-                return true;
+                return Finding.CYCLE;
             }
         }
-        return false;
+        return search.chainTooLong ? Finding.CHAIN_TOO_LONG : Finding.NONE;
     }
 
-    /** Searches depth-first from one unvisited schema object; {@code true} when an edge returns onto the path. */
+    /**
+     * Searches depth-first from one unvisited schema object; {@code true} when an edge returns onto the path. Each
+     * object that leaves the path records the length of its longest chain and offers it to the object below it.
+     */
     private boolean cycleFrom(Map<?, ?> start) {
         Deque<Frame> path = new ArrayDeque<>();
         enter(path, start);
         while (!path.isEmpty()) {
             Frame top = path.peek();
-            if (!top.edges().hasNext()) {
-                onPath.put(top.schema(), false);
-                path.pop();
+            if (!top.edges.hasNext()) {
+                leave(path, top);
                 continue;
             }
-            Map<?, ?> next = top.edges().next();
+            Map<?, ?> next = top.edges.next();
             @Nullable Boolean state = onPath.get(next);
             if (Boolean.TRUE.equals(state)) {
                 return true;
             }
             if (state == null) {
                 enter(path, next);
+            } else {
+                top.offer(chain.getOrDefault(next, 1));
             }
         }
         return false;
@@ -104,6 +141,21 @@ final class InPlaceCycles {
     private void enter(Deque<Frame> path, Map<?, ?> schema) {
         onPath.put(schema, true);
         path.push(new Frame(schema, edges(schema).iterator()));
+    }
+
+    /** Marks the object on top of the path done, with the longest chain from it, and offers that chain below it. */
+    private void leave(Deque<Frame> path, Frame top) {
+        int length = top.longestEdge + 1;
+        onPath.put(top.schema, false);
+        chain.put(top.schema, length);
+        if (length > MAX_IN_PLACE_CHAIN) {
+            chainTooLong = true;
+        }
+        path.pop();
+        Frame below = path.peek();
+        if (below != null) {
+            below.offer(length);
+        }
     }
 
     /** The schema objects a schema applies to the same value. */
@@ -116,7 +168,24 @@ final class InPlaceCycles {
         return edges;
     }
 
-    /** A schema object on the path and the edges not yet followed from it. */
-    private record Frame(Map<?, ?> schema, Iterator<Map<?, ?>> edges) {
+    /**
+     * A schema object on the path, the edges not yet followed from it, and the longest chain found so far behind the
+     * edges already followed.
+     */
+    private static final class Frame {
+
+        private final Map<?, ?> schema;
+        private final Iterator<Map<?, ?>> edges;
+        private int longestEdge;
+
+        Frame(Map<?, ?> schema, Iterator<Map<?, ?>> edges) {
+            this.schema = schema;
+            this.edges = edges;
+        }
+
+        /** Takes the longest chain behind one edge into account. */
+        void offer(int length) {
+            longestEdge = Math.max(longestEdge, length);
+        }
     }
 }

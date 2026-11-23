@@ -66,7 +66,9 @@ import org.snakeyaml.engine.v2.scanner.StreamReader;
  * string. It refuses, as {@link StoreOutcome#MALFORMED} passed on in a {@link FormsResult}, everything outside the
  * JSON data model: an anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite
  * number or not-a-number, a number whose exponent leaves the range of {@code int}, a quoted string that is not valid
- * Unicode (a lone surrogate from an escape), more than one document, and a document without a value. Text that is not
+ * Unicode (a lone surrogate from an escape), more than {@value DataNode#MAX_DEPTH} nested mappings and sequences (the
+ * nesting limit {@link DataNode#MAX_DEPTH}, which the detail names), more than one document, and a document without a
+ * value. Text that is not
  * well-formed YAML, or longer than {@link #CODE_POINT_LIMIT} code points, is refused the same way.
  * <p>
  * A detail names the position (line and column, counted from 1) and the problem, never the content (GDR-NFR-3). The
@@ -173,6 +175,9 @@ final class YamlReader {
             add(open, roots, scalar(scalar), scalar);
         } else {
             expectNoKey(open, node);
+            if (open.size() == DataNode.MAX_DEPTH) {
+                throw new Refusal(node, "a nesting deeper than " + DataNode.MAX_DEPTH + " levels");
+            }
             open.push(node instanceof MappingStartEvent ? new MappingContainer(node) : new SequenceContainer(node));
         }
     }

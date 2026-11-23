@@ -92,12 +92,15 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
      * @param value the data, a value of the JSON data model
      * @return the canonical UTF-8 content
      * @throws NullPointerException     if {@code value} is {@code null}
-     * @throws IllegalArgumentException if the data holds a value outside the JSON data model, or its YAML would be
-     *                                  longer than {@link #decode(byte[])} reads: 3,145,728 code points
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model, is nested deeper than
+     *                                  128 levels (the nesting limit {@link #decode(byte[])} applies, checked before
+     *                                  anything is ordered or written), or its YAML would be longer than
+     *                                  {@link #decode(byte[])} reads: 3,145,728 code points
      */
     @Override
     public byte[] encode(Map<String, @Nullable Object> value) {
         Objects.requireNonNull(value, "value");
+        DataNode.requireDataModel(value);
         String yaml = WRITER.write(ordered(value, shape));
         if (yaml.codePointCount(0, yaml.length()) > YamlReader.CODE_POINT_LIMIT) {
             throw new IllegalArgumentException("value: the YAML would be longer than " + YamlReader.CODE_POINT_LIMIT

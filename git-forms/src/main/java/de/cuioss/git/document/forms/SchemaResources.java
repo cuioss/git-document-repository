@@ -137,8 +137,11 @@ final class SchemaResources {
      * the objects the dynamic scope of a {@code $dynamicRef} may bind it to included, wherever it sits in the file (also
      * under a keyword the dialect does not define, such as {@code x-contact}), with their sub-schemas and targets in
      * turn. The schema checks, the search for in-place cycles, the check of {@code required} and the removal of
-     * {@code required} for validation therefore see the same schemas. Each object is listed once, compared by identity;
-     * the walk uses an explicit stack, so a deeply nested schema cannot overflow it.
+     * {@code required} for validation therefore see the same schemas. Each object is listed once, compared by identity.
+     * This walk uses an explicit stack, so it cannot overflow the thread stack whatever it follows. Every other walk over
+     * a schema ({@link #index}, {@link FormSchema#withoutRequired()}, {@code Shape.of} and
+     * {@code SchemaChecks.checkSubSchemas}) recurses once per level of nesting; it is kept safe by the nesting limit of
+     * {@link DataNode#MAX_DEPTH} levels that {@link YamlReader} applies to the schema file, not by this method.
      *
      * @return the schema objects, the root first
      */

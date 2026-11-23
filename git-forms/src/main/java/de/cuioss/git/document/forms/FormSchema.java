@@ -41,14 +41,18 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * A schema the library does not accept is the passed-on {@link StoreOutcome#MALFORMED}, its detail naming the schema
  * file and the problem, never content of the schema (GDR-NFR-3): text that is not UTF-8 or not JSON within the JSON
- * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
+ * data model of ADR-0008 (with the line and column), a schema file nested deeper than 128 mappings and sequences (the
+ * nesting limit of the reader, named in the detail with the line and column), a root that is not an object, another
+ * dialect, a {@code $ref} or
  * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it
  * (an array index of a JSON Pointer only in its canonical form, {@code 0} or without leading zeros), or that selects an
  * object inside the literal value of {@code const}, {@code enum}, {@code default} or {@code examples}, the value of
  * {@code dependentRequired} or {@code $vocabulary} or an object inside it, or the map of {@code properties},
  * {@code patternProperties}, {@code $defs}, {@code definitions} or {@code dependentSchemas} itself, a cycle of
  * schemas applied to the same value without descending into a child value (for example
- * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
+ * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, a chain of more than 128 schemas applied to
+ * the same value (for example a {@code $ref} to a schema whose {@code $ref} leads on, link after link), whose check
+ * would recurse once per link, {@value #SPLIT} that is not a boolean or not
  * on a top-level property of type {@code object} (also in a schema only a reference selects), {@code required} that is
  * not an array of unique strings, {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not},
  * {@code if}, {@code then}, {@code else} or {@code contains} (also in a schema such a sub-schema references), where
@@ -138,8 +142,10 @@ public final class FormSchema {
      *                detail
      * @param content the content of the schema file
      * @return {@link FormsOutcome#OK} with the schema, or the passed-on {@link StoreOutcome#MALFORMED} for a schema the
-     *         library does not accept; a cycle of schemas applied to the same value is refused before any other check
-     *         of the sub-schemas and before the validator sees the schema
+     *         library does not accept, among them a schema file nested deeper than 128 mappings and sequences, refused
+     *         by the reader with the limit and the position named; a cycle of schemas applied to the same value, and a
+     *         chain of more than 128 of them, is refused before any other check of the sub-schemas and before the
+     *         validator sees the schema
      * @throws NullPointerException if an argument is {@code null}
      */
     public static FormsResult<FormSchema> parse(String path, byte[] content) {
