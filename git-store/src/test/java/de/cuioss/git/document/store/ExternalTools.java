@@ -42,8 +42,9 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * A process writes its standard output and standard error into a file, never into a pipe, so a child that keeps a
  * pipe open cannot block the test before its deadline; a process that outlives the deadline is destroyed and fails the
- * test, and a process still running when the wait ends otherwise, for example by an interrupt, is destroyed as well. A probe makes its signature with {@code ssh-keygen -Y sign} itself, so its verdict says what the tool can do and
- * never depends on the encoder under test.
+ * test, and a process still running when the wait ends otherwise, for example by an interrupt, is destroyed as well. A
+ * probe makes its signature with {@code ssh-keygen -Y sign} itself, so its verdict says what the tool can do and never
+ * depends on the encoder under test.
  */
 final class ExternalTools {
 
