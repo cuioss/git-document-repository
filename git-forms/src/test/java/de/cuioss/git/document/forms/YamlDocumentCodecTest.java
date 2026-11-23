@@ -201,6 +201,35 @@ class YamlDocumentCodecTest {
                     """, text(codec.encode(data)), "the formatting");
         }
 
+        /**
+         * Strings a YAML 1.1 reader takes for booleans, timestamps or numbers stay strings under the YAML 1.2 core
+         * schema, so they are written plain; the byte output is unchanged by the owner's decision. A sexagesimal-like
+         * string holds {@code :}, which a plain string never does, so it is double-quoted.
+         */
+        @Test
+        @DisplayName("GDR-FORMS-3: strings that YAML 1.1 reads as other types are written as YAML 1.2 strings")
+        void yaml11Strings() {
+            var data = map("a", "no", "b", "yes", "c", "on", "d", "off", "e", "2026-11-21", "f", "12:30", "g",
+                    "1_000", "h", "0b101", "i", "y", "j", "n");
+
+            var encoded = codec.encode(data);
+
+            assertAll(
+                    () -> assertEquals("""
+                            a: no
+                            b: yes
+                            c: on
+                            d: off
+                            e: 2026-11-21
+                            f: "12:30"
+                            g: 1_000
+                            h: 0b101
+                            i: y
+                            j: n
+                            """, text(encoded), "written plain, the sexagesimal-like string quoted"),
+                    () -> assertEquals(data, decoded(codec.decode(encoded)), "read back as the same strings"));
+        }
+
         @Test
         @DisplayName("GDR-STORE-11: an empty document is written as an empty mapping")
         void emptyDocument() {
@@ -329,6 +358,70 @@ class YamlDocumentCodecTest {
         }
     }
 
+    /**
+     * A number a caller builds in memory beyond the number bounds of {@link YamlReader}: {@code encode} refuses it, so
+     * that it never writes text that {@code decode} refuses, and accepts the numbers at the bounds. The numbers are the
+     * bounds themselves and kept as literals.
+     */
+    @Nested
+    @DisplayName("Number bounds")
+    class NumberBounds {
+
+        static Stream<Arguments> beyondTheBounds() {
+            return Stream.of(
+                    Arguments.of("an exponent beyond 1000", new BigDecimal("1e1001"),
+                            "a number whose exponent exceeds 1000 in magnitude"),
+                    Arguments.of("more than 1000 digits", BigInteger.TEN.pow(1000),
+                            "a number with more than 1000 digits"));
+        }
+
+        static Stream<Arguments> atTheBounds() {
+            return Stream.of(
+                    Arguments.of("an exponent of 1000", new BigDecimal("1e1000")),
+                    Arguments.of("1000 digits", BigInteger.TEN.pow(999)));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-3: encode refuses a number with {0}, naming the limit and not the number")
+        @MethodSource("beyondTheBounds")
+        void refused(String description, Number number, String problem) {
+            var data = map(word(), number);
+
+            var refusal = assertThrows(IllegalArgumentException.class, () -> codec.encode(data));
+
+            var message = String.valueOf(refusal.getMessage());
+            assertAll(
+                    () -> assertEquals("value: " + problem + ", which decode refuses", message, "the limit named"),
+                    () -> assertFalse(message.contains(number.toString()), "no number in the message"),
+                    () -> assertEquals(StoreOutcome.MALFORMED,
+                            codec.decode(new YamlWriter().write(data).getBytes(StandardCharsets.UTF_8)).outcome(),
+                            "decode refuses the text encode would have written"));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-3: a number with {0} round-trips byte for byte")
+        @MethodSource("atTheBounds")
+        void atTheBound(String description, Number number) {
+            var data = map(word(), number);
+
+            var encoded = codec.encode(data);
+
+            assertAll(
+                    () -> assertEquals(data, decoded(codec.decode(encoded)), "the number reads back"),
+                    () -> assertArrayEquals(encoded, codec.encode(decoded(codec.decode(encoded))),
+                            "the round trip is byte-identical"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: encode refuses a number beyond the bounds inside a list and inside a map")
+        void nested() {
+            var inList = map(word(), List.of(1L, map(word(), List.of(new BigDecimal("1e1001")))));
+            var inMap = map(word(), map(word(), map(word(), BigInteger.TEN.pow(1000))));
+
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(inList), "inside a list"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(inMap), "inside a map"));
+        }
+    }
+
     @Nested
     @DisplayName("Arrays and keys")
     class ArraysAndKeys {
@@ -376,9 +469,106 @@ class YamlDocumentCodecTest {
         }
     }
 
+    @Nested
+    @DisplayName("Order through $ref and allOf")
+    class ThroughReferences {
+
+        private String encoded(String schema, Map<String, @Nullable Object> data) {
+            return text(new YamlDocumentCodec(SchemaValidatorTest.schema(schema)).encode(data));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: properties from a local $ref are written in the order of the definition")
+        void localReference() {
+            var schema = """
+                    { "type": "object",
+                      "properties": { "contact": { "$ref": "#/$defs/contact" } },
+                      "$defs": { "contact": { "type": "object",
+                                              "properties": { "zeta": {}, "alpha": {}, "mid": {} } } } }
+                    """;
+            var data = map("contact", map("alpha", 1L, "mid", 2L, "zeta", 3L));
+
+            assertEquals("""
+                    contact:
+                      zeta: 3
+                      alpha: 1
+                      mid: 2
+                    """, encoded(schema, data), "the order of the definition, not lexicographic");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: the branches of allOf contribute in their declaration order")
+        void allOfBranches() {
+            var schema = """
+                    { "allOf": [ { "properties": { "zeta": {}, "beta": {} } },
+                                 { "properties": { "alpha": {} } } ] }
+                    """;
+            var data = map("alpha", 1L, "extra", 4L, "beta", 2L, "zeta", 3L);
+
+            assertEquals("""
+                    zeta: 3
+                    beta: 2
+                    alpha: 1
+                    extra: 4
+                    """, encoded(schema, data), "branch one, then branch two, then the undeclared key");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a property declared inline and in allOf keeps its first position, its value merged")
+        void firstPositionWins() {
+            var inlineFirst = """
+                    { "properties": { "mid": {}, "zeta": { "properties": { "y": {} } } },
+                      "allOf": [ { "properties": { "alpha": {}, "zeta": { "properties": { "x": {} } } } } ] }
+                    """;
+            var allOfFirst = """
+                    { "allOf": [ { "properties": { "zeta": {} } } ],
+                      "properties": { "alpha": {}, "zeta": {} } }
+                    """;
+            var data = map("alpha", 1L, "mid", 2L, "zeta", map("x", 3L, "y", 4L));
+
+            assertAll(
+                    () -> assertEquals("""
+                            mid: 2
+                            zeta:
+                              y: 4
+                              x: 3
+                            alpha: 1
+                            """, encoded(inlineFirst, data), "inline first; the nested order merges both"),
+                    () -> assertEquals("""
+                            zeta:
+                              x: 3
+                              y: 4
+                            alpha: 1
+                            mid: 2
+                            """, encoded(allOfFirst, data), "allOf first, as its keyword is declared first"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a recursive tree of items that reference the root is ordered to the nesting limit")
+        void recursiveTreeToTheLimit() {
+            var schema = """
+                    { "properties": { "z": {}, "a": {}, "kids": { "type": "array", "items": { "$ref": "#" } } } }
+                    """;
+            // each level is a mapping and its sequence: 64 mappings, the innermost sequence at depth 128
+            int levels = DataNode.MAX_DEPTH / 2;
+            Map<String, @Nullable Object> node = map("kids", List.of(), "a", (long) levels - 1, "z", (long) levels - 1);
+            for (int level = levels - 2; level >= 0; level--) {
+                node = map("kids", List.of(node), "a", (long) level, "z", (long) level);
+            }
+            var expected = new StringBuilder();
+            for (int level = 0; level < levels; level++) {
+                String indent = " ".repeat(4 * level);
+                expected.append(level == 0 ? "" : " ".repeat(4 * level - 2) + "- ").append("z: ").append(level)
+                        .append('\n').append(indent).append("a: ").append(level).append('\n').append(indent)
+                        .append(level == levels - 1 ? "kids: []" : "kids:").append('\n');
+            }
+
+            assertEquals(expected.toString(), encoded(schema, node), "every level in schema order");
+        }
+    }
+
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
-    private static <T> T nullValue() {
-        return (T) null;
+    private static <T> @Nullable T nullValue() {
+        return null;
     }
 }

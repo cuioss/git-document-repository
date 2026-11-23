@@ -27,7 +27,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The checks of {@link FormSchema#parse(String, byte[])} that refuse a schema before the validator sees it: a cycle of
- * schemas applied to the same value ({@link InPlaceCycles}), a reference that leaves the file or selects no schema,
+ * schemas applied to the same value and a chain of more than {@value InPlaceCycles#MAX_IN_PLACE_CHAIN} of them
+ * ({@link InPlaceCycles}), a reference that leaves the file or selects no schema,
  * a reference to an object that is no schema (inside the literal value of {@code const}, {@code enum}, {@code default}
  * or {@code examples}, the value of {@code dependentRequired} or {@code $vocabulary}, or a map of named sub-schemas),
  * {@value FormSchema#SPLIT} that is not a boolean on a top-level property of type {@code object}, {@code required} that
@@ -57,6 +58,10 @@ final class SchemaChecks {
     static final String IN_PLACE_CYCLE =
             "a reference cycle that returns to the same value without descending into a child value";
 
+    /** The reason of a schema whose chain of schemas applied to the same value exceeds the bound. */
+    static final String IN_PLACE_CHAIN = "a chain of schemas applied to the same value longer than "
+            + InPlaceCycles.MAX_IN_PLACE_CHAIN;
+
     /**
      * The keywords whose sub-schemas decide between alternatives or conditions; {@code required} in them cannot be
      * deferred without changing which alternative or condition holds.
@@ -70,8 +75,9 @@ final class SchemaChecks {
     }
 
     /**
-     * Checks a schema file: first for a cycle of schemas applied to the same value, then the root and its sub-schemas,
-     * then for a reference to an object that is no schema, then the schemas only a reference selects.
+     * Checks a schema file: first for a cycle of schemas applied to the same value and for a chain of them longer than
+     * {@value InPlaceCycles#MAX_IN_PLACE_CHAIN}, then the root and its sub-schemas, then for a reference to an object
+     * that is no schema, then the schemas only a reference selects.
      *
      * @param resources the resources of the file, against which references are resolved
      * @param root      the root of the schema file
@@ -79,8 +85,16 @@ final class SchemaChecks {
      * @return the problem, or {@code null} when there is none
      */
     static @Nullable String problem(SchemaResources resources, Map<?, ?> root, List<Map<?, ?>> schemas) {
-        if (InPlaceCycles.present(resources, schemas)) {
-            return IN_PLACE_CYCLE;
+        switch (InPlaceCycles.find(resources, schemas)) {
+            case CYCLE -> {
+                return IN_PLACE_CYCLE;
+            }
+            case CHAIN_TOO_LONG -> {
+                return IN_PLACE_CHAIN;
+            }
+            case NONE -> {
+                // no cycle and no chain beyond the bound: the other checks follow
+            }
         }
         @Nullable String problem = checkSubSchemas(resources, root, false, true);
         if (problem == null) {

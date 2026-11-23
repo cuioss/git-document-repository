@@ -133,7 +133,8 @@ outcome list and its service interfaces; xref:specification/general.adoc#GDR-NFR
 xref:specification/general.adoc#GDR-NFR-2[GDR-NFR-2] and the part of
 xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] that the write path, the release, the index and the listeners
 touch are covered by tests of `git-store`. The module `git-forms`
-exists with its outcome list and its result (xref:specification/general.adoc#GDR-GEN-3[GDR-GEN-3]) and implements
+holds the kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome
+list and its result (xref:specification/general.adoc#GDR-GEN-3[GDR-GEN-3]), and so implements
 xref:specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1], xref:specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]
 and xref:specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements are planned.
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's

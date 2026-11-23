@@ -19,9 +19,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 
@@ -35,20 +37,26 @@ import org.jspecify.annotations.Nullable;
  * The schema is plain JSON Schema: a validator outside the library that supports the dialect uses it unchanged. Its
  * key {@code $schema} is absent or {@value #DIALECT}. Beyond the dialect the library reads two things from it: the
  * declaration order of the {@code properties} of every object, nested objects and the items of an array by their
- * sub-schema, which orders the keys of the YAML the {@link YamlDocumentCodec} writes; and the annotation keyword
+ * sub-schema, also where a branch of {@code allOf} or a {@code $ref} within the file declares them (but not a
+ * {@code $dynamicRef}, {@code anyOf}, {@code oneOf} or a conditional, which apply depending on the data), which orders
+ * the keys of the YAML the {@link YamlDocumentCodec} writes; and the annotation keyword
  * {@value #SPLIT}, which a validator outside the library ignores as an unknown keyword: with the value {@code true} on a
  * top-level property of type {@code object} it stores that part as a file of its own ({@link DocumentLayout}).
  * <p>
  * A schema the library does not accept is the passed-on {@link StoreOutcome#MALFORMED}, its detail naming the schema
  * file and the problem, never content of the schema (GDR-NFR-3): text that is not UTF-8 or not JSON within the JSON
- * data model of ADR-0008 (with the line and column), a root that is not an object, another dialect, a {@code $ref} or
+ * data model of ADR-0008 (with the line and column), a schema file nested deeper than 128 mappings and sequences (the
+ * nesting limit of the reader, named in the detail with the line and column), a root that is not an object, another
+ * dialect, a {@code $ref} or
  * {@code $dynamicRef} that points outside the schema file or whose fragment selects no object or boolean schema in it
  * (an array index of a JSON Pointer only in its canonical form, {@code 0} or without leading zeros), or that selects an
  * object inside the literal value of {@code const}, {@code enum}, {@code default} or {@code examples}, the value of
  * {@code dependentRequired} or {@code $vocabulary} or an object inside it, or the map of {@code properties},
  * {@code patternProperties}, {@code $defs}, {@code definitions} or {@code dependentSchemas} itself, a cycle of
  * schemas applied to the same value without descending into a child value (for example
- * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, {@value #SPLIT} that is not a boolean or not
+ * {@code {"allOf": [{"$ref": "#"}]}}), whose evaluation would never end, a chain of more than 128 schemas applied to
+ * the same value (for example a {@code $ref} to a schema whose {@code $ref} leads on, link after link), whose check
+ * would recurse once per link, {@value #SPLIT} that is not a boolean or not
  * on a top-level property of type {@code object} (also in a schema only a reference selects), {@code required} that is
  * not an array of unique strings, {@code required} in a sub-schema of {@code oneOf}, {@code anyOf}, {@code not},
  * {@code if}, {@code then}, {@code else} or {@code contains} (also in a schema such a sub-schema references), where
@@ -57,7 +65,12 @@ import org.jspecify.annotations.Nullable;
  * validator {@code dev.harrel:json-schema} refuses, for example one that does not conform to the meta-schema of the
  * dialect. These rules hold for every schema of the file a validator may apply, a schema that only a reference selects
  * (under an unknown keyword such as {@code x-contact}) included, and {@code required} is removed from each of them for
- * {@link SchemaValidator#validate(FormSchema, Map)}. A schema is immutable and may serve every thread.
+ * {@link SchemaValidator#validate(FormSchema, Map)}.
+ * <p>
+ * A schema is immutable and may serve every thread. It holds the validator of {@code dev.harrel:json-schema} 1.9.1 that
+ * {@link #parse(String, byte[])} prepared, once per schema, in a final field; every later use only reads it, which the
+ * library's {@code Validator.validate} allows concurrently once all schemas are registered (see
+ * {@link SchemaValidator}).
  *
  * @since 0.1
  */
@@ -75,6 +88,8 @@ public final class FormSchema {
     private static final String ITEMS = "items";
     private static final String PREFIX_ITEMS = "prefixItems";
     private static final String REQUIRED = "required";
+    private static final String ALL_OF = "allOf";
+    private static final String REF = "$ref";
 
     /**
      * The keywords whose value maps names to sub-schemas.
@@ -107,7 +122,7 @@ public final class FormSchema {
      * The keywords whose value is a list of sub-schemas; derived from the meta-schema as {@link #SCHEMA_MAPS}
      * describes.
      */
-    static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
+    static final Set<String> SCHEMA_LISTS = Set.of(ALL_OF, "anyOf", "oneOf", PREFIX_ITEMS);
 
     /** The keywords that reference a schema; within one file only. */
     static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
@@ -118,16 +133,16 @@ public final class FormSchema {
     private final Shape shape;
     private final List<String> splitProperties;
     private final SchemaResources resources;
+    private final SchemaValidator.Prepared prepared;
 
-    private FormSchema(String path, Map<String, @Nullable Object> schema, SchemaResources resources,
-            List<Map<?, ?>> schemas, List<String> splitProperties) {
+    private FormSchema(String path, Map<String, @Nullable Object> schema, Map<String, @Nullable Object> withoutRequired,
+            SchemaResources resources, SchemaValidator.Prepared prepared, List<String> splitProperties) {
         this.path = path;
         this.schema = schema;
+        this.withoutRequired = withoutRequired;
         this.resources = resources;
-        Set<Object> schemaObjects = identitySet();
-        schemaObjects.addAll(schemas);
-        this.withoutRequired = withoutRequired(schema, schemaObjects);
-        this.shape = Shape.of(schema);
+        this.prepared = prepared;
+        this.shape = Shape.of(resources, schema);
         this.splitProperties = List.copyOf(splitProperties);
     }
 
@@ -138,8 +153,10 @@ public final class FormSchema {
      *                detail
      * @param content the content of the schema file
      * @return {@link FormsOutcome#OK} with the schema, or the passed-on {@link StoreOutcome#MALFORMED} for a schema the
-     *         library does not accept; a cycle of schemas applied to the same value is refused before any other check
-     *         of the sub-schemas and before the validator sees the schema
+     *         library does not accept, among them a schema file nested deeper than 128 mappings and sequences, refused
+     *         by the reader with the limit and the position named; a cycle of schemas applied to the same value, and a
+     *         chain of more than 128 of them, is refused before any other check of the sub-schemas and before the
+     *         validator sees the schema
      * @throws NullPointerException if an argument is {@code null}
      */
     public static FormsResult<FormSchema> parse(String path, byte[] content) {
@@ -149,14 +166,11 @@ public final class FormSchema {
         if (text == null) {
             return malformed(path, "not UTF-8");
         }
-        FormsResult<Object> read = YAML.read(text);
+        FormsResult<Map<String, @Nullable Object>> read = YAML.readMapping(text, "the root: not an object");
         if (!read.isOk()) {
             return malformed(path, Objects.requireNonNull(read.detail()));
         }
-        if (!(read.value() instanceof Map<?, ?> root)) {
-            return malformed(path, "the root: not an object");
-        }
-        @SuppressWarnings("unchecked") Map<String, @Nullable Object> schema = (Map<String, @Nullable Object>) root;
+        Map<String, @Nullable Object> schema = Objects.requireNonNull(read.value());
         @Nullable Object dialect = schema.get("$schema");
         if (schema.containsKey("$schema") && !DIALECT.equals(dialect)) {
             return malformed(path, "$schema: not the dialect Draft 2020-12");
@@ -167,11 +181,15 @@ public final class FormSchema {
         if (problem != null) {
             return malformed(path, problem);
         }
-        var formSchema = new FormSchema(path, schema, resources, schemas, splitProperties(schema));
-        if (!SchemaValidator.accepts(formSchema)) {
+        Set<Object> schemaObjects = identitySet();
+        schemaObjects.addAll(schemas);
+        Map<String, @Nullable Object> withoutRequired = withoutRequired(schema, schemaObjects);
+        Optional<SchemaValidator.Prepared> prepared = SchemaValidator.prepare(withoutRequired, resources, schemas);
+        if (prepared.isEmpty()) {
             return malformed(path, "not a JSON Schema the validator accepts");
         }
-        return FormsResult.ok(formSchema);
+        return FormsResult.ok(
+                new FormSchema(path, schema, withoutRequired, resources, prepared.get(), splitProperties(schema)));
     }
 
     /**
@@ -272,9 +290,11 @@ public final class FormSchema {
     }
 
     /**
-     * Returns the top-level properties of the schema.
+     * Returns the top-level properties of the schema: those of its own {@code properties} and of every schema it
+     * applies to the same value through {@code allOf} and a {@code $ref} within the file, merged in the declaration
+     * order of its keywords, each name at its first position.
      *
-     * @return the names of the top-level {@code properties}, in declaration order, unmodifiable
+     * @return the names of the top-level properties, in that order, unmodifiable
      */
     public List<String> properties() {
         return shape.order();
@@ -308,69 +328,127 @@ public final class FormSchema {
         return SchemaChecks.holdsRequired(resources, subSchema, identitySet());
     }
 
-    /** The resources of the schema file, against which references are resolved. */
-    SchemaResources resources() {
-        return resources;
-    }
-
     /** The schema without the keyword {@code required}, which validation evaluates. */
     Map<String, @Nullable Object> withoutRequired() {
         return withoutRequired;
     }
 
     /**
-     * The declaration order of the properties, nested objects and array items by their sub-schema: {@code prefixItems}
-     * for the leading items, {@code items} for the others.
+     * The validator of the library, prepared once by {@link #parse(String, byte[])}, which {@code validate} and
+     * {@code required} of {@link SchemaValidator} share.
+     */
+    SchemaValidator.Prepared prepared() {
+        return prepared;
+    }
+
+    /**
+     * The declaration order of the properties, nested objects and array items by their sub-schema ({@code prefixItems}
+     * for the leading items, {@code items} for the others), through {@code allOf} and a {@code $ref} within the file.
      */
     Shape shape() {
         return shape;
     }
 
     /**
-     * The declaration order of the properties of an object schema.
-     *
-     * @param order       the names of the {@code properties}, in declaration order
-     * @param properties  the shapes of the properties whose schema is an object
-     * @param prefixItems the shapes of the leading items of an array by position, from {@code prefixItems}
-     * @param items       the shape of the further items of an array, from {@code items}, or {@code null}
+     * The declaration order of the properties of one value, resolved from the schema objects that apply to it, one
+     * level at a time.
+     * <p>
+     * The schemas that apply to the value are found by walking the keywords of each schema object in their declaration
+     * order: {@code properties} contributes its names, every branch of {@code allOf} contributes in its declaration
+     * order, and a {@code $ref} within the file contributes its target; a name takes the first position at which it is
+     * found. {@code $dynamicRef}, {@code anyOf}, {@code oneOf} and the conditional keywords are not followed, because
+     * whether they apply depends on the data. A schema applied twice to the same value is walked once. The shape of a
+     * property, or of the item of an array, is resolved only when it is asked for, from every applying schema that
+     * declares it, so a recursive schema such as {@code {"items": {"$ref": "#"}}} is resolved only as deep as the data
+     * goes, bounded by the nesting limit of {@link DataNode#MAX_DEPTH} levels. A shape is immutable.
      */
-    record Shape(List<String> order, Map<String, Shape> properties, List<Shape> prefixItems, @Nullable Shape items) {
+    static final class Shape {
 
-        /** The shape of a schema that declares nothing. */
-        static final Shape EMPTY = new Shape(List.of(), Map.of(), List.of(), null);
+        /** The shape of a value no schema declares. */
+        static final Shape EMPTY = new Shape(null, List.of());
 
-        /** Derives the shape of a schema; the shape of anything that is no object schema is empty. */
-        static Shape of(@Nullable Object schema) {
-            if (!(schema instanceof Map<?, ?> map)) {
-                return EMPTY;
+        private final @Nullable SchemaResources resources;
+        private final List<Map<?, ?>> applying;
+        private final List<String> order;
+
+        private Shape(@Nullable SchemaResources resources, List<Map<?, ?>> seeds) {
+            this.resources = resources;
+            List<Map<?, ?>> found = new ArrayList<>();
+            Set<String> names = new LinkedHashSet<>();
+            Set<Object> seen = identitySet();
+            for (Map<?, ?> seed : seeds) {
+                walk(seed, seen, found, names);
             }
-            List<String> order = new ArrayList<>();
-            Map<String, Shape> nested = new LinkedHashMap<>();
-            if (map.get(PROPERTIES) instanceof Map<?, ?> properties) {
-                for (Map.Entry<?, ?> entry : properties.entrySet()) {
-                    String name = (String) entry.getKey();
-                    order.add(name);
-                    nested.put(name, of(entry.getValue()));
-                }
-            }
-            List<Shape> prefix = map.get(PREFIX_ITEMS) instanceof List<?> prefixSchemas
-                    ? prefixSchemas.stream().map(Shape::of).toList() : List.of();
-            @Nullable Shape items = map.get(ITEMS) instanceof Map<?, ?> itemSchema ? of(itemSchema) : null;
-            return new Shape(List.copyOf(order), Map.copyOf(nested), prefix, items);
+            this.applying = List.copyOf(found);
+            this.order = List.copyOf(names);
         }
 
-        /** The shape of a property, empty for a property the schema does not declare. */
-        Shape property(String name) {
-            return properties.getOrDefault(name, EMPTY);
+        /** The shape of the root of a schema file. */
+        static Shape of(SchemaResources resources, Map<?, ?> root) {
+            return new Shape(resources, List.of(root));
         }
 
         /**
-         * The shape of the item of an array at a position: from {@code prefixItems} for a leading item, otherwise from
-         * {@code items}; empty when the schema declares neither.
+         * Adds a schema and the schemas it applies in place, through {@code allOf} and a {@code $ref} within the file,
+         * in the declaration order of its keywords, collecting the names of {@code properties} on the way. The
+         * recursion follows only schemas applied to the same value, so it is bounded by the in-place chain of
+         * {@link InPlaceCycles#MAX_IN_PLACE_CHAIN} schemas that {@link FormSchema#parse(String, byte[])} enforces.
+         */
+        private void walk(Map<?, ?> schema, Set<Object> seen, List<Map<?, ?>> found, Set<String> names) {
+            if (!seen.add(schema)) {
+                return;
+            }
+            found.add(schema);
+            for (Map.Entry<?, ?> entry : schema.entrySet()) {
+                walkKeyword(schema, entry.getKey(), entry.getValue(), seen, found, names);
+            }
+        }
+
+        /** Follows one keyword of a schema: {@code properties} names, the branches of {@code allOf}, a {@code $ref}. */
+        private void walkKeyword(Map<?, ?> schema, Object keyword, @Nullable Object value, Set<Object> seen,
+                List<Map<?, ?>> found, Set<String> names) {
+            if (PROPERTIES.equals(keyword) && value instanceof Map<?, ?> properties) {
+                // a set keeps the first position of a name
+                properties.keySet().forEach(name -> names.add((String) name));
+            } else if (ALL_OF.equals(keyword) && value instanceof List<?> branches) {
+                for (Object branch : branches) {
+                    if (branch instanceof Map<?, ?> branchSchema) {
+                        walk(branchSchema, seen, found, names);
+                    }
+                }
+            } else if (REF.equals(keyword) && value instanceof String reference && resources != null
+                    && resources.resolve(schema, reference) instanceof Map<?, ?> target) {
+                walk(target, seen, found, names);
+            }
+        }
+
+        /** The names of the properties, in the order of their first declaration, unmodifiable. */
+        List<String> order() {
+            return order;
+        }
+
+        /** The shape of a property, from every applying schema that declares it; empty when none does. */
+        Shape property(String name) {
+            List<Map<?, ?>> seeds = new ArrayList<>();
+            for (Map<?, ?> schema : applying) {
+                if (schema.get(PROPERTIES) instanceof Map<?, ?> properties) {
+                    addSchema(seeds, properties.get(name));
+                }
+            }
+            return seeds.isEmpty() ? EMPTY : new Shape(resources, seeds);
+        }
+
+        /**
+         * The shape of the item of an array at a position, from every applying schema: its {@code prefixItems} entry
+         * for a leading item, otherwise its {@code items}; empty when no applying schema declares either.
          */
         Shape item(int index) {
-            @Nullable Shape shape = byPosition(prefixItems, items, index);
-            return shape == null ? EMPTY : shape;
+            List<Map<?, ?>> seeds = new ArrayList<>();
+            for (Map<?, ?> schema : applying) {
+                List<?> prefixItems = schema.get(PREFIX_ITEMS) instanceof List<?> list ? list : List.of();
+                addSchema(seeds, byPosition(prefixItems, schema.get(ITEMS), index));
+            }
+            return seeds.isEmpty() ? EMPTY : new Shape(resources, seeds);
         }
     }
 

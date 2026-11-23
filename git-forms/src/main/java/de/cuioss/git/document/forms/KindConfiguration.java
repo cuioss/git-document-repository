@@ -16,9 +16,15 @@
 package de.cuioss.git.document.forms;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +45,7 @@ import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.jspecify.annotations.Nullable;
@@ -54,12 +61,25 @@ import org.jspecify.annotations.Nullable;
  * the key {@code template} (required for a per-document kind, optional for a numbered one) and the optional key
  * {@code numbering} with {@code prefix} and {@code digits}. A kind with {@code numbering} is a numbered kind.
  * <p>
- * A configuration the loader does not accept is the passed-on {@link StoreOutcome#MALFORMED}: text that is not YAML of
- * the JSON data model (see the position in the detail), a missing or unknown key, a value of the wrong type, an id or
- * collection outside {@code [a-z0-9-]+}, a duplicate id, a repository alias the registry does not know, a per-document
- * kind without {@code template}, or {@code digits} less than 1. The detail names the file and the key path
- * ({@code kinds.yaml: kinds[1].template: missing key}, positions counted from 0), never a configured value
- * (GDR-NFR-3). An I/O failure is the passed-on {@link GitOutcome#FAILED}, naming the exception class only.
+ * A configuration the loader does not accept is the passed-on {@link StoreOutcome#MALFORMED}:
+ * <ul>
+ * <li>a file that is a symbolic link, or that is larger than {@value #MAX_FILE_BYTES} bytes; neither is read;</li>
+ * <li>text that is not UTF-8, or not YAML of the JSON data model (see the position in the detail);</li>
+ * <li>a missing or unknown key, or a value of the wrong type;</li>
+ * <li>an id or collection outside {@code [a-z0-9-]+}, or a duplicate id;</li>
+ * <li>a repository alias the registry does not know;</li>
+ * <li>a second kind with the repository and the collection of an earlier kind, whatever the numbering of either: the
+ * two would share the branch namespace of the collection, and the branch of a numbered collection would conflict with
+ * the document branches below the same name of a per-document collection;</li>
+ * <li>a {@code schema}, {@code template} or {@code workflow} that is not a relative path: a leading {@code /}, an
+ * empty, {@code .} or {@code ..} segment, a backslash, or a control character;</li>
+ * <li>a per-document kind without {@code template};</li>
+ * <li>a {@code prefix} outside {@code [A-Za-z0-9_-]{0,16}}, which keeps a number safe in a reference name and a link,
+ * or {@code digits} outside 1 to {@value #MAX_DIGITS}, the number of digits of the largest counter, a {@code long}.</li>
+ * </ul>
+ * The detail names the file and the key path and the rule ({@code kinds.yaml: kinds[1].template: missing key},
+ * positions counted from 0), never a configured value (GDR-NFR-3). An I/O failure is the passed-on
+ * {@link GitOutcome#FAILED}, naming the exception class only.
  *
  * @since 0.1
  */
@@ -68,10 +88,22 @@ public final class KindConfiguration {
     /** The name of the configuration file at the root of the directory or the commit. */
     public static final String FILE = "kinds.yaml";
 
+    /** The largest configuration file the loader reads, in bytes (1 MiB); a larger file is refused unread. */
+    public static final int MAX_FILE_BYTES = 1_048_576;
+
+    /** The largest number of digits of a numbering: a counter is a {@code long}, whose largest value has 19 digits. */
+    public static final int MAX_DIGITS = 19;
+
     private static final CuiLogger LOGGER = new CuiLogger(KindConfiguration.class);
 
     /** The form of an id and a collection: lower-case letters, digits and hyphens. */
     private static final Pattern NAME = Pattern.compile("[a-z0-9-]+");
+
+    /** The form of a prefix: safe in a reference name and in a link, at most 16 characters. */
+    private static final Pattern PREFIX_FORM = Pattern.compile("[A-Za-z0-9_-]{0,16}");
+
+    /** The detail of a file larger than {@link #MAX_FILE_BYTES}. */
+    private static final String TOO_LARGE = "too large, more than " + MAX_FILE_BYTES + " bytes";
 
     /** The top-level key. */
     private static final String KINDS = "kinds";
@@ -103,25 +135,34 @@ public final class KindConfiguration {
     }
 
     /**
-     * Loads the kinds of documents from the file {@value #FILE} at the root of a directory.
+     * Loads the kinds of documents from the file {@value #FILE} at the root of a directory. The file is not followed
+     * when it is a symbolic link, and at most {@value #MAX_FILE_BYTES} bytes and one more are read from it.
      *
      * @param directory    the configuration directory
      * @param repositories the repository registry the alias of every kind must be found in
      * @return {@link FormsOutcome#OK} with the configuration; the passed-on {@link StoreOutcome#MALFORMED} for a
-     *         missing file or a configuration the loader does not accept; the passed-on {@link GitOutcome#FAILED} for
-     *         an I/O failure
+     *         missing file, a symbolic link, a file larger than {@value #MAX_FILE_BYTES} bytes or a configuration the
+     *         loader does not accept; the passed-on {@link GitOutcome#FAILED} for an I/O failure
      * @throws NullPointerException if an argument is {@code null}
      */
     public static FormsResult<KindConfiguration> fromDirectory(Path directory, RepositoryRegistry repositories) {
         Objects.requireNonNull(directory, "directory");
         Objects.requireNonNull(repositories, "repositories");
+        Path file = directory.resolve(FILE);
+        if (Files.isSymbolicLink(file)) {
+            return malformed("a symbolic link, not read");
+        }
         byte[] content;
-        try {
-            content = Files.readAllBytes(directory.resolve(FILE));
+        try (SeekableByteChannel channel = Files.newByteChannel(file, StandardOpenOption.READ,
+                     LinkOption.NOFOLLOW_LINKS); InputStream in = Channels.newInputStream(channel)) {
+            content = in.readNBytes(MAX_FILE_BYTES + 1);
         } catch (NoSuchFileException e) {
             return malformed("missing file");
         } catch (IOException e) {
             return failed(e);
+        }
+        if (content.length > MAX_FILE_BYTES) {
+            return malformed(TOO_LARGE);
         }
         return load(content, repositories, "directory " + directory);
     }
@@ -129,14 +170,16 @@ public final class KindConfiguration {
     /**
      * Loads the kinds of documents from the file {@value #FILE} at the root of a commit of a configuration repository.
      * The revision is resolved with {@link RepositoryReader#snapshot(Repository, String)} of {@code git-core}, and the
-     * blob is read through the repository's JGit {@link ObjectReader}.
+     * blob is read through the repository's JGit {@link ObjectReader}, only after its size, from
+     * {@link ObjectLoader#getSize()}, is found to be at most {@value #MAX_FILE_BYTES} bytes.
      *
      * @param repository   the configuration repository
      * @param revision     a reference, by its short or full name, or a full commit id
      * @param repositories the repository registry the alias of every kind must be found in
      * @return {@link FormsOutcome#OK} with the configuration; the Git outcome of the snapshot passed on when the
-     *         revision cannot be resolved; the passed-on {@link StoreOutcome#MALFORMED} for a missing file or a
-     *         configuration the loader does not accept; the passed-on {@link GitOutcome#FAILED} for an I/O failure
+     *         revision cannot be resolved; the passed-on {@link StoreOutcome#MALFORMED} for a missing file, a file
+     *         larger than {@value #MAX_FILE_BYTES} bytes or a configuration the loader does not accept; the passed-on
+     *         {@link GitOutcome#FAILED} for an I/O failure
      * @throws NullPointerException if an argument is {@code null}
      */
     public static FormsResult<KindConfiguration> fromRepository(Repository repository, String revision,
@@ -155,8 +198,13 @@ public final class KindConfiguration {
         }
         byte[] content;
         try (ObjectReader reader = repository.newObjectReader()) {
-            content = reader.open(ObjectId.fromString(file.get().blobId()), Constants.OBJ_BLOB)
-                    .getBytes(Integer.MAX_VALUE);
+            ObjectLoader loader = reader.open(ObjectId.fromString(file.get().blobId()), Constants.OBJ_BLOB);
+            // JGit 7.8.0 ObjectLoader.getBytes(int) refuses only a large object above the limit and returns a cached
+            // one whole, so the size is checked first.
+            if (loader.getSize() > MAX_FILE_BYTES) {
+                return malformed(TOO_LARGE);
+            }
+            content = loader.getBytes(MAX_FILE_BYTES);
         } catch (IOException e) {
             return failed(e);
         }
@@ -190,11 +238,15 @@ public final class KindConfiguration {
             throw new Malformed(KINDS + ": not a list");
         }
         Map<String, Kind> byId = new LinkedHashMap<>();
+        Set<List<String>> namespaces = new HashSet<>();
         for (int index = 0; index < list.size(); index++) {
             String path = KINDS + "[" + index + "]";
             Kind kind = kind(list.get(index), path, repositories);
             if (byId.putIfAbsent(kind.id(), kind) != null) {
                 throw new Malformed(path + "." + ID + ": duplicate id");
+            }
+            if (!namespaces.add(List.of(kind.repository(), kind.collection()))) {
+                throw new Malformed(path + "." + COLLECTION + ": a collection another kind of the same repository uses");
             }
         }
         return byId;
@@ -209,9 +261,9 @@ public final class KindConfiguration {
             throw new Malformed(path + "." + REPOSITORY + ": unknown alias");
         }
         String collection = name(keys, COLLECTION, path);
-        String schema = string(keys, SCHEMA, path);
-        String workflow = string(keys, WORKFLOW, path);
-        @Nullable String template = keys.containsKey(TEMPLATE) ? string(keys, TEMPLATE, path) : null;
+        String schema = relativePath(keys, SCHEMA, path);
+        String workflow = relativePath(keys, WORKFLOW, path);
+        @Nullable String template = keys.containsKey(TEMPLATE) ? relativePath(keys, TEMPLATE, path) : null;
         @Nullable Numbering numbering = keys.containsKey(NUMBERING)
                 ? numbering(keys.get(NUMBERING), path + "." + NUMBERING)
                 : null;
@@ -225,25 +277,32 @@ public final class KindConfiguration {
     private static Numbering numbering(@Nullable Object entry, String path) {
         Map<String, @Nullable Object> keys = mapping(entry, path, NUMBERING_KEYS);
         String prefix = anyString(keys, PREFIX, path);
+        if (!PREFIX_FORM.matcher(prefix).matches()) {
+            throw new Malformed(path + "." + PREFIX + ": not of the form " + PREFIX_FORM.pattern());
+        }
         Object digits = require(keys, DIGITS, path + "." + DIGITS);
-        if (!(digits instanceof Long count) || count < 1 || count > Integer.MAX_VALUE) {
-            throw new Malformed(path + "." + DIGITS + ": not an integer between 1 and " + Integer.MAX_VALUE);
+        if (!(digits instanceof Long count) || count < 1 || count > MAX_DIGITS) {
+            throw new Malformed(path + "." + DIGITS + ": not an integer between 1 and " + MAX_DIGITS);
         }
         return new Numbering(prefix, count.intValue());
     }
 
-    /** Checks that a value is a mapping that holds no key outside the allowed ones. */
-    @SuppressWarnings("unchecked")
+    /**
+     * Checks that a value is a mapping that holds no key outside the allowed ones, and copies it with each key checked
+     * as a string, so that no unchecked cast is needed; the mappings of the configuration are small.
+     */
     private static Map<String, @Nullable Object> mapping(@Nullable Object value, String path, Set<String> allowed) {
         if (!(value instanceof Map<?, ?> map)) {
             throw new Malformed(path + ": not a mapping");
         }
-        for (Object key : map.keySet()) {
-            if (!allowed.contains(key)) {
+        Map<String, @Nullable Object> keys = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!(entry.getKey() instanceof String key) || !allowed.contains(key)) {
                 throw new Malformed(path + ": unknown key");
             }
+            keys.put(key, entry.getValue());
         }
-        return (Map<String, @Nullable Object>) map;
+        return keys;
     }
 
     /** The value of a required key; a key with the value {@code null} counts as missing. */
@@ -278,6 +337,30 @@ public final class KindConfiguration {
         String text = string(keys, key, path);
         if (!NAME.matcher(text).matches()) {
             throw new Malformed(path + "." + key + ": not of the form [a-z0-9-]+");
+        }
+        return text;
+    }
+
+    /**
+     * The value of a required key that must be a relative path: not blank, no leading {@code /}, no empty, {@code .}
+     * or {@code ..} segment, no backslash and no control character.
+     */
+    private static String relativePath(Map<String, @Nullable Object> keys, String key, String path) {
+        String text = string(keys, key, path);
+        String keyPath = path + "." + key;
+        if (text.startsWith("/")) {
+            throw new Malformed(keyPath + ": not a relative path, leading /");
+        }
+        if (text.indexOf('\\') >= 0) {
+            throw new Malformed(keyPath + ": not a relative path, backslash");
+        }
+        if (text.chars().anyMatch(Character::isISOControl)) {
+            throw new Malformed(keyPath + ": not a relative path, control character");
+        }
+        for (String segment : text.split("/", -1)) {
+            if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
+                throw new Malformed(keyPath + ": not a relative path, empty, . or .. segment");
+            }
         }
         return text;
     }

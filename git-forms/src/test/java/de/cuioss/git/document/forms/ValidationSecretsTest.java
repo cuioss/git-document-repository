@@ -25,6 +25,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 
 import de.cuioss.git.document.store.StoreOutcome;
@@ -42,7 +44,8 @@ import org.junit.jupiter.api.function.Executable;
  * GDR-NFR-3 for schema validation and the codecs of {@code git-forms}: no violation message, no violation pointer, no
  * result detail and no log line repeats a value of the instance. The library's own messages would quote it (for example
  * the value that is not one of an {@code enum}); the messages of {@link SchemaValidator} are composed from keyword and
- * constraint instead.
+ * constraint instead. A pointer does carry the property names of the data, which is the stated limit: no message,
+ * detail or log line carries them.
  * <p>
  * Every string value is generated between tildes, which no fixed text contains; every number is generated six digits
  * long, beyond every constraint of the schema, which itself is a literal.
@@ -116,6 +119,51 @@ class ValidationSecretsTest {
         checks.add(() -> assertEquals(8, invalid.violations().size(), "one violation per property"));
         checks.add(() -> assertNoLogLine(values));
         assertAll(checks);
+    }
+
+    /**
+     * The stated limit: a schema with {@code patternProperties} or {@code additionalProperties} accepts keys the user
+     * chooses, and the pointer of a violation carries them, so the pointer is data. No message, detail or log line
+     * carries such a key.
+     */
+    @Test
+    @DisplayName("GDR-NFR-3: a data key reaches the pointer only, never a message, the detail or a log line")
+    void dataKeyedPointer() {
+        var schema = SchemaValidatorTest.schema("""
+                {
+                  "type": "object",
+                  "patternProperties": { "@": { "type": "integer" } },
+                  "additionalProperties": { "type": "integer" }
+                }
+                """);
+        var mail = word() + "@" + word() + ".invalid";
+        var person = capitalised(word()) + " " + capitalised(word());
+        Map<String, @Nullable Object> data = new LinkedHashMap<>();
+        data.put(mail, secret());
+        data.put(person, secret());
+        var keys = List.of(mail, person);
+
+        var result = new SchemaValidator().validate(schema, data);
+
+        var invalid = assertInstanceOf(ValidationResult.Invalid.class, result, "both values are of the wrong type");
+        List<Executable> checks = new ArrayList<>();
+        for (Violation violation : invalid.violations()) {
+            checks.add(() -> assertNoValue("a message", violation.message(), keys));
+        }
+        checks.add(() -> assertEquals(Set.of("/" + mail, "/" + person),
+                invalid.violations().stream().map(Violation::pointer).collect(Collectors.toSet()),
+                "the pointers carry the data keys"));
+        checks.add(() -> assertNoValue("the detail", result.detail().orElseThrow(), keys));
+        checks.add(() -> assertNoLogLine(keys));
+        assertAll(checks);
+    }
+
+    private static String word() {
+        return Generators.strings("abcdefghijklmnopqrstuvwxyz", 12, 20).next();
+    }
+
+    private static String capitalised(String word) {
+        return Character.toUpperCase(word.charAt(0)) + word.substring(1);
     }
 
     @Test

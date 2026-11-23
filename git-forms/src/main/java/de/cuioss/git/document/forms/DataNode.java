@@ -17,8 +17,10 @@ package de.cuioss.git.document.forms;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,12 +54,16 @@ import org.jspecify.annotations.Nullable;
  * library's scale-sensitive {@link BigDecimal#equals(Object)} compare by value, and {@code minimum}, {@code maximum} and
  * their exclusive forms compare by {@link BigDecimal#compareTo(BigDecimal)}, which expands nothing. Only
  * {@code multipleOf} is left: the library computes {@link BigDecimal#remainder(BigDecimal)}, whose working precision
- * grows with the difference of the exponents, so a number with a large exponent under {@code multipleOf} can stall the
- * validation, and no node can prevent that. The library then compares the remainder as a {@code double} with zero
+ * grows with the difference of the exponents, and no node can bound that. For data read from text it stays bounded
+ * because {@link YamlReader} refuses a number of more than {@value YamlReader#MAX_NUMBER_DIGITS} digits or with an
+ * exponent beyond {@value YamlReader#MAX_EXPONENT} in magnitude before it is parsed. A {@link BigDecimal} or
+ * {@link BigInteger} a caller builds in memory is not bounded: with a large exponent under {@code multipleOf} it can
+ * still stall the validation. The library then compares the remainder as a {@code double} with zero
  * ({@code MultipleOfEvaluator} in {@code Evaluators.java} of {@code dev.harrel:json-schema} 1.9.1:
  * {@code remainder(factor).doubleValue() == 0}); a remainder of a magnitude below the smallest positive {@code double}
- * (about {@code 4.9e-324}; below about {@code 1e-308} it already loses precision) underflows to zero, so {@code multipleOf} accepts such a number, for example {@code 1e-400} under {@code "multipleOf": 1}. This gap
- * of the library is accepted and not checked again.
+ * (about {@code 4.9e-324}; below about {@code 1e-308} it already loses precision) underflows to zero, so
+ * {@code multipleOf} accepts such a number, for example {@code 1e-400} under {@code "multipleOf": 1}, which the reader
+ * still reads. This underflow of the library is accepted and not checked again.
  */
 final class DataNode implements JsonNode {
 
@@ -66,6 +72,13 @@ final class DataNode implements JsonNode {
 
     /** The most digits a number without fraction may have to be an integer; a longer one is of the type number. */
     static final int MAX_INTEGER_DIGITS = 1000;
+
+    /**
+     * The most nested mappings and sequences a value of the data model may hold, the outermost container counting 1
+     * and a scalar root counting 0: the one compiled nesting limit of git-forms. {@link YamlReader} applies it to text,
+     * {@link #requireDataModel(Object)} to a value in memory.
+     */
+    static final int MAX_DEPTH = 128;
 
     /** log10(2), rounded up, so that a digit count derived from a bit length is never too small. */
     private static final double LOG10_OF_2 = 0.30103;
@@ -89,7 +102,8 @@ final class DataNode implements JsonNode {
      *
      * @param value the value
      * @return the node, whose JSON Pointer is the empty string
-     * @throws IllegalArgumentException if the value or a value inside it is outside the data model
+     * @throws IllegalArgumentException if the value or a value inside it is outside the data model, or if it is nested
+     *                                  deeper than {@value #MAX_DEPTH} levels
      */
     static DataNode root(@Nullable Object value) {
         requireDataModel(value);
@@ -99,19 +113,51 @@ final class DataNode implements JsonNode {
     /**
      * Checks a value and every value inside it against the data model, at the boundary: the validator descends only
      * where a keyword of the schema leads it, so a value it never reaches would otherwise pass unchecked.
+     * <p>
+     * The value may hold at most {@value #MAX_DEPTH} nested mappings and sequences, the outermost container counting 1
+     * and a scalar counting 0. The walk runs over an explicit stack, so a value nested deeper than that, or one that
+     * contains itself, is refused instead of overflowing the thread stack. A refusal names the limit or the type that
+     * is outside the data model, never a value or a key (GDR-NFR-3).
+     *
+     * @param value the value
+     * @throws IllegalArgumentException if the value or a value inside it is outside the data model, or if it is nested
+     *                                  deeper than {@value #MAX_DEPTH} levels
      */
-    private static void requireDataModel(@Nullable Object value) {
-        if (value != null && !isOfDataModel(value)) {
-            throw new IllegalArgumentException("not of the JSON data model: " + value.getClass().getName());
+    static void requireDataModel(@Nullable Object value) {
+        Deque<Pending> pending = new ArrayDeque<>();
+        pending.push(new Pending(value, 0));
+        while (!pending.isEmpty()) {
+            Pending next = pending.pop();
+            Object current = next.value();
+            if (current == null) {
+                continue;
+            }
+            if (!isOfDataModel(current)) {
+                throw new IllegalArgumentException("not of the JSON data model: " + current.getClass().getName());
+            }
+            if (current instanceof List<?> || current instanceof Map<?, ?>) {
+                int depth = next.depth() + 1;
+                if (depth > MAX_DEPTH) {
+                    throw new IllegalArgumentException(
+                            "not of the JSON data model: nested deeper than " + MAX_DEPTH + " levels");
+                }
+                pushInside(pending, current, depth);
+            }
         }
-        if (value instanceof List<?> list) {
-            list.forEach(DataNode::requireDataModel);
-        } else if (value instanceof Map<?, ?> map) {
+    }
+
+    /** Pushes every value inside a container onto the stack of the walk, checking the keys of a mapping. */
+    private static void pushInside(Deque<Pending> pending, Object container, int depth) {
+        if (container instanceof List<?> list) {
+            for (Object item : list) {
+                pending.push(new Pending(item, depth));
+            }
+        } else if (container instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 if (!(entry.getKey() instanceof String)) {
                     throw new IllegalArgumentException("not of the JSON data model: a key that is not a string");
                 }
-                requireDataModel(entry.getValue());
+                pending.push(new Pending(entry.getValue(), depth));
             }
         }
     }
@@ -303,6 +349,10 @@ final class DataNode implements JsonNode {
     @Override
     public int hashCode() {
         return Objects.hash(type, comparable());
+    }
+
+    /** A value still to be checked, with the number of containers around it. */
+    private record Pending(@Nullable Object value, int depth) {
     }
 
     /** The factory of nodes for schemas and data. */

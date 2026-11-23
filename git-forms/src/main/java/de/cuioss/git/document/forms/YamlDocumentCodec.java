@@ -15,7 +15,11 @@
  */
 package de.cuioss.git.document.forms;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,11 +40,15 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The keys of an object are written in the declaration order of the {@code properties} of its schema, a nested object
  * and the items of an array by their sub-schema ({@code prefixItems} by position for the leading items, {@code items}
- * for the others); the keys the schema does not declare follow in lexicographic order. The text is the canonical form
- * of {@link YamlWriter}, so equal data yields byte-identical content, and for every value {@code encode} accepts,
- * {@code decode(encode(v))} succeeds and {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte;
- * {@code encode} refuses a value whose YAML would be longer than the reader takes. Decoding reads YAML within the JSON data
- * model of ADR-0008 through {@link YamlReader}: content that is not UTF-8, not YAML of that data model (an anchor, an
+ * for the others); a property declared through a branch of {@code allOf} or a {@code $ref} within the schema file
+ * counts as declared, in the declaration order of the keywords that lead to it, each name at its first position, while
+ * {@code $dynamicRef}, {@code anyOf}, {@code oneOf} and the conditionals contribute nothing, because whether they apply
+ * depends on the data. The keys the schema does not declare follow in lexicographic order. The text is the canonical
+ * form of {@link YamlWriter}, so equal data yields byte-identical content, and for every value {@code encode} accepts,
+ * {@code decode(encode(v))} succeeds and {@code encode(decode(encode(v)))} equals {@code encode(v)} byte for byte,
+ * because {@code encode} refuses what the reader would refuse: a value nested deeper than its nesting limit, a number
+ * a caller built in memory beyond its number bounds, and a value whose YAML would be longer than it takes. Decoding
+ * reads YAML within the JSON data model of ADR-0008 through {@link YamlReader}: content that is not UTF-8, not YAML of that data model (an anchor, an
  * alias, an explicit tag, a key that is not a string, a duplicate key, ...) or whose root is not a mapping is
  * {@link StoreOutcome#MALFORMED}, its detail naming the position, never the content. A codec is immutable and may
  * serve every thread.
@@ -92,12 +100,20 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
      * @param value the data, a value of the JSON data model
      * @return the canonical UTF-8 content
      * @throws NullPointerException     if {@code value} is {@code null}
-     * @throws IllegalArgumentException if the data holds a value outside the JSON data model, or its YAML would be
-     *                                  longer than {@link #decode(byte[])} reads: 3,145,728 code points
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model, is nested deeper than
+     *                                  128 levels (the nesting limit {@link #decode(byte[])} applies, checked before
+     *                                  anything is ordered or written), holds a {@link BigInteger} or
+     *                                  {@link BigDecimal} that {@link #decode(byte[])} would refuse, with more than
+     *                                  1,000 significant digits or an exponent beyond 1,000 in magnitude (checked
+     *                                  before anything is ordered or written, the message naming the limit and never
+     *                                  the number), or its YAML would be longer than {@link #decode(byte[])} reads:
+     *                                  3,145,728 code points
      */
     @Override
     public byte[] encode(Map<String, @Nullable Object> value) {
         Objects.requireNonNull(value, "value");
+        DataNode.requireDataModel(value);
+        requireReadableNumbers(value);
         String yaml = WRITER.write(ordered(value, shape));
         if (yaml.codePointCount(0, yaml.length()) > YamlReader.CODE_POINT_LIMIT) {
             throw new IllegalArgumentException("value: the YAML would be longer than " + YamlReader.CODE_POINT_LIMIT
@@ -121,15 +137,50 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
         if (text == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, "not UTF-8");
         }
-        FormsResult<Object> read = READER.read(text);
+        FormsResult<Map<String, @Nullable Object>> read = READER.readMapping(text,
+                "line 1, column 1: a document that is not a mapping");
         if (!read.isOk()) {
             return StoreResult.of(StoreOutcome.MALFORMED, Objects.requireNonNull(read.detail()));
         }
-        if (!(read.value() instanceof Map<?, ?> root)) {
-            return StoreResult.of(StoreOutcome.MALFORMED, "line 1, column 1: a document that is not a mapping");
+        return StoreResult.ok(Objects.requireNonNull(read.value()));
+    }
+
+    /**
+     * Refuses a {@link BigInteger} or {@link BigDecimal} anywhere in a value whose written form the reader refuses,
+     * through the bounds of {@link YamlReader#exceededNumberBound(String)}. The value has passed
+     * {@link DataNode#requireDataModel(Object)}, so it holds no cycle and the walk over an explicit stack ends; the
+     * refusal names the bound, never the number (GDR-NFR-3).
+     */
+    private static void requireReadableNumbers(Object value) {
+        Deque<Object> pending = new ArrayDeque<>();
+        pending.push(value);
+        while (!pending.isEmpty()) {
+            switch (pending.pop()) {
+                case Map<?, ?> map -> pushInside(pending, map.values());
+                case List<?> list -> pushInside(pending, list);
+                case BigInteger number -> requireReadable(number.toString());
+                case BigDecimal number -> requireReadable(number.toString());
+                default -> {
+                    // no other value of the data model can exceed a bound of the reader
+                }
+            }
         }
-        @SuppressWarnings("unchecked") Map<String, @Nullable Object> data = (Map<String, @Nullable Object>) root;
-        return StoreResult.ok(data);
+    }
+
+    /** Pushes the values of a container onto the stack of the walk; a {@code null} holds no number. */
+    private static void pushInside(Deque<Object> pending, Iterable<? extends @Nullable Object> values) {
+        for (@Nullable Object inside : values) {
+            if (inside != null) {
+                pending.push(inside);
+            }
+        }
+    }
+
+    /** Refuses a number whose text, as {@link YamlWriter} writes it, exceeds a bound of the reader. */
+    private static void requireReadable(String number) {
+        YamlReader.exceededNumberBound(number).ifPresent(problem -> {
+            throw new IllegalArgumentException("value: " + problem + ", which decode refuses");
+        });
     }
 
     /** A copy of a value with every mapping in schema order, the undeclared keys after the declared ones, sorted. */

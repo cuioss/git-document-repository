@@ -69,10 +69,13 @@ unsigned and carry no trailers until GDR-STORE-12/13. JOL (`org.openjdk.jol:jol-
 the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
 `FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as
 `FormsResult.PassedOn`) and the `LogRecord` holder `GitFormsLogMessages`, and with the kinds of documents as
-configuration: `KindConfiguration` (loads `kinds.yaml` from a directory or a commit of a configuration repository) with
-`Kind` and `Numbering`, over the package-private `YamlReader` (YAML within the JSON data model, on
-`org.snakeyaml:snakeyaml-engine`), and with schema validation, data layout and codec: `FormSchema` (a JSON Schema of
-Draft 2020-12, its declaration order and the split keyword `gdr-split`), `SchemaValidator` (on `dev.harrel:json-schema`,
+configuration: `KindConfiguration` (loads `kinds.yaml`, at most 1 MiB and never through a symbolic link, from a
+directory or a commit of a configuration repository, and checks the pair of repository and collection, the prefix,
+the digits and the relative paths) with `Kind` and `Numbering`, over the package-private `YamlReader` (YAML within the
+JSON data model, on `org.snakeyaml:snakeyaml-engine`, with the number of digits and the exponent of a number bounded
+before it is parsed and the nesting limited to 128 levels), and with schema validation, data layout and codec:
+`FormSchema` (a JSON Schema of Draft 2020-12, its declaration order, also through a local `$ref` and `allOf`, and the
+split keyword `gdr-split`), `SchemaValidator` (on `dev.harrel:json-schema`,
 `required` checked separately) with the sealed `ValidationResult` and `Violation`, `DocumentLayout`, `YamlDocumentCodec`
 and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNode` over the data model),
 `SchemaResources` (the schema resources of a file and the resolution of references), `SchemaChecks` (the refusals of

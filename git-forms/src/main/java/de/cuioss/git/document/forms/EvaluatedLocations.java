@@ -16,14 +16,12 @@
 package de.cuioss.git.document.forms;
 
 import java.net.URI;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -45,7 +43,14 @@ import org.jspecify.annotations.Nullable;
  * (the leading items), {@code items} (all), {@code contains} (each item it matches) and {@code unevaluatedItems} of an
  * applied schema. The annotations of {@code not} are never collected. Whether a value satisfies an applied schema is
  * decided by {@code dev.harrel:json-schema} 1.9.1 with the schema without {@code required}, as
- * {@link SchemaValidator#validate(FormSchema, Map)} evaluates it; the validator is prepared on first use only.
+ * {@link SchemaValidator#validate(FormSchema, Map)} evaluates it, through the validator the schema prepared once
+ * ({@link FormSchema#prepared()}): each sub-schema is applied by the reference to it that the preparation registered,
+ * so a check registers nothing and the validator stays shared.
+ * <p>
+ * Whether a value satisfies a sub-schema is decided once per pair of sub-schema and value, so the walk of the applied
+ * schemas re-validates a value at most once per sub-schema; within one location the cost grows with the square of
+ * the schemas applied in place, which the in-place chain of {@link InPlaceCycles#MAX_IN_PLACE_CHAIN} schemas and the
+ * nesting limit of {@link DataNode#MAX_DEPTH} levels bound. That cost is accepted.
  * <p>
  * One instance serves one check and is not shared between threads.
  */
@@ -64,13 +69,8 @@ final class EvaluatedLocations {
     /** The keywords whose list of sub-schemas is applied in place. */
     private static final List<String> IN_PLACE_LISTS = List.of("allOf", "anyOf", "oneOf");
 
-    /** The base of the URIs under which the reference to an applied schema is registered with the validator. */
-    private static final String APPLIED = "https://gdr.invalid/applied/";
-
     private final FormSchema schema;
-    private final Map<String, URI> references = new HashMap<>();
     private final Map<Object, Map<Object, Boolean>> satisfied = new IdentityHashMap<>();
-    private SchemaValidator.@Nullable Prepared prepared;
 
     /**
      * Creates the evaluation of one check.
@@ -177,8 +177,8 @@ final class EvaluatedLocations {
 
     /**
      * Tells whether a value satisfies a sub-schema, as the validator evaluates the schema without {@code required}: a
-     * boolean schema by its value, an object schema through a reference to its location, which the validator resolves
-     * within the registered schema.
+     * boolean schema by its value, an object schema through the reference to it that the preparation registered, which
+     * the validator resolves within the registered schema.
      */
     private boolean satisfies(@Nullable Object subSchema, @Nullable Object value) {
         if (subSchema instanceof Boolean bool) {
@@ -187,32 +187,15 @@ final class EvaluatedLocations {
         if (!(subSchema instanceof Map<?, ?> map)) {
             return false;
         }
-        @Nullable String pointer = schema.resources().pointerOf(map);
-        if (pointer == null) {
+        SchemaValidator.Prepared prepared = schema.prepared();
+        Optional<URI> applied = prepared.appliedUri(map);
+        if (applied.isEmpty()) {
             return false;
         }
         Map<Object, Boolean> byValue = satisfied.computeIfAbsent(subSchema, key -> new IdentityHashMap<>());
         // IdentityHashMap admits the null value as a key; the validation never calls back into this method
-        return byValue.computeIfAbsent(value, key -> validator().validator()
-                .validate(references.computeIfAbsent(pointer, this::register), DataNode.root(key)).isValid());
-    }
-
-    /**
-     * Registers a schema that references the sub-schema at a JSON Pointer of the registered schema; the fragment is
-     * URL-encoded, because the validator decodes the fragment of a reference so.
-     */
-    private URI register(String pointer) {
-        SchemaValidator.Prepared validator = validator();
-        String reference = validator.uri() + "#" + URLEncoder.encode(pointer, StandardCharsets.UTF_8);
-        return validator.validator().registerSchema(URI.create(APPLIED + references.size()),
-                DataNode.root(Map.of("$ref", reference)));
-    }
-
-    private SchemaValidator.Prepared validator() {
-        if (prepared == null) {
-            prepared = SchemaValidator.prepare(schema);
-        }
-        return prepared;
+        return byValue.computeIfAbsent(value,
+                key -> prepared.validator().validate(applied.get(), DataNode.root(key)).isValid());
     }
 
     /**

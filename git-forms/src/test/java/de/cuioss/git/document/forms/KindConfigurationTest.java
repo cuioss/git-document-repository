@@ -76,14 +76,16 @@ import org.junit.jupiter.params.provider.MethodSource;
  * The kinds of documents as configuration (GDR-FORMS-1): the example of the specification loaded from a directory and
  * from a commit of an in-memory repository of {@code git-testing}, a numbered kind without template, a kind no class
  * knows found through {@link KindConfiguration#find(String)}, the success logged as {@code GIT_FORMS-1}, and every
- * refusal: the passed-on {@link StoreOutcome#MALFORMED} with a detail naming the file and the key path, the passed-on
- * {@link GitOutcome#FAILED} for an I/O failure, and the Git outcome of an unresolvable revision. No detail and no log
- * record carries a configured value (GDR-NFR-3).
+ * refusal: the passed-on {@link StoreOutcome#MALFORMED} with a detail naming the file, the key path and the rule (among
+ * them the pair of repository and collection, the prefix form, the range of digits, the relative path form, the file
+ * size bound and the symbolic link), the passed-on {@link GitOutcome#FAILED} for an I/O failure, and the Git outcome of
+ * an unresolvable revision. No detail and no log record carries a configured value (GDR-NFR-3).
  * <p>
- * The example of the specification is kept as a literal, being the contract. Every other id, collection, alias and
- * reference is generated: names from lower-case letters only, at least twelve long, so that no name can occur in the
- * fixed text of a detail (whose longest run of letters is shorter); references between tildes, which no fixed text
- * contains.
+ * The example of the specification is kept as a literal, being the contract, and so are the values each rule is about
+ * (a prefix {@code /}, a path {@code ../x}, the bounds). Every other id, collection, alias, prefix and reference is
+ * generated: names from lower-case letters only and prefixes from upper-case letters only, at least twelve long, so
+ * that none can occur in the fixed text of a detail (whose longest run of letters is shorter); references between
+ * tildes, which no fixed text contains.
  */
 @EnableGeneratorController
 @EnableTestLogger(rootLevel = TestLogLevel.DEBUG)
@@ -124,11 +126,30 @@ class KindConfigurationTest {
     private static final TypedGenerator<String> NAMES =
             Generators.uniqueValues(Generators.strings("abcdefghijklmnopqrstuvwxyz", 12, 20));
 
+    /** Prefixes: upper-case letters only, within the prefix form {@code [A-Za-z0-9_-]{0,16}}, unique within the run. */
+    private static final TypedGenerator<String> PREFIXES =
+            Generators.uniqueValues(Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 16));
+
     /** The passed-on outcome of a configuration the loader does not accept. */
     private static final FormsResult.Outcome MALFORMED = new FormsResult.PassedOn(StoreOutcome.MALFORMED);
 
+    /** The detail of a prefix outside its form. */
+    private static final String PREFIX_REFUSED = "kinds[0].numbering.prefix: not of the form [A-Za-z0-9_-]{0,16}";
+
+    /** The detail of digits outside 1 to 19. */
+    private static final String DIGITS_REFUSED = "kinds[0].numbering.digits: not an integer between 1 and 19";
+
+    /** The detail of a file above the size bound. */
+    private static final String TOO_LARGE = "kinds.yaml: too large, more than 1048576 bytes";
+
     private static String name() {
         return NAMES.next();
+    }
+
+    /** The example of the specification padded with a comment to exactly the given number of bytes. */
+    private static String exampleOfSize(int bytes) {
+        int padding = bytes - EXAMPLE.length() - 2;
+        return EXAMPLE + "#" + "x".repeat(padding) + "\n";
     }
 
     /** A reference between tildes, such as a schema path. */
@@ -199,7 +220,7 @@ class KindConfigurationTest {
     String workflow, String prefix) {
 
         static Values generate(String alias) {
-            return new Values(name(), alias, name(), reference(), reference(), reference(), reference());
+            return new Values(name(), alias, name(), reference(), reference(), reference(), PREFIXES.next());
         }
 
         /** The keys of a per-document kind, each with its YAML value, in the order of the example. */
@@ -333,6 +354,71 @@ class KindConfigurationTest {
                     "the empty prefix is kept");
         }
 
+        @ParameterizedTest(name = "GDR-FORMS-1: the prefix \"{0}\", within the prefix form, loads")
+        @MethodSource("de.cuioss.git.document.forms.KindConfigurationTest#acceptedPrefixes")
+        void prefixInForm(String prefix, @TempDir Path directory) throws Exception {
+            var values = Values.generate(name());
+            var keys = with(values.numbered("3"), "numbering", "{ prefix: " + quoted(prefix) + ", digits: 3 }");
+
+            var configuration = loaded(KindConfiguration.fromDirectory(write(directory, yaml(keys)),
+                    registry(values.alias())));
+
+            assertEquals(new Numbering(prefix, 3), configuration.find(values.id()).orElseThrow().numbering(),
+                    "the prefix is kept");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: digits of 19, the digits of the largest long counter, load")
+        void largestDigits(@TempDir Path directory) throws Exception {
+            var values = Values.generate(name());
+
+            var configuration = loaded(KindConfiguration.fromDirectory(write(directory, yaml(values.numbered("19"))),
+                    registry(values.alias())));
+
+            assertEquals(new Numbering(values.prefix(), 19),
+                    configuration.find(values.id()).orElseThrow().numbering(), "the 19 digits are kept");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: the same collection in two repositories loads, one namespace per repository")
+        void sameCollectionInTwoRepositories(@TempDir Path directory) throws Exception {
+            var first = Values.generate(name());
+            var second = Values.generate(name());
+            var keys = with(second.perDocument(), "collection", first.collection());
+
+            var configuration = loaded(KindConfiguration.fromDirectory(
+                    write(directory, yaml(first.numbered("3"), keys)), registry(first.alias(), second.alias())));
+
+            assertAll(
+                    () -> assertEquals(first.collection(), configuration.find(first.id()).orElseThrow().collection(),
+                            "the first kind has the collection"),
+                    () -> assertEquals(first.collection(), configuration.find(second.id()).orElseThrow().collection(),
+                            "the second kind, of the other repository, has the same collection"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: a file of exactly 1,048,576 bytes loads from a directory")
+        void fileAtBoundFromDirectory(@TempDir Path directory) throws Exception {
+            var text = exampleOfSize(KindConfiguration.MAX_FILE_BYTES);
+
+            var result = KindConfiguration.fromDirectory(write(directory, text), registry(EXAMPLE_ALIAS));
+
+            assertAll(
+                    () -> assertEquals(1_048_576, text.getBytes(StandardCharsets.UTF_8).length, "the file size"),
+                    () -> assertEquals(EXAMPLE_KINDS, loaded(result).kinds(), "the kinds of the file"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: a blob of exactly 1,048,576 bytes loads from a commit")
+        void fileAtBoundFromRepository(@InMemory Repository repository) throws Exception {
+            var branch = name();
+            commit(repository, branch, Map.of(KindConfiguration.FILE, exampleOfSize(KindConfiguration.MAX_FILE_BYTES)));
+
+            var result = KindConfiguration.fromRepository(repository, branch, registry(EXAMPLE_ALIAS));
+
+            assertEquals(EXAMPLE_KINDS, loaded(result).kinds(), "the kinds of the blob");
+        }
+
         @Test
         @DisplayName("GDR-FORMS-1: a load is logged as GIT_FORMS-1 with the number and the source, no configured value")
         void loadIsLogged(@TempDir Path directory) throws Exception {
@@ -368,9 +454,10 @@ class KindConfigurationTest {
             var underscored = name() + "_" + name();
             var unknownAlias = name();
             var numbered = values.numbered("3");
+            var longPrefix = PREFIXES.next().substring(0, 12) + "ABCDE";
             var configured = new ArrayList<>(values.all());
             configured.addAll(other.all());
-            configured.addAll(List.of(marker, upperId, underscored, unknownAlias));
+            configured.addAll(List.of(marker, upperId, underscored, unknownAlias, longPrefix));
             return Stream.of(
                     Arguments.of("a per-document kind without template",
                             yaml(kind, with(other.perDocument(), "template", null)),
@@ -413,12 +500,24 @@ class KindConfigurationTest {
                     Arguments.of("a numbering without digits",
                             yaml(with(numbered, "numbering", "{ prefix: " + quoted(values.prefix()) + " }")),
                             "kinds[0].numbering.digits: missing key"),
-                    Arguments.of("digits of 0", yaml(values.numbered("0")),
-                            "kinds[0].numbering.digits: not an integer between 1 and 2147483647"),
-                    Arguments.of("digits beyond int", yaml(values.numbered("2147483648")),
-                            "kinds[0].numbering.digits: not an integer between 1 and 2147483647"),
-                    Arguments.of("digits that are a string", yaml(values.numbered(quoted("3"))),
-                            "kinds[0].numbering.digits: not an integer between 1 and 2147483647"),
+                    Arguments.of("digits of 0", yaml(values.numbered("0")), DIGITS_REFUSED),
+                    Arguments.of("digits of 20, more than the digits of the largest long counter",
+                            yaml(values.numbered("20")), DIGITS_REFUSED),
+                    Arguments.of("digits that are a string", yaml(values.numbered(quoted("3"))), DIGITS_REFUSED),
+                    Arguments.of("a prefix /", yaml(prefixed(numbered, quoted("/"))), PREFIX_REFUSED),
+                    Arguments.of("a prefix ..", yaml(prefixed(numbered, quoted(".."))), PREFIX_REFUSED),
+                    Arguments.of("a prefix :", yaml(prefixed(numbered, quoted(":"))), PREFIX_REFUSED),
+                    Arguments.of("a prefix #", yaml(prefixed(numbered, quoted("#"))), PREFIX_REFUSED),
+                    Arguments.of("a prefix of a space", yaml(prefixed(numbered, quoted(" "))), PREFIX_REFUSED),
+                    Arguments.of("a prefix of a newline", yaml(prefixed(numbered, "\"\\n\"")), PREFIX_REFUSED),
+                    Arguments.of("a prefix of 17 characters", yaml(prefixed(numbered, quoted(longPrefix))),
+                            PREFIX_REFUSED),
+                    Arguments.of("a per-document kind with the collection of a numbered kind of the same repository",
+                            yaml(numbered, with(other.perDocument(), "collection", values.collection())),
+                            "kinds[1].collection: a collection another kind of the same repository uses"),
+                    Arguments.of("a numbered kind with the collection of a per-document kind of the same repository",
+                            yaml(kind, with(other.numbered("3"), "collection", values.collection())),
+                            "kinds[1].collection: a collection another kind of the same repository uses"),
                     Arguments.of("text the YAML reader refuses",
                             "kinds:\n  - id: " + values.id() + "\n    id: " + other.id() + "\n",
                             "line 3, column 5: a duplicate key"))
@@ -426,8 +525,36 @@ class KindConfigurationTest {
                             alias, configured));
         }
 
+        /**
+         * Every reference that is not a relative path, for each of {@code schema}, {@code template} and
+         * {@code workflow}: description, YAML, expected detail and the configured values.
+         */
+        static Stream<Arguments> nonRelativeReferences() {
+            var alias = name();
+            var values = Values.generate(alias);
+            List<List<String>> references = List.of(
+                    List.of("../x", quoted("../x"), "empty, . or .. segment"),
+                    List.of("a/./b", quoted("a/./b"), "empty, . or .. segment"),
+                    List.of("/x", quoted("/x"), "leading /"),
+                    List.of("a//b", quoted("a//b"), "empty, . or .. segment"),
+                    List.of("x/", quoted("x/"), "empty, . or .. segment"),
+                    List.of("a\\b", "'a\\b'", "backslash"),
+                    List.of("a\\u0000b", "\"a\\0b\"", "control character"));
+            return Stream.of("schema", "template", "workflow")
+                    .flatMap(key -> references.stream().map(reference -> Arguments.of(
+                            "the " + key + " " + reference.getFirst(),
+                            yaml(with(values.perDocument(), key, reference.get(1))),
+                            "kinds[0]." + key + ": not a relative path, " + reference.get(2),
+                            alias, values.all())));
+        }
+
+        /** The keys of a numbered kind with its prefix replaced by a YAML value. */
+        private static Map<String, String> prefixed(Map<String, String> numbered, String prefix) {
+            return with(numbered, "numbering", "{ prefix: " + prefix + ", digits: 3 }");
+        }
+
         @ParameterizedTest(name = "GDR-FORMS-1: {0} is MALFORMED, naming the key path and no value")
-        @MethodSource("malformedConfigurations")
+        @MethodSource({"malformedConfigurations", "nonRelativeReferences"})
         void malformed(String description, String yaml, String problem, String alias, List<String> configured,
                 @TempDir Path directory) throws Exception {
             var result = KindConfiguration.fromDirectory(write(directory, yaml), registry(alias));
@@ -435,8 +562,50 @@ class KindConfigurationTest {
             assertAll(
                     () -> assertEquals(MALFORMED, result.outcome(), "the configuration is refused as MALFORMED"),
                     () -> assertEquals(KindConfiguration.FILE + ": " + problem, result.detail(),
-                            "the detail names the file and the key path"),
-                    () -> assertNoValue(result.detail(), configured));
+                            "the detail names the file, the key path and the rule"),
+                    () -> assertNoValue(result.detail(), configured),
+                    () -> assertAll(TestLoggerFactory.getTestHandler().getRecords().stream()
+                            .<Executable>map(logRecord -> () -> assertNoValue(String.valueOf(logRecord.getMessage()),
+                                    configured))));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: a file of 1,048,577 bytes in a directory is MALFORMED, too large")
+        void fileAboveBoundInDirectory(@TempDir Path directory) throws Exception {
+            write(directory, exampleOfSize(KindConfiguration.MAX_FILE_BYTES + 1));
+
+            var result = KindConfiguration.fromDirectory(directory, registry(EXAMPLE_ALIAS));
+
+            assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, TOO_LARGE)), result,
+                    "a file above the bound is refused");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: a blob of 1,048,577 bytes in a commit is MALFORMED, too large")
+        void fileAboveBoundInCommit(@InMemory Repository repository) throws Exception {
+            var branch = name();
+            commit(repository, branch,
+                    Map.of(KindConfiguration.FILE, exampleOfSize(KindConfiguration.MAX_FILE_BYTES + 1)));
+
+            var result = KindConfiguration.fromRepository(repository, branch, registry(EXAMPLE_ALIAS));
+
+            assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, TOO_LARGE)), result,
+                    "a blob above the bound is refused");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: a kinds.yaml that is a symbolic link is MALFORMED and not followed")
+        void symbolicLink(@TempDir Path directory, @TempDir Path elsewhere) throws Exception {
+            Path target = write(elsewhere, EXAMPLE).resolve(KindConfiguration.FILE);
+            Files.createSymbolicLink(directory.resolve(KindConfiguration.FILE), target);
+
+            var result = KindConfiguration.fromDirectory(directory, registry(EXAMPLE_ALIAS));
+
+            assertAll(
+                    () -> assertTrue(KindConfiguration.fromDirectory(elsewhere, registry(EXAMPLE_ALIAS)).isOk(),
+                            "the target itself is a valid configuration"),
+                    () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                            "kinds.yaml: a symbolic link, not read")), result, "the link is refused"));
         }
 
         @Test
@@ -529,9 +698,13 @@ class KindConfigurationTest {
         }
     }
 
+    /** Prefixes within the form {@code [A-Za-z0-9_-]{0,16}}: the one of the example, the empty one, 16 characters. */
+    static Stream<String> acceptedPrefixes() {
+        return Stream.of("R-", "", "aZ_-09aZ_-09aZ_-");
+    }
+
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
-    private static <T> T nullValue() {
-        return (T) null;
+    private static <T> @Nullable T nullValue() {
+        return null;
     }
 }
