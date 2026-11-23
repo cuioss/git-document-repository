@@ -234,9 +234,23 @@ link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse
 7.8.0 `DirCache`]), and blobs, tree and commit are inserted through one `ObjectInserter`, flushed once after the
 commit. A `TreeEdit` is either `TreeEdit.Put`, which sets a path to content with a `TreeEdit.Mode` (a regular file,
 mode `100644`, unless the caller names an executable file, `100755`, or a symbolic link, `120000`), or
-`TreeEdit.Delete`, which removes it. Every path is checked with the check JGit's `DirCacheEntry` applies before
-anything is written, and two edits of the same path are refused. `CommitMetadata` carries author, committer, message
-and an optional `CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.
+`TreeEdit.Delete`, which removes it. `CommitMetadata` carries author, committer, message and an optional
+`CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.
+
+Every path of the edits is checked before anything is written, with one strictness on every host: a JGit
+`ObjectChecker` with `setSafeForWindows(true)` and `setSafeForMacOS(true)`, whatever the platform the library runs on
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectChecker.java[JGit
+7.8.0 `ObjectChecker`]). Besides what JGit refuses everywhere (an empty component, `.`, `..`, `.git` in any case and
+`git~1`), it refuses a component ending in a dot or a space, a character Windows forbids, a Windows device name such as
+`CON` or `aux.txt`, and a name HFS+ folds to `.git`. Owner decision: JGit's own check, `SystemReader.checkPath`, applies
+the checks of the running platform only
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java[JGit
+7.8.0 `SystemReader`]), so a tree written on a Linux server could hold a path a client on Windows or macOS cannot check
+out; one strictness for every host keeps every tree the library writes portable, at the cost of refusing on Linux a
+name Linux would store. The edits are also checked against each other, compared without case: two edits of the same
+path are refused (`edits: duplicate path`), and so are two edits of which one names a directory of the other's path,
+such as `a` and `a/b` (`edits: overlapping path`), because JGit 7.8.0 `DirCacheEditor` keeps only one of them
+(`deleteOverlappingSubtree`) and the caller's other edit would be lost without a word.
 
 With a `CommitSigning` (a JGit `org.eclipse.jgit.lib.Signer`, the signing key and a `CredentialsProvider`), the commit
 is signed before it is inserted through
@@ -247,9 +261,28 @@ is signed before it is inserted through
 
 The writer creates objects only: it reads and writes no reference, so nothing outside the object database changes.
 Moving a reference to the commit is <<GDR-CORE-5>>, which writes no reflog. The outcomes: `OK` with the full id of the
-commit; `NOT_FOUND` when a parent is no full commit id or no commit of the repository, or an edit names an invalid or
-a repeated path, the detail naming the field (`parents` or `edits`) and nothing being written; `FAILED` for an I/O or
-a signing failure, the detail naming the exception class.
+commit; `NOT_FOUND` when a parent is no full commit id or no commit of the repository, or an edit names an invalid, a
+repeated or an overlapping path, the detail naming the field (`parents` or `edits`) and nothing being written; `FAILED`
+for an I/O or a signing failure, the detail naming the exception class. `FAILED` also covers three failures JGit
+raises unchecked, each named by its class only:
+
+* a tree of the first parent that holds a path JGit refuses, such as `.GIT` or `git~1` written by another tool:
+  `DirCache.read` builds a `DirCacheEntry` per path, whose check throws the `InvalidPathException` of
+  `org.eclipse.jgit.dircache`
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCacheEntry.java[JGit
+  7.8.0 `DirCacheEntry`]);
+* a tree too large to be read in one piece: `CanonicalTreeParser.reset` reads a tree through
+  `ObjectLoader.getCachedBytes()`, which throws a `LargeObjectException` (the notes tree of <<GDR-CORE-10>> as well,
+  through `NoteMap.readTree` and `NoteParser`);
+* an invalid `gpg.format` of the repository's configuration when the commit is signed: `new GpgConfig(Config)` reads
+  it through `Config.getEnum`, which throws an `IllegalArgumentException` for an unknown value
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/GpgConfig.java[JGit
+  7.8.0 `GpgConfig`]); the signer is not called.
+
+The caller's code runs on the caller's contract and is mapped to no outcome: an unchecked exception of the `Signer`
+propagates unchanged, except the `JGitInternalException` that JGit 7.8.0 `Signer.signObject` itself wraps an encoding
+failure in, which is `FAILED`; a checked exception of the `Signer` (`IOException`, a `GitAPIException`) is a signing
+failure, `FAILED`. Nothing is inserted in either case.
 
 [#GDR-CORE-5]
 == GDR-CORE-5: Compare-and-Swap Reference Update
@@ -282,15 +315,41 @@ CommitMetadata, TreeOperation, int attempts)` reads the reference exactly (`Repo
 its commit to the `TreeOperation` (`null` for a reference that does not exist yet), writes the next commit with the
 reference's commit as the only parent (<<GDR-CORE-4>>) and moves the reference. `compareAndDelete(Repository,
 String refName, String expectedOldId, int attempts)` deletes it. `attempts` is the total number of tries, at least one;
-fewer is an `IllegalArgumentException`. Neither writes a reflog (`RefUpdate.disableRefLog()`). The outcomes as built:
+fewer is an `IllegalArgumentException`. The loops count from zero to below `attempts`, so `Integer.MAX_VALUE` is a
+bound like any other and the counter never overflows. Neither writes a reflog (`RefUpdate.disableRefLog()`).
 
-* `compareAndSwap`: `OK` with the full id of the new commit for `NEW` or `FAST_FORWARD`; `CONFLICT` when every attempt
-  ended in `LOCK_FAILURE`, the reference left as the concurrent writers left it; the result of the `InCoreWriter` when
-  it wrote no commit, the reference untouched; `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other
-  result. The commit of a lost attempt stays unreferenced in the object database.
-* `compareAndDelete`: `OK` with the deleted id for `FORCED`; `NOT_FOUND` when `expectedOldId` is no full commit id,
-  nothing being read or written; `CONFLICT` when the reference moved away or is gone, or every attempt met a held lock;
-  `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other result.
+Every entry point, `compareAndSwapTree` below included, checks the reference name before it reads anything. A name
+that `Repository.isValidRefName` rejects (a `..` component such as `refs/heads/../../../outside/x`, a name of one
+component such as `HEAD`, a name ending `.lock`, a character git forbids;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Repository.java[JGit
+7.8.0 `Repository`]) is `REFUSED_BY_POLICY` with the detail `refName: not a valid reference name` before any file is
+read or written, because the file backend maps a reference name to a path below the git directory. A name read as
+absent that overlaps an existing reference (`RefDatabase.isNameConflicting`: `refs/heads/a/b` while `refs/heads/a`
+exists, or the reverse) is `REJECTED` with the detail `refName: name conflict`: a compare-and-swap decides it after it
+read the reference and before the operation runs, a compare-and-delete in the re-read that follows its `LOCK_FAILURE`.
+Without that decision JGit 7.8.0 `RefUpdate.updateImpl` answers the name with `LOCK_FAILURE` (lines 714-718), and the
+loop would re-run the operation for every attempt and end in `CONFLICT`, a lost race that no retry can win.
+
+An attempt parses the commit the reference points at as it is (`RevWalk.parseAny`). A reference that points at an
+annotated tag, or at any other object that is no commit, ends the call `REJECTED` with the detail
+`<refName>: points at no commit`: `RevWalk.parseCommit` would peel the tag and move the reference from the tag to a
+commit on the tagged commit.
+
+The outcomes as built:
+
+* `compareAndSwap`: `OK` with the full id of the new commit for `NEW` or `FAST_FORWARD`; `REFUSED_BY_POLICY` for an
+  invalid reference name; `CONFLICT` when every attempt ended in `LOCK_FAILURE`, the reference left as the concurrent
+  writers left it; the result of the `InCoreWriter` when it wrote no commit, the reference untouched; `FAILED` for
+  `IO_FAILURE` or an I/O failure; `REJECTED` for a name conflict, a reference at no commit and every other result. The
+  commit of a lost attempt stays unreferenced in the object database.
+* `compareAndDelete`: `OK` with the deleted id for `FORCED`; `REFUSED_BY_POLICY` for an invalid reference name and
+  `NOT_FOUND` when `expectedOldId` is no full commit id, nothing being read or written in either case; `CONFLICT` when
+  the reference moved away or is gone, or every attempt met a held lock; `FAILED` for `IO_FAILURE` or an I/O failure;
+  `REJECTED` for a name conflict and every other result.
+
+The `TreeOperation` is the caller's code and runs on the caller's contract: an exception it throws, and the
+`NullPointerException` of a `null` list or element it returns, propagates out of `compareAndSwap` unchanged, with the
+reference untouched.
 
 A package-private tree-level variant, `compareAndSwapTree`, runs the same retry loop with a finished tree instead of
 edits, for a caller that builds the whole tree itself (the notes of <<GDR-CORE-10>>): each attempt hands the tree of
@@ -312,7 +371,12 @@ the reference is still symbolic with the same target
 7.8.0 `DfsRefUpdate`],
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit
 7.8.0 `RefUpdate`]). When a detaching update or a delete of a symbolic reference ends in `LOCK_FAILURE` with no old id,
-the updater therefore decides through one atomic `BatchRefUpdate`: the unlink of the symbolic reference
+the updater therefore decides through one atomic `BatchRefUpdate`. On the file backend that state is reached as well,
+when another writer holds the reference's lock: `RefDirectoryUpdate.tryLock` returns before it calls
+`setOldObjectId`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/RefDirectoryUpdate.java[JGit
+7.8.0 `RefDirectoryUpdate`]), so the old id is unset there too; the file backend refuses the batch, and the attempt is
+reported as the same `LOCK_FAILURE`, a lost race. The batch is: the unlink of the symbolic reference
 (`ReceiveCommand.unlink`, expecting its target), a no-op `ReceiveCommand.link` on every further link of a symbolic chain
 that holds only while the link still points at the same target, and a command on the base reference from the expected
 id to the same id, which changes nothing and holds only while the base reference still points at the expected id.
@@ -333,7 +397,9 @@ target between the read and the update. For a dangling symbolic reference the up
 any `RefUpdate`, with the command on the base reference holding only while the base reference is still absent: a target
 written in between makes the batch fail, which is a lost race, and the next attempt reads the alias again and builds
 on the written commit. A backend that refuses the batch (the file backend) falls through to its `RefUpdate`, which
-re-reads the reference under its lock.
+re-reads the reference under its lock. That fall-through is recorded, not closed: the file backend compares the zero
+expected id with the id it reads under its own lock, so no comparison is dropped, and a guard of the updater around it
+would only repeat that comparison outside the lock.
 
 A detail names the reference and the `RefUpdate.Result`, never content or an identity
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an
@@ -379,8 +445,10 @@ entry (object id or file mode) differs from the base on both sides and differs b
 * `MergeResult.NotMerged`: every other non-success, with its outcome and its detail (the component `reason`, returned
   by `detail()`): `NOT_FOUND` when a commit id is no full commit id or no commit of the repository (an annotated tag or
   a tree included), the detail naming the field `ours` or `theirs`; `CONFLICT` with the detail
-  `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, the detail naming
-  the exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
+  `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, and for a tree of
+  the merge base or a tip that holds a path JGit refuses, such as `.GIT` or `git~1` (`StrategySimpleTwoWayInCore`
+  builds a `DirCacheEntry` per entry it takes, whose check throws an `InvalidPathException`), the detail naming the
+  exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
   detail `merge: no conflicting path`, because a `Conflicting` without a path would contradict its own contract.
 
 `MergeResult` composes the shape of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] (an outcome of the closed `GitOutcome` list
@@ -568,8 +636,14 @@ note.
 * `write(Repository, String notesRef, String commitId, byte[] note, CommitMetadata, int attempts)` sets the note,
   replacing a note the commit already has, and returns the full id of the new notes commit. The note is copied on
   entry. `NOT_FOUND` names the commit as for `read`, nothing being written; `CONFLICT` means every attempt lost its race
-  to another writer of the notes reference; `FAILED` is an I/O or a signing failure; `REJECTED` every other result of
-  the reference update.
+  to another writer of the notes reference; `FAILED` is an I/O or a signing failure, an invalid `gpg.format`, or a
+  notes tree too large to be read in one piece (the `LargeObjectException` of `NoteMap.readTree`, which parses each
+  tree with `NoteParser` through `CanonicalTreeParser.reset` and `ObjectLoader.getCachedBytes()`;
+  link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteParser.java[JGit
+  7.8.0 `NoteParser`]); `REJECTED` is a notes reference that does not exist and whose name conflicts with an existing
+  reference, such as `refs/notes/a/b` while `refs/notes/a` exists (detail `refName: name conflict`, decided by the
+  updater before the note is set, never a lost race, see <<GDR-CORE-5>>), a notes reference at no commit, and every
+  other result of the reference update.
 
 For both, a notes reference that is not below `refs/notes/` or no valid reference name
 (`Repository.isValidRefName`) is `REFUSED_BY_POLICY` with a detail naming the field only, as for an invalid branch

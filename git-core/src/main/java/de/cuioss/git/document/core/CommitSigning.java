@@ -31,6 +31,13 @@ import org.jspecify.annotations.Nullable;
  * repository, a {@code GpgConfig} read from the repository's configuration, the commit builder, the committer as the
  * signing identity, the signing key and the credentials of this record.
  * <p>
+ * The {@code GpgConfig} is read before the signer is called: an invalid {@code gpg.format} of the repository's
+ * configuration ends the write as {@link GitOutcome#FAILED} with the class name of JGit's
+ * {@link IllegalArgumentException}, and the signer is not called. The signer itself is the caller's code and runs on
+ * the caller's contract: a checked exception it throws ({@code IOException} or a JGit {@code GitAPIException}) and a
+ * {@code JGitInternalException} end the write as {@link GitOutcome#FAILED} with the class name; any other unchecked
+ * exception propagates out of the writer unchanged, and nothing is inserted.
+ * <p>
  * {@link #toString()} renders neither the signing key nor the credentials (GDR-NFR-3).
  *
  * @param signer      the signer

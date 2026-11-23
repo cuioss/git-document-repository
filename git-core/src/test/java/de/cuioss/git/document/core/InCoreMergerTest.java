@@ -477,6 +477,25 @@ class InCoreMergerTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-6: a tip whose tree holds a path JGit refuses is a failure naming the class only")
+        void refusedPathInATip(@InMemory Repository repository) throws Exception {
+            var kept = TestCommits.name();
+            var changed = TestCommits.name();
+            var keptContent = "base-" + content();
+            var changedContent = "base-" + content();
+            var base = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent));
+            var ours = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent,
+                    ".GIT", OURS + "-" + content()), base);
+            var theirs = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent,
+                    changed, THEIRS + "-" + content()), base);
+
+            var result = merge(repository, ours, theirs);
+
+            assertEquals(new MergeResult.NotMerged(GitOutcome.FAILED, "InvalidPathException"), result,
+                    "the refused path is a failure, the detail naming the exception class, never the path");
+        }
+
+        @Test
         @DisplayName("a null argument is rejected")
         void nullArguments(@InMemory Repository repository) throws Exception {
             var commit = commit(repository, Map.of(TestCommits.name(), file())).name();

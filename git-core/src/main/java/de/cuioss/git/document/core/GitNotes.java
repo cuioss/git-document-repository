@@ -47,7 +47,9 @@ import org.jspecify.annotations.Nullable;
  * {@link ReferenceUpdater}: each attempt reads the notes tree the reference currently points at, sets the note on it
  * and commits the resulting tree, with the reference's commit as the only parent. A lost race re-reads the notes tree
  * the concurrent writer left and sets the note on that tree again, so the other writer's notes are kept. The update
- * replaces a symbolic notes reference instead of moving the reference it points at.
+ * replaces a symbolic notes reference instead of moving the reference it points at. A notes reference whose name
+ * conflicts with an existing reference is decided by the updater before the note is set and reaches the caller as
+ * {@link GitOutcome#REJECTED}, not as a lost race.
  * <p>
  * A commit is addressed by its full id and must be a commit itself: it is parsed as it is ({@code RevWalk.parseAny}),
  * so neither a tree, a blob nor an annotated tag, not even one that points at a commit, receives a note. A detail names
@@ -154,8 +156,14 @@ public final class GitNotes {
      * detail names the field. Nothing is written;</li>
      * <li>{@link GitOutcome#CONFLICT}: every attempt lost its race against another writer of the notes reference;
      * the reference is left as the other writers left it;</li>
-     * <li>{@link GitOutcome#FAILED}: an I/O or a signing failure; the detail names the exception class;</li>
-     * <li>{@link GitOutcome#REJECTED}: the reference update ended in any other result; the detail names it.</li>
+     * <li>{@link GitOutcome#FAILED}: an I/O or a signing failure, a notes tree too large to be read in one piece
+     * ({@code LargeObjectException}: JGit 7.8.0 {@code NoteMap.readTree} parses each tree through
+     * {@code CanonicalTreeParser.reset}, which reads it with {@code ObjectLoader.getCachedBytes()}), or an invalid
+     * {@code gpg.format} when the notes commit is signed; the detail names the exception class;</li>
+     * <li>{@link GitOutcome#REJECTED}: the notes reference does not exist and its name conflicts with an existing
+     * reference, e.g. {@code refs/notes/a/b} while {@code refs/notes/a} exists (detail {@code refName: name conflict},
+     * decided before the note is set, never retried as a lost race), the notes reference points at no commit, or the
+     * reference update ended in any other result; the detail names it.</li>
      * </ul>
      *
      * @param repository the repository

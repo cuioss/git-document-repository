@@ -38,7 +38,9 @@ public enum GitOutcome {
 
     /**
      * Rejected: {@code push} was refused by the remote (non-fast-forward, a protected branch or another refusal of the
-     * remote), or a reference update was refused locally.
+     * remote), or a reference update was refused locally: by JGit, or, for compare-and-swap, compare-and-delete and the
+     * write of a note, because the reference does not exist and its name conflicts with an existing reference (detail
+     * {@code refName: name conflict}) or because the reference points at no commit.
      */
     REJECTED,
 
@@ -60,8 +62,10 @@ public enum GitOutcome {
     /**
      * Refused by policy: a remote outside the {@link RemotePolicy} or a push to more than one destination (refused
      * before any contact), or a capability the
-     * {@link RefusingFS} refuses (a present hook or a process start). The detail names the refused remote or
-     * capability. Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
+     * {@link RefusingFS} refuses (a present hook or a process start), or a reference name that is not valid (JGit
+     * 7.8.0 {@code Repository.isValidRefName}), refused by compare-and-swap, compare-and-delete and the notes before
+     * any file is touched. The detail names the refused remote or capability, or the field of the reference name.
+     * Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
      * {@code cloneIfMissing} and {@code fetchCommit}), and for a capability by an operation that would run the hook or
      * start the process. {@code open} checks no configured remote: it reports a valid repository as {@link #OK}
      * whatever its remotes are.
@@ -92,7 +96,11 @@ public enum GitOutcome {
     /** Identity mismatch: the commit an operation reached differs from the pinned commit it was meant to reach. */
     IDENTITY_MISMATCH,
 
-    /** Failed: an I/O failure outside the outcomes above. Raised by every operation. */
+    /**
+     * Failed: an I/O failure outside the outcomes above, an invalid value of a configuration key the operation reads,
+     * or a stored tree JGit cannot take in, such as one holding a path it refuses or one too large to be read in one
+     * piece. Raised by every operation.
+     */
     FAILED,
 
     /**
