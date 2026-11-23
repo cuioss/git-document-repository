@@ -170,6 +170,12 @@ switch-over:
   of a remote (`cloneIfMissing`) is new; `fetchCommit` writes the reference `refs/pinned/<id>` itself, because JGit
   7.8.0 ignores the destination of a fetch refspec whose source is an object id (`FetchProcess.expandSingle`); the
   operations log through `CuiLogger`.
+* *Reading a file.* `readFile` reads a blob of at most 16 MiB
+  (xref:../specification/git-core.adoc#GDR-CORE-8[GDR-CORE-8]). Its outcomes are `OK` with the bytes,
+  `REFUSED_BY_POLICY` for a larger blob, refused before its content is read (detail
+  `path: larger than the limit of 16 MiB`), `NOT_FOUND` for a commit that is no full commit id or is not in the cache
+  and for a path that is no regular file at the commit, `NOT_A_REPOSITORY` for a cache that is no bare repository, and
+  `FAILED`.
 * *Write path.* In-core writing, compare-and-swap, the in-core merge and the notes
   (xref:../specification/git-core.adoc#GDR-CORE-4[GDR-CORE-4], xref:../specification/git-core.adoc#GDR-CORE-5[GDR-CORE-5],
   xref:../specification/git-core.adoc#GDR-CORE-6[GDR-CORE-6], xref:../specification/git-core.adoc#GDR-CORE-10[GDR-CORE-10])

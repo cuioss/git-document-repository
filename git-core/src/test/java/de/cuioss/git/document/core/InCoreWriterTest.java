@@ -50,6 +50,7 @@ import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.easymock.EasyMock;
 import org.eclipse.jgit.errors.LargeObjectException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.ConfigConstants;
@@ -92,6 +93,26 @@ class InCoreWriterTest {
     private static final String OBJECTS = "objects";
 
     private final InCoreWriter writer = new InCoreWriter();
+
+    /**
+     * A signer double that fails every signing with an {@link IOException} and locates no key.
+     *
+     * @param message the message of the exception, so a test can check it never reaches a result
+     * @return the replayed double
+     * @throws Exception never; the checked exceptions of {@link Signer#sign}, whose expectation is recorded here
+     */
+    static Signer failingSigner(String message) throws Exception {
+        var failure = new IOException(message);
+        Signer signer = EasyMock.niceMock(Signer.class);
+        // EasyMock mocks the default method signObject as well, which JGit 7.8.0 calls to sign an object
+        signer.signObject(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(),
+                EasyMock.anyObject(), EasyMock.anyObject());
+        EasyMock.expectLastCall().andStubThrow(failure);
+        EasyMock.expect(signer.sign(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(),
+                EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject())).andStubThrow(failure);
+        EasyMock.replay(signer);
+        return signer;
+    }
 
     /**
      * Generates an identity with a whole-second time and a whole-hour offset, the precision git stores.
@@ -314,11 +335,11 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: a signing failure is a failure naming the exception class, and no commit is returned")
-        void signingFailure(@InMemory Repository repository) {
+        void signingFailure(@InMemory Repository repository) throws Exception {
             var marker = TestCommits.name();
             var plain = metadata();
             var metadata = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
-                    new CommitSigning(TestSigner.failing(marker), null, null));
+                    new CommitSigning(failingSigner(marker), null, null));
 
             var result = writer.write(repository, List.of(), metadata, List.of(put(TestCommits.name(), content())));
 
@@ -476,13 +497,13 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-NFR-3: a detail names the field and the reason, never an identity, message, content or path")
-        void detailsCarryNoInput(@InMemory Repository repository) {
+        void detailsCarryNoInput(@InMemory Repository repository) throws Exception {
             var marker = TestCommits.name();
             var plain = metadata();
             var metadata = new CommitMetadata(new PersonIdent(marker, marker + "@example.invalid"),
                     new PersonIdent(marker, marker + "@example.invalid"), marker + "\n", null);
             var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
-                    new CommitSigning(TestSigner.failing(marker), marker, null));
+                    new CommitSigning(failingSigner(marker), marker, null));
             var markedPut = put(marker, marker);
 
             var results = List.of(

@@ -36,7 +36,12 @@ import org.eclipse.jgit.transport.URIish;
  * It is registered with JGit 7.8.0 {@link Transport#register(TransportProtocol)}, ahead of the built-in protocols, and
  * unregistered on {@link #close()}; JGit holds a registered protocol by a weak reference only, so the test keeps this
  * instance for as long as it is needed. The fetch itself runs through the built-in local transport of the delegate URL
- * ({@code TransportLocal}), whose path carries no marker.
+ * ({@code TransportLocal}); the delegate URL is never handled by this protocol, also when its path contains the
+ * marker.
+ * <p>
+ * It stays a subclass instead of an EasyMock double: JGit selects a protocol from its registry and opens a
+ * {@link Transport} whose real state (the local repository, the URL) the fetch reads, and a mocked abstract
+ * {@code Transport} would replace exactly that state.
  */
 final class InterceptingTransportProtocol extends TransportProtocol implements AutoCloseable {
 
@@ -76,9 +81,15 @@ final class InterceptingTransportProtocol extends TransportProtocol implements A
         return "intercepting";
     }
 
+    /**
+     * Handles a URL whose path contains the marker, except the delegate URL itself: the fetch opens the delegate
+     * through {@link Transport#open(Repository, URIish)}, which asks every registered protocol again, so a marker that
+     * also occurs in the delegate's path would select this protocol for its own delegate and recurse until the stack
+     * overflows.
+     */
     @Override
     public boolean canHandle(URIish candidate, Repository local, String remoteName) {
-        return candidate.getPath() != null && candidate.getPath().contains(marker);
+        return candidate.getPath() != null && candidate.getPath().contains(marker) && !delegate.equals(candidate);
     }
 
     @Override

@@ -82,7 +82,7 @@ The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`,
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
-`cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
+`cui-test-generator`, `cui-test-juli-logger`, `cui-test-mockwebserver-junit5` and EasyMock in its test scope; and
 `cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator`,
 `cui-test-juli-logger` and JOL in its test scope; and `cui-java-tools`, Lombok, `org.snakeyaml:snakeyaml-engine` 3.2
 and `dev.harrel:json-schema` 1.9.1 in `git-forms`, with `git-testing`, JUnit 5, `cui-test-generator` and
@@ -114,7 +114,7 @@ Every other dependency below is open and needs the owner's approval before it is
 |every module |`org.jspecify:jspecify` (declared), annotations only
 |`git-core` |JGit (`requires transitive`), `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `cui-test-juli-logger` for the log capture of <<GDR-NFR-3>>, `cui-test-mockwebserver-junit5` for the end-to-end
-redirect test, `cui-test-generator` and JUnit 5 (each declared)
+redirect test, `cui-test-generator`, JUnit 5 and EasyMock for the test doubles (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
@@ -184,8 +184,10 @@ the refused remote or capability; an invalid branch name (working-tree operation
 reservation release; besides the reference names JGit refuses, the names git reads as something other than a branch:
 `HEAD`, `@`, a leading `-`, a component ending `.lock` and a name starting `refs/`) or notes reference (notes), an
 invalid reference name for compare-and-swap and compare-and-delete (JGit's `Repository.isValidRefName`, before any
-file is touched), the detail naming the field only; `git-store`: a registered remote
-the policy does not permit, the detail naming the alias
+file is touched), the detail naming the field only; a bare clone whose URL cannot be stored without its user
+information (detail `not a URL`); cache repository: `readFile` of a blob larger than 16 MiB, before its content is
+read (detail `path: larger than the limit of 16 MiB`); `git-store`: a registered remote the policy does not permit,
+the detail naming the alias
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
 log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
 in-core merge and notes on an id that is no commit, notes on a missing notes reference or note; a branch without a

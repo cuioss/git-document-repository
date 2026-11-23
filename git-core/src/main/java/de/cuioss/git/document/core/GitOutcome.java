@@ -64,8 +64,9 @@ public enum GitOutcome {
      * before any contact), or a capability the
      * {@link RefusingFS} refuses (a present hook or a process start), or a reference name that is not valid (JGit
      * 7.8.0 {@code Repository.isValidRefName}), refused by compare-and-swap, compare-and-delete and the notes before
-     * any file is touched. The detail names the refused remote or capability, or the field of the reference name.
-     * Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
+     * any file is touched, or a blob larger than the size limit of {@code readFile} (16 MiB), refused before its
+     * content is read. The detail names the refused remote or capability, the field of the reference name, or the
+     * path and the limit. Raised for a remote only by the operations that contact one ({@code fetch}, {@code push},
      * {@code cloneIfMissing} and {@code fetchCommit}), and for a capability by an operation that would run the hook or
      * start the process. {@code open} checks no configured remote: it reports a valid repository as {@link #OK}
      * whatever its remotes are.

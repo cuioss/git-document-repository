@@ -27,8 +27,10 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
 
@@ -461,6 +463,73 @@ class JGitCacheRepositoryTest {
                     () -> assertEquals(GitOutcome.NOT_A_REPOSITORY,
                             operations.readFile(new ReadFileInput(plain, commit, DATA + "/" + CSV)).outcome(),
                             "readFile refuses a cache that is no repository"));
+        }
+    }
+
+    @Nested
+    @DisplayName("readFile size limit")
+    class SizeLimit {
+
+        /** The limit of {@code readFile} in bytes, as the array length of a blob of that size. */
+        private static final int LIMIT = Math.toIntExact(JGitRepositoryOperations.READ_FILE_LIMIT_BYTES);
+
+        /**
+         * A blob of the given size, every byte the same generated value: blobs of different sizes are distinct by
+         * construction, whatever value is drawn.
+         */
+        private static byte[] blob(int size) {
+            var content = new byte[size];
+            Arrays.fill(content, Generators.bytes().next());
+            return content;
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-8: a blob of 16 MiB and one a byte smaller are read, one a byte larger is refused")
+        void boundedBySize() throws Exception {
+            assertTrue(operations.initCache(cache).isOk(), "the cache repository is initialised");
+            var below = blob(LIMIT - 1);
+            var at = blob(LIMIT);
+            var above = blob(LIMIT + 1);
+            // TreeFormatter needs the entries in name order
+            var names = new TreeMap<String, byte[]>();
+            var belowName = TestCommits.name();
+            var atName = TestCommits.name();
+            var aboveName = TestCommits.name();
+            names.put(belowName, below);
+            names.put(atName, at);
+            names.put(aboveName, above);
+            String id;
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setMustExist(true)
+                         .build(); ObjectInserter inserter = repository.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                for (var entry : names.entrySet()) {
+                    tree.append(entry.getKey(), FileMode.REGULAR_FILE,
+                            inserter.insert(Constants.OBJ_BLOB, entry.getValue()));
+                }
+                var ident = new PersonIdent(TestCommits.name(), TestCommits.name() + "@example.invalid");
+                var builder = new CommitBuilder();
+                builder.setTreeId(inserter.insert(tree));
+                builder.setAuthor(ident);
+                builder.setCommitter(ident);
+                builder.setMessage(line());
+                id = inserter.insert(builder).name();
+                inserter.flush();
+            }
+
+            var readBelow = read(id, belowName);
+            var readAt = read(id, atName);
+            var readAbove = read(id, aboveName);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, readBelow.outcome(), "a blob below the limit is read"),
+                    () -> assertArrayEquals(below, readBelow.value(), "the blob below the limit is read whole"),
+                    () -> assertEquals(GitOutcome.OK, readAt.outcome(), "a blob at the limit is read"),
+                    () -> assertArrayEquals(at, readAt.value(), "the blob at the limit is read whole"),
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, readAbove.outcome(),
+                            "a blob above the limit is refused"),
+                    () -> assertNull(readAbove.value(), "a refused blob carries no content"),
+                    () -> assertEquals("path: larger than the limit of 16 MiB", readAbove.detail(),
+                            "the detail names the field and the limit, never the path"));
         }
     }
 
