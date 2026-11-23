@@ -80,6 +80,9 @@ import org.jspecify.annotations.Nullable;
  *
  * @since 0.1
  */
+// S6539 counts the types of the public face of the store; the writer delegates every operation to StoreClone and its
+// parts, so its coupling is its purpose as the facade
+@SuppressWarnings("java:S6539")
 public final class StoreWriter implements AutoCloseable {
 
     /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */

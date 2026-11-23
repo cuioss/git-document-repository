@@ -42,6 +42,9 @@ import org.jspecify.annotations.Nullable;
  * writer is the public face of the store and delegates every operation here; the behaviour, the locks and their order
  * are those its documentation states. {@link CloneOpening} opens the clone and builds these parts.
  */
+// S6539 counts the parts this class delegates to; it is the one place that wires the parts of the clone, so its
+// coupling is its purpose, and splitting it would only move the wiring
+@SuppressWarnings("java:S6539")
 final class StoreClone {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreClone.class);
