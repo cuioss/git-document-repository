@@ -41,6 +41,7 @@ import de.cuioss.git.document.core.RepositoryOperations.RefUpdate;
 import de.cuioss.git.document.core.RepositoryOperations.RepositoryInfo;
 import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
@@ -56,6 +57,9 @@ import org.junit.jupiter.api.Test;
 @EnableGeneratorController
 @DisplayName("RepositoryOperations value records")
 class RepositoryOperationsRecordsTest {
+
+    /** The values asserted absent from a rendering: distinct by construction and found in no text by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     private static String text() {
         return Generators.letterStrings(1, 20).next();
@@ -95,10 +99,10 @@ class RepositoryOperationsRecordsTest {
     @DisplayName("PLAN-02 (f), GDR-NFR-3: the fetch-commit input renders its URL without user information and query")
     void fetchCommitInputRendersNoSecret() {
         var credential = GitGenerators.credentials().next();
-        // a leading digit: the fixed rendering contains no digit and every generated value is letters only, so a
-        // removed token or query cannot reappear through another part of the rendering
-        var token = "0" + new String(credential.token());
-        var query = "0" + text();
+        // distinct values: their marker occurs in no other part of the rendering, so a removed token or query cannot
+        // reappear through it
+        var token = distinctTexts.next();
+        var query = distinctTexts.next();
         var host = text().toLowerCase(Locale.ROOT) + ".example.invalid";
         var repositoryPath = text();
         var cache = path();
@@ -121,10 +125,9 @@ class RepositoryOperationsRecordsTest {
     @Test
     @DisplayName("GDR-NFR-3: the fetch-commit input renders no user information of a URL with an upper-case scheme")
     void fetchCommitInputUpperCaseSchemeRendersNoSecret() {
-        var credential = GitGenerators.credentials().next();
-        // leading digits: the fixed rendering contains no digit, so neither value can appear through it
-        var user = "0" + credential.username();
-        var token = "1" + new String(credential.token());
+        // distinct values: their marker occurs in no other part of the rendering, so neither can appear through it
+        var user = distinctTexts.next();
+        var token = distinctTexts.next();
         var cache = path();
         var commit = text();
         var url = "HTTPS://" + user + ":" + token + "@" + text().toLowerCase(Locale.ROOT) + ".example.invalid/"
@@ -248,9 +251,9 @@ class RepositoryOperationsRecordsTest {
     @DisplayName("the clone input builder builds the constructor value and renders no URL")
     void cloneInput() {
         var gitDir = path();
-        // two distinct sentinels: the user of the URL and the user handed to the credentials provider
-        var urlUser = "urluser" + text();
-        var providerUser = "provideruser" + text();
+        // two distinct values: the user of the URL and the user handed to the credentials provider
+        var urlUser = distinctTexts.next();
+        var providerUser = distinctTexts.next();
         var url = "https://" + urlUser + "@" + text() + ".example.invalid/" + text() + ".git";
         var pushRefSpecs = List.of(text());
         CredentialsProvider credentials = new UsernamePasswordCredentialsProvider(providerUser,

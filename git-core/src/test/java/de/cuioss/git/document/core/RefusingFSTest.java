@@ -35,8 +35,10 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
@@ -65,10 +67,8 @@ class RefusingFSTest {
         return Generators.letterStrings(1, 12).next();
     }
 
-    /** A word too long to occur by chance in a refusal message. */
-    private static String longWord() {
-        return Generators.letterStrings(24, 32).next();
-    }
+    /** The values asserted absent from a refusal message: distinct by construction, found nowhere by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     @Test
     @DisplayName("GDR-CORE-1: refuses every process entry point (the refusal reason and prefix are the contract)")
@@ -100,8 +100,8 @@ class RefusingFSTest {
     @Test
     @DisplayName("GDR-CORE-1: a refusal names no command and no argument, which can carry a secret")
     void refusalCarriesNoCommandArgument() {
-        var command = longWord();
-        var secret = longWord();
+        var command = distinctTexts.next();
+        var secret = distinctTexts.next();
         var builder = new ProcessBuilder(command, secret);
         var out = new ByteArrayOutputStream();
         var emptyStream = new ByteArrayInputStream(new byte[0]);

@@ -37,8 +37,10 @@ import java.util.TreeMap;
 import java.util.stream.Stream;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
@@ -76,6 +78,9 @@ class InCoreMergerTest {
     /** The side of the second tip of a conflict fixture. */
     private static final String THEIRS = "theirs";
 
+    /** Contents that must differ from each other and from generated base contents: distinct by construction. */
+    private static final TypedGenerator<String> DISTINCT_CONTENTS = GitGenerators.distinctTexts();
+
     private final InCoreMerger merger = new InCoreMerger();
 
     /** A file of a fixture tree: its mode and its content. */
@@ -92,11 +97,11 @@ class InCoreMergerTest {
     }
 
     /**
-     * A regular file whose content starts with the name of its side: two sides never receive the same content, and
-     * never the letters-only content a base file is generated with, however the generator draws.
+     * A regular file whose content is the name of its side and a distinct value: two sides never receive the same
+     * content, and never the letters-only content a base file is generated with, however the generator draws.
      */
     static Entry sideFile(String side) {
-        return file(side + "-" + content());
+        return file(side + "-" + DISTINCT_CONTENTS.next());
     }
 
     static Entry executable(String content) {
@@ -481,13 +486,13 @@ class InCoreMergerTest {
         void refusedPathInATip(@InMemory Repository repository) throws Exception {
             var kept = TestCommits.name();
             var changed = TestCommits.name();
-            var keptContent = "base-" + content();
-            var changedContent = "base-" + content();
+            var keptContent = DISTINCT_CONTENTS.next();
+            var changedContent = DISTINCT_CONTENTS.next();
             var base = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent));
             var ours = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent,
-                    ".GIT", OURS + "-" + content()), base);
+                    ".GIT", DISTINCT_CONTENTS.next()), base);
             var theirs = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent,
-                    changed, THEIRS + "-" + content()), base);
+                    changed, DISTINCT_CONTENTS.next()), base);
 
             var result = merge(repository, ours, theirs);
 
