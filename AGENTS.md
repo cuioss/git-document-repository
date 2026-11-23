@@ -94,12 +94,15 @@ public class of a package: javac rejects exporting a package that contains only 
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph (`git-store` appends the edge `git-core`, `git-forms` the edge `git-store`), and the execution `consumer-isolation` of
-`git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
+graph (`git-store` appends the edge `git-core`, `git-forms` the edge `git-store`), the execution `consumer-isolation` of
+`git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives,
+and the execution `direct-dependency-isolation` of `git-core/pom.xml` bans every declared compile or runtime dependency
+outside JSpecify, JGit and `cui-java-tools`, whatever its `optional` flag (the transitive path of `consumer-isolation`
+filters optional dependencies).
 `DomainTermAbsenceTest` in each module (`git-core`, `git-testing`, `git-store` and `git-forms`) asserts that no public type carries
 a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
-`META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the JGit translation bundle it
-reaches, its worktrees package included; `git-store` ships none and relies on that of `git-core`; `git-forms` ships
+`META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the one JGit translation class
+and bundle it reaches (`JGitText`), its worktrees package included; `git-store` ships none and relies on that of `git-core`; `git-forms` ships
 `resource-config.json` only, for the bundle and the meta-schema its JSON Schema validator loads (GDR-NFR-4).
 
 ## Build
@@ -134,8 +137,8 @@ These follow the conventions of the foundation code that moves into this reposit
 - **Never add a dependency without the owner's approval**, JGit included.
 - A new module adds its allowed reactor edges to the `module-layering` rule: one `<include>` per edge of the module
   graph, in its own POM (see `git-store/pom.xml`).
-- A new compile dependency of `git-core` is added to the `consumer-isolation` rule of `git-core/pom.xml` only after the
-  owner's approval; until then the build fails.
+- A new compile dependency of `git-core` is added to the `consumer-isolation` and `direct-dependency-isolation` rules of
+  `git-core/pom.xml` only after the owner's approval; until then the build fails.
 - Documentation is AsciiDoc; Javadoc on every public type and method.
 - Every source file carries the license header; `-Ppre-commit` maintains it. `inceptionYear` in the root pom
   must stay set, otherwise every run restamps all headers.
