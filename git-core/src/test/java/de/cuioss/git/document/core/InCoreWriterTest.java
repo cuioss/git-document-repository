@@ -46,9 +46,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.easymock.EasyMock;
 import org.eclipse.jgit.errors.LargeObjectException;
@@ -92,6 +94,9 @@ class InCoreWriterTest {
     /** The directory of the object database inside a bare repository: part of git's repository layout. */
     private static final String OBJECTS = "objects";
 
+    /** Values asserted absent from a repository or a text, or that must differ: distinct by construction. */
+    private static final TypedGenerator<String> DISTINCT_CONTENTS = GitGenerators.distinctTexts();
+
     private final InCoreWriter writer = new InCoreWriter();
 
     /**
@@ -132,6 +137,16 @@ class InCoreWriterTest {
      */
     static String content() {
         return Generators.letterStrings(1, 40).next() + "\n";
+    }
+
+    /**
+     * Generates file content that differs from every other content of this generator and from every letters-only
+     * {@link #content()}, for a test that asserts the content absent from a repository or a text.
+     *
+     * @return a distinct value ended by a line feed
+     */
+    static String distinctContent() {
+        return DISTINCT_CONTENTS.next() + "\n";
     }
 
     /**
@@ -255,7 +270,7 @@ class InCoreWriterTest {
             var regular = TestCommits.name();
             var executable = TestCommits.name();
             var link = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var parent = writeRoot(repository, Map.of(regular, content()));
 
             var result = writer.write(repository, List.of(parent), metadata(), List.of(
@@ -353,7 +368,8 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-NFR-3: a failure of an anonymous exception class is a failure with a nonblank detail")
         void anonymousFailure(@InMemory Repository repository) {
-            var marker = TestCommits.name();
+            // a distinct value: a letters-only name could occur by chance in the binary class name of the detail
+            var marker = DISTINCT_CONTENTS.next();
             var plain = metadata();
             var metadata = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
                     new CommitSigning(anonymouslyFailing(marker), null, null));
@@ -394,7 +410,7 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-CORE-4: a parent that is no commit of the repository is not found, nothing is written")
         void absentParent(@InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(ObjectId.zeroId().name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -410,7 +426,7 @@ class InCoreWriterTest {
                 blob = inserter.insert(Constants.OBJ_BLOB, content().getBytes(UTF_8));
                 inserter.flush();
             }
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(blob.name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -432,7 +448,7 @@ class InCoreWriterTest {
                 tagId = inserter.insert(tag);
                 inserter.flush();
             }
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(tagId.name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -444,7 +460,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-11: an abbreviated parent id is no full commit id and is not found")
         void abbreviatedParent(@InMemory Repository repository) {
             var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(parent.substring(0, 12)), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -465,7 +481,7 @@ class InCoreWriterTest {
         @MethodSource("invalidPaths")
         @DisplayName("GDR-CORE-4: an invalid path of a put is not found, nothing is written")
         void invalidPutPath(String path, @InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
 
@@ -475,7 +491,7 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-CORE-4: an invalid path of a delete is not found, nothing is written")
         void invalidDeletePath(@InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(),
                     List.of(put(TestCommits.name(), content), new TreeEdit.Delete(".git/config")));
@@ -487,7 +503,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-4: two edits of one path are not found, nothing is written")
         void duplicatePath(@InMemory Repository repository) {
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(),
                     List.of(put(path, content), new TreeEdit.Delete(path)));
@@ -498,7 +514,8 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-NFR-3: a detail names the field and the reason, never an identity, message, content or path")
         void detailsCarryNoInput(@InMemory Repository repository) throws Exception {
-            var marker = TestCommits.name();
+            // a distinct value: a letters-only name could occur by chance in the fixed words of a detail
+            var marker = DISTINCT_CONTENTS.next();
             var plain = metadata();
             var metadata = new CommitMetadata(new PersonIdent(marker, marker + "@example.invalid"),
                     new PersonIdent(marker, marker + "@example.invalid"), marker + "\n", null);
@@ -538,7 +555,7 @@ class InCoreWriterTest {
         void treeTakenAsReturned(@InMemory Repository repository) throws Exception {
             var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var source = new SingleFileSource(path, content);
 
             var result = writer.writeTree(repository, List.of(parent), metadata(), source);
@@ -559,7 +576,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-5: a root commit hands the source no parent tree")
         void rootCommitWithoutParentTree(@InMemory Repository repository) throws Exception {
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var source = new SingleFileSource(path, content);
             var refsBefore = refs(repository);
 
@@ -580,7 +597,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the exception class, nothing flushed")
         void sourceFailure(@InMemory Repository repository) {
             var marker = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.writeTree(repository, List.of(), metadata(), (reader, inserter, parentTree) -> {
                 inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8));
@@ -647,7 +664,7 @@ class InCoreWriterTest {
         @MethodSource("refusedOnEveryHost")
         @DisplayName("GDR-CORE-4: a path refused on Windows or macOS is refused on every host, nothing is written")
         void refusedOnEveryHost(String path, @InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
 
@@ -658,7 +675,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-4: two paths equal without case are a duplicate, nothing is written")
         void caseFoldDuplicate(@InMemory Repository repository) {
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(),
                     List.of(put(path, content), put(path.toUpperCase(Locale.ROOT), "upper-" + content)));
@@ -672,7 +689,7 @@ class InCoreWriterTest {
             var directory = TestCommits.name();
             var below = directory + "/" + TestCommits.name();
             var deeper = below + "/" + TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             List<List<TreeEdit>> overlapping = List.of(
                     List.of(put(directory, content), put(below, content)),
                     List.of(put(below, content), put(directory, content)),
@@ -719,7 +736,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-4: a parent tree holding a path JGit refuses is a failure naming the class only")
         void parentTreeWithRefusedPath(String name, @InMemory Repository repository) throws Exception {
             var parent = commitWithTree(repository, Map.of(name, content(), TestCommits.name(), content()));
-            var content = "put-" + content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(parent.name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -742,11 +759,11 @@ class InCoreWriterTest {
             var plain = metadata();
             var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
                     new CommitSigning(signer, TestSigner.KEY, null));
-            var content = "signed-" + content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), signed, List.of(put(TestCommits.name(), content)));
             var unsigned = writer.write(repository, List.of(), metadata(),
-                    List.of(put(TestCommits.name(), "unsigned-" + content())));
+                    List.of(put(TestCommits.name(), distinctContent())));
 
             assertAll(
                     () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the invalid format is a failure"),
@@ -767,7 +784,7 @@ class InCoreWriterTest {
             var plain = metadata();
             var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
                     new CommitSigning(throwing(failure), null, null));
-            var content = "thrown-" + content();
+            var content = distinctContent();
             var edits = List.of(put(TestCommits.name(), content));
             List<String> parents = List.of();
 
@@ -902,7 +919,7 @@ class InCoreWriterTest {
         var root = repository.getDirectory().toPath();
         var filesBefore = snapshot(root);
         var refsBefore = refs(repository);
-        var content = content();
+        var content = distinctContent();
         var path = TestCommits.name();
 
         var result = writer.write(repository, List.of(parent.name()), metadata(), List.of(put(path, content)));

@@ -41,7 +41,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -61,6 +60,7 @@ import de.cuioss.git.document.testing.LocalRemote;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
@@ -122,6 +122,9 @@ class JGitRepositoryOperationsTest {
 
     @TempDir
     Path temp;
+
+    /** The values asserted absent from a detail, a log or a file: distinct by construction, found nowhere by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     private JGitRepositoryOperations operations;
 
@@ -1060,13 +1063,14 @@ class JGitRepositoryOperationsTest {
         @BeforeEach
         void credential() {
             credential = GitGenerators.credentials().next();
-            token = new String(credential.token());
+            // a distinct token: it occurs in a detail or a log record only if the operation put it there
+            token = distinctTexts.next();
             url = "https://" + credential.username() + ":" + token + "@" + FOREIGN_HOST + "/" + TestCommits.name()
                     + ".git";
         }
 
         private UsernamePasswordCredentialsProvider provider() {
-            return new UsernamePasswordCredentialsProvider(credential.username(), credential.token());
+            return new UsernamePasswordCredentialsProvider(credential.username(), token.toCharArray());
         }
 
         /**
@@ -1169,8 +1173,8 @@ class JGitRepositoryOperationsTest {
         @Test
         @DisplayName("GDR-NFR-3: a refused URL renders neither its query nor its fragment")
         void refusedUrlRendersNoQuery(@LocalRepository Repository client) throws Exception {
-            // upper case, so it cannot occur by chance in the lower-case host or path of the detail
-            var query = TestCommits.name().toUpperCase(Locale.ROOT);
+            // a distinct value: it cannot occur by chance in the host or path of the detail
+            var query = distinctTexts.next();
             TestCommits.addRemote(client, ORIGIN,
                     "https://" + FOREIGN_HOST + "/" + TestCommits.name() + ".git?access_token=" + query + "#" + query);
 
@@ -1286,8 +1290,8 @@ class JGitRepositoryOperationsTest {
         void cloneStoresNoQueryData(@Remote LocalRemote remote) throws Exception {
             var ref = branchRef();
             var commit = TestCommits.commitOn(remote.repository(), ref);
-            // long enough that it cannot occur by chance in the configuration text
-            var token = Generators.strings("ghijklmnopqrstuvwxyz", 32, 32).next();
+            // a distinct value: it occurs in the configuration text only if the query or fragment was stored
+            var token = distinctTexts.next();
             var gitDir = temp.resolve(TestCommits.name() + ".git");
             var url = remote.uri() + "?access_token=" + token + "#" + token;
 
@@ -1613,11 +1617,9 @@ class JGitRepositoryOperationsTest {
         @Test
         @DisplayName("PLAN-02 (f), GDR-NFR-3: a refused redirect is logged REMOTE_REFUSED by its host only")
         void refusedRedirectLogged(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
-            var credential = GitGenerators.credentials().next();
-            // the generator draws a user name of as few as one letter, which occurs by chance in unrelated log text;
-            // a distinctive prefix keeps the absence assertion below meaningful for every seed
-            var user = "redirect-user-" + credential.username();
-            var token = new String(credential.token());
+            // distinct values: found in no log text by chance, so the absence assertions below hold for every seed
+            var user = distinctTexts.next();
+            var token = distinctTexts.next();
             var redirect = new URIish("https://" + user + ":" + token + "@" + FOREIGN_HOST + "/"
                     + TestCommits.name() + ".git");
             var marker = TestCommits.name();

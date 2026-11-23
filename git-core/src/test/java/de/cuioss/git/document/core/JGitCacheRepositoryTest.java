@@ -28,7 +28,6 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -36,8 +35,10 @@ import java.util.stream.Stream;
 
 import de.cuioss.git.document.core.RepositoryOperations.FetchCommitInput;
 import de.cuioss.git.document.core.RepositoryOperations.ReadFileInput;
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
@@ -83,6 +84,9 @@ class JGitCacheRepositoryTest {
 
     @TempDir
     Path temp;
+
+    /** The values asserted absent from a detail: distinct by construction, found nowhere by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     private JGitRepositoryOperations operations;
     private Path source;
@@ -358,7 +362,7 @@ class JGitCacheRepositoryTest {
         @Test
         @DisplayName("GDR-NFR-3: an invalid commit or path names its field, never the caller's value")
         void detailsCarryNoInput() {
-            var mail = TestCommits.name() + "@example.invalid";
+            var mail = distinctTexts.next() + "@example.invalid";
             assertTrue(fetch(url(), commit, RemotePolicy.localOnly()).isOk(), "the pinned commit is fetched");
 
             var fetched = fetch(url(), mail, RemotePolicy.localOnly());
@@ -374,10 +378,10 @@ class JGitCacheRepositoryTest {
         @Test
         @DisplayName("GDR-NFR-3: the fetch is anonymous, and no part of the URL beyond its location reaches a detail")
         void anonymousFetch() {
-            // upper case, so no secret can occur by chance in the lower-case host or path of the detail
-            var user = TestCommits.name().toUpperCase(Locale.ROOT);
-            var password = TestCommits.name().toUpperCase(Locale.ROOT);
-            var token = TestCommits.name().toUpperCase(Locale.ROOT);
+            // distinct values: no secret can occur by chance in the host or path of the detail
+            var user = distinctTexts.next();
+            var password = distinctTexts.next();
+            var token = distinctTexts.next();
             var marker = TestCommits.name();
             var url = "https://" + user + ":" + password + "@" + FOREIGN_HOST + "/" + marker + ".git?token=" + token
                     + "#" + token;

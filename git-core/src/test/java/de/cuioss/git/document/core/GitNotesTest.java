@@ -41,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
@@ -354,7 +355,8 @@ class GitNotesTest {
         @DisplayName("GDR-NFR-3: no detail carries the note's content")
         void detailsCarryNoContent(@InMemory Repository repository) throws Exception {
             var commit = TestCommits.commit(repository, null);
-            var marker = TestCommits.name();
+            // a distinct value: a letters-only name could occur by chance in the fixed words of a detail
+            var marker = GitGenerators.distinctTexts().next();
             var note = marker.getBytes(UTF_8);
             var notesRef = notesRef();
 

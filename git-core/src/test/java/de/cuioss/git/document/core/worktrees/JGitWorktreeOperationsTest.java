@@ -59,6 +59,7 @@ import de.cuioss.git.document.core.RepositoryOperations.Identity;
 import de.cuioss.git.document.core.worktrees.WorktreeOperations.CommitInput;
 import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
 import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
@@ -582,9 +583,12 @@ class JGitWorktreeOperationsTest {
         @DisplayName("GDR-CORE-12: a branch name that is no valid reference name is refused before anything is written")
         void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
-            var escape = name();
+            // distinct values, so no part of a name occurs by chance in a detail
+            var distinctTexts = GitGenerators.distinctTexts();
+            var escape = distinctTexts.next();
             // git's reference-name rules: a '..' component, a space and a trailing '.lock' are invalid
-            var hostile = List.of("../../../" + escape, name() + " " + name(), name() + ".lock");
+            var hostile = List.of("../../../" + escape, distinctTexts.next() + " " + distinctTexts.next(),
+                    distinctTexts.next() + ".lock");
             var existing = name();
             branchOn(main, existing);
             var before = tree(main.root());
@@ -1594,7 +1598,8 @@ class JGitWorktreeOperationsTest {
         @DisplayName("GDR-CORE-15: a reservation a crashed process left is released, and the addition succeeds again")
         void crashedProcessRecovered(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
-            var branch = name();
+            // a distinct value: a letters-only name such as "tion" occurs by chance in the text of an INFO message
+            var branch = GitGenerators.distinctTexts().next();
             var tip = branchOn(main, branch);
             // the reservation of an addition whose process ended between reserving and releasing
             var left = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + branch).orElseThrow();
@@ -1642,7 +1647,8 @@ class JGitWorktreeOperationsTest {
         @DisplayName("GDR-CORE-15: an invalid branch name is refused and deletes nothing in or outside the common directory")
         void invalidBranchNameRefused(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
-            var escape = name();
+            // a distinct value: a letters-only name could occur by chance in the fixed words of the detail
+            var escape = GitGenerators.distinctTexts().next();
             var hostile = "../../../" + escape;
             Files.writeString(temp.resolve(escape), content());
             var held = LinkedWorktrees.reserveBranch(commonDir(main), Constants.R_HEADS + name()).orElseThrow();
@@ -1878,7 +1884,8 @@ class JGitWorktreeOperationsTest {
         @Test
         @DisplayName("GDR-CORE-13: a reflog entry that cannot be written does not fail the created commit")
         void reflogFailureKeepsCommit(@LocalRepository Repository source) throws Exception {
-            var upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
+            // distinct values: none occurs by chance in a log message the commit did not put it in
+            var distinctTexts = GitGenerators.distinctTexts();
             var main = mainTree(source, temp);
             var branch = name();
             var worktree = added(main, branch);
@@ -1887,9 +1894,9 @@ class JGitWorktreeOperationsTest {
                     .resolve(Constants.HEAD);
             Files.createDirectories(linkedLog);
             Files.writeString(worktree.path().resolve(name()), content());
-            var author = new Identity(upper.next(), upper.next() + "@example.invalid");
-            var committer = new Identity(upper.next(), upper.next() + "@example.invalid");
-            var message = upper.next();
+            var author = new Identity(distinctTexts.next(), distinctTexts.next() + "@example.invalid");
+            var committer = new Identity(distinctTexts.next(), distinctTexts.next() + "@example.invalid");
+            var message = distinctTexts.next();
 
             var result = operations.commit(CommitInput.builder().root(worktree.path()).message(message)
                     .author(author).committer(committer).build());
@@ -2065,17 +2072,17 @@ class JGitWorktreeOperationsTest {
     @DisplayName("secrets (GDR-NFR-3)")
     class Secrets {
 
-        // upper case, so a value cannot occur by chance in the lower-case names and paths of a detail
-        private final TypedGenerator<String> upper = Generators.strings("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12, 20);
+        // distinct values: a value cannot occur by chance in the names and paths of a detail or a log message
+        private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
         @Test
         @DisplayName("GDR-NFR-3: no log message or result detail carries a name, an e-mail address or a message, no INFO "
                 + "message a path")
         void noPersonalDataInLogsOrDetails(@LocalRepository Repository source) throws Exception {
             var main = mainTree(source, temp);
-            var author = new Identity(upper.next(), upper.next() + "@example.invalid");
-            var committer = new Identity(upper.next(), upper.next() + "@example.invalid");
-            var message = upper.next();
+            var author = new Identity(distinctTexts.next(), distinctTexts.next() + "@example.invalid");
+            var committer = new Identity(distinctTexts.next(), distinctTexts.next() + "@example.invalid");
+            var message = distinctTexts.next();
             var worktree = added(main, name());
             Files.writeString(worktree.path().resolve(name()), content());
             var input = CommitInput.builder().root(worktree.path()).message(message).author(author)
