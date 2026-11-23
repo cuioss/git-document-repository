@@ -19,10 +19,12 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -31,7 +33,6 @@ import java.util.Set;
 
 import de.cuioss.git.document.core.CommitMetadata;
 import de.cuioss.git.document.core.GitNotes;
-import de.cuioss.git.document.core.GitResult;
 import de.cuioss.git.document.core.InCoreWriter;
 import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.RepositoryOperations;
@@ -119,11 +120,11 @@ final class AnchorNotes {
     }
 
     /**
-     * The notes tip a due check builds on, with the proof the newest notes commit added: the {@code previous} of the
-     * next proof.
+     * The notes tip a due check builds on, with the newest proof of its history ({@link #current()}): the
+     * {@code previous} of the next proof.
      *
      * @param commit the notes commit the notes reference points at; {@code null} without a notes reference
-     * @param proof  the proof the newest notes commit added; empty for none
+     * @param proof  the newest proof of the notes history; empty only when the history holds no note at all
      */
     record Tip(@Nullable ObjectId commit, byte[] proof) {
 
@@ -146,7 +147,8 @@ final class AnchorNotes {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof Tip tip && Objects.equals(commit, tip.commit) && Arrays.equals(proof, tip.proof);
+            return other instanceof Tip(var otherCommit, var otherProof) && Objects.equals(commit, otherCommit)
+                    && Arrays.equals(proof, otherProof);
         }
 
         @Override
@@ -188,7 +190,8 @@ final class AnchorNotes {
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof Kept kept && Objects.equals(basis, kept.basis) && Arrays.equals(proof, kept.proof);
+            return other instanceof Kept(var otherBasis, var otherProof) && Objects.equals(basis, otherBasis)
+                    && Arrays.equals(proof, otherProof);
         }
 
         @Override
@@ -225,17 +228,46 @@ final class AnchorNotes {
     }
 
     /**
-     * Returns the notes tip with the proof its newest notes commit added ({@link #newest}).
+     * Returns the notes tip with the newest proof of its history, the {@code previous} of the next proof: the note the
+     * newest notes commit along the first-parent history added, that is the note its first parent lacks or holds with
+     * other content. A notes commit that adds no note, for example one that only removes a note, is passed over.
+     * {@link #publish} adds exactly one note per notes commit, so only a notes commit written elsewhere adds none or
+     * several.
      *
-     * @return the tip; its proof is empty without a notes reference or when that note cannot be read
+     * @return the tip with the newest proof; with an empty proof without a notes reference or when its history adds no
+     *         note at all; empty when the newest notes commit that adds a note adds several, or adds one that is no
+     *         base64, so no predecessor can be identified and no proof may be built on the tip
      * @throws IOException if the notes cannot be read
      */
-    Tip current() throws IOException {
+    Optional<Tip> current() throws IOException {
         @Nullable ObjectId commit = tip();
         if (commit == null) {
-            return new Tip(null, new byte[0]);
+            return Optional.of(new Tip(null, new byte[0]));
         }
-        return new Tip(commit, newest(commit).flatMap(this::proof).orElseGet(() -> new byte[0]));
+        Repository repository = clone.repository();
+        try (ObjectReader reader = repository.newObjectReader(); RevWalk walk = new RevWalk(reader)) {
+            @Nullable RevCommit step = walk.parseCommit(commit);
+            while (step != null) {
+                @Nullable RevCommit parent = step.getParentCount() == 0 ? null : walk.parseCommit(step.getParent(0));
+                NoteMap before = parent == null ? NoteMap.newEmptyMap() : NoteMap.read(reader, parent);
+                List<Note> added = new ArrayList<>();
+                for (Note note : NoteMap.read(reader, step)) {
+                    if (!note.getData().equals(before.get(note))) {
+                        added.add(note);
+                    }
+                }
+                if (added.size() > 1) {
+                    LOGGER.debug("A notes commit adds several notes; no proof predecessor is identified");
+                    return Optional.empty();
+                }
+                if (added.size() == 1) {
+                    return Optional.ofNullable(decode(reader.open(added.getFirst().getData(), Constants.OBJ_BLOB)
+                            .getBytes(Integer.MAX_VALUE))).map(proof -> new Tip(commit, proof));
+                }
+                step = parent;
+            }
+        }
+        return Optional.of(new Tip(commit, new byte[0]));
     }
 
     /**
@@ -257,49 +289,6 @@ final class AnchorNotes {
             }
         }
         return annotated;
-    }
-
-    /**
-     * Returns the subject whose note a notes commit added: the note of the commit that its first parent lacks or holds
-     * with other content. One note is written per notes commit, so for the tip that subject carries the newest proof.
-     *
-     * @param tip the notes commit
-     * @return the subject, or empty when the commit added no single note
-     * @throws IOException if the notes cannot be read
-     */
-    Optional<ObjectId> newest(ObjectId tip) throws IOException {
-        Repository repository = clone.repository();
-        try (ObjectReader reader = repository.newObjectReader(); RevWalk walk = new RevWalk(reader)) {
-            RevCommit commit = walk.parseCommit(tip);
-            NoteMap current = NoteMap.read(reader, commit);
-            NoteMap parent = commit.getParentCount() == 0 ? NoteMap.newEmptyMap()
-                    : NoteMap.read(reader, walk.parseCommit(commit.getParent(0)));
-            @Nullable ObjectId added = null;
-            for (Note note : current) {
-                if (!note.getData().equals(parent.get(note))) {
-                    if (added != null) {
-                        return Optional.empty();
-                    }
-                    added = note.copy();
-                }
-            }
-            return Optional.ofNullable(added);
-        }
-    }
-
-    /**
-     * Reads and decodes the proof of a subject from its note.
-     *
-     * @param subject the anchored commit
-     * @return the proof, or empty when the subject has no note or the note is no base64
-     */
-    Optional<byte[]> proof(ObjectId subject) {
-        GitResult<byte[]> read = notes.read(clone.repository(), notesRef, subject.name());
-        byte[] note = read.value();
-        if (!read.isOk() || note == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(decode(note));
     }
 
     /**

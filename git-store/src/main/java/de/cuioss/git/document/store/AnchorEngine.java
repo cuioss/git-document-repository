@@ -54,8 +54,9 @@ import org.jspecify.annotations.Nullable;
  * is {@code false}) and every checkpoint without a note in the notes reference of the provider as the fetch mirrored
  * it, oldest commit time first;</li>
  * <li>without any lock of the clone: the provider obtains the proof of each pending subject in turn, with the commit time
- * of the subject and the newest proof as {@code previous}: the note the notes tip added ({@link AnchorNotes#current}),
- * or the proof published just before in the same due check;</li>
+ * of the subject and the newest proof as {@code previous}: the newest proof of the notes history
+ * ({@link AnchorNotes#current}), or the proof published just before in the same due check; a notes history whose
+ * newest proof cannot be identified ends the due check in phase one, so no proof is built on it;</li>
  * <li>under the shared side and the transport lock again, per proof: the proof is kept under its local-only reference,
  * its note written onto the notes tip the proof extends and pushed with that tip as the lease
  * ({@link AnchorNotes#publish}). A tip that moved meanwhile, for example by a fetch that brought the note of another
@@ -261,7 +262,12 @@ final class AnchorEngine {
                 }
             }
             pending.sort(Comparator.comparing(Subject::time).thenComparing(subject -> subject.id().name()));
-            return StoreResult.ok(new Plan(pending, proofs.current()));
+            Optional<AnchorNotes.Tip> tip = proofs.current();
+            if (tip.isEmpty()) {
+                return StoreResult.of(StoreOutcome.INCOMPLETE,
+                        proofs.notesRef() + ": no proof predecessor is identified on the notes tip");
+            }
+            return StoreResult.ok(new Plan(pending, tip.get()));
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the due check: %s", type);

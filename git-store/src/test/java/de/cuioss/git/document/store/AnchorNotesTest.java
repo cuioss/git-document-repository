@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -284,6 +285,41 @@ class AnchorNotesTest {
             var result = update.update();
             assertTrue(result == RefUpdate.Result.NEW || result == RefUpdate.Result.FORCED
                     || result == RefUpdate.Result.FAST_FORWARD, () -> "the fixture note is written: " + result);
+            return id;
+        }
+    }
+
+    /**
+     * Writes one notes commit onto a notes reference, as a tool other than the store would: the notes of its parent,
+     * the current tip, with the base64 of every given proof added; with no proof given it adds no note.
+     */
+    private static ObjectId notesCommit(Repository repository, String notesRef, Map<ObjectId, byte[]> proofs)
+            throws IOException {
+        @Nullable ObjectId parent = tip(repository, notesRef);
+        try (ObjectInserter inserter = repository.newObjectInserter(); ObjectReader reader = repository.newObjectReader();
+             RevWalk walk = new RevWalk(reader)) {
+            NoteMap notes = parent == null ? NoteMap.newEmptyMap() : NoteMap.read(reader, walk.parseCommit(parent));
+            for (Map.Entry<ObjectId, byte[]> proof : proofs.entrySet()) {
+                notes.set(proof.getKey(), inserter.insert(Constants.OBJ_BLOB,
+                        Base64.getEncoder().encode(proof.getValue())));
+            }
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(word(), "", Instant.ofEpochSecond(100_000), ZoneOffset.UTC);
+            commit.setTreeId(notes.writeTree(inserter));
+            if (parent != null) {
+                commit.setParentId(parent);
+            }
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(notesRef);
+            update.setNewObjectId(id);
+            update.setForceUpdate(true);
+            var result = update.update();
+            assertTrue(result == RefUpdate.Result.NEW || result == RefUpdate.Result.FORCED
+                    || result == RefUpdate.Result.FAST_FORWARD, () -> "the fixture notes commit is written: " + result);
             return id;
         }
     }
@@ -556,6 +592,100 @@ class AnchorNotesTest {
                     () -> assertNull(cloneTip(fixture, fixture.notesRef()), "no note is written"),
                     () -> assertNull(tip(repository, fixture.notesRef()), "nothing reached the remote"));
         }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a notes tip that adds no note over a proof history keeps the earlier proof as previous")
+    void tipAddingNoNoteKeepsEarlierProofAsPrevious(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+
+        try (var fixture = open(remote)) {
+            fixture.anchor();
+            var checkpoint = checkpoint(repository, 1);
+            notesCommit(repository, fixture.notesRef(), Map.of());
+            var release = commit(repository, StoreReferences.releaseTag(document(), 1), Instant.ofEpochSecond(200_000));
+
+            var anchoring = fixture.anchor();
+
+            var calls = fixture.provider().calls();
+            assertAll(
+                    () -> assertEquals(List.of(release.name()), anchoring.anchored(), "the release is anchored"),
+                    () -> assertEquals(release, calls.get(1).subject(), "with a proof of its own"),
+                    () -> assertArrayEquals(ScriptedAnchorProvider.proofOf(checkpoint), calls.get(1).previous(),
+                            "chained on the earlier proof, not on none"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a notes tip that adds several notes ends the due check incomplete without a proof")
+    void tipAddingSeveralNotesEndsDueCheck(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        var other = commit(repository, "refs/heads/" + word(), Instant.ofEpochSecond(110_000));
+
+        try (var fixture = open(remote)) {
+            fixture.anchor();
+            Map<ObjectId, byte[]> proofs = new LinkedHashMap<>();
+            proofs.put(main, word().getBytes(StandardCharsets.US_ASCII));
+            proofs.put(other, word().getBytes(StandardCharsets.US_ASCII));
+            var foreignTip = notesCommit(repository, fixture.notesRef(), proofs);
+            commit(repository, StoreReferences.releaseTag(document(), 1), Instant.ofEpochSecond(200_000));
+
+            var anchoring = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(StoreOutcome.INCOMPLETE, anchoring.outcome(), "the due check fails closed"),
+                    () -> assertEquals(1, fixture.provider().calls().size(), "no proof is requested on the tip"),
+                    () -> assertEquals(foreignTip, tip(repository, fixture.notesRef()), "the notes tip is unchanged"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a notes history without any note starts with previous none")
+    void historyWithoutNoteStartsWithNone(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+
+        try (var fixture = open(remote)) {
+            var empty = notesCommit(repository, fixture.notesRef(), Map.of());
+
+            var anchoring = fixture.anchor();
+
+            var checkpoint = checkpoint(repository, 1);
+            var notesTip = Objects.requireNonNull(tip(repository, fixture.notesRef()), "the notes reference");
+            assertAll(
+                    () -> assertEquals(List.of(checkpoint.name()), anchoring.anchored(), "the checkpoint is anchored"),
+                    () -> assertArrayEquals(new byte[0], fixture.provider().calls().getFirst().previous(),
+                            "with previous none"),
+                    () -> assertEquals(List.of(empty), List.of(parse(repository, notesTip).getParents()),
+                            "its note is written onto the empty notes history"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a tip and a kept proof are equal by their commit and the bytes of their proof")
+    void tipAndKeptEqualByCommitAndProofBytes() {
+        var commit = ObjectId.fromString("1".repeat(Constants.OBJECT_ID_STRING_LENGTH));
+        var other = ObjectId.fromString("2".repeat(Constants.OBJECT_ID_STRING_LENGTH));
+        byte[] proof = word().getBytes(StandardCharsets.US_ASCII);
+        byte[] otherProof = word().getBytes(StandardCharsets.US_ASCII);
+        var tip = new AnchorNotes.Tip(commit, proof);
+        var kept = new AnchorNotes.Kept(commit, proof);
+
+        assertAll(
+                () -> assertEquals(tip, new AnchorNotes.Tip(commit, proof.clone()), "equal commit and proof bytes"),
+                () -> assertEquals(tip.hashCode(), new AnchorNotes.Tip(commit, proof.clone()).hashCode(),
+                        "with equal hash codes"),
+                () -> assertNotEquals(tip, new AnchorNotes.Tip(other, proof), "another commit"),
+                () -> assertNotEquals(tip, new AnchorNotes.Tip(commit, otherProof), "another proof"),
+                () -> assertNotEquals(tip, new AnchorNotes.Tip(null, proof), "no commit"),
+                () -> assertEquals(kept, new AnchorNotes.Kept(commit, proof.clone()), "equal basis and proof bytes"),
+                () -> assertEquals(kept.hashCode(), new AnchorNotes.Kept(commit, proof.clone()).hashCode(),
+                        "with equal hash codes"),
+                () -> assertNotEquals(kept, new AnchorNotes.Kept(other, proof), "another basis"),
+                () -> assertNotEquals(kept, new AnchorNotes.Kept(commit, otherProof), "another proof"),
+                () -> assertNotEquals(tip, kept, "a tip is no kept proof"));
     }
 
     @Test
