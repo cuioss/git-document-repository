@@ -52,6 +52,10 @@ stored, so the result stays `OK` with the commit.
 refused or failed `worktreeAdd` could not undo everything the addition created, for example a created branch still at
 its start commit that could not be deleted; the message carries no argument, neither the branch name nor a path. The
 addition ends `FAILED` or with the outcome of the failure it rolled back.
+|GIT_CORE-105 |GIT_CORE |Added a linked working tree, its branch reservation was not released |Logged when
+`worktreeAdd` completed a linked working tree but could not release the reservation of its branch; the message carries
+no argument, neither the branch name nor a path. The working tree is kept and the result stays `OK`; the reservation
+left behind keeps later additions of the branch `BRANCH_CHECKED_OUT` until `releaseBranchReservation` releases it.
 |===
 
 == ERROR Level (200-299)
