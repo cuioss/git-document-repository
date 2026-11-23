@@ -51,7 +51,7 @@ class DataNodeTest {
     /** Generous: an expanded number takes minutes or fails for want of memory, a canonical one milliseconds. */
     private static final Duration NO_STALL = Duration.ofSeconds(30);
 
-    /** 1 × 10^2147483647, the largest exponent {@link YamlReader} accepts. */
+    /** 1 × 10^2147483647, built in memory, as {@link YamlReader} refuses its exponent in text. */
     private static final BigDecimal ONE_HUGE = new BigDecimal("1e2147483647");
 
     /** 100 × 10^2147483647, whose zeros {@link BigDecimal#stripTrailingZeros()} cannot strip without overflow. */
@@ -185,23 +185,25 @@ class DataNodeTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-2: const and enum with a huge exponent validate without a stall")
+        @DisplayName("GDR-FORMS-2: const and enum compare data with a huge exponent without a stall")
         void constAndEnum() {
+            // the schema is read from text, so its numbers stay within the exponent bound of the reader, 1000
             String constSchema = """
-                    { "type": "object", "properties": { "v": { "const": 100e2147483647 } } }
+                    { "type": "object", "properties": { "v": { "const": 100e998 } } }
                     """;
             String enumSchema = """
-                    { "type": "object", "properties": { "v": { "enum": [1, 1e2147483647, 100e2147483647] } } }
+                    { "type": "object", "properties": { "v": { "enum": [1, 1e1000, 1e-1000] } } }
                     """;
+            var thousandOtherNotation = new BigDecimal(BigInteger.TEN, -999);
 
             assertTimeoutPreemptively(NO_STALL, () -> assertAll(
-                    () -> assertEquals(new ValidationResult.Valid(), validate(constSchema, TEN_HUGER),
+                    () -> assertEquals(new ValidationResult.Valid(), validate(constSchema, thousandOtherNotation),
                             "const matches the same value in another notation"),
                     () -> assertInstanceOf(ValidationResult.Invalid.class, validate(constSchema, ONE_HUGE),
-                            "const refuses another value"),
-                    () -> assertEquals(new ValidationResult.Valid(), validate(enumSchema, ONE_HUGE),
-                            "enum matches 1e2147483647"),
-                    () -> assertEquals(new ValidationResult.Valid(), validate(enumSchema, TEN_HUGER),
+                            "const refuses a value with a huge exponent, unexpanded"),
+                    () -> assertInstanceOf(ValidationResult.Invalid.class, validate(enumSchema, ONE_HUGE),
+                            "enum refuses 1e2147483647, unexpanded"),
+                    () -> assertEquals(new ValidationResult.Valid(), validate(enumSchema, thousandOtherNotation),
                             "enum matches the same value in another notation"),
                     () -> assertEquals(new ValidationResult.Valid(), validate(enumSchema, new BigDecimal("1.0")),
                             "enum matches 1.0 against 1"),

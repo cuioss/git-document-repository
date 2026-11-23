@@ -54,12 +54,16 @@ import org.jspecify.annotations.Nullable;
  * library's scale-sensitive {@link BigDecimal#equals(Object)} compare by value, and {@code minimum}, {@code maximum} and
  * their exclusive forms compare by {@link BigDecimal#compareTo(BigDecimal)}, which expands nothing. Only
  * {@code multipleOf} is left: the library computes {@link BigDecimal#remainder(BigDecimal)}, whose working precision
- * grows with the difference of the exponents, so a number with a large exponent under {@code multipleOf} can stall the
- * validation, and no node can prevent that. The library then compares the remainder as a {@code double} with zero
+ * grows with the difference of the exponents, and no node can bound that. For data read from text it stays bounded
+ * because {@link YamlReader} refuses a number of more than {@value YamlReader#MAX_NUMBER_DIGITS} digits or with an
+ * exponent beyond {@value YamlReader#MAX_EXPONENT} in magnitude before it is parsed. A {@link BigDecimal} or
+ * {@link BigInteger} a caller builds in memory is not bounded: with a large exponent under {@code multipleOf} it can
+ * still stall the validation. The library then compares the remainder as a {@code double} with zero
  * ({@code MultipleOfEvaluator} in {@code Evaluators.java} of {@code dev.harrel:json-schema} 1.9.1:
  * {@code remainder(factor).doubleValue() == 0}); a remainder of a magnitude below the smallest positive {@code double}
- * (about {@code 4.9e-324}; below about {@code 1e-308} it already loses precision) underflows to zero, so {@code multipleOf} accepts such a number, for example {@code 1e-400} under {@code "multipleOf": 1}. This gap
- * of the library is accepted and not checked again.
+ * (about {@code 4.9e-324}; below about {@code 1e-308} it already loses precision) underflows to zero, so
+ * {@code multipleOf} accepts such a number, for example {@code 1e-400} under {@code "multipleOf": 1}, which the reader
+ * still reads. This underflow of the library is accepted and not checked again.
  */
 final class DataNode implements JsonNode {
 

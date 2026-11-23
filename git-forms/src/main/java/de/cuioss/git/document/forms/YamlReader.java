@@ -65,7 +65,9 @@ import org.snakeyaml.engine.v2.scanner.StreamReader;
  * resolves a plain scalar with its {@code CoreScalarResolver}, the YAML 1.2 core schema; a quoted or block scalar is a
  * string. It refuses, as {@link StoreOutcome#MALFORMED} passed on in a {@link FormsResult}, everything outside the
  * JSON data model: an anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite
- * number or not-a-number, a number whose exponent leaves the range of {@code int}, a quoted string that is not valid
+ * number or not-a-number, a number with more than {@value #MAX_NUMBER_DIGITS} digits (leading zeros not counted) or
+ * whose exponent exceeds {@value #MAX_EXPONENT} in magnitude, both refused before the number is parsed and the bound
+ * named in the detail, a quoted string that is not valid
  * Unicode (a lone surrogate from an escape), more than {@value DataNode#MAX_DEPTH} nested mappings and sequences (the
  * nesting limit {@link DataNode#MAX_DEPTH}, which the detail names), more than one document, and a document without a
  * value. Text that is not
@@ -93,6 +95,29 @@ final class YamlReader {
      * refuse what this reader would refuse.
      */
     static final int CODE_POINT_LIMIT = 3 * 1024 * 1024;
+
+    /**
+     * The most significant digits a number may have in the text, leading zeros not counted; equal to the digit limit
+     * of an integer of {@link DataNode}. Parsing a digit string, and the {@link BigDecimal#remainder(BigDecimal)} the
+     * validator computes for {@code multipleOf}, cost time that grows with the digits.
+     */
+    static final int MAX_NUMBER_DIGITS = DataNode.MAX_INTEGER_DIGITS;
+
+    /**
+     * The largest magnitude of the adjusted exponent of a float, the exponent of its first significant digit: the
+     * working precision of {@link BigDecimal#remainder(BigDecimal)} under {@code multipleOf} grows with the difference
+     * of the exponents. The bound keeps {@code 1e-400} readable.
+     */
+    static final int MAX_EXPONENT = 1000;
+
+    /**
+     * The magnitude beyond which the exponent text is no longer accumulated: no fraction a text within the code point
+     * limit can hold brings an exponent beyond it back within {@link #MAX_EXPONENT}.
+     */
+    private static final long EXPONENT_CEILING = (long) CODE_POINT_LIMIT + MAX_EXPONENT;
+
+    /** The problem of a number with too many digits. */
+    private static final String TOO_MANY_DIGITS = "a number with more than " + MAX_NUMBER_DIGITS + " digits";
 
     /** The load settings: comments not parsed, marks kept for the details, the limit of the text. */
     private final LoadSettings settings = LoadSettings.builder().setUseMarks(true)
@@ -230,7 +255,7 @@ final class YamlReader {
             return Boolean.valueOf(text.toLowerCase(Locale.ROOT));
         }
         if (Tag.INT.equals(tag)) {
-            return integer(text);
+            return integer(text, event);
         }
         if (Tag.FLOAT.equals(tag)) {
             return decimal(text, event);
@@ -238,18 +263,57 @@ final class YamlReader {
         return text;
     }
 
-    /** Converts a float of the core schema; an infinity, not-a-number and an exponent beyond int are refused. */
+    /**
+     * Converts a float of the core schema. An infinity and not-a-number are refused, and so are, before the text is
+     * parsed, more than {@value #MAX_NUMBER_DIGITS} significant digits and an adjusted exponent (that of the first
+     * significant digit, as {@link BigDecimal} counts it) of a magnitude above {@value #MAX_EXPONENT}.
+     */
     private static BigDecimal decimal(String text, ScalarEvent event) {
         String lower = text.toLowerCase(Locale.ROOT);
         if (lower.contains("inf") || lower.contains("nan")) {
             throw new Refusal(event, "a number outside the JSON data model");
         }
-        try {
-            return new BigDecimal(text);
-        } catch (NumberFormatException e) {
-            // the exponent leaves the range of int, for example 1e-2147483648
-            throw new Refusal(event, "a number outside the range of the reader");
+        int marker = lower.indexOf('e');
+        String mantissa = marker < 0 ? text : text.substring(0, marker);
+        int point = mantissa.indexOf('.');
+        int fractionDigits = point < 0 ? 0 : mantissa.length() - point - 1;
+        String digitText = point < 0 ? mantissa : mantissa.substring(0, point) + mantissa.substring(point + 1);
+        int digits = significantDigits(digitText);
+        if (digits > MAX_NUMBER_DIGITS) {
+            throw new Refusal(event, TOO_MANY_DIGITS);
         }
+        long exponent = marker < 0 ? 0 : boundedExponent(text.substring(marker + 1));
+        long adjusted = exponent - fractionDigits + Math.max(digits, 1) - 1;
+        if (Math.abs(adjusted) > MAX_EXPONENT) {
+            throw new Refusal(event, "a number whose exponent exceeds " + MAX_EXPONENT + " in magnitude");
+        }
+        return new BigDecimal(text);
+    }
+
+    /** The number of digits of a digit string after its sign and its leading zeros. */
+    private static int significantDigits(String digits) {
+        int start = 0;
+        if (start < digits.length() && (digits.charAt(start) == '+' || digits.charAt(start) == '-')) {
+            start++;
+        }
+        while (start < digits.length() && digits.charAt(start) == '0') {
+            start++;
+        }
+        return digits.length() - start;
+    }
+
+    /**
+     * The value of the exponent of a float, accumulated so that it cannot overflow: once its magnitude passes any
+     * value a text within the code point limit could bring back into the bound, it stays there.
+     */
+    private static long boundedExponent(String exponent) {
+        boolean negative = exponent.startsWith("-");
+        int start = negative || exponent.startsWith("+") ? 1 : 0;
+        long value = 0;
+        for (int index = start; index < exponent.length() && value <= EXPONENT_CEILING; index++) {
+            value = value * 10 + (exponent.charAt(index) - '0');
+        }
+        return negative ? -value : value;
     }
 
     /** Whether a text holds no lone surrogate. */
@@ -258,16 +322,24 @@ final class YamlReader {
                 && codePoint <= Character.MAX_SURROGATE);
     }
 
-    /** Converts an integer of the core schema: decimal, octal with {@code 0o} or hexadecimal with {@code 0x}. */
-    private static Object integer(String text) {
-        BigInteger value;
+    /**
+     * Converts an integer of the core schema: decimal, octal with {@code 0o} or hexadecimal with {@code 0x}; more than
+     * {@value #MAX_NUMBER_DIGITS} digits in the text, leading zeros not counted, are refused before it is parsed.
+     */
+    private static Object integer(String text, ScalarEvent event) {
+        int radix = 10;
+        String digits = text;
         if (text.startsWith(OCTAL)) {
-            value = new BigInteger(text.substring(OCTAL.length()), 8);
+            radix = 8;
+            digits = text.substring(OCTAL.length());
         } else if (text.startsWith(HEXADECIMAL)) {
-            value = new BigInteger(text.substring(HEXADECIMAL.length()), 16);
-        } else {
-            value = new BigInteger(text);
+            radix = 16;
+            digits = text.substring(HEXADECIMAL.length());
         }
+        if (significantDigits(digits) > MAX_NUMBER_DIGITS) {
+            throw new Refusal(event, TOO_MANY_DIGITS);
+        }
+        BigInteger value = new BigInteger(digits, radix);
         return value.bitLength() < Long.SIZE ? (Object) value.longValueExact() : value;
     }
 

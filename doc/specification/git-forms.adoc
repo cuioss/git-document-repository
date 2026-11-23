@@ -82,7 +82,8 @@ of kinds with the keys of the example:
 
 The file is read as YAML within the JSON data model (ADR-0008) by the package-private `YamlReader`, built on
 `org.snakeyaml:snakeyaml-engine` 3.2: plain scalars resolve by the YAML 1.2 core schema, and an anchor, an alias, an
-explicit tag, a key that is not a string, a duplicate key, an infinite number or not-a-number, a nesting deeper than
+explicit tag, a key that is not a string, a duplicate key, an infinite number or not-a-number, a number with more
+than 1,000 digits or whose exponent exceeds 1,000 in magnitude (<<GDR-FORMS-2>>), a nesting deeper than
 128 mappings and sequences (<<GDR-FORMS-2>>) and more than one document are refused. Every refusal is the outcome `MALFORMED` of `git-store`, passed on: a key that is missing or unknown, a
 value of the wrong type or form, a duplicate id, an unknown alias, a per-document kind without `template`, or text the
 reader refuses. The detail names the file and the key path, positions counted from 0 (`kinds.yaml: kinds[1].template:
@@ -200,7 +201,8 @@ value outside it (a `Double`, for example) with an `IllegalArgumentException` th
 number without fraction (`1.00`, or a `BigDecimal` with a negative scale) is an integer if it has at most 1,000 digits;
 a longer one, a `BigInteger` included, is of the type `number`, so the keyword `"type": "integer"` refuses it. The limit
 exists because the validator compares two integers by their full expansion (`JsonNode.asInteger`): `1e2147483647`,
-which `YamlReader` accepts, would otherwise be expanded to more than two thousand million digits. `DataNode` holds every
+which `YamlReader` refuses but a caller can build in memory as a `BigDecimal`, would otherwise be expanded to more than
+two thousand million digits. `DataNode` holds every
 number in a canonical form, the unscaled value stripped of its trailing zeros as far as the scale stays within the range
 of `int`, and compares numbers by that form, so equal values are equal whatever their notation (`10`, `1e1` and `10.0`;
 `100e2147483647` and `10e2147483648`) and no number is expanded by its exponent. The validator compares the values of
@@ -210,14 +212,21 @@ own node types, and `minimum`, `maximum` and their exclusive forms by `BigDecima
 1.9.1, `JsonNodeUtil`];
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]). Only `multipleOf` is left to the library: it computes `BigDecimal.remainder`, whose working
-precision grows with the difference of the exponents, so data with a large exponent under `multipleOf` can stall the
-validation, and no node can prevent that. The library then compares the remainder, converted to `double`, with zero
+precision grows with the difference of the exponents, and parsing a long digit string costs time that grows with its
+digits. `YamlReader` therefore bounds every number of the text before it parses it: more than 1,000 significant
+digits (leading zeros not counted), in a decimal, octal or hexadecimal integer as in a float, is refused as
+`MALFORMED` with the detail `a number with more than 1000 digits`, and a float whose adjusted exponent, that of its
+first significant digit, exceeds 1,000 in magnitude is refused as `MALFORMED` with the detail
+`a number whose exponent exceeds 1000 in magnitude`; neither detail names the number. `1e1000` is read, `1e1001` and
+`1e2147483647` are refused. The bounds apply to text the reader reads, documents, schema files and `kinds.yaml`
+alike; a `BigDecimal` or `BigInteger` a caller builds in memory is not bounded, and under `multipleOf` a large exponent
+can still stall its validation. The library then compares the remainder, converted to `double`, with zero
 (`remainder(factor).doubleValue() == 0` in `MultipleOfEvaluator`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]); a remainder of a magnitude below the smallest positive `double` (about `4.9e-324`; below about `1e-308` it already
 loses precision) underflows to zero, so `multipleOf` accepts such
-a number, `1e-400` under `"multipleOf": 1` for example. `git-forms` accepts this gap of the library and adds no check of
-its own.
+a number, `1e-400` under `"multipleOf": 1` for example, which the exponent bound keeps readable. `git-forms` accepts
+this underflow of the library and adds no check of its own; `NumberBoundsTest` pins it.
 
 Data and schemas are bounded by one compiled nesting limit, 128 nested containers (mappings and sequences, the
 outermost counting 1 and a scalar root 0), held as `DataNode.MAX_DEPTH`. The validator `dev.harrel:json-schema` 1.9.1,
@@ -330,8 +339,8 @@ therefore yields byte-identical content. `encode` refuses with an `IllegalArgume
 be longer than the 3,145,728 code points (3 Mi) that `YamlReader` sets as the code point limit of snakeyaml-engine
 and decoding therefore reads, so for every value `encode` accepts, `decode(encode(v))` succeeds and `encode(decode(encode(v)))` equals
 `encode(v)` byte for byte. Decoding reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an
-anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite number, a number whose
-exponent leaves the range of `int`, a double-quoted string whose escape yields a lone surrogate, a nesting deeper than
+anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite number, a number with more
+than 1,000 digits or whose exponent exceeds 1,000 in magnitude, a double-quoted string whose escape yields a lone surrogate, a nesting deeper than
 128 levels) is `MALFORMED` with its line and column, never the content. `encode` refuses a value nested deeper than
 that limit with an `IllegalArgumentException` before it orders or writes anything (<<GDR-FORMS-2>>).
 
