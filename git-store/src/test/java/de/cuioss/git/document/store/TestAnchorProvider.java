@@ -52,7 +52,7 @@ public class TestAnchorProvider implements AnchorProvider {
     }
 
     @Override
-    public StoreResult<byte[]> obtain(String repository, ObjectId subject, byte[] previous) {
+    public StoreResult<byte[]> obtain(String repository, ObjectId subject, Instant commitTime, byte[] previous) {
         return StoreResult.of(StoreOutcome.UNAVAILABLE, "the test provider is never reachable");
     }
 

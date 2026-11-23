@@ -98,6 +98,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(6)
                 .build();
+
+        /**
+         * The anchor provider {@code signed} signed a proof (GDR-STORE-18): the repository alias, the object id of the
+         * subject, the time of the statement, its sequence number and the SHA-256 of the proof, nothing else.
+         */
+        public static final LogRecord PROOF_SIGNED = LogRecordModel.builder()
+                .template("Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s")
+                .prefix(PREFIX)
+                .identifier(7)
+                .build();
     }
 
     /**

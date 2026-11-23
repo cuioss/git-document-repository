@@ -40,8 +40,9 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The commit-signing keys a signature verification trusts (GDR-STORE-14): an immutable parse of a file in Git's
- * {@code allowed_signers} format, the format of
+ * The signing keys a signature verification trusts: the commit-signing keys of {@code signing.allowed-signers}
+ * (GDR-STORE-14) or the anchor keys of {@code anchor.signed.allowed-signers} (GDR-STORE-18), as an immutable parse of a
+ * file in Git's {@code allowed_signers} format, the format of
  * <a href="https://man.openbsd.org/ssh-keygen.1#ALLOWED_SIGNERS">ssh-keygen(1), ALLOWED SIGNERS</a>.
  * <p>
  * Each line is {@code <principals> [<options>] <key type> <base64 key> [<comment>]}; blank lines and lines starting with
@@ -51,8 +52,8 @@ import org.jspecify.annotations.Nullable;
  * before, the timestamp, which is {@code YYYYMMDD} (the start of the day) or {@code YYYYMMDDHHMM[SS]}, in UTC when it
  * ends with {@code Z} and in the system time zone otherwise, as {@code ssh-keygen} interprets it; a timestamp that
  * names no calendar date, such as {@code 20260230}, is refused;</li>
- * <li>{@code namespaces="<namespace>,..."}: the key is used for commits only when the list contains {@code git}; a key
- * without the option is used for every namespace. OpenSSH reads the list as a pattern list, in which a negated entry
+ * <li>{@code namespaces="<namespace>,..."}: the key is used for a namespace only when the list contains it, for commits
+ * {@code git} and for anchor proofs {@code git-document-anchor}; a key without the option is used for every namespace. OpenSSH reads the list as a pattern list, in which a negated entry
  * ({@code !git}) overrides a matching positive one; the store does not evaluate patterns and refuses a list with an
  * entry that contains {@code !}, {@code *} or {@code ?}, so it never accepts a key for commits that OpenSSH would
  * reject. An entry listed twice is read once.</li>
@@ -64,9 +65,9 @@ import org.jspecify.annotations.Nullable;
  * any other option, and a line that cannot be read are refused as {@link StoreOutcome#MALFORMED}. The detail names the
  * line number and the reason, never a principal, an option value or key text.
  * <p>
- * The file is read from the given path or from {@code signing.allowed-signers} of the configuration, never from the
- * repository whose commits are verified: an administrator who rewrites the repository cannot make a key of their own
- * trusted.
+ * The file is read from the given path, from {@code signing.allowed-signers} or from
+ * {@code anchor.signed.allowed-signers} of the configuration, never from the repository whose commits or proofs are
+ * verified: an administrator who rewrites the repository cannot make a key of their own trusted.
  *
  * @since 0.1
  */
@@ -77,6 +78,12 @@ public final class AllowedSigners {
 
     /** The detail of a file that cannot be read; it names no path. */
     static final String UNREADABLE = "signing.allowed-signers: not readable";
+
+    /** The detail of a configuration without {@code anchor.signed.allowed-signers}. */
+    static final String ANCHOR_MISSING = "anchor.signed.allowed-signers is missing";
+
+    /** The detail of an anchor allowed-signers file that cannot be read; it names no path. */
+    static final String ANCHOR_UNREADABLE = "anchor.signed.allowed-signers: not readable";
 
     private static final Pattern DATE = Pattern.compile("\\d{8}");
     private static final Pattern DATE_TIME = Pattern.compile("\\d{12}(\\d{2})?");
@@ -109,12 +116,16 @@ public final class AllowedSigners {
      * @throws NullPointerException if {@code file} is {@code null}
      */
     public static StoreResult<AllowedSigners> read(Path file) {
+        return read(file, UNREADABLE);
+    }
+
+    private static StoreResult<AllowedSigners> read(Path file, String unreadable) {
         Objects.requireNonNull(file, "file");
         List<String> lines;
         try {
             lines = Files.readAllLines(file);
         } catch (IOException | SecurityException e) {
-            return StoreResult.of(StoreOutcome.UNAVAILABLE, UNREADABLE);
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, unreadable);
         }
         return parse(lines);
     }
@@ -137,6 +148,26 @@ public final class AllowedSigners {
     }
 
     /**
+     * Reads the allowed-signers file of the anchor keys named by {@code anchor.signed.allowed-signers}, against which
+     * the provider {@code signed} verifies its proofs (GDR-STORE-18).
+     *
+     * @param configuration the configuration of the store
+     * @return {@link StoreOutcome#OK} with the allowed signers; {@link StoreOutcome#MALFORMED} with the detail
+     *         {@value #ANCHOR_MISSING} when the key is absent, or with {@code line <n>: <reason>} for a line that is
+     *         refused; {@link StoreOutcome#UNAVAILABLE} with {@value #ANCHOR_UNREADABLE} for a file that cannot be read,
+     *         without naming its path
+     * @throws NullPointerException if {@code configuration} is {@code null}
+     */
+    public static StoreResult<AllowedSigners> fromAnchor(StoreConfiguration configuration) {
+        Objects.requireNonNull(configuration, "configuration");
+        @Nullable String file = configuration.anchor().signed().allowedSigners();
+        if (file == null) {
+            return StoreResult.of(StoreOutcome.MALFORMED, ANCHOR_MISSING);
+        }
+        return read(Path.of(file), ANCHOR_UNREADABLE);
+    }
+
+    /**
      * Returns the number of keys listed.
      *
      * @return the number of entries, one per line that lists a key
@@ -146,7 +177,8 @@ public final class AllowedSigners {
     }
 
     /**
-     * Checks a signing key at a time.
+     * Checks a commit-signing key at a time: the check of {@link #check(byte[], Instant, String)} in the namespace
+     * {@value SshSignatures#NAMESPACE_GIT}.
      *
      * @param publicKeyBlob the SSH wire form of the public key that made the signature
      * @param time          the committer time of the signed commit
@@ -155,13 +187,28 @@ public final class AllowedSigners {
      *         {@link Match#UNKNOWN_KEY} otherwise
      */
     Match check(byte[] publicKeyBlob, Instant time) {
+        return check(publicKeyBlob, time, SshSignatures.NAMESPACE_GIT);
+    }
+
+    /**
+     * Checks a signing key at a time for a namespace. An entry is used for the namespace when it has no
+     * {@code namespaces} option or its list contains the namespace.
+     *
+     * @param publicKeyBlob the SSH wire form of the public key that made the signature
+     * @param time          the time the signature claims, the committer time of a commit or the time of a statement
+     * @param namespace     the namespace of the signature, {@value SshSignatures#NAMESPACE_GIT} for commits
+     * @return {@link Match#VALID} when an entry for the namespace lists the key with a validity that includes the
+     *         time, {@link Match#OUTSIDE_VALIDITY} when such entries list the key but none is valid at the time, and
+     *         {@link Match#UNKNOWN_KEY} otherwise
+     */
+    Match check(byte[] publicKeyBlob, Instant time, String namespace) {
         Optional<byte[]> key = SshSignatures.ed25519Key(publicKeyBlob);
         if (key.isEmpty()) {
             return Match.UNKNOWN_KEY;
         }
         boolean listed = false;
         for (Entry entry : entries) {
-            if (entry.forCommits() && Arrays.equals(entry.key(), key.get())) {
+            if (entry.usedFor(namespace) && Arrays.equals(entry.key(), key.get())) {
                 listed = true;
                 if (entry.validAt(time)) {
                     return Match.VALID;
@@ -180,9 +227,9 @@ public final class AllowedSigners {
     enum Match {
         /** A listed key, valid at the time. */
         VALID,
-        /** A key not listed for commits. */
+        /** A key not listed for the namespace. */
         UNKNOWN_KEY,
-        /** A key listed for commits, but not valid at the time. */
+        /** A key listed for the namespace, but not valid at the time. */
         OUTSIDE_VALIDITY
     }
 
@@ -443,8 +490,8 @@ public final class AllowedSigners {
     private record Entry(byte[] key, @Nullable Instant validAfter, @Nullable Instant validBefore,
     @Nullable Set<String> namespaces) {
 
-        boolean forCommits() {
-            return namespaces == null || namespaces.contains(SshSignatures.NAMESPACE_GIT);
+        boolean usedFor(String namespace) {
+            return namespaces == null || namespaces.contains(namespace);
         }
 
         boolean validAt(Instant time) {

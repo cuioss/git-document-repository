@@ -54,7 +54,7 @@ import org.junit.jupiter.params.provider.ValueSource;
  * kept as literals.
  */
 @EnableGeneratorController
-@DisplayName("AllowedSigners (GDR-STORE-14)")
+@DisplayName("AllowedSigners (GDR-STORE-14, GDR-STORE-18)")
 class AllowedSignersTest {
 
     @TempDir
@@ -320,6 +320,89 @@ class AllowedSignersTest {
                         value(configured).check(key.publicKeyBlob(), Instant.EPOCH), "the configured file"),
                 () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "signing.allowed-signers is missing"),
                         absent, "absent"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-18: the namespace-aware check uses a key for git-document-anchor and for git as its list says")
+    void namespaceAwareCheck() throws Exception {
+        var anchorOnly = TestKeys.ed25519();
+        var gitOnly = TestKeys.ed25519();
+        var both = TestKeys.ed25519();
+        var unrestricted = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " namespaces=\"git-document-anchor\" " + anchorOnly.publicKeyLine()
+                + "\n" + principal() + " namespaces=\"git\" " + gitOnly.publicKeyLine() + "\n" + principal()
+                + " namespaces=\"git,git-document-anchor\" " + both.publicKeyLine() + "\n" + principal() + " "
+                + unrestricted.publicKeyLine() + "\n"));
+
+        String anchor = SignedAnchorProvider.NAMESPACE;
+        assertAll(
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(anchorOnly.publicKeyBlob(), Instant.EPOCH, anchor), "anchor key for anchors"),
+                () -> assertEquals(AllowedSigners.Match.UNKNOWN_KEY,
+                        signers.check(anchorOnly.publicKeyBlob(), Instant.EPOCH), "anchor key not for commits"),
+                () -> assertEquals(AllowedSigners.Match.UNKNOWN_KEY,
+                        signers.check(gitOnly.publicKeyBlob(), Instant.EPOCH, anchor), "commit key not for anchors"),
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(gitOnly.publicKeyBlob(), Instant.EPOCH, SshSignatures.NAMESPACE_GIT),
+                        "commit key for commits"),
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(both.publicKeyBlob(), Instant.EPOCH, anchor), "both: anchors"),
+                () -> assertEquals(AllowedSigners.Match.VALID, signers.check(both.publicKeyBlob(), Instant.EPOCH),
+                        "both: commits"),
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(unrestricted.publicKeyBlob(), Instant.EPOCH, anchor),
+                        "no namespaces: every namespace"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-18: the validity of an anchor key bounds the namespace-aware check")
+    void anchorValidity() throws Exception {
+        var key = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " namespaces=\"git-document-anchor\",valid-after=\"20260101Z\" "
+                + key.publicKeyLine()));
+
+        assertAll(
+                () -> assertEquals(AllowedSigners.Match.VALID, signers.check(key.publicKeyBlob(),
+                        Instant.parse("2026-06-01T00:00:00Z"), SignedAnchorProvider.NAMESPACE), "inside"),
+                () -> assertEquals(AllowedSigners.Match.OUTSIDE_VALIDITY, signers.check(key.publicKeyBlob(),
+                        Instant.parse("2025-06-01T00:00:00Z"), SignedAnchorProvider.NAMESPACE), "before"));
+    }
+
+    private static StoreConfiguration anchorConfiguration(@Nullable String allowedSigners) {
+        Map<String, Object> tree = new LinkedHashMap<>();
+        tree.put("save", Map.of("max-attempts", 1));
+        tree.put("drafts", Map.of("expiry", Period.ofDays(1).toString()));
+        tree.put("fetch", Map.of("interval", Duration.ofMinutes(1).toString()));
+        if (allowedSigners != null) {
+            tree.put("anchor", Map.of("signed", Map.of("allowed-signers", allowedSigners)));
+        }
+        return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-18: fromAnchor reads anchor.signed.allowed-signers; absent is MALFORMED, unreadable UNAVAILABLE")
+    void fromAnchorConfiguration() throws Exception {
+        var key = TestKeys.ed25519();
+        var path = file(principal() + " " + key.publicKeyLine());
+        var missing = temp.resolve(Generators.letterStrings(12, 20).next());
+
+        var configured = AllowedSigners.fromAnchor(anchorConfiguration(path.toString()));
+        var absent = AllowedSigners.fromAnchor(anchorConfiguration(null));
+        var unreadable = AllowedSigners.fromAnchor(anchorConfiguration(missing.toString()));
+
+        assertAll(
+                () -> assertEquals(AllowedSigners.Match.VALID, value(configured).check(key.publicKeyBlob(),
+                        Instant.EPOCH, SignedAnchorProvider.NAMESPACE), "the configured file"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "anchor.signed.allowed-signers is missing"),
+                        absent, "absent"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.UNAVAILABLE,
+                        "anchor.signed.allowed-signers: not readable"), unreadable, "unreadable"),
+                () -> assertFalse(String.valueOf(unreadable.detail()).contains(missing.toString()), "no path"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "signing.allowed-signers is missing"),
+                        AllowedSigners.from(anchorConfiguration(path.toString())),
+                        "the commit-signing file is a separate key"));
     }
 
     @Test

@@ -22,7 +22,9 @@
  * <p>
  * It provides the signing key source {@code file} ({@code FileSigningKeySource}, an unencrypted OpenSSH Ed25519 key
  * from a file), which {@code StoreProviders} finds through {@link java.util.ServiceLoader} beside the sources an
- * application supplies.
+ * application supplies, and the built-in anchor provider {@code signed} ({@code SignedAnchorProvider}, the own
+ * timestamp), which {@code StoreProviders} builds from the configuration when {@code anchor.provider} names it, its
+ * anchor key taken from one of those signing key sources.
  */
 module de.cuioss.git.document.store {
     exports de.cuioss.git.document.store;

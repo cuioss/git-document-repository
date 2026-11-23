@@ -15,6 +15,7 @@
  */
 package de.cuioss.git.document.store;
 
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -35,6 +36,11 @@ import org.jspecify.annotations.Nullable;
  * id that no provider carries, or that two providers carry, stops the start as {@link StoreOutcome#MALFORMED} naming
  * the service interface and the configuration key, never the configured id (GDR-NFR-3); two providers with an id nobody
  * configured do not stop it.
+ * <p>
+ * The anchor provider {@value SignedAnchorProvider#ID} is built in: when {@code anchor.provider} names it, the store
+ * builds a {@link SignedAnchorProvider} from the section {@code anchor.signed} (GDR-STORE-18), its anchor key taken from
+ * the candidate signing key source that {@code anchor.signed.key-source} names, and a candidate anchor provider that
+ * also carries that id is a second provider with the id of {@code anchor.provider}.
  *
  * @param signing the active signing key source
  * @param persons the active person directory
@@ -47,6 +53,15 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
 
     /** The rendering of an absent anchor provider in the log record {@code GIT_STORE-1}. */
     private static final String NO_ANCHOR_PROVIDER = "none";
+
+    /** The key of the commit-signing key reference. */
+    private static final String SIGNING_KEY = "signing.key";
+
+    /** The key of the anchor key source of the provider {@code signed}. */
+    private static final String SIGNED_KEY_SOURCE = "anchor.signed.key-source";
+
+    /** The key of the anchor key reference of the provider {@code signed}. */
+    private static final String SIGNED_KEY = "anchor.signed.key";
 
     /**
      * Checks that the signing key source and the person directory are present.
@@ -71,7 +86,8 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * {@link #select(StoreConfiguration, Iterable, Iterable, Iterable)}.
      *
      * @param configuration the configuration of the store
-     * @return {@link StoreOutcome#OK} with the selected providers, or {@link StoreOutcome#MALFORMED}
+     * @return {@link StoreOutcome#MALFORMED} for a provider that cannot be loaded, otherwise the result of
+     * {@link #select(StoreConfiguration, Iterable, Iterable, Iterable)}
      * @throws NullPointerException if {@code configuration} is {@code null}
      */
     public static StoreResult<StoreProviders> load(StoreConfiguration configuration) {
@@ -97,13 +113,24 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * <p>
      * A success is logged as {@code GIT_STORE-1} with the three ids, a refusal as {@code GIT_STORE-100} with its
      * detail.
+     * <p>
+     * When {@code anchor.provider} is {@value SignedAnchorProvider#ID}, the anchor key source is selected among the
+     * signing candidates by the effective {@code anchor.signed.key-source} (default
+     * {@value StoreConfiguration.Signing#DEFAULT_KEY_SOURCE}), {@code anchor.signed.key} is required (detail
+     * {@code anchor.signed.key is missing}), and the start is refused when the public key of the anchor key equals the
+     * public key of the commit-signing key ({@code anchor.signed.key equals the commit-signing key}); both public keys
+     * are read from their sources here, once. No detail names a key reference or key material.
      *
      * @param configuration the configuration of the store
      * @param signing       the candidate signing key sources
      * @param anchors       the candidate anchor providers
      * @param persons       the candidate person directories
-     * @return {@link StoreOutcome#OK} with the selected providers, or {@link StoreOutcome#MALFORMED} naming the service
-     * interface and the configuration key whose id no candidate or more than one candidate carries
+     * @return {@link StoreOutcome#OK} with the selected providers; {@link StoreOutcome#MALFORMED} naming the service
+     * interface and the configuration key whose id no candidate or more than one candidate carries, or the refusal of
+     * the provider {@value SignedAnchorProvider#ID}; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED}
+     * with {@code <key>: key source unavailable} or {@code <key>: key source refused} when a public key the provider
+     * {@value SignedAnchorProvider#ID} needs cannot be read, the key being {@code anchor.signed.key} or
+     * {@code signing.key}
      * @throws NullPointerException if an argument or a candidate is {@code null}
      */
     public static StoreResult<StoreProviders> select(StoreConfiguration configuration,
@@ -123,9 +150,16 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         if (!directory.isOk()) {
             return refuse(directory.detail());
         }
+        SigningKeySource signingSource = Objects.requireNonNull(source.value());
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
-        if (anchorId != null) {
+        if (SignedAnchorProvider.ID.equals(anchorId)) {
+            var provider = signed(configuration, signingSource, signing, anchors);
+            if (!provider.isOk()) {
+                return refuse(provider);
+            }
+            anchor = provider.value();
+        } else if (anchorId != null) {
             var provider = unique(AnchorProvider.class, StoreConfiguration.ANCHOR_PROVIDER, anchorId, anchors,
                     AnchorProvider::id);
             if (!provider.isOk()) {
@@ -133,8 +167,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
             }
             anchor = provider.value();
         }
-        var providers = new StoreProviders(Objects.requireNonNull(source.value()),
-                Objects.requireNonNull(directory.value()), anchor);
+        var providers = new StoreProviders(signingSource, Objects.requireNonNull(directory.value()), anchor);
         LOGGER.info(GitStoreLogMessages.INFO.PROVIDERS_SELECTED, providers.signing().id(), providers.persons().id(),
                 anchor == null ? NO_ANCHOR_PROVIDER : anchor.id());
         return StoreResult.ok(providers);
@@ -197,8 +230,105 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         return StoreResult.ok(providers);
     }
 
+    /**
+     * Builds the built-in provider {@code signed} (GDR-STORE-18) from the section {@code anchor.signed}.
+     * <p>
+     * The anchor key source is the candidate signing key source carrying the effective {@code anchor.signed.key-source}
+     * (default {@value StoreConfiguration.Signing#DEFAULT_KEY_SOURCE}); the public keys of the anchor key and, when
+     * {@code signing.key} is set, of the commit-signing key are read once, and equal public keys stop the start, so a
+     * different key reference or key source cannot hide the same key. {@code anchor.signed.allowed-signers}, when set,
+     * is read for the verification. No detail names a key reference or key material (GDR-NFR-3).
+     *
+     * @return {@link StoreOutcome#OK} with the provider; {@link StoreOutcome#MALFORMED} for a candidate that also carries
+     * the id {@value SignedAnchorProvider#ID}, a missing {@code anchor.signed.key}, an anchor key source no candidate or
+     * more than one candidate carries, a key of another type than Ed25519, an anchor key equal to the commit-signing key
+     * or a refused allowed-signers file; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED} for a key
+     * source that handed out no public key, or the result of a file that cannot be read
+     */
+    private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
+            Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
+        for (AnchorProvider candidate : anchors) {
+            if (SignedAnchorProvider.ID.equals(Objects.requireNonNull(candidate, "candidate").id())) {
+                return StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
+                        + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER);
+            }
+        }
+        StoreConfiguration.Anchor.Signed section = configuration.anchor().signed();
+        String keyReference = section.key();
+        if (keyReference == null) {
+            return StoreResult.of(StoreOutcome.MALFORMED, SIGNED_KEY + " is missing");
+        }
+        var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE,
+                Objects.requireNonNullElse(section.keySource(), StoreConfiguration.Signing.DEFAULT_KEY_SOURCE),
+                signing, SigningKeySource::id);
+        if (!anchorSource.isOk()) {
+            return retype(anchorSource);
+        }
+        SigningKeySource keySource = Objects.requireNonNull(anchorSource.value());
+        var anchorKey = publicKey(keySource, keyReference, SIGNED_KEY);
+        if (!anchorKey.isOk()) {
+            return retype(anchorKey);
+        }
+        SshSignatures.AcceptedKey publicKey = Objects.requireNonNull(anchorKey.value());
+        String commitKeyReference = configuration.signing().key();
+        if (commitKeyReference != null) {
+            var commitKey = publicKey(signingSource, commitKeyReference, SIGNING_KEY);
+            if (!commitKey.isOk()) {
+                return retype(commitKey);
+            }
+            if (publicKey.equals(commitKey.value())) {
+                return StoreResult.of(StoreOutcome.MALFORMED, SIGNED_KEY + " equals the commit-signing key");
+            }
+        }
+        @Nullable AllowedSigners allowedSigners = null;
+        if (section.allowedSigners() != null) {
+            var read = AllowedSigners.fromAnchor(configuration);
+            if (!read.isOk()) {
+                return retype(read);
+            }
+            allowedSigners = read.value();
+        }
+        return StoreResult.ok(new SignedAnchorProvider(
+                new SignedAnchorProvider.AnchorKey(keySource, keyReference, publicKey), allowedSigners,
+                section.maxClockSkew(), Clock.systemUTC()));
+    }
+
+    /**
+     * Reads the public key of a key reference.
+     *
+     * @param source       the key source
+     * @param keyReference the key reference
+     * @param key          the configuration key of the key reference, named in the detail
+     * @return {@link StoreOutcome#OK} with the key; {@link StoreOutcome#UNAVAILABLE} with
+     * {@code <key>: key source unavailable}; {@link StoreOutcome#REFUSED} with {@code <key>: key source refused};
+     * {@link StoreOutcome#MALFORMED} with {@code <key>: key type not supported}
+     */
+    private static StoreResult<SshSignatures.AcceptedKey> publicKey(SigningKeySource source, String keyReference,
+            String key) {
+        StoreResult<String> line = source.publicKey(keyReference);
+        String value = line.value();
+        if (!line.isOk() || value == null) {
+            // the source's own detail is never passed on: it may name the key reference
+            return line.outcome() == StoreOutcome.UNAVAILABLE
+                    ? StoreResult.of(StoreOutcome.UNAVAILABLE, key + ": key source unavailable")
+                    : StoreResult.of(StoreOutcome.REFUSED, key + ": key source refused");
+        }
+        if (SshSignatures.parsePublicKeyLine(value) instanceof SshSignatures.AcceptedKey accepted) {
+            return StoreResult.ok(accepted);
+        }
+        return StoreResult.of(StoreOutcome.MALFORMED, key + ": key type not supported");
+    }
+
+    private static <V> StoreResult<V> retype(StoreResult<?> result) {
+        return new StoreResult<>(result.outcome(), null, result.detail());
+    }
+
     private static StoreResult<StoreProviders> refuse(@Nullable String detail) {
-        var refusal = StoreResult.<StoreProviders>of(StoreOutcome.MALFORMED, Objects.requireNonNull(detail));
+        return refuse(StoreResult.of(StoreOutcome.MALFORMED, Objects.requireNonNull(detail)));
+    }
+
+    private static StoreResult<StoreProviders> refuse(StoreResult<?> result) {
+        StoreResult<StoreProviders> refusal = retype(result);
         LOGGER.warn(GitStoreLogMessages.WARN.START_REFUSED, refusal.detail());
         return refusal;
     }

@@ -48,6 +48,12 @@ release tag and the full id of the release commit.
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the full name of the reference, the number of
 commits reachable from it and the number of those without a signature valid at their committer time, never a
 principal, a key or a commit message.
+|GIT_STORE-7 |GIT_STORE |Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s
+|Logged once per proof the anchor provider `signed` signed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]): the repository alias, the full object id of
+the subject, the time of the statement (UTC, ISO 8601 with seconds), its sequence number and the SHA-256 of the proof
+in lowercase hex, nothing else; never the key reference, key material or the detail of the anchor key source. The
+record lets the operator's log pipeline keep a copy of the chain outside Git.
 |===
 
 == WARN Level (100-199)
