@@ -36,6 +36,13 @@ Its two libraries are decided; the owner approved both on 2026-11-21:
   `dev/harrel/jsonschema/messages.properties` and its bundled meta-schemas
   (link:https://repo1.maven.org/maven2/dev/harrel/json-schema/1.9.1/json-schema-1.9.1.jar[json-schema 1.9.1 jar]).
 
+The tests of `git-forms` run on the class path, not on the module path: `git-testing` requires `org.junit.jupiter.api`
+transitively, so on the module path Surefire would place `org.junit.platform.commons` in a named module while its
+launcher stays in the unnamed module, and the launcher fails with an `IllegalAccessError` on
+`org.junit.platform.commons.util` (recorded in `git-forms/pom.xml` and `git-testing/pom.xml`). A run of `git-forms` on
+the module path, with `dev.harrel:json-schema` as the automatic module `dev.harrel.jsonschema`, is therefore not
+exercised by the tests; javac still compiles and checks `module-info.java`.
+
 The template engine is still open and needs the owner's approval.
 
 [#GDR-FORMS-1]
@@ -344,10 +351,27 @@ by `FormSchema.parse`. The result is `Valid` or `MandatoryFieldsMissing` with th
 those of a referenced definition exactly as those of an inline schema. A schema applied a second time to the same value is not walked
 again, so each missing field is named once; a recursive schema is checked as deep as the data goes. The outcome of `Invalid` is `INVALID`, that of `MandatoryFieldsMissing` is
 `MANDATORY_FIELDS_MISSING`; the detail names the number of findings only, the findings are data of the result. A message
-is composed by `git-forms` from the failing keyword and the constraint of the schema (a number, a type name or a format
-name, for example `must be at most 5`), never from the library's own message, which may quote the value of the
+is composed by `git-forms` from the failing keyword and the constraint of the schema (a number or a type name, for
+example `must be at most 5`), never from the library's own message, which may quote the value of the
 instance (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); `git-forms` therefore replaces the library's `MessageProvider` by one
 that returns the message key.
+
+The JSON Pointer of a `Violation`, and each pointer of `MandatoryFieldsMissing`, carries the property names of the
+data: a schema with `patternProperties` or `additionalProperties` accepts keys the user chooses, so a pointer is data
+of the document. A caller treats it as data and never logs it (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); the message
+never carries it.
+
+The keyword `format` is an annotation only and is not asserted: the Draft 2020-12 dialect of `dev.harrel:json-schema`
+1.9.1 enables the vocabulary `format-annotation`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Dialects.java[json-schema
+1.9.1, `Dialects`]), its default evaluators hold none for `format`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Draft2020EvaluatorFactory.java[json-schema
+1.9.1, `Draft2020EvaluatorFactory`]), and the `FormatEvaluatorFactory` that asserts it applies only when it is passed
+to `ValidatorFactory.withEvaluatorFactory`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/FormatEvaluatorFactory.java[json-schema
+1.9.1, `FormatEvaluatorFactory`]), which `git-forms` does not do. So `"format": "date"` accepts any string, and no
+message names a format. The link format `gdr-link` is not checked by the validator either; its check belongs to
+<<GDR-FORMS-8>>, which is planned.
 
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
@@ -402,7 +426,16 @@ of two spaces, `{}` and `[]` for an empty mapping and sequence, line feed line e
 is plain only when it is made of letters, digits and a few punctuation marks and reads back as a string under the YAML
 1.2 core schema, otherwise it is double-quoted with escapes; a key whose written form is longer than 1024 code points,
 which a reader does not take as an implicit key, is written explicitly (`? <key>`, then `: <value>`). Equal data
-therefore yields byte-identical content. `encode` refuses with an `IllegalArgumentException` a value whose YAML would
+therefore yields byte-identical content.
+
+The output is YAML 1.2 and is read correctly only by a reader of the YAML 1.2 core schema. A YAML 1.1 reader, such as
+PyYAML or SnakeYAML 1.x, reads some plain strings as other types: the strings `yes`, `no`, `on`, `off`, `y` and `n` as
+booleans (link:https://yaml.org/type/bool.html[YAML 1.1, `bool`]), a date-like string such as `2026-11-23` as a
+timestamp (link:https://yaml.org/type/timestamp.html[YAML 1.1, `timestamp`]), and an integer form only YAML 1.1 knows,
+such as `1_000` or `0b101`, as a number (link:https://yaml.org/type/int.html[YAML 1.1, `int`]). Each of these is a
+string under the YAML 1.2 core schema, so `YamlWriter` writes it plain. A sexagesimal-like string such as `1:30` is
+double-quoted, because `:` is not among the characters of a plain string. By the owner's decision the byte output stays
+as it is: these strings are not quoted for a YAML 1.1 reader. `encode` refuses with an `IllegalArgumentException` a value whose YAML would
 be longer than the 3,145,728 code points (3 Mi) that `YamlReader` sets as the code point limit of snakeyaml-engine
 and decoding therefore reads, so for every value `encode` accepts, `decode(encode(v))` succeeds and `encode(decode(encode(v)))` equals
 `encode(v)` byte for byte. Decoding reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an

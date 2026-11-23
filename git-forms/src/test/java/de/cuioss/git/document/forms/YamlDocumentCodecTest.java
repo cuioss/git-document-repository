@@ -201,6 +201,35 @@ class YamlDocumentCodecTest {
                     """, text(codec.encode(data)), "the formatting");
         }
 
+        /**
+         * Strings a YAML 1.1 reader takes for booleans, timestamps or numbers stay strings under the YAML 1.2 core
+         * schema, so they are written plain; the byte output is unchanged by the owner's decision. A sexagesimal-like
+         * string holds {@code :}, which a plain string never does, so it is double-quoted.
+         */
+        @Test
+        @DisplayName("GDR-FORMS-3: strings that YAML 1.1 reads as other types are written as YAML 1.2 strings")
+        void yaml11Strings() {
+            var data = map("a", "no", "b", "yes", "c", "on", "d", "off", "e", "2026-11-21", "f", "12:30", "g",
+                    "1_000", "h", "0b101", "i", "y", "j", "n");
+
+            var encoded = codec.encode(data);
+
+            assertAll(
+                    () -> assertEquals("""
+                            a: no
+                            b: yes
+                            c: on
+                            d: off
+                            e: 2026-11-21
+                            f: "12:30"
+                            g: 1_000
+                            h: 0b101
+                            i: y
+                            j: n
+                            """, text(encoded), "written plain, the sexagesimal-like string quoted"),
+                    () -> assertEquals(data, decoded(codec.decode(encoded)), "read back as the same strings"));
+        }
+
         @Test
         @DisplayName("GDR-STORE-11: an empty document is written as an empty mapping")
         void emptyDocument() {

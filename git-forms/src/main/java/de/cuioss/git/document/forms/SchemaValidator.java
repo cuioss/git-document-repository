@@ -46,8 +46,12 @@ import org.jspecify.annotations.Nullable;
  * JSON provider is needed.
  * <p>
  * A violation names the JSON Pointer of the failing value (RFC 6901) and a message composed by this class from the
- * failing keyword and the constraint of the schema: a number, a type name or a format name, nothing else. The
- * validator's own messages are never used, because they may quote the value of the instance (GDR-NFR-3).
+ * failing keyword and the constraint of the schema: a number or a type name, nothing else. The validator's own messages
+ * are never used, because they may quote the value of the instance (GDR-NFR-3).
+ * <p>
+ * The keyword {@code format} is an annotation only and never asserted: the Draft 2020-12 dialect of the library enables
+ * the vocabulary {@code format-annotation}, its default evaluators hold none for {@code format}, and its
+ * {@code FormatEvaluatorFactory} is not registered here.
  * <p>
  * The library's validator is prepared once per schema, by {@link FormSchema#parse(String, byte[])}, and kept by the
  * {@link FormSchema}; {@code validate} and {@code required} only read it. That one prepared validator serves every
@@ -210,8 +214,8 @@ public final class SchemaValidator {
     }
 
     /**
-     * Composes the message of a failing keyword. Only a number, a type name or a format name of the schema is quoted;
-     * nothing of the instance.
+     * Composes the message of a failing keyword. Only a number or a type name of the schema is quoted; nothing of the
+     * instance.
      */
     static String message(@Nullable String keyword, @Nullable Object constraint) {
         if (keyword == null) {
@@ -247,7 +251,6 @@ public final class SchemaValidator {
         return switch (keyword) {
             case "type" -> "must be of type " + typeNames(constraint);
             case "pattern" -> "must match the pattern of the schema";
-            case "format" -> "must be of the format " + formatName(constraint);
             case "enum" -> "must be one of the values the schema lists";
             case "const" -> "must be the value the schema prescribes";
             case "uniqueItems" -> "must not contain duplicate items";
@@ -277,10 +280,6 @@ public final class SchemaValidator {
             list.stream().filter(String.class::isInstance).map(String.class::cast).forEach(names::add);
         }
         return names.isEmpty() ? "the schema" : String.join(" or ", names);
-    }
-
-    private static String formatName(@Nullable Object constraint) {
-        return constraint instanceof String name ? name : "the schema";
     }
 
     /**

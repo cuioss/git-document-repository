@@ -157,6 +157,19 @@ class SchemaValidatorTest {
                     () -> assertEquals(Optional.of("4 violations"), result.detail(), "the detail names the number"));
         }
 
+        @Test
+        @DisplayName("GDR-FORMS-2: format is an annotation only and is not asserted")
+        void formatNotAsserted() {
+            var schema = schema("""
+                    { "type": "object",
+                      "properties": { "d": { "format": "date" }, "e": { "format": "email" } } }
+                    """);
+
+            assertEquals(new ValidationResult.Valid(),
+                    validator.validate(schema, Map.of("d", "not-a-date", "e", "no-at")),
+                    "a string that matches no format is valid");
+        }
+
         static Stream<Arguments> embeddedResources() {
             return Stream.of(
                     Arguments.of("a keyword inside an inline $id resource", """

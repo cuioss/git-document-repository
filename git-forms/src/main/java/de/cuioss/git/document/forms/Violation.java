@@ -20,10 +20,14 @@ import java.util.Objects;
 /**
  * A violation of the schema by a value of a document (GDR-FORMS-2).
  *
+ * The pointer is data of the document: it carries the property names of the data, which a schema with
+ * {@code patternProperties} or {@code additionalProperties} lets the user choose, so a caller treats it as data and
+ * never logs it. The message never carries it.
+ *
  * @param pointer the JSON Pointer (RFC 6901) of the failing value: the empty string for the document itself, otherwise
- *                starting with {@code /}
+ *                starting with {@code /}; it carries property names of the data
  * @param message the message, composed from the failing keyword and the constraint of the schema, never from the value
- *                (GDR-NFR-3)
+ *                or the pointer (GDR-NFR-3)
  * @since 0.1
  */
 public record Violation(String pointer, String message) {

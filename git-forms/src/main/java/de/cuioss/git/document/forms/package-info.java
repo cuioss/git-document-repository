@@ -14,8 +14,15 @@
  * limitations under the License.
  */
 /**
- * Schema-driven documents on top of the store: the closed outcome list and result of {@code git-forms} and its log
- * messages.
+ * Schema-driven documents on top of the store: the closed outcome list {@link de.cuioss.git.document.forms.FormsOutcome}
+ * with the result {@link de.cuioss.git.document.forms.FormsResult} and the log messages of {@code git-forms}; the kinds
+ * of documents as configuration ({@link de.cuioss.git.document.forms.KindConfiguration}); the schema validation of a
+ * JSON Schema of Draft 2020-12 ({@link de.cuioss.git.document.forms.FormSchema},
+ * {@link de.cuioss.git.document.forms.SchemaValidator}); and the data layout and codec
+ * ({@link de.cuioss.git.document.forms.DocumentLayout}, {@link de.cuioss.git.document.forms.YamlDocumentCodec},
+ * {@link de.cuioss.git.document.forms.CounterCodec}).
+ * <p>
+ * The keyword {@code format} is an annotation only: the validation never asserts it.
  */
 @NullMarked
 package de.cuioss.git.document.forms;
