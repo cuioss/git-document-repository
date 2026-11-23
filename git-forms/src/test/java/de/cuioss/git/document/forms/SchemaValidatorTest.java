@@ -158,6 +158,20 @@ class SchemaValidatorTest {
         }
 
         @Test
+        @DisplayName("GDR-FORMS-2: a key that needs escaping is escaped in the pointer of a violation (RFC 6901)")
+        void escapedViolationPointer() {
+            var schema = schema("""
+                    { "type": "object",
+                      "properties": { "a/b": { "type": "object",
+                        "properties": { "c~d": { "type": "string" } } } } }
+                    """);
+            Map<String, @Nullable Object> data = Map.of("a/b", Map.of("c~d", (long) Generators.integers().next()));
+
+            assertEquals(new ValidationResult.Invalid(List.of(new Violation("/a~1b/c~0d", "must be of type string"))),
+                    validator.validate(schema, data), "the pointer of the failing value is escaped");
+        }
+
+        @Test
         @DisplayName("GDR-FORMS-2: format is an annotation only and is not asserted")
         void formatNotAsserted() {
             var schema = schema("""
