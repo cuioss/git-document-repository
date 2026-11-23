@@ -242,8 +242,12 @@ final class AnchorEngine {
         }
         StoreEvents.fetched(fetched.value(), updates);
         try {
-            if (checkpoint() == Checkpoints.Standing.STRANDED) {
+            Checkpoints.Standing standing = checkpoint();
+            if (standing == Checkpoints.Standing.STRANDED) {
                 return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: a checkpoint tag that was not pushed remains");
+            }
+            if (standing == Checkpoints.Standing.UNTARGETED) {
+                return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: the newest checkpoint tag points at no commit");
             }
             Map<ObjectId, Instant> subjects = subjects();
             if (!pushKept(proofs, subjects, proofs.annotated(), anchored)) {
@@ -267,12 +271,17 @@ final class AnchorEngine {
 
     /**
      * Repairs the checkpoints an earlier due check kept, then makes a due checkpoint unless a kept one still waits for
-     * its tag push.
+     * its tag push. A newest checkpoint tag that points at no commit blocks both: nothing is repaired or made, since
+     * only the first checkpoint has no parent.
      *
      * @return how the checkpoints stand
      */
     private Checkpoints.Standing checkpoint() throws IOException {
         Checkpoints.Latest latest = checkpoints.latest();
+        if (latest.untargeted()) {
+            LOGGER.debug("The newest checkpoint tag points at no commit; no checkpoint is made");
+            return Checkpoints.Standing.UNTARGETED;
+        }
         Checkpoints.Repair repair = checkpoints.repair(latest);
         if (repair.standing() != Checkpoints.Standing.CURRENT) {
             return repair.standing();

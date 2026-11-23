@@ -102,12 +102,26 @@ final class Checkpoints {
 
     /**
      * The newest checkpoint of the clone as the last fetch mirrored it.
+     * <p>
+     * A {@code null} commit means one of two things, told apart by the number: with number 0 there is no checkpoint
+     * yet, and the next one is the first, without a parent; with a number above 0 the newest checkpoint tag points at no
+     * commit (a blob or a tree), the state is {@linkplain #untargeted() untargeted}, and no checkpoint may follow it,
+     * because only the first checkpoint has no parent.
      *
      * @param number the number of its tag; 0 when there is none
-     * @param commit the checkpoint commit its tag points at, an annotated tag peeled; {@code null} when there is none or
-     *               the tag points at no commit
+     * @param commit the checkpoint commit its tag points at, an annotated tag peeled; {@code null} when there is none
+     *               (number 0) or the tag points at no commit (number above 0)
      */
     record Latest(int number, @Nullable ObjectId commit) {
+
+        /**
+         * Tells whether the newest checkpoint tag exists but points at no commit.
+         *
+         * @return whether a checkpoint tag exists and its commit is {@code null}
+         */
+        boolean untargeted() {
+            return number > 0 && commit == null;
+        }
     }
 
     /**
@@ -129,7 +143,13 @@ final class Checkpoints {
          * The tag push of a checkpoint failed and its local tag could not be deleted again, so the clone lists a
          * checkpoint the remote lacks; the due check ends before the subjects are discovered.
          */
-        STRANDED
+        STRANDED,
+
+        /**
+         * The newest checkpoint tag points at no commit ({@link Latest#untargeted()}), so no checkpoint can follow it;
+         * no new checkpoint is made and the due check ends before the subjects are discovered.
+         */
+        UNTARGETED
     }
 
     /**
@@ -158,7 +178,7 @@ final class Checkpoints {
     /**
      * Reads the checkpoint tag with the highest number.
      *
-     * @return the newest checkpoint, number 0 without any
+     * @return the newest checkpoint, number 0 without any; its commit is {@code null} as {@link Latest} states
      * @throws IOException if the references or the tagged object cannot be read
      */
     Latest latest() throws IOException {
@@ -211,7 +231,8 @@ final class Checkpoints {
 
     /**
      * Tells whether a checkpoint is due: none exists yet and a listed reference exists, or the interval has passed
-     * since the commit time of the newest checkpoint and the listed references differ from those it lists.
+     * since the commit time of the newest checkpoint and the listed references differ from those it lists. An
+     * {@linkplain Latest#untargeted() untargeted} newest checkpoint makes none due.
      *
      * @param latest   the newest checkpoint
      * @param listed   the content of {@value #REFS_FILE} for the references now
@@ -223,7 +244,7 @@ final class Checkpoints {
     boolean due(Latest latest, byte[] listed, Instant now, Duration interval) throws IOException {
         @Nullable ObjectId previous = latest.commit();
         if (previous == null) {
-            return listed.length > 0;
+            return !latest.untargeted() && listed.length > 0;
         }
         try (RevWalk walk = new RevWalk(clone.repository())) {
             RevCommit commit = walk.parseCommit(previous);
@@ -239,16 +260,21 @@ final class Checkpoints {
      * Writes, keeps, tags and pushes the next checkpoint; the tag is pushed only once the kept reference points at the
      * commit.
      *
-     * @param latest the newest checkpoint, the parent of the new one
+     * @param latest the newest checkpoint, the parent of the new one; with number 0 the new one is the first and has no
+     *               parent, an {@linkplain Latest#untargeted() untargeted} one makes none
      * @param listed the content of {@value #REFS_FILE}
      * @return {@link StoreOutcome#OK} with how the checkpoints stand after the push: {@link Standing#CURRENT} when its
      *         tag is on the remote, {@link Standing#BLOCKED} when the commit stays kept for the next due check,
-     *         {@link Standing#STRANDED} when, in addition, its local tag stayed; {@link StoreOutcome#INCOMPLETE} when
-     *         the commit was written but could not be kept, so nothing was pushed; {@link StoreOutcome#REFUSED} or
-     *         {@link StoreOutcome#UNAVAILABLE} of the signing key source; or the passed-on Git outcome of the write
+     *         {@link Standing#STRANDED} when, in addition, its local tag stayed, {@link Standing#UNTARGETED} without any
+     *         write for an untargeted newest checkpoint; {@link StoreOutcome#INCOMPLETE} when the commit was written but
+     *         could not be kept, so nothing was pushed; {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE}
+     *         of the signing key source; or the passed-on Git outcome of the write
      * @throws IOException if a reference cannot be read or written
      */
     StoreResult<Standing> create(Latest latest, byte[] listed) throws IOException {
+        if (latest.untargeted()) {
+            return StoreResult.ok(Standing.UNTARGETED);
+        }
         int number = latest.number() + 1;
         String tag = StoreReferences.checkpoint(number);
         var prepared = committing.signatures().prepare(tag);

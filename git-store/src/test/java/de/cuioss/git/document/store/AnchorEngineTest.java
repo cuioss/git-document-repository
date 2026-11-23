@@ -447,6 +447,49 @@ class AnchorEngineTest {
                                 "two checkpoints"));
             }
         }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a newest checkpoint tag that points at no commit makes no checkpoint and ends the due check incomplete")
+        void untargetedCheckpointMakesNone(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+            ObjectId blob;
+            try (ObjectInserter inserter = remote.repository().newObjectInserter()) {
+                blob = inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8));
+                inserter.flush();
+            }
+            RefUpdate update = remote.repository().updateRef(StoreReferences.checkpoint(1));
+            update.setNewObjectId(blob);
+            assertEquals(RefUpdate.Result.NEW, update.update(), "the fixture tag is written");
+
+            try (var fixture = open(remote)) {
+                var anchoring = fixture.writer().anchor();
+
+                assertAll(
+                        () -> assertEquals(StoreOutcome.INCOMPLETE, anchoring.outcome(),
+                                "the due check ends incomplete"),
+                        () -> assertEquals(Set.of(StoreReferences.checkpoint(1)),
+                                refs(remote.repository(), StoreReferences.CHECKPOINTS).keySet(),
+                                "no checkpoint 2 was made"),
+                        () -> assertEquals(List.of(), fixture.anchors().calls(), "the provider was not asked"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                                "The newest checkpoint tag points at no commit; no checkpoint is made"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: without any checkpoint tag the first checkpoint is made without a parent")
+        void firstCheckpointHasNoParent(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                var anchoring = fixture.anchor();
+
+                var one = checkpoint(remote.repository(), 1);
+                assertAll(
+                        () -> assertEquals(List.of(one.name()), anchoring.anchored(), "checkpoint 1 is anchored"),
+                        () -> assertEquals(List.of(), parents(remote.repository(), one), "it has no parent"));
+            }
+        }
     }
 
     @Nested
