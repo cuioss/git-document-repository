@@ -430,6 +430,18 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   incomplete (`effort` and the three review numbers); the review-gate re-read was decidable this time (0 unresolved, 1 body finding, `handled: 0`).
   Reported to the operator; routing pending. The session was restarted around this analysis (the anchor carried the state). The 14 candidate
   messages: 5 recurrences extended, 6 new lessons (`2026-11-23-12-001` to `-006`), 1 folded into the architecture Watch, 1 into PLAN-22, 1 discarded.
+- 2026-11-23 — PLAN-20 released on the operator's word and its command emitted (not launched; `auto_emit=false`); the operator accepted the
+  three-file overlap with PLAN-10 (`AGENTS.md`, `general.adoc`, `pom.xml`). PLAN-10 had in fact merged (PR #58, `ad9e773`) while its row read `running`.
+- 2026-11-23 — PLAN-10 landed (PR #58, `ad9e773`) and was analysed on three layers (`landings/PLAN-10.md`): no blocker or major; layer 3: ten minor
+  (an unbounded `allowed_signers` read, `Path.of` outside a try, a second `gpgsig` header stripped but not verified, a back-dated committer time
+  inside the signed payload, an O(history) `RevWalk`, the `Z` suffix and the one-RSA-line refusal, the reference in two log records, an
+  exception from `IdentityClaims`, an unisolated third-party `SigningKeySource`, a mislabelled exit message); layer 2: a test gap (merge commit,
+  `mergetag`, second `gpgsig`, oversized file) and cross-checks that may only skip; layer 1: the `ssh.apache` premise is not shown (the own-encoder
+  decision stands without it) and the scope cut "checkpoint and notes" was not flagged. The two persisted claim verdicts: claim 0 corroborated,
+  claim 1 unverifiable. The landing is incomplete (`effort` and the three review numbers) and the review-gate re-read is undecidable
+  (CodeRabbit "Minor comments: 20"). The 15 messages: 14 candidate lessons (11 new lessons `2026-11-23-14-001` to `-011`, with 013 folded into `-010`;
+  007 folded into PLAN-11 as a Standing Constraint, no surface added; 012 folded into the shared-documents Watch) and the landing. Reported to the
+  operator; routing of the layer-3 findings pending (candidate: PLAN-22 deliverable 4).
 
 ## Open Defects
 
@@ -498,7 +510,17 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   walked as a tree (a hang); two registry aliases for one repository pass the duplicate-collection check; and the hostile in-memory value ends in
   an `IllegalArgumentException`, not a result. — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (a candidate: a
   `git-forms` hardening plan after PLAN-13, or into PLAN-13 itself).
-- Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
+- PLAN-10 defects in `git-store` (`landings/PLAN-10.md`; ten minor, no blocker or major, with the layer-2 test gap L2-1 and the layer-1 residue
+  L1-1 to L1-3): `AllowedSigners.read` has no size or line bound and `from` calls `Path.of` outside a try (an `OutOfMemoryError`, an
+  `InvalidPathException` instead of a result, GDR-GEN-3); `SignatureVerification` strips every `gpgsig` header but verifies only the first
+  (object-id malleability) and takes the validity time from the committer time inside the signed payload (a back-dated commit of an expired key is
+  valid; Git's own semantics, but no revocation), and its `RevWalk` keeps the whole history in memory; the `Z` suffix is accepted where OpenSSH 8.8 and 8.9
+  refuse it and one non-Ed25519 line disables the whole file; two log records name the reference (the document id); `IdentityClaims` throws for
+  a token-derived `acr` or `amr`; a third-party `SigningKeySource` that throws is not isolated; `VerifySignatures` labels any
+  `IllegalArgumentException` as "not a repository". — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (a candidate:
+  PLAN-22 as deliverable 4, which is strictly sequential after PLAN-11 on the same files).
+- Incomplete landings (PLAN-10 `plan-10-store-signing-trailers-verify-015.md`: misses `effort` and the three review numbers (all `unknown`: no finalize step
+  records them); its `review-gate` re-read is undecidable (CodeRabbit "Minor comments: 20") and the Sonar `0` is not re-verified; PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
   `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`, PLAN-07
@@ -547,7 +569,12 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   collection plan, with a verify-first clause because #29 changed two of the tests since. Retired.
 - PLAN-19 and PLAN-04 both edited `doc/specification/general.adoc` and the state lists. — observed at PLAN-04's landing: its
   rebase conflicted by hand in four documents (`doc/README.adoc`, `AGENTS.md`, `README.adoc`, `general.adoc`), both sides kept; no
-  re-verify signal. Recorded in Queue annotations (PLAN-04) for the next pairing. Retired.
+  re-verify signal. Recorded in Queue annotations (PLAN-04) for the next pairing. **Recurrence (PLAN-10, 2026-11-23, candidate message 012):**
+  PLAN-10's `phase-5-execute` found `origin/main` advanced by PR #59 and the merge-tree probe reported conflicts in `doc/README.adoc` and
+  `doc/specification/general.adoc`; one `2-refine` envelope was spent on the reconcile. Every plan of the epic edits the implementation-state lines of those
+  two files and the "Current state" paragraph of `AGENTS.md`, so plans that run at the same time conflict there whatever their module. The gate
+  predicted the pair (both declared those files), so the pairing was already known. Open question for the operator, not decided here: a
+  shared-surface rule (serialise such pairs, or defer the state-line edit to a landing step) or one line per module. Open.
 - PLAN-06 is the last foundation plan and the 0.1.0 release follows it (an operator act through `/release`; a Maven Central release
   cannot be withdrawn). PLAN-20 changes the behaviour of public `git-core` and `git-worktrees` operations and adds guards. —
   question to the operator, open: release PLAN-20 before 0.1.0, or release 0.1.0 first and carry the fixes into the next version.
@@ -558,8 +585,9 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `git-core` (a canonical-constructor break, acceptable only because nothing is released yet); PLAN-09 has landed too (PR #52: release,
   index, listeners, the save step, and `TreeEdit.Mode` in `git-core`, and a test-scope JOL dependency), so the cut would publish those;
   PLAN-12 has landed too (PR #54) and PLAN-23 closed its two majors (PR #59): `git-forms` is on `main` and in the reactor, and its own
-  analysis still carries one major (the pointer-string memory amplification) and five minors, unrouted; PLAN-10, PLAN-11, PLAN-22 and PLAN-20
-  are what is still open against the cut. The operator's #50 (2026-11-21) added the consumer
+  analysis still carries one major (the pointer-string memory amplification) and five minors, unrouted; PLAN-10 has landed too (PR #58,
+  `ad9e773`: every save and release commit is signed, the identity trailers, the verifier and its CI main class, no new dependency) with ten
+  minors, unrouted; PLAN-11, PLAN-22 and PLAN-20 are what is still open against the cut. The operator's #50 (2026-11-21) added the consumer
   propagation block to `.github/project.yml` (no version change).
 - The committed architecture inventory `.plan/project-architecture/` still names the removed module `git-worktrees` (`_project.json`,
   `git-document-repository/enriched.json` and a whole `git-worktrees/enriched.json`) after PLAN-21 (`landings/PLAN-21.md` L2-4). It is
