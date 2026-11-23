@@ -83,7 +83,7 @@ owner decides inside this plan.
 - HYPOTHESIS: `git-store`'s save offers a hook to regenerate derived files from the re-applied commit's data on every
   attempt — confirm/refute at the save implementation PLAN-08 lands in `git-store/` (its save operation type)
   (verify-at-outline); refuted → report the gap to the orchestrator via the inbox instead of editing `git-store`.
-  - verdict: contradicted | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: no | evidence: re-read at c1e02fc: StoreWriter.save(Author, DocumentKey, Map<String,String> expectedBlobIds, String message) (StoreWriter.java 229) takes no callback; ExplicitSave 232-239 re-applies the draft's own edits per attempt; git-store.adoc 216-228 (GDR-STORE-3) names no hook, while GDR-FORMS-4 (git-forms.adoc 84-87) needs output regenerated on every attempt: a store gap to stage, not to absorb in git-forms
+  - verdict: corroborated | checked_at: ad9e773a636499b03e14639ee7de75322db72879 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at ad9e773a636499b03e14639ee7de75322db72879: the gap the 2026-11-21 verdict found at c1e02fc (no per-attempt hook) was folded into PLAN-09 deliverable 5 and shipped (PR #52): SaveStep.java:44 declares the interface and StoreWriter.java:240 takes a SaveStep in save; git-store.adoc GDR-STORE-3 names the step. The earlier contradicted verdict is superseded, not wrong at its sha
 
 ## Expected Surface
 

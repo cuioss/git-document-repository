@@ -111,9 +111,11 @@ file with validity periods, runnable from CI without the application (GDR-STORE-
 
 - OBSERVED: GDR-STORE-12 states that whether the store uses `org.eclipse.jgit.ssh.apache` "is open and needs the
   owner's approval" — read at `doc/specification/git-store.adoc` § GDR-STORE-12.
+  - verdict: corroborated | checked_at: ad9e773a636499b03e14639ee7de75322db72879 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at ad9e773: git-store.adoc 660 records the decision (own SSHSIG encoder, no dependency); pom.xml is not in the diff; GDR-STORE-12 premise 'needs owner approval' is superseded by the recorded decision (leaf layer-1 reading)
 - HYPOTHESIS: JGit 7.8.0 ships an SSH `Signer` (in `org.eclipse.jgit.ssh.apache`) that can sign with a key the
   caller supplies rather than one it reads from disk itself — confirm/refute at JGit `v7.8.0.202609011348-r`
   `org.eclipse.jgit.ssh.apache/src/org/eclipse/jgit/signing/ssh/SshSigner.java` § `sign` (verify-at-outline).
+  - verdict: unverifiable | checked_at: ad9e773a636499b03e14639ee7de75322db72879 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: not shown by reading at ad9e773: the org.eclipse.jgit.ssh.apache artifact is not in ~/.m2 and the 7.8.0 core sources hold no SSH signer; Signer.sign takes a key name not key bytes; the own-encoder decision stands without the premise
 
 ## Expected Surface
 

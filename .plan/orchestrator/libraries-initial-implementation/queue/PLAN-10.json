@@ -2,10 +2,10 @@
   "id": "PLAN-10",
   "slug": "store-signing-trailers-verify",
   "workstream": "WS-02",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "plan-10-store-signing-trailers-verify",
+  "pr": "58",
+  "landing": "landings/PLAN-10.md",
   "seq": 10
 }

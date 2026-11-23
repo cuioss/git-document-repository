@@ -107,6 +107,24 @@ statement chain (GDR-STORE-18).
   tree-producing operation (the checkpoint tree) compares file modes as well as bytes; a Sonar S6539 fix lowers the count of
   every class it touches, and a deliberate `catch (RuntimeException ...)` carries its justification in the form the
   OpenRewrite recipe accepts, so no `java:S1135` placeholder reaches new code.
+- Review lessons of PLAN-10 (`landings/PLAN-10.md`; six review loop-backs against an allowance of three, 56 % of the plan's
+  tokens in finalize, Sonar new-code issues 18, 6, 2, 1 across pushes): the `signed` provider adds a security format (the
+  statement `anchor signed 1`) and a verifier, which is the class that needed the rounds, so budget for three or more review
+  rounds and read the reference implementation's refusals before the first commit (for allowed signers: OpenSSH `sshsig.c`;
+  list each refusal and test it: repeated options, empty or inverted intervals, strict calendar dates, pattern syntax,
+  duplicates, and refuse a feature not implemented at parse time instead of storing it as a literal). A verifier that reports
+  "every item is valid" proves it saw every item against the state the walk used (shallow boundary, missing objects), never a
+  snapshot taken earlier. Check-then-use on bytes from a pluggable provider uses the verified defensive copy downstream, never
+  the caller-owned buffer. A capability probe that guards an interoperability test is independent of the code under test
+  (fixtures from the external tool itself, the same executable the test uses, subprocess output to a file, a deadline,
+  destroy in `finally`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` for isolation). For each requirement, check every
+  "stays", "never", "every" and "is refused" sentence of the specification against the file that would enforce it. Before the
+  first push run the Sonar-class rules the project gates on over the new code in one pass (records, method placement, record
+  patterns, no `java:S1135` placeholder) instead of one rule family per push. PLAN-10 shipped signing for save and release commits only,
+  because no checkpoint or notes commit existed on `main` (`landings/PLAN-10.md` L1-2): the checkpoint and note commits of this plan
+  are signed through the same seam, `CommitSignatures` (`CommitSigning(signer, null, null)` on the in-core write), and carry no identity
+  trailers (GDR-STORE-13 limits them to save and release); a test shows a checkpoint and a note commit verify under
+  `SignatureVerification`. No file surface is added (`git-store/` is already declared).
 
 ## Done when
 
