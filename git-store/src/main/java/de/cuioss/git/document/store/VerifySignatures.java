@@ -143,11 +143,7 @@ public final class VerifySignatures {
     }
 
     private static int failed(PrintStream err, StoreResult<?> result) {
-        String outcome = switch (result.outcome()) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
-        err.println(outcome + " " + result.detail());
+        err.println(StoreResult.name(result.outcome()) + " " + result.detail());
         return FAILED;
     }
 }

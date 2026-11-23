@@ -578,16 +578,10 @@ final class DocumentRelease {
             Release release = Objects.requireNonNull(result.value());
             LOGGER.info(GitStoreLogMessages.INFO.RELEASED, clone.alias(), release.tag(), release.commitId());
         } else if (result.outcome() != StoreOutcome.INCOMPLETE) {
-            LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED, clone.alias(), source, name(result.outcome()));
+            LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED, clone.alias(), source,
+                    StoreResult.name(result.outcome()));
         }
         return result;
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     private static <V> StoreResult<V> passedOn(GitOutcome outcome, String detail) {

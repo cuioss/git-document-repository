@@ -82,7 +82,7 @@ final class SourceSigner implements Signer {
     public GpgSignature sign(Repository repository, GpgConfig config, byte[] data, PersonIdent committer,
             @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) throws IOException {
         if (publicKeyBlob == null) {
-            failure = StoreResult.of(StoreOutcome.REFUSED, "signing: key type not supported");
+            failure = StoreResult.of(StoreOutcome.REFUSED, CommitSignatures.KEY_TYPE_NOT_SUPPORTED);
             throw new IOException(FAILURE_MESSAGE);
         }
         StoreResult<byte[]> signed = source.sign(keyReference,

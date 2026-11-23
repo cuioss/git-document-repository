@@ -124,7 +124,7 @@ final class CommitSignatures {
     }
 
     private void log(String reference, StoreResult<?> result) {
-        LOGGER.warn(GitStoreLogMessages.WARN.SIGNING_FAILED, alias, reference, name(result.outcome()));
+        LOGGER.warn(GitStoreLogMessages.WARN.SIGNING_FAILED, alias, reference, StoreResult.name(result.outcome()));
     }
 
     /** The result of a source that handed out no public key; the source's own detail is never passed on. */
@@ -137,13 +137,6 @@ final class CommitSignatures {
     /** The outcome a failure of the source ends the operation with: {@code UNAVAILABLE} as it is, else {@code REFUSED}. */
     private static StoreOutcome sourceOutcome(StoreResult.Outcome outcome) {
         return outcome == StoreOutcome.UNAVAILABLE ? StoreOutcome.UNAVAILABLE : StoreOutcome.REFUSED;
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     /**

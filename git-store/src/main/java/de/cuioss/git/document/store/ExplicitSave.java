@@ -740,16 +740,9 @@ final class ExplicitSave {
             case SaveResult.Conflicting(List<String> paths) -> LOGGER.info(GitStoreLogMessages.INFO.SAVE_CONFLICT,
                     clone.alias(), target, paths.size());
             case SaveResult.NotSaved notSaved -> LOGGER.warn(GitStoreLogMessages.WARN.SAVE_NOT_COMPLETED,
-                    clone.alias(), target, name(notSaved.outcome()));
+                    clone.alias(), target, StoreResult.name(notSaved.outcome()));
         }
         return result;
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     private static SaveResult.NotSaved notSaved(GitOutcome outcome, String detail) {
