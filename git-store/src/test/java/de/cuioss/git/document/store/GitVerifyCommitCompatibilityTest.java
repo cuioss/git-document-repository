@@ -37,7 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 
@@ -57,11 +57,17 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The cross-check of GDR-STORE-14 with a stock Git installation: {@code git verify-commit} with
  * {@code gpg.format=ssh} and {@code gpg.ssh.allowedSignersFile}
- * (<a href="https://git-scm.com/docs/git-verify-commit">git-verify-commit(1)</a>) accepts a commit the store signed,
- * and rejects it with an allowed-signers file whose {@code valid-before} lies before the committer time, which Git
- * passes to {@code ssh-keygen} since Git 2.35. The test runs only when {@code git --version} reports 2.35 or later and
- * {@code ssh-keygen} can be started (JUnit assumptions, skipped otherwise); the processes run with a temporary
- * {@code HOME} and {@code GIT_CONFIG_NOSYSTEM=1}, without network.
+ * (<a href="https://git-scm.com/docs/git-verify-commit">git-verify-commit(1)</a>) accepts a commit the store signed
+ * with an allowed-signers file whose validity includes the committer time, and rejects it with one whose
+ * {@code valid-before} lies before it, which Git passes to {@code ssh-keygen} since Git 2.35. The commit time is
+ * historical and the accepting validity ends after it but long before the test runs, so only a check at the commit
+ * time, never one at the wall time, passes both cases.
+ * <p>
+ * The test runs only when {@code git --version} reports 2.35 or later and the {@code ssh-keygen} on the {@code PATH}
+ * finds principals and honours key lifetimes at a verify time ({@link ExternalTools#verifiesWithLifetimes}); that
+ * same executable is Git's {@code gpg.ssh.program}. The processes run with a temporary {@code HOME} and
+ * {@code XDG_CONFIG_HOME}, an empty {@code GIT_CONFIG_GLOBAL}, {@code GIT_CONFIG_NOSYSTEM=1} and no inherited
+ * {@code GIT_*} variable, without network.
  */
 @EnableGeneratorController
 @DisplayName("git verify-commit compatibility (GDR-STORE-14)")
@@ -69,10 +75,14 @@ class GitVerifyCommitCompatibilityTest {
 
     private static final Pattern VERSION = Pattern.compile("git version (\\d+)\\.(\\d+)");
 
-    /** The committer time of the signed commit: 2027-01-15T08:00:00Z, far from every validity bound. */
-    private static final Instant COMMIT_TIME = Instant.ofEpochSecond(1_800_000_000L);
+    /** The committer time of the signed commit: 2020-06-01T08:00:00Z, years before any run of the test. */
+    private static final Instant COMMIT_TIME = Instant.parse("2020-06-01T08:00:00Z");
 
-    private static final long PROCESS_SECONDS = 60;
+    /**
+     * A validity bound as {@code ssh-keygen} reads it: a day without the suffix {@code Z}, which OpenSSH 8.8 and 8.9
+     * refuse, so in local time; every bound lies days away from the commit time.
+     */
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("uuuuMMdd").withZone(ZoneOffset.UTC);
 
     @TempDir
     Path temp;
@@ -86,50 +96,45 @@ class GitVerifyCommitCompatibilityTest {
         return Objects.requireNonNull(result.value(), "a success carries its value");
     }
 
-    /** The exit code and output of a finished process. */
-    private record Finished(int code, String output) {
-    }
-
-    private Finished execute(List<String> command) throws IOException, InterruptedException {
+    /**
+     * Runs Git in an isolated environment: a temporary home and XDG configuration directory, an empty global
+     * configuration file, no system configuration and no inherited {@code GIT_*} variable.
+     */
+    private ExternalTools.Finished git(List<String> arguments) throws IOException, InterruptedException {
         var home = Files.createDirectories(temp.resolve("home"));
-        var builder = new ProcessBuilder(command).redirectErrorStream(true).directory(home.toFile());
-        builder.environment().put("HOME", home.toString());
-        builder.environment().put("GIT_CONFIG_NOSYSTEM", "1");
-        builder.environment().remove("GIT_DIR");
-        Process process = builder.start();
-        process.getOutputStream().close();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(process.waitFor(PROCESS_SECONDS, TimeUnit.SECONDS), "the process ends");
-        return new Finished(process.exitValue(), output);
+        var xdg = Files.createDirectories(temp.resolve("xdg"));
+        var global = temp.resolve("gitconfig");
+        if (!Files.exists(global)) {
+            Files.createFile(global);
+        }
+        List<String> command = new ArrayList<>();
+        command.add("git");
+        command.addAll(arguments);
+        var builder = new ProcessBuilder(command).directory(home.toFile());
+        Map<String, String> environment = builder.environment();
+        environment.keySet().removeIf(name -> name.startsWith("GIT_"));
+        environment.put("HOME", home.toString());
+        environment.put("XDG_CONFIG_HOME", xdg.toString());
+        environment.put("GIT_CONFIG_GLOBAL", global.toString());
+        environment.put("GIT_CONFIG_NOSYSTEM", "1");
+        return ExternalTools.run(builder, Files.createTempFile(temp, "git", ".out"), null);
     }
 
-    /** Whether a program can be started at all. */
-    private boolean startable(String... command) {
-        try {
-            execute(List.of(command));
-            return true;
-        } catch (IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
-    private void assumeToolsPresent() throws InterruptedException {
-        Finished version;
-        try {
-            version = execute(List.of("git", "--version"));
-        } catch (IOException e) {
-            assumeTrue(false, "git is not installed");
-            return;
-        }
+    /** The {@code ssh-keygen} Git is to use, after the assumptions on both tools held. */
+    private Path assumeToolsPresent() throws IOException, InterruptedException {
+        Optional<Path> git = ExternalTools.onPath("git");
+        assumeTrue(git.isPresent(), "git is not on the path");
+        var version = git(List.of("--version"));
         var matcher = VERSION.matcher(version.output());
         assumeTrue(matcher.find(), "git reports its version");
         int major = Integer.parseInt(matcher.group(1));
         int minor = Integer.parseInt(matcher.group(2));
         assumeTrue(major > 2 || major == 2 && minor >= 35, "git 2.35 or later");
-        assumeTrue(startable("ssh-keygen", "-?"), "ssh-keygen is installed");
+        Optional<Path> keygen = ExternalTools.onPath("ssh-keygen");
+        assumeTrue(keygen.isPresent(), "ssh-keygen is not on the path");
+        assumeTrue(ExternalTools.verifiesWithLifetimes(keygen.get(), temp),
+                "ssh-keygen finds principals and honours key lifetimes at a verify time");
+        return keygen.get();
     }
 
     /** Saves one signed commit onto {@code main} of the remote at {@link #COMMIT_TIME}. */
@@ -159,28 +164,29 @@ class GitVerifyCommitCompatibilityTest {
         }
     }
 
-    private Finished verifyCommit(LocalRemote remote, Path allowedSigners, String commitId)
-            throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>(List.of("git", "--git-dir=" + remote.repository().getDirectory(),
-                "-c", "gpg.format=ssh", "-c", "gpg.ssh.allowedSignersFile=" + allowedSigners, "verify-commit",
+    private ExternalTools.Finished verifyCommit(LocalRemote remote, Path keygen, Path allowedSigners,
+            String commitId) throws IOException, InterruptedException {
+        return git(List.of("--git-dir=" + remote.repository().getDirectory(), "-c", "gpg.format=ssh", "-c",
+                "gpg.ssh.program=" + keygen, "-c", "gpg.ssh.allowedSignersFile=" + allowedSigners, "verify-commit",
                 commitId));
-        return execute(command);
     }
 
     @Test
-    @DisplayName("GDR-STORE-14: git verify-commit accepts a store-signed commit and honours valid-before")
+    @DisplayName("GDR-STORE-14: git verify-commit accepts a store-signed commit and honours its validity at commit time")
     void gitVerifyCommitAcceptsStoreSignature(@Remote LocalRemote remote) throws Exception {
-        assumeToolsPresent();
+        var keygen = assumeToolsPresent();
         var signed = saveSigned(remote);
         var principal = word() + "@example.org";
-        var valid = Files.writeString(temp.resolve("valid"), principal + " " + signed.key().publicKeyLine() + "\n");
-        var expiredBefore = DateTimeFormatter.ofPattern("uuuuMMdd").withZone(ZoneOffset.UTC)
-                .format(COMMIT_TIME.minus(Duration.ofDays(3)));
+        var validAfter = DAY.format(COMMIT_TIME.minus(Duration.ofDays(30)));
+        var validBefore = DAY.format(COMMIT_TIME.plus(Duration.ofDays(30)));
+        var valid = Files.writeString(temp.resolve("valid"), principal + " valid-after=\"" + validAfter
+                + "\",valid-before=\"" + validBefore + "\" " + signed.key().publicKeyLine() + "\n");
+        var expiredBefore = DAY.format(COMMIT_TIME.minus(Duration.ofDays(3)));
         var expired = Files.writeString(temp.resolve("expired"), principal + " valid-before=\"" + expiredBefore
                 + "\" " + signed.key().publicKeyLine() + "\n");
 
-        var accepted = verifyCommit(remote, valid, signed.commitId());
-        var rejected = verifyCommit(remote, expired, signed.commitId());
+        var accepted = verifyCommit(remote, keygen, valid, signed.commitId());
+        var rejected = verifyCommit(remote, keygen, expired, signed.commitId());
 
         assertAll(
                 () -> assertEquals(0, accepted.code(), () -> "accepted: " + accepted.output()),

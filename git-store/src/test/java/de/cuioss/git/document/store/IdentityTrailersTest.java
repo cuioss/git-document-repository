@@ -217,8 +217,10 @@ class IdentityTrailersTest {
         @ValueSource(strings = {"line\nbreak", "carriage\rreturn", "tab\tchar", "space char", "nul\u0000char", " "})
         @DisplayName("GDR-STORE-13: an issuer with whitespace or a control character, or blank, is refused")
         void refusesIssuer(String issuer) {
+            var authTime = time();
+            List<String> amr = List.of();
             var thrown = assertThrows(IllegalArgumentException.class,
-                    () -> new IdentityClaims(issuer, time(), null, List.of()));
+                    () -> new IdentityClaims(issuer, authTime, null, amr));
 
             assertEquals("issuer: invalid", thrown.getMessage(), "names the component only");
         }
@@ -228,8 +230,10 @@ class IdentityTrailersTest {
         @DisplayName("GDR-STORE-13: an acr with a control character or the separator ;, or blank, is refused")
         void refusesAcr(String acr) {
             var issuer = issuer();
+            var authTime = time();
+            List<String> amr = List.of();
             var thrown = assertThrows(IllegalArgumentException.class,
-                    () -> new IdentityClaims(issuer, time(), acr, List.of()));
+                    () -> new IdentityClaims(issuer, authTime, acr, amr));
 
             assertEquals("acr: invalid", thrown.getMessage(), "names the component only");
         }
@@ -240,9 +244,10 @@ class IdentityTrailersTest {
         @DisplayName("GDR-STORE-13: an amr with whitespace, a control character or a separator, or blank, is refused")
         void refusesAmr(String method) {
             var issuer = issuer();
+            var authTime = time();
             List<String> amr = List.of("pwd", method);
             var thrown = assertThrows(IllegalArgumentException.class,
-                    () -> new IdentityClaims(issuer, time(), null, amr));
+                    () -> new IdentityClaims(issuer, authTime, null, amr));
 
             assertEquals("amr: invalid", thrown.getMessage(), "names the component only");
         }
@@ -253,13 +258,14 @@ class IdentityTrailersTest {
             List<String> amr = new ArrayList<>(List.of("pwd"));
             var claims = new IdentityClaims(issuer(), time(), null, amr);
             amr.add("otp");
+            List<String> copied = claims.amr();
 
             assertAll(
                     () -> assertEquals(List.of("issuer", "authTime", "acr", "amr"),
                             Arrays.stream(IdentityClaims.class.getRecordComponents()).map(RecordComponent::getName)
                                     .toList(), "the components are the trailer claims only"),
                     () -> assertEquals(List.of("pwd"), claims.amr(), "a copy of amr"),
-                    () -> assertThrows(UnsupportedOperationException.class, () -> claims.amr().add("otp"),
+                    () -> assertThrows(UnsupportedOperationException.class, () -> copied.add("otp"),
                             "an immutable amr"));
         }
     }

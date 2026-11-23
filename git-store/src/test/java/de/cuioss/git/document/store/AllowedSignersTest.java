@@ -178,11 +178,46 @@ class AllowedSignersTest {
                         signers.check(key.publicKeyBlob(), Instant.parse("2025-06-01T00:00:00Z")), "in between"));
     }
 
+    @Test
+    @DisplayName("GDR-STORE-14: a namespace listed twice is read once, and the key stays listed for commits")
+    void duplicateNamespaces() throws Exception {
+        var key = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " namespaces=\"git,git\" " + key.publicKeyLine()));
+
+        assertAll(
+                () -> assertEquals(1, signers.size(), "one entry"),
+                () -> assertEquals(AllowedSigners.Match.VALID, signers.check(key.publicKeyBlob(), Instant.EPOCH),
+                        "listed for commits"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a leap day is a valid timestamp, in the date and in the date-time form")
+    void leapDay() throws Exception {
+        var key = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " valid-after=\"20280229Z\",valid-before=\"202802292359Z\" "
+                + key.publicKeyLine()));
+
+        assertAll(
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2028-02-29T12:00:00Z")), "on the leap day"),
+                () -> assertEquals(AllowedSigners.Match.OUTSIDE_VALIDITY,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2028-03-01T00:00:00Z")), "the day after"));
+    }
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {
             "cert-authority|cert-authority not supported",
             "valid-after=\"2026\"|timestamp malformed",
             "valid-before=\"20261332Z\"|timestamp malformed",
+            "valid-after=\"202602300000Z\"|timestamp malformed",
+            "valid-before=\"20260230\"|timestamp malformed",
+            "valid-after=\"20270229120000Z\"|timestamp malformed",
+            "namespaces=\"git,!git\"|namespace pattern not supported",
+            "namespaces=\"!file\"|namespace pattern not supported",
+            "namespaces=\"g*\"|namespace pattern not supported",
+            "namespaces=\"gi?\"|namespace pattern not supported",
             "no-touch-required|option not supported",
             "valid-after=\"20260101|quote not closed"})
     @DisplayName("GDR-STORE-14: a refused option is MALFORMED naming the line number, never a principal or key text")

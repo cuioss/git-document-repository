@@ -297,15 +297,15 @@ class StoreProvidersTest {
         @Test
         @DisplayName("GDR-STORE-12: load finds the shipped signing key source file beside the test providers")
         void loadsShippedFileSource() {
-            var providers = providers(StoreProviders.load(configuration(FileSigningKeySource.ID,
+            var providers = providers(StoreProviders.load(configuration(FileSigningKeySource.SOURCE_ID,
                     TestPersonDirectory.ID, null)));
 
             assertAll(
                     () -> assertEquals(FileSigningKeySource.class, providers.signing().getClass(),
                             "the shipped signing key source"),
-                    () -> assertEquals(FileSigningKeySource.ID, providers.signing().id(), "its id"));
-            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
-                    "signing key source " + FileSigningKeySource.ID + ", person directory " + TestPersonDirectory.ID);
+                    () -> assertEquals(FileSigningKeySource.SOURCE_ID, providers.signing().id(), "its id"));
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO, "signing key source "
+                    + FileSigningKeySource.SOURCE_ID + ", person directory " + TestPersonDirectory.ID);
         }
 
         @Test

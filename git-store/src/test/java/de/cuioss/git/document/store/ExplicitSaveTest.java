@@ -297,13 +297,37 @@ class ExplicitSaveTest {
     }
 
     private Fixture open(LocalRemote remote, StoreConfiguration configuration, TechnicalUser user) {
+        return open(remote, configuration, user, TestKeys.ed25519().source());
+    }
+
+    private Fixture open(LocalRemote remote, StoreConfiguration configuration, TechnicalUser user,
+            SigningKeySource source) {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var gitDir = temp.resolve(word() + ".git");
         var now = time();
         var operations = new ScriptedRepositoryOperations();
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration,
-                TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, source, operations,
+                Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, user, now, operations);
+    }
+
+    /** A signing key source that cannot be reached for any call. */
+    private record UnavailableSource() implements SigningKeySource {
+
+        @Override
+        public String id() {
+            return "unavailable";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, "down");
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, "down");
+        }
     }
 
     private Fixture open(LocalRemote remote) {
@@ -736,6 +760,45 @@ class ExplicitSaveTest {
                         () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
                         () -> assertNull(fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
                                 "the draft is deleted"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-12: a draft without changes is saved as the base with an unavailable signing source")
+        void draftWithoutChangesNeedsNoSigning(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var tipId = commit(remote.repository(), target, base);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote, configuration(null, ATTEMPTS), user(null), new UnavailableSource())) {
+                fixture.draft(author, key, puts(base));
+
+                var result = fixture.save(author, key, Map.of());
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.Saved(tipId.name()), result, "saved as the base"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "no push"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-13: a blank message gets the subject Save <collection>/<id> before the trailers")
+        void blankMessageGetsDefaultSubject(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            commit(remote.repository(), target, files(word()));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "x")));
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of(), " \n\t\n"));
+
+                assertEquals("Save " + key.collection().name() + "/" + key.id() + "\n\n" + trailers(author.pseudonym()),
+                        parse(remote.repository(), ObjectId.fromString(saved.commitId())).getFullMessage(),
+                        "the default subject, then the identity trailers");
             }
         }
 

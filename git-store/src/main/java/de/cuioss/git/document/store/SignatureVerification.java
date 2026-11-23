@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -47,6 +48,10 @@ import org.jspecify.annotations.Nullable;
  * {@link Reason#MALFORMED}, {@link Reason#INVALID}, then {@link Reason#UNKNOWN_KEY} or
  * {@link Reason#OUTSIDE_VALIDITY}. The allowed signers are those given, never a file of the repository.
  * <p>
+ * A walk that reaches a shallow commit (JGit 7.8.0 {@code ObjectDatabase.getShallowCommits}, whose parents
+ * {@code RevWalk} treats as absent) is {@link StoreOutcome#INCOMPLETE}, never a success, because the commits beyond
+ * the boundary cannot be checked.
+ * <p>
  * The verification reads only: it changes no reference and writes no object. A finished verification is logged as
  * {@code GIT_STORE-6} with the reference and the counts.
  *
@@ -57,6 +62,9 @@ public final class SignatureVerification {
     private static final CuiLogger LOGGER = new CuiLogger(SignatureVerification.class);
 
     private static final byte[] GPGSIG = "gpgsig ".getBytes(US_ASCII);
+
+    /** The detail, after the reference, of a history that reaches a shallow boundary. */
+    static final String SHALLOW = "history is shallow";
 
     private SignatureVerification() {
     }
@@ -117,7 +125,10 @@ public final class SignatureVerification {
      * @param reference      the full name of the reference, for example {@code refs/heads/main}
      * @param allowedSigners the trusted keys
      * @return {@link StoreOutcome#OK} with the commits without a valid signature in the order of the walk, newest
-     *         first, empty when every commit is valid; the passed-on {@link GitOutcome#NOT_FOUND} with
+     *         first, empty when every commit is valid; {@link StoreOutcome#INCOMPLETE} with
+     *         {@code <reference>: history is shallow} when the walk reaches a shallow commit, whose parents the
+     *         repository lacks, so that no commit beyond the boundary can pass unchecked; the passed-on
+     *         {@link GitOutcome#NOT_FOUND} with
      *         {@code <reference>: not found} for an unknown reference; the passed-on {@link GitOutcome#FAILED} with
      *         {@code <reference>: <simple class name of the exception>} when the repository cannot be read
      * @throws NullPointerException if an argument is {@code null}
@@ -133,11 +144,15 @@ public final class SignatureVerification {
                 return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.NOT_FOUND), null,
                         reference + ": not found");
             }
+            Set<ObjectId> shallow = repository.getObjectDatabase().getShallowCommits();
             List<UnverifiedCommit> unverified = new ArrayList<>();
             int commits = 0;
             try (RevWalk walk = new RevWalk(repository)) {
                 walk.markStart(walk.parseCommit(ref.getObjectId()));
                 for (RevCommit commit : walk) {
+                    if (shallow.contains(commit)) {
+                        return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW);
+                    }
                     commits++;
                     Reason reason = check(commit, allowedSigners);
                     if (reason != null) {
@@ -165,7 +180,7 @@ public final class SignatureVerification {
         if (!armored.startsWith(SshSignatures.BEGIN)) {
             return Reason.NOT_SSH;
         }
-        if (!(SshSignatures.decode(armored) instanceof SshSignatures.Decoding.Decoded decoded)) {
+        if (!(SshSignatures.decode(armored) instanceof SshSignatures.DecodedSignature decoded)) {
             return Reason.MALFORMED;
         }
         if (!SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, unsignedPayload(commit.getRawBuffer()))) {

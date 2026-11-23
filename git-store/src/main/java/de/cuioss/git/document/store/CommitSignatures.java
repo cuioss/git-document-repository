@@ -23,6 +23,7 @@ import de.cuioss.git.document.core.CommitSigning;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.GitResult;
 import de.cuioss.tools.logging.CuiLogger;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The single signing seam of the store (GDR-STORE-12): every commit the store signs takes its {@link CommitSigning}
@@ -30,7 +31,8 @@ import de.cuioss.tools.logging.CuiLogger;
  * checkpoint and notes commits of GDR-STORE-16 and GDR-STORE-17 once the store writes them. Draft commits are never
  * signed.
  * <p>
- * {@link #prepare(String)} runs once per save or release, before its first attempt: it fetches the public key line
+ * {@link #prepare(String)} runs at most once per save or release, through {@link Lazy}, when the first attempt that
+ * writes a commit needs it: it fetches the public key line
  * from the active {@link SigningKeySource} once, refuses a key of another type than
  * {@value SshSignatures#KEY_TYPE}, and returns the signing of a fresh {@link SourceSigner}, which every attempt of the
  * operation re-uses. Only the signature itself is made per attempt, because the signed commit depends on the fetched
@@ -89,7 +91,7 @@ final class CommitSignatures {
             return refused(reference, sourceFailure(line.outcome()));
         }
         String publicKeyLine = Objects.requireNonNull(line.value());
-        if (!(SshSignatures.parsePublicKeyLine(publicKeyLine) instanceof SshSignatures.KeyLine.Accepted)) {
+        if (!(SshSignatures.parsePublicKeyLine(publicKeyLine) instanceof SshSignatures.AcceptedKey)) {
             return refused(reference, StoreResult.of(StoreOutcome.REFUSED, KEY_TYPE_NOT_SUPPORTED));
         }
         return StoreResult.ok(new Prepared(new SourceSigner(source, keyReference, publicKeyLine)));
@@ -142,6 +144,45 @@ final class CommitSignatures {
             case StoreOutcome store -> store.name();
             case StoreResult.PassedOn(GitOutcome git) -> git.name();
         };
+    }
+
+    /**
+     * Returns the signing of one save or release, prepared when it is first needed.
+     *
+     * @param reference the reference the operation writes, for the log record
+     * @return the signing that calls {@link #prepare(String)} on its first {@link Lazy#get()} only
+     */
+    Lazy lazy(String reference) {
+        return new Lazy(this, Objects.requireNonNull(reference, "reference"));
+    }
+
+    /**
+     * The signing of one save or release, prepared on the first attempt that writes a commit and re-used by every
+     * later one, so an operation that writes no commit, such as a save of an unchanged draft or the push of a missing
+     * release tag, never asks the source. An instance serves one operation on one thread.
+     */
+    static final class Lazy {
+
+        private final CommitSignatures signatures;
+        private final String reference;
+        private @Nullable StoreResult<Prepared> prepared;
+
+        private Lazy(CommitSignatures signatures, String reference) {
+            this.signatures = signatures;
+            this.reference = reference;
+        }
+
+        /**
+         * Returns the prepared signing, preparing it on the first call.
+         *
+         * @return the result of {@link CommitSignatures#prepare(String)}, the same on every call
+         */
+        StoreResult<Prepared> get() {
+            if (prepared == null) {
+                prepared = signatures.prepare(reference);
+            }
+            return prepared;
+        }
     }
 
     /**

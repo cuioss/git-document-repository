@@ -230,7 +230,7 @@ class CommitSignatureTest {
         RevCommit commit = parse(repository, id);
         byte[] signature = commit.getRawGpgSignature();
         assertNotNull(signature, "the commit carries a gpgsig header");
-        var decoded = assertInstanceOf(SshSignatures.Decoding.Decoded.class,
+        var decoded = assertInstanceOf(SshSignatures.DecodedSignature.class,
                 SshSignatures.decode(new String(signature, StandardCharsets.US_ASCII)), "an SSH signature");
         assertAll(
                 () -> assertArrayEquals(key.publicKeyBlob(), decoded.publicKeyBlob(), "by the test key"),
@@ -476,7 +476,8 @@ class CommitSignatureTest {
                 assertAll(
                         () -> assertEquals(new SaveResult.NotSaved(outcome, detail), saved, "the save"),
                         () -> assertEquals(StoreResult.of(outcome, detail), released, "the release"),
-                        () -> assertEquals(List.of(), fixture.operations().fetches(), "nothing is fetched"));
+                        () -> assertEquals(List.of(), fixture.operations().pushes(),
+                                "the key is asked for after the fetch, and nothing is pushed"));
                 assertNothingChanged(fixture, remote, key, author, draft, targetTip, mainTip);
             }
         }

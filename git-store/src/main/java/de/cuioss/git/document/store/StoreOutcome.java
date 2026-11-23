@@ -32,7 +32,10 @@ public enum StoreOutcome implements StoreResult.Outcome {
      */
     OK,
 
-    /** Incomplete: raised by a release whose tag is still missing after {@code main} moved. */
+    /**
+     * Incomplete: raised by a release whose tag is still missing after {@code main} moved, and by a signature
+     * verification whose history reaches a shallow boundary.
+     */
     INCOMPLETE,
 
     /**

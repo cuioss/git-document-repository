@@ -71,6 +71,9 @@ final class SshSignatures {
     /** The length of a base64 line of the armor, as {@code ssh-keygen} writes it. */
     static final int LINE_LENGTH = 70;
 
+    /** The reason of a public key line that is not a valid Ed25519 key. */
+    static final String KEY_MALFORMED = "key malformed";
+
     /** The only version of the signature blob. */
     private static final int VERSION = 1;
 
@@ -170,7 +173,7 @@ final class SshSignatures {
     static KeyLine parsePublicKeyLine(String line) {
         String[] parts = line.strip().split("\\s+", 3);
         if (parts.length < 2) {
-            return new KeyLine.Refused("key malformed");
+            return new KeyLine.Refused(KEY_MALFORMED);
         }
         if (!KEY_TYPE.equals(parts[0])) {
             return new KeyLine.Refused("key type not supported");
@@ -179,11 +182,11 @@ final class SshSignatures {
         try {
             blob = Base64.getDecoder().decode(parts[1]);
         } catch (IllegalArgumentException e) {
-            return new KeyLine.Refused("key malformed");
+            return new KeyLine.Refused(KEY_MALFORMED);
         }
         return ed25519Key(blob)
-                .<KeyLine>map(KeyLine.Accepted::new)
-                .orElseGet(() -> new KeyLine.Refused("key malformed"));
+                .<KeyLine>map(AcceptedKey::new)
+                .orElseGet(() -> new KeyLine.Refused(KEY_MALFORMED));
     }
 
     /**
@@ -207,18 +210,22 @@ final class SshSignatures {
      * Parses an armored signature back into its fields.
      *
      * @param armored the armored signature, as stored in the {@code gpgsig} header; lines may carry surrounding
-     *                whitespace
+     *                whitespace, such as the indentation of a commit header, but {@value #BEGIN} and {@value #END}
+     *                must each stand on a line of their own, as OpenSSH requires
      * @return the decoded signature, or {@link Decoding.Malformed} naming the reason, never an exception
      */
     static Decoding decode(String armored) {
-        String text = armored.strip();
-        if (!text.startsWith(BEGIN) || !text.endsWith(END) || text.length() < BEGIN.length() + END.length()) {
+        String[] lines = armored.strip().split("\\R");
+        if (lines.length < 2 || !BEGIN.equals(lines[0].strip()) || !END.equals(lines[lines.length - 1].strip())) {
             return new Decoding.Malformed("armor missing");
         }
-        String body = text.substring(BEGIN.length(), text.length() - END.length()).replaceAll("\\s", "");
+        var body = new StringBuilder();
+        for (int index = 1; index < lines.length - 1; index++) {
+            body.append(lines[index].strip());
+        }
         byte[] blob;
         try {
-            blob = Base64.getDecoder().decode(body);
+            blob = Base64.getDecoder().decode(body.toString());
         } catch (IllegalArgumentException e) {
             return new Decoding.Malformed("base64 malformed");
         }
@@ -245,7 +252,7 @@ final class SshSignatures {
         if (signatureType == null || signature == null || !signatureReader.atEnd()) {
             return new Decoding.Malformed("signature truncated");
         }
-        return new Decoding.Decoded(publicKey, new String(namespace, UTF_8), new String(hashAlgorithm, US_ASCII),
+        return new DecodedSignature(publicKey, new String(namespace, UTF_8), new String(hashAlgorithm, US_ASCII),
                 new String(signatureType, US_ASCII), signature);
     }
 
@@ -261,7 +268,7 @@ final class SshSignatures {
      * @param message   the signed message
      * @return whether the signature is valid
      */
-    static boolean verify(Decoding.Decoded decoded, String namespace, byte[] message) {
+    static boolean verify(DecodedSignature decoded, String namespace, byte[] message) {
         if (!namespace.equals(decoded.namespace()) || !KEY_TYPE.equals(decoded.signatureType())
                 || !(HASH_SHA512.equals(decoded.hashAlgorithm()) || HASH_SHA256.equals(decoded.hashAlgorithm()))) {
             return false;
@@ -304,44 +311,9 @@ final class SshSignatures {
     }
 
     /**
-     * The result of parsing a public key line.
+     * The result of parsing a public key line: an {@link AcceptedKey} or a {@link KeyLine.Refused}.
      */
-    sealed interface KeyLine permits KeyLine.Accepted, KeyLine.Refused {
-
-        /**
-         * An accepted Ed25519 public key line.
-         */
-        final class Accepted implements KeyLine {
-
-            private final byte[] key;
-
-            Accepted(byte[] key) {
-                this.key = key.clone();
-            }
-
-            /**
-             * Returns the key.
-             *
-             * @return a copy of the 32 key bytes
-             */
-            byte[] key() {
-                return key.clone();
-            }
-
-            /**
-             * Returns the public key blob of the key.
-             *
-             * @return the blob, see {@link SshSignatures#publicKeyBlob(byte[])}
-             */
-            byte[] blob() {
-                return publicKeyBlob(key);
-            }
-
-            @Override
-            public String toString() {
-                return "Accepted[" + KEY_TYPE + "]";
-            }
-        }
+    sealed interface KeyLine permits AcceptedKey, KeyLine.Refused {
 
         /**
          * A refused public key line.
@@ -353,80 +325,44 @@ final class SshSignatures {
     }
 
     /**
-     * The result of decoding an armored signature.
+     * An accepted Ed25519 public key line.
      */
-    sealed interface Decoding permits Decoding.Decoded, Decoding.Malformed {
+    static final class AcceptedKey implements KeyLine {
+
+        private final byte[] key;
+
+        AcceptedKey(byte[] key) {
+            this.key = key.clone();
+        }
 
         /**
-         * A decoded signature.
+         * Returns the key.
+         *
+         * @return a copy of the 32 key bytes
          */
-        final class Decoded implements Decoding {
-
-            private final byte[] publicKeyBlob;
-            private final String namespace;
-            private final String hashAlgorithm;
-            private final String signatureType;
-            private final byte[] signature;
-
-            Decoded(byte[] publicKeyBlob, String namespace, String hashAlgorithm, String signatureType,
-                    byte[] signature) {
-                this.publicKeyBlob = publicKeyBlob.clone();
-                this.namespace = namespace;
-                this.hashAlgorithm = hashAlgorithm;
-                this.signatureType = signatureType;
-                this.signature = signature.clone();
-            }
-
-            /**
-             * Returns the public key blob the signature embeds.
-             *
-             * @return a copy of the blob
-             */
-            byte[] publicKeyBlob() {
-                return publicKeyBlob.clone();
-            }
-
-            /**
-             * Returns the namespace the signature was made in.
-             *
-             * @return the namespace
-             */
-            String namespace() {
-                return namespace;
-            }
-
-            /**
-             * Returns the hash algorithm of the signed blob.
-             *
-             * @return the hash algorithm
-             */
-            String hashAlgorithm() {
-                return hashAlgorithm;
-            }
-
-            /**
-             * Returns the type of the signature.
-             *
-             * @return the signature type
-             */
-            String signatureType() {
-                return signatureType;
-            }
-
-            /**
-             * Returns the raw signature.
-             *
-             * @return a copy of the signature bytes
-             */
-            byte[] signature() {
-                return signature.clone();
-            }
-
-            @Override
-            public String toString() {
-                return "Decoded[namespace=" + namespace + ", hash=" + hashAlgorithm + ", type=" + signatureType + "]";
-            }
+        byte[] key() {
+            return key.clone();
         }
+
+        /**
+         * Returns the public key blob of the key.
+         *
+         * @return the blob, see {@link SshSignatures#publicKeyBlob(byte[])}
+         */
+        byte[] blob() {
+            return publicKeyBlob(key);
+        }
+
+        @Override
+        public String toString() {
+            return "AcceptedKey[" + KEY_TYPE + "]";
+        }
+    }
+
+    /**
+     * The result of decoding an armored signature: a {@link DecodedSignature} or a {@link Decoding.Malformed}.
+     */
+    sealed interface Decoding permits DecodedSignature, Decoding.Malformed {
 
         /**
          * A signature that could not be decoded.
@@ -434,6 +370,78 @@ final class SshSignatures {
          * @param reason why, never a part of the input
          */
         record Malformed(String reason) implements Decoding {
+        }
+    }
+
+    /**
+     * A decoded signature.
+     */
+    static final class DecodedSignature implements Decoding {
+
+        private final byte[] publicKeyBlob;
+        private final String namespace;
+        private final String hashAlgorithm;
+        private final String signatureType;
+        private final byte[] signature;
+
+        DecodedSignature(byte[] publicKeyBlob, String namespace, String hashAlgorithm, String signatureType,
+                byte[] signature) {
+            this.publicKeyBlob = publicKeyBlob.clone();
+            this.namespace = namespace;
+            this.hashAlgorithm = hashAlgorithm;
+            this.signatureType = signatureType;
+            this.signature = signature.clone();
+        }
+
+        /**
+         * Returns the public key blob the signature embeds.
+         *
+         * @return a copy of the blob
+         */
+        byte[] publicKeyBlob() {
+            return publicKeyBlob.clone();
+        }
+
+        /**
+         * Returns the namespace the signature was made in.
+         *
+         * @return the namespace
+         */
+        String namespace() {
+            return namespace;
+        }
+
+        /**
+         * Returns the hash algorithm of the signed blob.
+         *
+         * @return the hash algorithm
+         */
+        String hashAlgorithm() {
+            return hashAlgorithm;
+        }
+
+        /**
+         * Returns the type of the signature.
+         *
+         * @return the signature type
+         */
+        String signatureType() {
+            return signatureType;
+        }
+
+        /**
+         * Returns the raw signature.
+         *
+         * @return a copy of the signature bytes
+         */
+        byte[] signature() {
+            return signature.clone();
+        }
+
+        @Override
+        public String toString() {
+            return "DecodedSignature[namespace=" + namespace + ", hash=" + hashAlgorithm + ", type=" + signatureType
+                    + "]";
         }
     }
 

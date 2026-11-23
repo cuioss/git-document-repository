@@ -52,8 +52,8 @@ import org.eclipse.jgit.lib.Repository;
  * Every save commit and every release commit is signed in the SSH signature format through the active
  * {@link SigningKeySource} under the key reference {@code signing.key} (GDR-STORE-12), and carries the identity
  * trailers {@code Actor}, {@code Actor-Issuer}, {@code Auth-Time} and {@code Auth-Context} built from the author's
- * pseudonym and the {@link IdentityClaims} of the call (GDR-STORE-13). The public key is fetched once per save or
- * release, before its first attempt. A source that refuses or cannot be reached ends the save or release with
+ * pseudonym and the {@link IdentityClaims} of the call (GDR-STORE-13). The public key is fetched at most once per save
+ * or release, by the first attempt that writes a commit. A source that refuses or cannot be reached ends the save or release with
  * {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE}, nothing pushed. Draft commits stay unsigned and
  * carry no trailers.
  * <p>
@@ -177,9 +177,14 @@ public final class StoreWriter implements AutoCloseable {
      * GDR-STORE-5); a changed path without one overwrites a concurrent change.
      * <p>
      * The save commit is signed through the active signing key source (GDR-STORE-12) and its message is the given
-     * message followed by the identity trailers of the author's pseudonym and the claims (GDR-STORE-13). The public key
-     * is fetched once, before the first attempt; a source that refuses or cannot be reached ends the save with nothing
-     * written or pushed.
+     * message followed by the identity trailers of the author's pseudonym and the claims (GDR-STORE-13); a blank
+     * message is replaced by the subject {@code Save <collection>/<id>}, and a message whose first paragraph is the
+     * subject of a release of the document ({@code Release <collection>/<id> v<n>}) is
+     * {@link StoreOutcome#MALFORMED}. The public key is fetched once, by the first attempt that writes a commit, so a
+     * save of a draft without changes never asks the source. A source that refuses or cannot be reached, and a
+     * signature that fails, end the save with no save commit written or pushed; the fetch that attempt ran before may
+     * still have updated the clone, a moved remote target included, and those references are emitted to the index and
+     * the listeners as after any fetch.
      *
      * @param author          the author, whose pseudonym names the draft reference, the commit's author and the
      *                        trailer {@code Actor}
@@ -190,7 +195,8 @@ public final class StoreWriter implements AutoCloseable {
      * @param message         the commit message, before the trailers
      * @return {@link SaveResult.Saved} with the commit the target branch points at, {@link SaveResult.Conflicting}
      *         with every conflicting path, or {@link SaveResult.NotSaved} with the outcome that prevented the save, for
-     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym, {@link StoreOutcome#REFUSED} for a
+     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message,
+     *         {@link StoreOutcome#REFUSED} for a
      *         signing key source that refuses or a key of another type than Ed25519,
      *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that cannot be reached,
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing draft,
@@ -243,7 +249,8 @@ public final class StoreWriter implements AutoCloseable {
      * takes only the entry's paths from the collection branch onto {@code main}, its only parent. Its message is
      * {@code Release <collection>/<id> v<n>}, composed by the store, followed by the identity trailers of the user who
      * releases (GDR-STORE-13); its author is that user, and it is signed through the active signing key source
-     * (GDR-STORE-12), whose public key is fetched once before the first attempt.
+     * (GDR-STORE-12), whose public key is fetched once, by the first attempt that writes a release commit; a release
+     * that only pushes the missing tag of a merged release never asks the source.
      * <p>
      * The release runs under the shared side of the clone's maintenance lock, each attempt, from the fetch to the push
      * of the tag, under its transport lock. When {@code main} moved on the remote and the tag is missing there, a

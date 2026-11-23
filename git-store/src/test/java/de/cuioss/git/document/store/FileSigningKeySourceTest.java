@@ -32,7 +32,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.LogRecord;
 
 
@@ -94,7 +93,7 @@ class FileSigningKeySourceTest {
             assertTrue(signed.isOk(), () -> "signed: " + signed.detail());
             String armored = SshSignatures.encode(key.publicKeyBlob(), SshSignatures.NAMESPACE_GIT,
                     Objects.requireNonNull(signed.value()));
-            var decoded = assertInstanceOf(SshSignatures.Decoding.Decoded.class, SshSignatures.decode(armored),
+            var decoded = assertInstanceOf(SshSignatures.DecodedSignature.class, SshSignatures.decode(armored),
                     "the signature decodes");
             assertTrue(SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, message), "the signature verifies");
         }
@@ -121,10 +120,18 @@ class FileSigningKeySourceTest {
             replacement.writePrivateKey(file);
 
             var second = source.publicKey(file.toString());
+            byte[] message = message();
+            var signed = source.sign(file.toString(), SshSignatures.signedData(SshSignatures.NAMESPACE_GIT, message));
 
+            assertTrue(signed.isOk(), () -> "signed: " + signed.detail());
+            var decoded = assertInstanceOf(SshSignatures.DecodedSignature.class,
+                    SshSignatures.decode(SshSignatures.encode(replacement.publicKeyBlob(), SshSignatures.NAMESPACE_GIT,
+                            Objects.requireNonNull(signed.value()))), "the signature decodes");
             assertAll(() -> assertTrue(first.isOk(), "the first key is read"),
                     () -> assertEquals(StoreResult.ok(withoutComment(replacement.publicKeyLine())), second,
-                            "the replacement key is read"));
+                            "the replacement key is read"),
+                    () -> assertTrue(SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, message),
+                            "the replacement key made the signature"));
         }
 
         @Test
@@ -137,20 +144,21 @@ class FileSigningKeySourceTest {
         @Test
         @DisplayName("GDR-STORE-12: ssh-keygen derives the same public key from the test file (skipped without it)")
         void sshKeygenReadsTheFile() throws Exception {
-            Optional<Path> keygen = SshSignaturesTest.onPath("ssh-keygen");
+            Optional<Path> keygen = ExternalTools.onPath("ssh-keygen");
             assumeTrue(keygen.isPresent(), "ssh-keygen is not on the path");
+            assumeTrue(ExternalTools.posix(directory), "the temporary file system has no POSIX permissions");
             var key = TestKeys.ed25519();
             Path file = keyFile();
             key.writePrivateKey(file);
             Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
 
-            var process = new ProcessBuilder(keygen.get().toString(), "-y", "-f", file.toString())
-                    .redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes(), US_ASCII).strip();
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "ssh-keygen finished");
+            var finished = ExternalTools.run(new ProcessBuilder(keygen.get().toString(), "-y", "-f", file.toString()),
+                    directory.resolve("ssh-keygen.out"), null);
+            String[] fields = finished.output().strip().split("\\s+", 3);
 
-            assertEquals(withoutComment(key.publicKeyLine()), output.split("\\s+", 3)[0] + " "
-                    + output.split("\\s+", 3)[1], "ssh-keygen reads the written file");
+            assertAll(() -> assertEquals(0, finished.code(), () -> "ssh-keygen read the file: " + finished.output()),
+                    () -> assertEquals(withoutComment(key.publicKeyLine()), fields[0] + " " + fields[1],
+                            "ssh-keygen reads the written file"));
         }
     }
 

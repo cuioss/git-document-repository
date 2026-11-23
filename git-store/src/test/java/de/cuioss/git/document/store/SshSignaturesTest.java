@@ -26,8 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,9 +34,6 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 
@@ -56,8 +51,9 @@ import org.junit.jupiter.params.provider.ValueSource;
  * The SSH signature format of GDR-STORE-12 as {@link SshSignatures} encodes, decodes and verifies it
  * (<a href="https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig">PROTOCOL.sshsig</a>), with a
  * per-run Ed25519 key of {@link TestKeys}: the round trip, the armor, the refusal of tampered, foreign and malformed
- * input without exception, the refusal of other key types, and, when an {@code ssh-keygen} of OpenSSH 8.8 or later is
- * on the path, the acceptance of an encoded signature by {@code ssh-keygen -Y verify}.
+ * input without exception, the refusal of other key types, and, when the {@code ssh-keygen} on the path signs and
+ * verifies SSH signatures ({@link ExternalTools#verifiesSignatures}), the acceptance of an encoded signature by that
+ * same {@code ssh-keygen -Y verify}.
  */
 @EnableGeneratorController
 @DisplayName("SshSignatures (GDR-STORE-12)")
@@ -72,8 +68,8 @@ class SshSignaturesTest {
                 key.sign(SshSignatures.signedData(namespace, message)));
     }
 
-    private static SshSignatures.Decoding.Decoded decoded(String armored) {
-        return assertInstanceOf(SshSignatures.Decoding.Decoded.class, SshSignatures.decode(armored),
+    private static SshSignatures.DecodedSignature decoded(String armored) {
+        return assertInstanceOf(SshSignatures.DecodedSignature.class, SshSignatures.decode(armored),
                 "the signature decodes");
     }
 
@@ -200,6 +196,24 @@ class SshSignaturesTest {
                     SshSignatures.BEGIN + SshSignatures.END);
         }
 
+        static Stream<String> markerNotOnItsOwnLine() {
+            String valid = sign(TestKeys.ed25519(), SshSignatures.NAMESPACE_GIT, message());
+            List<String> lines = valid.lines().toList();
+            String body = String.join("\n", lines.subList(1, lines.size() - 1));
+            return Stream.of(SshSignatures.BEGIN + body + "\n" + SshSignatures.END + "\n",
+                    SshSignatures.BEGIN + "\n" + body + SshSignatures.END + "\n",
+                    SshSignatures.BEGIN + body + SshSignatures.END);
+        }
+
+        @ParameterizedTest
+        @MethodSource("markerNotOnItsOwnLine")
+        @DisplayName("GDR-STORE-12: a base64 body attached to the BEGIN or END marker is malformed, as OpenSSH reads it")
+        void markerNotOnItsOwnLine(String armored) {
+            var malformed = assertInstanceOf(SshSignatures.Decoding.Malformed.class, SshSignatures.decode(armored),
+                    "the armor is refused");
+            assertEquals("armor missing", malformed.reason(), "the reason");
+        }
+
         @ParameterizedTest
         @MethodSource("malformedArmor")
         @DisplayName("GDR-STORE-12: a truncated or garbage armor is reported as malformed, never thrown")
@@ -233,7 +247,7 @@ class SshSignaturesTest {
         void ed25519KeyLine() {
             var key = TestKeys.ed25519();
 
-            var accepted = assertInstanceOf(SshSignatures.KeyLine.Accepted.class,
+            var accepted = assertInstanceOf(SshSignatures.AcceptedKey.class,
                     SshSignatures.parsePublicKeyLine(key.publicKeyLine()), "the line is accepted");
             assertAll(() -> assertArrayEquals(key.publicKey(), accepted.key(), "the key"),
                     () -> assertArrayEquals(key.publicKeyBlob(), accepted.blob(), "the blob"),
@@ -246,15 +260,13 @@ class SshSignaturesTest {
     @DisplayName("Stock ssh-keygen")
     class StockTool {
 
-        /** The pattern of the version OpenSSH prints for {@code ssh -V}. */
-        private static final Pattern VERSION = Pattern.compile("OpenSSH_(\\d+)\\.(\\d+)");
-
         @Test
-        @DisplayName("GDR-STORE-12: ssh-keygen -Y verify -n git accepts an encoded signature (skipped without OpenSSH 8.8)")
+        @DisplayName("GDR-STORE-12: ssh-keygen -Y verify -n git accepts an encoded signature (skipped without -Y verify)")
         void sshKeygenAccepts(@TempDir Path directory) throws Exception {
-            Optional<Path> keygen = onPath("ssh-keygen");
+            Optional<Path> keygen = ExternalTools.onPath("ssh-keygen");
             assumeTrue(keygen.isPresent(), "ssh-keygen is not on the path");
-            assumeTrue(openSshAtLeast(8, 8), "no OpenSSH 8.8 or later");
+            assumeTrue(ExternalTools.verifiesSignatures(keygen.get(), directory),
+                    "the ssh-keygen on the path signs and verifies SSH signatures (-Y sign, -Y verify)");
             var key = TestKeys.ed25519();
             byte[] message = message();
             Path allowed = Files.writeString(directory.resolve("allowed_signers"),
@@ -263,58 +275,11 @@ class SshSignaturesTest {
                     sign(key, SshSignatures.NAMESPACE_GIT, message), US_ASCII);
             Path messageFile = Files.write(directory.resolve("message"), message);
 
-            var process = new ProcessBuilder(keygen.get().toString(), "-Y", "verify", "-f", allowed.toString(), "-I",
-                    "signer@example.invalid", "-n", "git", "-s", signature.toString())
-                    .redirectInput(messageFile.toFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(directory.resolve("output").toFile())
-                    .start();
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "ssh-keygen finished");
-            assertEquals(0, process.exitValue(),
-                    () -> "ssh-keygen accepted the signature: " + read(directory.resolve("output")));
-        }
+            var verified = ExternalTools.run(new ProcessBuilder(keygen.get().toString(), "-Y", "verify", "-f",
+                            allowed.toString(), "-I", "signer@example.invalid", "-n", "git", "-s", signature.toString()),
+                    directory.resolve("output"), messageFile);
 
-        private static boolean openSshAtLeast(int major, int minor) throws IOException, InterruptedException {
-            Optional<Path> ssh = onPath("ssh");
-            if (ssh.isEmpty()) {
-                return false;
-            }
-            var process = new ProcessBuilder(ssh.get().toString(), "-V").redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes(), US_ASCII);
-            if (!process.waitFor(30, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                return false;
-            }
-            Matcher matcher = VERSION.matcher(output);
-            if (!matcher.find()) {
-                return false;
-            }
-            int foundMajor = Integer.parseInt(matcher.group(1));
-            int foundMinor = Integer.parseInt(matcher.group(2));
-            return foundMajor > major || foundMajor == major && foundMinor >= minor;
+            assertEquals(0, verified.code(), () -> "ssh-keygen accepted the signature: " + verified.output());
         }
-
-        private static String read(Path file) {
-            try {
-                return Files.readString(file, US_ASCII);
-            } catch (IOException e) {
-                return "(output unreadable)";
-            }
-        }
-    }
-
-    /**
-     * Finds an executable on the {@code PATH}.
-     *
-     * @param name the name of the executable
-     * @return its path, or empty when no directory of the {@code PATH} holds it
-     */
-    static Optional<Path> onPath(String name) {
-        String path = System.getenv("PATH");
-        if (path == null) {
-            return Optional.empty();
-        }
-        return Stream.of(path.split(File.pathSeparator)).filter(entry -> !entry.isBlank())
-                .map(entry -> Path.of(entry, name)).filter(Files::isExecutable).findFirst();
     }
 }

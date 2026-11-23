@@ -25,8 +25,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.ResolverStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -47,9 +49,13 @@ import org.jspecify.annotations.Nullable;
  * <ul>
  * <li>{@code valid-after="<timestamp>"} and {@code valid-before="<timestamp>"}: the key is valid at or after, and at or
  * before, the timestamp, which is {@code YYYYMMDD} (the start of the day) or {@code YYYYMMDDHHMM[SS]}, in UTC when it
- * ends with {@code Z} and in the system time zone otherwise, as {@code ssh-keygen} interprets it;</li>
+ * ends with {@code Z} and in the system time zone otherwise, as {@code ssh-keygen} interprets it; a timestamp that
+ * names no calendar date, such as {@code 20260230}, is refused;</li>
  * <li>{@code namespaces="<namespace>,..."}: the key is used for commits only when the list contains {@code git}; a key
- * without the option is used for every namespace.</li>
+ * without the option is used for every namespace. OpenSSH reads the list as a pattern list, in which a negated entry
+ * ({@code !git}) overrides a matching positive one; the store does not evaluate patterns and refuses a list with an
+ * entry that contains {@code !}, {@code *} or {@code ?}, so it never accepts a key for commits that OpenSSH would
+ * reject. An entry listed twice is read once.</li>
  * </ul>
  * The store signs and verifies with Ed25519 only: a line with another key type, a line with {@code cert-authority} or
  * any other option, and a line that cannot be read are refused as {@link StoreOutcome#MALFORMED}. The detail names the
@@ -74,6 +80,14 @@ public final class AllowedSigners {
     private static final String VALID_AFTER = "valid-after=";
     private static final String VALID_BEFORE = "valid-before=";
     private static final String NAMESPACES = "namespaces=";
+    private static final String TIMESTAMP_MALFORMED = "timestamp malformed";
+    private static final Pattern NAMESPACE_PATTERN = Pattern.compile("[!*?]");
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("uuuuMMdd")
+            .withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter MINUTE = DateTimeFormatter.ofPattern("uuuuMMddHHmm")
+            .withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter SECOND = DateTimeFormatter.ofPattern("uuuuMMddHHmmss")
+            .withResolverStyle(ResolverStyle.STRICT);
 
     private final List<Entry> entries;
 
@@ -205,7 +219,7 @@ public final class AllowedSigners {
             return new Line.Refused("key type not supported");
         }
         if (!(SshSignatures.parsePublicKeyLine(fields.get(keyType) + " " + fields.get(keyType + 1))
-                instanceof SshSignatures.KeyLine.Accepted accepted)) {
+                instanceof SshSignatures.AcceptedKey accepted)) {
             return new Line.Refused("key malformed");
         }
         return options == null ? new Line.Parsed(new Entry(accepted.key(), null, null, null))
@@ -218,41 +232,39 @@ public final class AllowedSigners {
     }
 
     private static Line parseOptions(String options, byte[] key) {
-        @Nullable Instant validAfter = null;
-        @Nullable Instant validBefore = null;
-        @Nullable Set<String> namespaces = null;
         List<String> parts = split(options, ',');
         if (parts == null) {
             return new Line.Refused("quote not closed");
         }
+        var read = new Options();
         for (String option : parts) {
-            String lower = option.toLowerCase(Locale.ROOT);
-            if ("cert-authority".equals(lower)) {
-                return new Line.Refused("cert-authority not supported");
-            }
-            if (lower.startsWith(VALID_AFTER) || lower.startsWith(VALID_BEFORE)) {
-                boolean after = lower.startsWith(VALID_AFTER);
-                @Nullable Instant time = timestamp(unquote(option.substring(
-                        (after ? VALID_AFTER : VALID_BEFORE).length())));
-                if (time == null) {
-                    return new Line.Refused("timestamp malformed");
-                }
-                if (after) {
-                    validAfter = time;
-                } else {
-                    validBefore = time;
-                }
-            } else if (lower.startsWith(NAMESPACES)) {
-                namespaces = Set.of(unquote(option.substring(NAMESPACES.length())).split(","));
-            } else {
-                return new Line.Refused("option not supported");
+            @Nullable String refusal = read.apply(option);
+            if (refusal != null) {
+                return new Line.Refused(refusal);
             }
         }
-        return new Line.Parsed(new Entry(key, validAfter, validBefore, namespaces));
+        return new Line.Parsed(new Entry(key, read.validAfter, read.validBefore, read.namespaces));
     }
 
     /**
-     * A timestamp of {@code valid-after} or {@code valid-before}.
+     * The value of {@code namespaces}: its entries, each once.
+     *
+     * @return the namespaces, or {@code null} when an entry is a pattern, which the store does not evaluate
+     */
+    private static @Nullable Set<String> namespaces(String value) {
+        Set<String> names = new HashSet<>();
+        for (String name : value.split(",")) {
+            if (NAMESPACE_PATTERN.matcher(name).find()) {
+                return null;
+            }
+            names.add(name);
+        }
+        return Set.copyOf(names);
+    }
+
+    /**
+     * A timestamp of {@code valid-after} or {@code valid-before}, resolved strictly, so that a date the calendar lacks
+     * is malformed.
      *
      * @return the instant, or {@code null} for a malformed timestamp
      */
@@ -262,16 +274,50 @@ public final class AllowedSigners {
         ZoneId zone = utc ? ZoneOffset.UTC : ZoneId.systemDefault();
         try {
             if (DATE.matcher(digits).matches()) {
-                return LocalDate.parse(digits, DateTimeFormatter.BASIC_ISO_DATE).atStartOfDay(zone).toInstant();
+                return LocalDate.parse(digits, DAY).atStartOfDay(zone).toInstant();
             }
             if (DATE_TIME.matcher(digits).matches()) {
-                String pattern = digits.length() == 12 ? "uuuuMMddHHmm" : "uuuuMMddHHmmss";
-                return LocalDateTime.parse(digits, DateTimeFormatter.ofPattern(pattern)).atZone(zone).toInstant();
+                var format = digits.length() == 12 ? MINUTE : SECOND;
+                return LocalDateTime.parse(digits, format).atZone(zone).toInstant();
             }
         } catch (DateTimeException e) {
             return null;
         }
         return null;
+    }
+
+    /** The options of one line, read one at a time. */
+    private static final class Options {
+
+        private @Nullable Instant validAfter;
+        private @Nullable Instant validBefore;
+        private @Nullable Set<String> namespaces;
+
+        /**
+         * Reads one option.
+         *
+         * @return {@code null} when the option is read, otherwise the reason of the refusal
+         */
+        @Nullable
+        String apply(String option) {
+            String lower = option.toLowerCase(Locale.ROOT);
+            if ("cert-authority".equals(lower)) {
+                return "cert-authority not supported";
+            }
+            if (lower.startsWith(VALID_AFTER)) {
+                validAfter = timestamp(unquote(option.substring(VALID_AFTER.length())));
+                return validAfter == null ? TIMESTAMP_MALFORMED : null;
+            }
+            if (lower.startsWith(VALID_BEFORE)) {
+                validBefore = timestamp(unquote(option.substring(VALID_BEFORE.length())));
+                return validBefore == null ? TIMESTAMP_MALFORMED : null;
+            }
+            if (lower.startsWith(NAMESPACES)) {
+                namespaces = AllowedSigners.namespaces(unquote(option.substring(NAMESPACES.length())));
+                return namespaces == null ? "namespace pattern not supported" : null;
+            }
+            return "option not supported";
+        }
     }
 
     private static String unquote(String value) {
@@ -366,9 +412,9 @@ public final class AllowedSigners {
 
         @Override
         public boolean equals(@Nullable Object other) {
-            return other instanceof Entry entry && Arrays.equals(key, entry.key)
-                    && Objects.equals(validAfter, entry.validAfter) && Objects.equals(validBefore, entry.validBefore)
-                    && Objects.equals(namespaces, entry.namespaces);
+            return other instanceof Entry(var otherKey, var otherAfter, var otherBefore, var otherNamespaces)
+                    && Arrays.equals(key, otherKey) && Objects.equals(validAfter, otherAfter)
+                    && Objects.equals(validBefore, otherBefore) && Objects.equals(namespaces, otherNamespaces);
         }
 
         @Override

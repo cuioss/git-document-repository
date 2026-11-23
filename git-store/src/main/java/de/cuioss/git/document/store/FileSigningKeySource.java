@@ -33,15 +33,16 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The signing key source {@value #ID} the store ships (GDR-STORE-12): it signs with an unencrypted OpenSSH Ed25519
+ * The signing key source {@value #SOURCE_ID} the store ships (GDR-STORE-12): it signs with an unencrypted OpenSSH Ed25519
  * private key from a file, the key reference ({@code signing.key}) being the path of that file.
  * <p>
  * The file must be in the format {@code openssh-key-v1} of
  * <a href="https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key">PROTOCOL.key</a>, as
  * {@code ssh-keygen -t ed25519 -N ""} writes it: cipher {@code none}, KDF {@code none}, exactly one key of type
  * {@value SshSignatures#KEY_TYPE}, and matching check integers. The file is read on every call; no key is kept between
- * calls, and every byte array that held key material is zeroed before the call returns. The signature is made with the
- * JDK provider {@code Ed25519}.
+ * calls, and every byte array of the source that held key material is zeroed before the call returns. The signature is
+ * made with the JDK provider {@code Ed25519}; the key specification and the private key the JCA builds from the seed
+ * copy it into buffers the source does not own, and the source does not promise to clear those copies.
  * <p>
  * The outcomes of {@link #sign(String, byte[])} and {@link #publicKey(String)}:
  * <ul>
@@ -57,7 +58,7 @@ import java.util.Objects;
 public final class FileSigningKeySource implements SigningKeySource {
 
     /** The id of the source, the value {@code signing.key-source} names it by. */
-    public static final String ID = "file";
+    public static final String SOURCE_ID = "file";
 
     /** The detail of a file that cannot be read. */
     static final String UNAVAILABLE = "signing: key unavailable";
@@ -93,7 +94,7 @@ public final class FileSigningKeySource implements SigningKeySource {
 
     @Override
     public String id() {
-        return ID;
+        return SOURCE_ID;
     }
 
     @Override
@@ -261,7 +262,7 @@ public final class FileSigningKeySource implements SigningKeySource {
 
     @Override
     public String toString() {
-        return "FileSigningKeySource[" + ID + "]";
+        return "FileSigningKeySource[" + SOURCE_ID + "]";
     }
 
     /**

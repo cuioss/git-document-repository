@@ -24,7 +24,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 
-import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
@@ -190,7 +189,8 @@ final class StoreClone {
         try {
             var fetched = fetch();
             if (!fetched.isOk()) {
-                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), name(fetched.outcome()));
+                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(),
+                        StoreResult.name(fetched.outcome()));
             }
         }
         // an unchecked failure of one fetch must not end the schedule (GDR-STORE-9)
@@ -198,13 +198,6 @@ final class StoreClone {
         catch (RuntimeException e) {
             LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getSimpleName());
         }
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     /** Subscribes a listener to a branch by its full name; see {@link StoreWriter#subscribe}. */

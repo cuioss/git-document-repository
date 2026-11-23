@@ -73,7 +73,7 @@ final class IdentityTrailers {
         if (!StoreReferences.isPseudonym(pseudonym)) {
             return StoreResult.of(StoreOutcome.MALFORMED, StoreReferences.INVALID_PSEUDONYM);
         }
-        var composed = new StringBuilder(message.replaceFirst("[\\r\\n]+\\z", "")).append("\n\n");
+        var composed = new StringBuilder(withoutTrailingLineBreaks(message)).append("\n\n");
         trailer(composed, ACTOR, pseudonym);
         trailer(composed, ACTOR_ISSUER, claims.issuer());
         trailer(composed, AUTH_TIME,
@@ -83,6 +83,15 @@ final class IdentityTrailers {
             trailer(composed, AUTH_CONTEXT, context);
         }
         return StoreResult.ok(composed.toString());
+    }
+
+    /** The message without its trailing carriage returns and line feeds, in one pass from the end. */
+    private static String withoutTrailingLineBreaks(String message) {
+        int end = message.length();
+        while (end > 0 && (message.charAt(end - 1) == '\n' || message.charAt(end - 1) == '\r')) {
+            end--;
+        }
+        return message.substring(0, end);
     }
 
     /** The value of {@code Auth-Context}; {@code null} when neither {@code acr} nor {@code amr} is present. */

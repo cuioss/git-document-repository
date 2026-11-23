@@ -18,10 +18,12 @@ package de.cuioss.git.document.store;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,9 +144,11 @@ class SourceSignerTest {
         byte[] raw = commit.getRawGpgSignature();
         assertNotNull(raw, "the commit carries a gpgsig header");
         String armored = new String(raw, US_ASCII);
-        var decoded = assertInstanceOf(SshSignatures.Decoding.Decoded.class, SshSignatures.decode(armored),
+        var decoded = assertInstanceOf(SshSignatures.DecodedSignature.class, SshSignatures.decode(armored),
                 "the header decodes");
         assertAll(() -> assertTrue(armored.startsWith("-----BEGIN SSH SIGNATURE-----"), "the armor"),
+                () -> assertArrayEquals(source.key().publicKeyBlob(), decoded.publicKeyBlob(),
+                        "the signature embeds the key of the source"),
                 () -> assertTrue(SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, signedPayload(commit)),
                         "the signature verifies over the commit without its header"),
                 () -> assertEquals(1, source.signCalls(), "the source signed once"),
@@ -207,6 +211,43 @@ class SourceSignerTest {
                 () -> assertEquals(StoreOutcome.REFUSED, failure.outcome(), "refused"),
                 () -> assertEquals("signing: key type not supported", failure.detail(), "the detail"),
                 () -> assertEquals(0, source.signCalls(), "the source was not asked to sign"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-12: a signature made with another key than the public key line is REFUSED and writes nothing")
+    void replacedKey(@InMemory Repository repository) throws Exception {
+        var announced = TestKeys.ed25519();
+        var replacement = TestKeys.ed25519();
+        var source = new SigningWith(replacement, announced.publicKeyLine());
+        var signer = new SourceSigner(source, keyReference(), announced.publicKeyLine());
+
+        var result = write(repository, signer);
+
+        var failure = signer.failure().orElseThrow();
+        assertAll(() -> assertEquals(GitOutcome.FAILED, result.outcome(), "the write failed"),
+                () -> assertEquals(StoreOutcome.REFUSED, failure.outcome(), "refused"),
+                () -> assertEquals(SourceSigner.KEY_MISMATCH, failure.detail(), "the detail"),
+                () -> assertEquals(0, repository.getRefDatabase().getRefs().size(), "no reference moved"),
+                () -> assertNull(result.value(), "no commit id is returned"));
+    }
+
+    /** A signing key source that signs with one key and hands out the public key line of another. */
+    private record SigningWith(TestKeys.Ed25519 key, String line) implements SigningKeySource {
+
+        @Override
+        public String id() {
+            return "signing-with";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return StoreResult.ok(key.sign(data));
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return StoreResult.ok(line);
+        }
     }
 
     /** A signing key source that answers every signing with a fixed result and hands out a fixed public key line. */

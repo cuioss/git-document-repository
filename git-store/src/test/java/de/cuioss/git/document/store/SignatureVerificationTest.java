@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -76,7 +77,8 @@ import org.junit.jupiter.api.io.TempDir;
  * every signed save verifies; an unsigned commit, a signature in another format, a malformed and a tampered signature,
  * an unknown key, a key outside its validity at the committer time and a key whose namespaces exclude {@code git} are
  * listed with their {@link Reason}, in the order of the walk, newest first; an allowed-signers file inside the
- * repository is never consulted; an unknown reference is the passed-on {@code NOT_FOUND}.
+ * repository is never consulted; an unknown reference is the passed-on {@code NOT_FOUND}; a walk that reaches a shallow
+ * commit is {@code INCOMPLETE}.
  * <p>
  * The commit time of the store is fixed per test, and every validity bound lies a day away from it, so the fixture
  * times differ by construction. Principals, paths, contents and pseudonyms are generated; the reasons, the outcomes and
@@ -243,7 +245,7 @@ class SignatureVerificationTest {
 
     @Test
     @DisplayName("GDR-STORE-14: a key valid only after or only before the committer time is OUTSIDE_VALIDITY")
-    void outsideValidity(@Remote LocalRemote remote) throws Exception {
+    void outsideValidity(@Remote LocalRemote remote) {
         try (var store = open(remote)) {
             var saved = store.save();
             var key = store.source().key();
@@ -347,7 +349,25 @@ class SignatureVerificationTest {
     @Test
     @DisplayName("GDR-STORE-14: an unverified commit names a full commit id and a reason")
     void unverifiedCommitChecksItsComponents() {
-        assertThrows(IllegalArgumentException.class, () -> new UnverifiedCommit(word(), Reason.UNSIGNED),
+        var notAnId = word();
+
+        assertThrows(IllegalArgumentException.class, () -> new UnverifiedCommit(notAnId, Reason.UNSIGNED),
                 "not a commit id");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a walk that reaches a shallow commit is INCOMPLETE, so an unchecked ancestor never passes")
+    void shallowBoundary(@Remote LocalRemote remote) throws Exception {
+        try (var store = open(remote)) {
+            commit(remote.repository(), StoreReferences.MAIN, store.now().minus(Duration.ofDays(1)), null);
+            var saved = store.save();
+            var signers = allowed(line("", store.source().key()));
+            remote.repository().getObjectDatabase().setShallowCommits(Set.of(saved));
+
+            var result = SignatureVerification.verify(remote.repository(), StoreReferences.MAIN, signers);
+
+            assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE, StoreReferences.MAIN + ": history is shallow"),
+                    result, "incomplete, not an empty list");
+        }
     }
 }

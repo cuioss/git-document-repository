@@ -36,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 
 import de.cuioss.git.document.core.JGitRepositoryOperations;
@@ -62,8 +63,9 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The main class of the signature verification (GDR-STORE-14) through {@link VerifySignatures#run}: exit code
  * {@code 0} for a reference whose commits all verify, {@code 1} with one line {@code <commit id> <reason>} per
- * unverified commit, {@code 2} for a usage error, an unreadable allowed-signers file, an unknown reference and a
- * directory that is no repository; nothing printed carries key text, a principal or a path.
+ * unverified commit, {@code 2} for a usage error, an argument that is no valid path, an unreadable allowed-signers file,
+ * an unknown reference, a directory that is no repository and a history behind a shallow boundary; nothing printed
+ * carries key text, a principal or a path.
  * <p>
  * Principals, paths, contents and pseudonyms are generated; the exit codes, the reasons and the printed details are the
  * specified vocabulary and kept as literals.
@@ -204,6 +206,36 @@ class VerifySignaturesTest {
 
         assertEquals(new Ran(VerifySignatures.FAILED, "", VerifySignatures.USAGE + System.lineSeparator()), ran,
                 "usage");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: an argument that is no valid path exits 2 with a fixed diagnostic naming no input")
+    void invalidPath() {
+        var invalid = word() + "\0" + word();
+        var valid = temp.resolve(word()).toString();
+
+        var badGitDir = run(invalid, valid, StoreReferences.MAIN);
+        var badAllowedSigners = run(valid, invalid, StoreReferences.MAIN);
+
+        var expected = new Ran(VerifySignatures.FAILED, "", VerifySignatures.INVALID_PATH + System.lineSeparator());
+        assertAll(
+                () -> assertEquals(expected, badGitDir, "the git-dir"),
+                () -> assertEquals(expected, badAllowedSigners, "the allowed-signers file"),
+                () -> assertFalse(badAllowedSigners.err().contains(invalid.substring(0, 8)), "no input"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a history behind a shallow boundary exits 2 with INCOMPLETE, never 0")
+    void shallowHistory(@Remote LocalRemote remote) throws Exception {
+        var key = saveSigned(remote);
+        var allowed = allowed(word() + "@example.org", key);
+        var tip = Objects.requireNonNull(remote.repository().exactRef(StoreReferences.MAIN)).getObjectId();
+        remote.repository().getObjectDatabase().setShallowCommits(Set.of(tip));
+
+        var ran = run(gitDir(remote), allowed.toString(), StoreReferences.MAIN);
+
+        assertEquals(new Ran(VerifySignatures.FAILED, "", "INCOMPLETE " + StoreReferences.MAIN + ": "
+                + SignatureVerification.SHALLOW + System.lineSeparator()), ran, "incomplete");
     }
 
     @Test

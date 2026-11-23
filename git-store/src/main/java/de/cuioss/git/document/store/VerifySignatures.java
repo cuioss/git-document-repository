@@ -15,8 +15,13 @@
  */
 package de.cuioss.git.document.store;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -42,10 +47,12 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
  * <ul>
  * <li>{@code 0} when every commit of every reference is valid,</li>
  * <li>{@code 1} when a commit is not, and</li>
- * <li>{@code 2} for a usage error, a repository that cannot be opened, or any other non-success, printed to standard
- * error as {@code <outcome> <detail>}.</li>
+ * <li>{@code 2} for a usage error, an argument that is no valid path, a repository that cannot be opened, or any other
+ * non-success, printed to standard error as {@code <outcome> <detail>}; a history that reaches a shallow boundary is
+ * such a non-success ({@link StoreOutcome#INCOMPLETE}), so a shallow clone never exits {@code 0}.</li>
  * </ul>
- * Nothing printed names a key, a principal or a path.
+ * Nothing printed names a key, a principal or a path. Standard output and standard error are written in UTF-8 and
+ * flushed per line.
  *
  * @since 0.1
  */
@@ -63,6 +70,9 @@ public final class VerifySignatures {
     /** The usage line printed for a usage error. */
     static final String USAGE = "usage: VerifySignatures <git-dir> <allowed-signers> <reference>...";
 
+    /** The diagnostic of an argument that is no valid path; it names neither the argument nor the path. */
+    static final String INVALID_PATH = "MALFORMED arguments: not a valid path";
+
     private VerifySignatures() {
     }
 
@@ -72,7 +82,12 @@ public final class VerifySignatures {
      * @param args {@code <git-dir> <allowed-signers> <reference>...}
      */
     public static void main(String[] args) {
-        System.exit(run(args, System.out, System.err));
+        int code;
+        try (var out = new PrintStream(new FileOutputStream(FileDescriptor.out), true, UTF_8);
+             var err = new PrintStream(new FileOutputStream(FileDescriptor.err), true, UTF_8)) {
+            code = run(args, out, err);
+        }
+        System.exit(code);
     }
 
     /**
@@ -92,12 +107,21 @@ public final class VerifySignatures {
             err.println(USAGE);
             return FAILED;
         }
-        var allowedSigners = AllowedSigners.read(Path.of(args[1]));
+        Path gitDir;
+        Path allowedSignersFile;
+        try {
+            gitDir = Path.of(args[0]);
+            allowedSignersFile = Path.of(args[1]);
+        } catch (InvalidPathException e) {
+            err.println(INVALID_PATH);
+            return FAILED;
+        }
+        var allowedSigners = AllowedSigners.read(allowedSignersFile);
         if (!allowedSigners.isOk()) {
             return failed(err, allowedSigners);
         }
         List<String> references = Arrays.asList(args).subList(2, args.length);
-        try (Repository repository = new FileRepositoryBuilder().setGitDir(Path.of(args[0]).toFile())
+        try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile())
                      .setFS(new RefusingFS()).setMustExist(true).build()) {
             int code = VERIFIED;
             for (String reference : references) {

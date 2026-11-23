@@ -314,14 +314,50 @@ class ReleaseTest {
     }
 
     private Fixture open(LocalRemote remote) {
+        return open(remote, TestKeys.ed25519().source());
+    }
+
+    private Fixture open(LocalRemote remote, SigningKeySource source) {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var gitDir = temp.resolve(word() + ".git");
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(),
-                TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), source, operations,
+                Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, operations);
+    }
+
+    /** A signing key source over a generated key that can be switched to unavailable. */
+    private static final class SwitchableSource implements SigningKeySource {
+
+        private final TestKeys.Source delegate = TestKeys.ed25519().source();
+        private volatile boolean unavailable;
+
+        void makeUnavailable() {
+            unavailable = true;
+        }
+
+        int publicKeyCalls() {
+            return delegate.publicKeyCalls();
+        }
+
+        @Override
+        public String id() {
+            return "switchable";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return unavailable ? StoreResult.of(StoreOutcome.UNAVAILABLE, "switched off")
+                    : delegate.sign(keyReference, data);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return unavailable ? StoreResult.of(StoreOutcome.UNAVAILABLE, "switched off")
+                    : delegate.publicKey(keyReference);
+        }
     }
 
     /** A per-document repository: {@code main} and a working branch that forked from it, both moved since. */
@@ -554,34 +590,63 @@ class ReleaseTest {
         }
 
         @Test
-        @DisplayName("GDR-STORE-13: a save on main imitating the release subject and its trailers is no release")
-        void saveImitatingReleaseSubjectAndTrailersIsNoRelease(@Remote LocalRemote remote) throws Exception {
+        @DisplayName("GDR-STORE-13: a save imitating the release subject and its trailers is refused; the release merges")
+        void saveImitatingReleaseSubjectAndTrailersIsRefused(@Remote LocalRemote remote) {
             var key = document();
             var forked = fork(remote.repository(), key);
             var author = Author.of(pseudonym());
             var forger = Author.of(pseudonym());
-            var mainContent = entry(collection(Kind.MAIN));
             var crafted = message(key, 1) + "\n\n" + trailers(author.pseudonym());
 
             try (var fixture = open(remote)) {
-                value(fixture.writer().draft(forger, mainContent, List.of(new TreeEdit.Put(
-                        "m" + word() + "/" + word(), content().getBytes(StandardCharsets.UTF_8))), word()));
-                var save = assertInstanceOf(SaveResult.Saved.class,
-                        fixture.writer().save(forger, CLAIMS, mainContent, Map.of(), crafted));
-                var saved = ObjectId.fromString(save.commitId());
+                value(fixture.writer().draft(forger, key, List.of(new TreeEdit.Put(
+                        key.collection().name() + "/" + key.id() + ".json",
+                        content().getBytes(StandardCharsets.UTF_8))), word()));
+                var refused = fixture.writer().save(forger, CLAIMS, key, Map.of(), crafted);
 
                 var release = value(fixture.release(author, key));
 
                 var commit = ObjectId.fromString(release.commitId());
                 assertAll(
-                        () -> assertTrue(parse(remote.repository(), saved).getFullMessage().startsWith(crafted),
-                                "the save carries the crafted subject and the forged trailers"),
-                        () -> assertNotEquals(saved, commit, "the save is not taken as the release"),
+                        () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED,
+                                ExplicitSave.RELEASE_SUBJECT), refused, "the save is refused"),
                         () -> assertEquals(StoreReferences.releaseTag(key, 1), release.tag(), "v1"),
-                        () -> assertEquals(List.of(saved, forked.working()), parents(remote.repository(), commit),
-                                "merged onto the save"),
+                        () -> assertEquals(List.of(forked.main(), forked.working()),
+                                parents(remote.repository(), commit), "a release commit merged onto main"),
                         () -> assertEquals(commit, tip(remote.repository(), release.tag()),
-                                "the tag on the release commit, not on the save"));
+                                "the tag on the release commit"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a save of an entry whose message has the release subject and a body is never tagged")
+        void numberedSaveWithReleaseSubjectAndBodyIsNeverTagged(@Remote LocalRemote remote) {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var path = collection.name() + "/" + key.id() + ".json";
+            var base = files(word());
+            var mainTip = commit(remote.repository(), StoreReferences.MAIN, base);
+            commit(remote.repository(), StoreReferences.target(key), merged(base, files(path)), mainTip);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                value(fixture.writer().draft(author, key, List.of(new TreeEdit.Put(path,
+                        content().getBytes(StandardCharsets.UTF_8))), word()));
+                var refused = fixture.writer().save(author, CLAIMS, key, Map.of(),
+                        message(key, 1) + "\n\n" + word());
+
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED,
+                                ExplicitSave.RELEASE_SUBJECT), refused, "the save is refused"),
+                        () -> assertEquals(List.of(mainTip), parents(remote.repository(), commit),
+                                "a new release commit onto main"),
+                        () -> assertTrue(parse(remote.repository(), commit).getFullMessage()
+                                .startsWith(message(key, 1) + "\n\n" + "Actor: "), "the release carries the trailers"),
+                        () -> assertEquals(commit, tip(remote.repository(), release.tag()),
+                                "the tag on the release commit"));
             }
         }
 
@@ -650,6 +715,33 @@ class ReleaseTest {
                         () -> assertEquals(tag, pushes.getLast().remoteRef(), "the push of the tag"),
                         () -> assertNothingLeaks(incomplete.detail(),
                                 List.of(key.collection().name() + "/" + key.id() + ".json", author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-12: a repeat that only pushes the missing tag succeeds with an unavailable signing source")
+        void tagOnlyRecoveryNeedsNoSigning(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            fork(remote.repository(), key);
+            var tag = StoreReferences.releaseTag(key, 1);
+            var author = Author.of(pseudonym());
+            var source = new SwitchableSource();
+
+            try (var fixture = open(remote, source)) {
+                fixture.operations().failPushTo(tag, GitOutcome.UNREACHABLE);
+                var incomplete = fixture.release(author, key);
+                var mainTip = requiredTip(remote.repository(), StoreReferences.MAIN);
+                source.makeUnavailable();
+                int publicKeyCalls = source.publicKeyCalls();
+
+                var repeated = fixture.release(author, key);
+
+                assertAll(
+                        () -> assertEquals(StoreOutcome.INCOMPLETE, incomplete.outcome(), "first incomplete"),
+                        () -> assertEquals(StoreResult.ok(new Release(tag, mainTip.name(), 1)), repeated,
+                                "the tag pushed without signing"),
+                        () -> assertEquals(mainTip, tip(remote.repository(), tag), "the tag on the remote"),
+                        () -> assertEquals(publicKeyCalls, source.publicKeyCalls(), "the source was not asked"));
             }
         }
 

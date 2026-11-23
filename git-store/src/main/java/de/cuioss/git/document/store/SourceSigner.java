@@ -44,12 +44,19 @@ import org.jspecify.annotations.Nullable;
  * A non-success of the source is captured and surfaces to JGit as an {@link IOException} whose message carries no key
  * reference, no key material and no detail of the source (GDR-NFR-3); JGit reports the write as failed, and
  * {@link #failure()} hands the captured outcome to the commit path, so it can report {@link StoreOutcome#REFUSED} or
- * {@link StoreOutcome#UNAVAILABLE} instead. An instance serves one save or release on one thread.
+ * {@link StoreOutcome#UNAVAILABLE} instead. A signature of the source is verified against the public key line given
+ * at construction before it is encoded: a key replaced between the read of the public key and the signing (the source
+ * {@code file} reads its key file on every call) is captured as {@link StoreOutcome#REFUSED} with the detail
+ * {@value #KEY_MISMATCH}, so no commit carries a key that did not make its signature. An instance serves one save or
+ * release on one thread.
  */
 final class SourceSigner implements Signer {
 
     /** The message of every signing failure: names neither the key reference nor the source's detail. */
     static final String FAILURE_MESSAGE = "signing: the signing key source did not sign";
+
+    /** The detail of a signature that does not verify with the public key read before the operation. */
+    static final String KEY_MISMATCH = "signing: signature does not match the public key";
 
     private final SigningKeySource source;
     private final String keyReference;
@@ -68,7 +75,7 @@ final class SourceSigner implements Signer {
         this.source = Objects.requireNonNull(source, "source");
         this.keyReference = Objects.requireNonNull(keyReference, "keyReference");
         this.publicKeyBlob = SshSignatures.parsePublicKeyLine(Objects.requireNonNull(publicKeyLine, "publicKeyLine"))
-                instanceof SshSignatures.KeyLine.Accepted accepted ? accepted.blob() : null;
+                instanceof SshSignatures.AcceptedKey accepted ? accepted.blob() : null;
     }
 
     @Override
@@ -83,6 +90,12 @@ final class SourceSigner implements Signer {
         byte[] signature = signed.value();
         if (!signed.isOk() || signature == null) {
             failure = new StoreResult<>(signed.outcome(), null, signed.detail());
+            throw new IOException(FAILURE_MESSAGE);
+        }
+        var made = new SshSignatures.DecodedSignature(publicKeyBlob, SshSignatures.NAMESPACE_GIT,
+                SshSignatures.HASH_SHA512, SshSignatures.KEY_TYPE, signature);
+        if (!SshSignatures.verify(made, SshSignatures.NAMESPACE_GIT, data)) {
+            failure = StoreResult.of(StoreOutcome.REFUSED, KEY_MISMATCH);
             throw new IOException(FAILURE_MESSAGE);
         }
         return new GpgSignature(
