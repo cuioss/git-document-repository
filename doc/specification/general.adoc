@@ -21,10 +21,13 @@ three service interfaces, whose providers are planned (xref:git-store.adoc[`git-
 <<GDR-GEN-1>> is implemented; <<GDR-NFR-1>> is covered by `IndexFootprintTest` of `git-store`; <<GDR-NFR-2>> and the
 part of <<GDR-NFR-3>> that the write path, the release, the index and the listeners touch are covered by tests of
 `git-store` (`ConcurrentWritersTest`, `WritePathSecretsTest`, and the log and detail assertions of `SaveStepTest`,
-`ReleaseTest`, `StoreIndexTest` and `CommitListenerTest`); and for <<GDR-NFR-4>> `git-core` and `git-forms` ship their
-native-image metadata, which this repository does not verify yet. `git-forms` exists with its outcome list and result
-(<<GDR-GEN-3>>) and implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1], xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]
-and xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements are planned. Every other requirement of the
+`ReleaseTest`, `StoreIndexTest` and `CommitListenerTest`), and the part that schema validation and the nesting limit of
+`git-forms` touch by its tests `ValidationSecretsTest` and `NestingDepthTest`; and for <<GDR-NFR-4>> `git-core` and
+`git-forms` ship their native-image metadata, which this repository does not verify in a native image yet. `git-forms`
+holds the kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome
+list and result (<<GDR-GEN-3>>), and so implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1],
+xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2] and xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements
+are planned. Every other requirement of the
 libraries is planned, and `git-timestamp` and `git-directory` are not yet created.
 
 [#GDR-GEN-1]
@@ -378,7 +381,11 @@ link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/ha
 `git-forms`, so none of the library's JSON providers is loaded, and neither library nor the code of `git-forms` uses
 reflection on these paths: snakeyaml-engine is used through its event parser and core-schema resolver only.
 `NativeImageMetadataTest` of `git-forms` asserts that the file is on the class path and that every listed resource and
-bundle resolves.
+bundle resolves; it also runs `FormSchema.parse`, `validate`, `required` and `YamlReader` under a class loader that
+loads `git-forms`, json-schema and snakeyaml-engine child-first and records every resource they request, and asserts
+that every recorded resource of `git-forms` and json-schema is listed, the message bundle and `draft2020-12.json` among
+them, that snakeyaml-engine is asked for no resource, and that no class of snakeyaml-engine the reads load references a
+reflection API.
 
 This repository does not verify the requirement yet: until a native test lane exists here (open), only a consuming
 application's native build verifies it, the first being the native build of

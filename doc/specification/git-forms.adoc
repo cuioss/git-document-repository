@@ -5,10 +5,13 @@
 :source-highlighter: highlight.js
 
 `git-forms` (module `de.cuioss.git.document.forms`, one package of the same name) is the layer of schema-driven
-documents on top of `git-store`, on which alone it depends. It holds so far its closed outcome list `FormsOutcome`, its
-result `FormsResult` and its log messages (xref:general.adoc#GDR-GEN-3[GDR-GEN-3],
-xref:general.adoc#GDR-GEN-4[GDR-GEN-4]); of the requirements below, <<GDR-FORMS-1>>, <<GDR-FORMS-2>> and
-<<GDR-FORMS-3>> are implemented and the others are planned. Rationale:
+documents on top of `git-store`, on which alone it depends. It holds the kinds of documents as configuration
+(<<GDR-FORMS-1>>), schema validation (<<GDR-FORMS-2>>) and the data layout with the codecs of the YAML data and the
+counter file (<<GDR-FORMS-3>>), with its closed outcome list `FormsOutcome`, its result `FormsResult` and its log
+messages (xref:general.adoc#GDR-GEN-3[GDR-GEN-3], xref:general.adoc#GDR-GEN-4[GDR-GEN-4]). The code returns the
+outcomes `OK`, `INVALID` and `MANDATORY_FIELDS_MISSING` and passes on the outcomes of the store, `MALFORMED` among them;
+`MISMATCH`, `TRANSITION_REFUSED` and `STEP_UP_REQUIRED` belong to the planned requirements. Of the requirements below,
+<<GDR-FORMS-1>>, <<GDR-FORMS-2>> and <<GDR-FORMS-3>> are implemented and the others are planned. Rationale:
 xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:
