@@ -216,12 +216,13 @@ class YamlReaderTest {
         void nullText() {
             String nullText = nullValue();
             var notMapping = marker();
+            var text = name();
 
             assertAll(
                     () -> assertThrows(NullPointerException.class, () -> reader.read(nullText), "a null text"),
                     () -> assertThrows(NullPointerException.class, () -> reader.readMapping(nullText, notMapping),
                             "a null text of a mapping"),
-                    () -> assertThrows(NullPointerException.class, () -> reader.readMapping(name(), nullText),
+                    () -> assertThrows(NullPointerException.class, () -> reader.readMapping(text, nullText),
                             "a null detail"));
         }
     }

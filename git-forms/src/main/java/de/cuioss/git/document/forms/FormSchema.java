@@ -122,7 +122,7 @@ public final class FormSchema {
      * The keywords whose value is a list of sub-schemas; derived from the meta-schema as {@link #SCHEMA_MAPS}
      * describes.
      */
-    static final Set<String> SCHEMA_LISTS = Set.of("allOf", "anyOf", "oneOf", PREFIX_ITEMS);
+    static final Set<String> SCHEMA_LISTS = Set.of(ALL_OF, "anyOf", "oneOf", PREFIX_ITEMS);
 
     /** The keywords that reference a schema; within one file only. */
     static final Set<String> REFERENCES = Set.of("$ref", "$dynamicRef");
@@ -400,20 +400,25 @@ public final class FormSchema {
             }
             found.add(schema);
             for (Map.Entry<?, ?> entry : schema.entrySet()) {
-                Object keyword = entry.getKey();
-                if (PROPERTIES.equals(keyword) && entry.getValue() instanceof Map<?, ?> properties) {
-                    // a set keeps the first position of a name
-                    properties.keySet().forEach(name -> names.add((String) name));
-                } else if (ALL_OF.equals(keyword) && entry.getValue() instanceof List<?> branches) {
-                    for (Object branch : branches) {
-                        if (branch instanceof Map<?, ?> branchSchema) {
-                            walk(branchSchema, seen, found, names);
-                        }
+                walkKeyword(schema, entry.getKey(), entry.getValue(), seen, found, names);
+            }
+        }
+
+        /** Follows one keyword of a schema: {@code properties} names, the branches of {@code allOf}, a {@code $ref}. */
+        private void walkKeyword(Map<?, ?> schema, Object keyword, @Nullable Object value, Set<Object> seen,
+                List<Map<?, ?>> found, Set<String> names) {
+            if (PROPERTIES.equals(keyword) && value instanceof Map<?, ?> properties) {
+                // a set keeps the first position of a name
+                properties.keySet().forEach(name -> names.add((String) name));
+            } else if (ALL_OF.equals(keyword) && value instanceof List<?> branches) {
+                for (Object branch : branches) {
+                    if (branch instanceof Map<?, ?> branchSchema) {
+                        walk(branchSchema, seen, found, names);
                     }
-                } else if (REF.equals(keyword) && entry.getValue() instanceof String reference && resources != null
-                        && resources.resolve(schema, reference) instanceof Map<?, ?> target) {
-                    walk(target, seen, found, names);
                 }
+            } else if (REF.equals(keyword) && value instanceof String reference && resources != null
+                    && resources.resolve(schema, reference) instanceof Map<?, ?> target) {
+                walk(target, seen, found, names);
             }
         }
 

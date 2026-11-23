@@ -159,7 +159,7 @@ class NativeImageMetadataTest {
     @Test
     @DisplayName("GDR-NFR-4: every resource parse, validate and required load from git-forms and json-schema is listed")
     void listsEveryLoadedResource() throws Exception {
-        var recording = record();
+        var recording = recordLoads();
         var literals = matches(LITERAL_PATTERN);
         var bundles = matches(QUALIFIED_NAME);
         Set<String> loaded = new LinkedHashSet<>(recording.resourcesOf(Origin.FORMS));
@@ -176,7 +176,7 @@ class NativeImageMetadataTest {
     @Test
     @DisplayName("GDR-NFR-4: YamlReader requests no resource of snakeyaml-engine and reaches it without reflection")
     void yamlReaderNeedsNoMetadata() throws Exception {
-        var recording = record();
+        var recording = recordLoads();
         var yamlClasses = recording.classesOf(Origin.YAML);
 
         assertAll("snakeyaml-engine under YamlReader",
@@ -211,7 +211,7 @@ class NativeImageMetadataTest {
      * {@link YamlReader} on YAML beyond JSON, all under a fresh recording class loader that is also the context class
      * loader, and returns what was requested.
      */
-    private static Recording record() throws Exception {
+    private static Recording recordLoads() throws Exception {
         var loader = new RecordingLoader();
         Thread thread = Thread.currentThread();
         ClassLoader context = thread.getContextClassLoader();
