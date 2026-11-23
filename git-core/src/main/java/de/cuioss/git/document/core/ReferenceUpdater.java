@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 
 import de.cuioss.tools.logging.CuiLogger;
@@ -59,11 +60,25 @@ import org.jspecify.annotations.Nullable;
  * {@link BatchRefUpdate} that replaces or deletes the symbolic reference only while every link of its chain still
  * points where it did and its base reference still points at the expected id; a dangling symbolic reference, which
  * the backend would replace for the zero expected id even after its target was written, is replaced by that batch
- * before any {@link RefUpdate} runs, and only while its base reference is still absent. A batch that fails on an I/O
- * error is a failure, not a lost race. Neither path drops the expected-id check.
+ * before any {@link RefUpdate} runs, and only while its base reference is still absent; the file backend refuses that
+ * batch, and the update falls through to the {@link RefUpdate}, which compares under the reference's lock. A batch
+ * that fails on an I/O error is a failure, not a lost race. Neither path drops the expected-id check.
  * <p>
  * {@link #compareAndDelete(Repository, String, String, int)} deletes a reference under the same lock-held comparison;
  * there the force flag is set, because JGit rejects a delete without it, and the expected id alone guards the delete.
+ * <p>
+ * Every entry point checks the reference name before it reads or writes anything: a name that JGit 7.8.0
+ * {@code Repository.isValidRefName} rejects (a component {@code ..}, a name of one component such as {@code HEAD}, a
+ * name ending {@code .lock}, among others) is {@link GitOutcome#REFUSED_BY_POLICY} before any file is touched. A name
+ * read as absent that overlaps an existing reference ({@code RefDatabase.isNameConflicting}: {@code refs/heads/a/b}
+ * while {@code refs/heads/a} exists, or the reverse) is {@link GitOutcome#REJECTED} with the detail
+ * {@code refName: name conflict}: a compare-and-swap decides it after it read the reference and before the operation
+ * runs, a compare-and-delete in the re-read that follows its {@link RefUpdate.Result#LOCK_FAILURE}. Without that
+ * decision JGit 7.8.0 {@code RefUpdate.updateImpl} answers a name conflict with {@code LOCK_FAILURE} (lines 714-718),
+ * which the loop would retry as a lost race.
+ * <p>
+ * Code of the caller runs on the caller's contract: an exception the {@link TreeOperation} throws, and a
+ * {@code null} list or element it returns, propagates unchanged; the reference is not touched.
  * <p>
  * A detail names the reference and the {@link RefUpdate.Result}, never content or an identity (GDR-NFR-3).
  *
@@ -95,7 +110,7 @@ public final class ReferenceUpdater {
      * Writes the next commit of a reference and moves the reference to it, provided no other writer moved the
      * reference in between; a lost race is retried until the attempts are used up.
      * <p>
-     * A symbolic {@code refName} is followed, as git follows one when it commits on {@code HEAD}: JGit 7.8.0
+     * A symbolic {@code refName} is followed, as git follows {@code HEAD} when it commits: JGit 7.8.0
      * {@code Repository.updateRef(refName)} locks and moves the base reference, compares the expected id with that base
      * reference's id, and keeps the symbolic reference pointing at it. The named reference thus reads as the new
      * commit afterwards, which is what the result reports.
@@ -104,22 +119,31 @@ public final class ReferenceUpdater {
      * <ul>
      * <li>{@link GitOutcome#OK}: the reference was created ({@link RefUpdate.Result#NEW}) or moved
      * ({@link RefUpdate.Result#FAST_FORWARD}); the value is the full id of the new commit;</li>
+     * <li>{@link GitOutcome#REFUSED_BY_POLICY}: {@code refName} is no valid reference name (JGit 7.8.0
+     * {@code Repository.isValidRefName}); detail {@code refName: not a valid reference name}. Nothing is read or
+     * written;</li>
      * <li>{@link GitOutcome#CONFLICT}: every attempt lost its race ({@link RefUpdate.Result#LOCK_FAILURE}); the reference
      * is left as the concurrent writers left it;</li>
      * <li>{@link GitOutcome#FAILED}: an I/O failure, including {@link RefUpdate.Result#IO_FAILURE}, which is neither
      * retried nor reported as a conflict;</li>
-     * <li>{@link GitOutcome#REJECTED}: the update ended in any other {@link RefUpdate.Result}; the detail names it;</li>
+     * <li>{@link GitOutcome#REJECTED}: the reference does not exist and its name conflicts with an existing one (detail
+     * {@code refName: name conflict}, decided before the operation runs), the reference points at no commit, e.g. at
+     * an annotated tag (the detail names the reference), or the update ended in any other {@link RefUpdate.Result}
+     * (the detail names it);</li>
      * <li>the result of the {@link InCoreWriter} when it did not write the commit, e.g. {@link GitOutcome#NOT_FOUND}
      * for an edit with an invalid path; the reference is not touched.</li>
      * </ul>
+     * <p>
+     * An exception of the {@code operation}, or a {@code null} list or element it returns, propagates unchanged.
      *
      * @param repository the repository
      * @param refName    the full name of the reference, e.g. {@code refs/heads/main}
      * @param metadata   author, committer, message and signing of every commit written
      * @param operation  derives the edits from the reference's current tree; called once per attempt
-     * @param attempts   the total number of tries, at least 1
+     * @param attempts   the total number of tries, at least 1; {@link Integer#MAX_VALUE} included
      * @return the full id of the commit the reference now points at, or the outcome that prevented it
-     * @throws NullPointerException     if an argument is {@code null}
+     * @throws NullPointerException     if an argument is {@code null}, or the operation returns {@code null} or a
+     *                                  list with a {@code null} element
      * @throws IllegalArgumentException if {@code attempts} is less than 1
      */
     public GitResult<String> compareAndSwap(Repository repository, String refName, CommitMetadata metadata,
@@ -162,16 +186,17 @@ public final class ReferenceUpdater {
      * {@link GitOutcome#FAILED}, without a retry.
      * <p>
      * The outcomes are those of {@code compareAndSwap}: {@link GitOutcome#OK} with the full id of the new commit,
+     * {@link GitOutcome#REFUSED_BY_POLICY} for an invalid reference name, before anything is read,
      * {@link GitOutcome#CONFLICT} after a {@link RefUpdate.Result#LOCK_FAILURE} in every attempt,
      * {@link GitOutcome#FAILED} for an I/O failure, {@link RefUpdate.Result#IO_FAILURE} included,
-     * {@link GitOutcome#REJECTED} for any other {@link RefUpdate.Result}, and the writer's result when it did not
-     * write the commit.
+     * {@link GitOutcome#REJECTED} for a name conflict ({@code refName: name conflict}), a reference at no commit or any
+     * other {@link RefUpdate.Result}, and the writer's result when it did not write the commit.
      *
      * @param repository the repository
      * @param refName    the full name of the reference, e.g. {@code refs/notes/commits}
      * @param metadata   author, committer, message and signing of every commit written
      * @param source     derives the finished tree from the reference's current tree; called once per attempt
-     * @param attempts   the total number of tries, at least 1
+     * @param attempts   the total number of tries, at least 1; {@link Integer#MAX_VALUE} included
      * @return the full id of the commit the reference now points at, or the outcome that prevented it
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if {@code attempts} is less than 1
@@ -195,11 +220,24 @@ public final class ReferenceUpdater {
      */
     private static GitResult<String> swap(Repository repository, String refName, int attempts, boolean detach,
             NextCommit next) {
+        if (!Repository.isValidRefName(refName)) {
+            return invalidName();
+        }
         try {
-            for (int attempt = 1; attempt <= attempts; attempt++) {
+            for (int attempt = 0; attempt < attempts; attempt++) {
                 Ref current = repository.exactRef(refName);
+                if (current == null && isNameConflicting(repository, refName)) {
+                    return nameConflict();
+                }
                 @Nullable ObjectId expected = current == null ? null : current.getObjectId();
-                @Nullable RevCommit parent = expected == null ? null : parseCommit(repository, expected);
+                @Nullable RevCommit parent = null;
+                if (expected != null) {
+                    Optional<RevCommit> commit = parseCommit(repository, expected);
+                    if (commit.isEmpty()) {
+                        return GitResult.of(GitOutcome.REJECTED, refName + ": points at no commit");
+                    }
+                    parent = commit.get();
+                }
                 GitResult<String> written = next.write(parent);
                 if (!written.isOk()) {
                     return written;
@@ -211,7 +249,7 @@ public final class ReferenceUpdater {
                         return GitResult.ok(commit.name());
                     }
                     case LOCK_FAILURE -> LOGGER.debug("Compare-and-swap of %s lost its race, attempt %s of %s",
-                            refName, attempt, attempts);
+                            refName, attempt + 1, attempts);
                     case IO_FAILURE -> {
                         return GitResult.of(GitOutcome.FAILED, refName + ": " + result);
                     }
@@ -252,19 +290,25 @@ public final class ReferenceUpdater {
      * <ul>
      * <li>{@link GitOutcome#OK}: the reference was deleted ({@link RefUpdate.Result#FORCED}); the value is the deleted
      * id, the expected id;</li>
+     * <li>{@link GitOutcome#REFUSED_BY_POLICY}: {@code refName} is no valid reference name (JGit 7.8.0
+     * {@code Repository.isValidRefName}); detail {@code refName: not a valid reference name}. Nothing is read or
+     * written;</li>
      * <li>{@link GitOutcome#NOT_FOUND}: {@code expectedOldId} is no full commit id; the detail names the field. Nothing
      * is read or written;</li>
      * <li>{@link GitOutcome#CONFLICT}: the reference moved away from the expected id or is gone, or every attempt met a
      * held lock; the reference is left as the other writer left it;</li>
      * <li>{@link GitOutcome#FAILED}: an I/O failure, including {@link RefUpdate.Result#IO_FAILURE}, which is neither
      * retried nor reported as a conflict;</li>
-     * <li>{@link GitOutcome#REJECTED}: the delete ended in any other {@link RefUpdate.Result}; the detail names it.</li>
+     * <li>{@link GitOutcome#REJECTED}: the reference does not exist and its name conflicts with an existing one (detail
+     * {@code refName: name conflict}, decided in the re-read after the {@code LOCK_FAILURE} JGit answers it with,
+     * never retried), or the delete ended in any other
+     * {@link RefUpdate.Result}; the detail names it.</li>
      * </ul>
      *
      * @param repository    the repository
      * @param refName       the full name of the reference, e.g. {@code refs/heads/main}
      * @param expectedOldId the full id of the commit the reference must point at to be deleted
-     * @param attempts      the total number of tries, at least 1
+     * @param attempts      the total number of tries, at least 1; {@link Integer#MAX_VALUE} included
      * @return the deleted id, or the outcome that prevented the delete
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if {@code attempts} is less than 1
@@ -275,12 +319,15 @@ public final class ReferenceUpdater {
         Objects.requireNonNull(refName, REF_NAME);
         Objects.requireNonNull(expectedOldId, "expectedOldId");
         requireAttempts(attempts);
+        if (!Repository.isValidRefName(refName)) {
+            return invalidName();
+        }
         if (!GitIdentity.isFullCommitId(expectedOldId)) {
             return GitResult.of(GitOutcome.NOT_FOUND, "expectedOldId: not a full commit id");
         }
         ObjectId expected = ObjectId.fromString(expectedOldId);
         try {
-            for (int attempt = 1; attempt <= attempts; attempt++) {
+            for (int attempt = 0; attempt < attempts; attempt++) {
                 RefUpdate.Result result = delete(repository, refName, expected);
                 switch (result) {
                     case FORCED -> {
@@ -288,12 +335,15 @@ public final class ReferenceUpdater {
                     }
                     case LOCK_FAILURE -> {
                         Ref current = repository.exactRef(refName);
+                        if (current == null && isNameConflicting(repository, refName)) {
+                            return nameConflict();
+                        }
                         if (current == null || !expected.equals(current.getObjectId())) {
                             return GitResult.of(GitOutcome.CONFLICT,
                                     refName + ": " + result + ", the reference moved or is gone");
                         }
-                        LOGGER.debug("Compare-and-delete of %s met a held lock, attempt %s of %s", refName, attempt,
-                                attempts);
+                        LOGGER.debug("Compare-and-delete of %s met a held lock, attempt %s of %s", refName,
+                                attempt + 1, attempts);
                     }
                     case IO_FAILURE -> {
                         return GitResult.of(GitOutcome.FAILED, refName + ": " + result);
@@ -332,12 +382,45 @@ public final class ReferenceUpdater {
         return result;
     }
 
-    private static RevCommit parseCommit(Repository repository, ObjectId id) throws IOException {
+    /**
+     * Parses the object a reference points at as it is; empty when it is no commit. JGit 7.8.0
+     * {@code RevWalk.parseCommit} peels an annotated tag ({@code peel(parseAny(id))}), so it would write the next commit
+     * on the tagged commit and move the reference away from the tag; {@code parseAny} does not peel.
+     */
+    private static Optional<RevCommit> parseCommit(Repository repository, ObjectId id) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
-            return walk.parseCommit(id);
+            return walk.parseAny(id) instanceof RevCommit commit ? Optional.of(commit) : Optional.empty();
         }
     }
 
+    /**
+     * Whether the name of a reference read as absent overlaps an existing reference. JGit 7.8.0
+     * {@code RefUpdate.updateImpl} answers such a name with {@link RefUpdate.Result#LOCK_FAILURE}, which the loop could
+     * not tell from a lost race, so the caller asks before it runs the operation or after the delete it re-reads.
+     */
+    private static boolean isNameConflicting(Repository repository, String refName) throws IOException {
+        return repository.getRefDatabase().isNameConflicting(refName);
+    }
+
+    /** The refusal of a reference name JGit 7.8.0 {@code Repository.isValidRefName} rejects; names the field only. */
+    private static GitResult<String> invalidName() {
+        return GitResult.of(GitOutcome.REFUSED_BY_POLICY, REF_NAME + ": not a valid reference name");
+    }
+
+    /** The result of a reference name that conflicts with an existing reference. */
+    private static GitResult<String> nameConflict() {
+        return GitResult.of(GitOutcome.REJECTED, REF_NAME + ": name conflict");
+    }
+
+    /**
+     * Creates or moves the reference to the new commit under the expected id.
+     * <p>
+     * For a dangling symbolic reference replaced itself, the guarded batch decides first; a backend that refuses the
+     * batch, the file backend ({@code PackedBatchRefUpdate} refuses a symbolic command in an atomic batch, JGit
+     * 7.8.0), falls through to {@code update.update()}, where {@code RefDirectoryUpdate} compares the zero expected id
+     * with the id it reads under the reference's lock. That fall-through is kept on purpose: the file backend decides
+     * there under its own lock, so no comparison is dropped.
+     */
     private static RefUpdate.Result update(Repository repository, String refName, boolean detach,
             @Nullable ObjectId expected, ObjectId commit) throws IOException {
         RefUpdate update = repository.updateRef(refName, detach);
@@ -374,12 +457,15 @@ public final class ReferenceUpdater {
     }
 
     /**
-     * Whether a detaching update of a symbolic reference lost its race only because the backend compared the expected
-     * id with no id at all. JGit 7.8.0 {@code DfsRefUpdate.tryLock(false)} sets the old id of a symbolic reference to
-     * {@code null}, so {@code RefUpdate.updateImpl} compares the expected id with {@link ObjectId#zeroId()} and reports
-     * {@link RefUpdate.Result#LOCK_FAILURE} whatever the reference points at; {@code RefDirectoryUpdate.tryLock} instead
-     * re-reads the reference under its lock and keeps the resolved id, so there a {@code LOCK_FAILURE} with an old id
-     * is a real one.
+     * Whether a detaching update of a symbolic reference ended in {@link RefUpdate.Result#LOCK_FAILURE} with no old id,
+     * so that the guarded batch has to decide. JGit 7.8.0 {@code DfsRefUpdate.tryLock(false)} sets the old id of a
+     * symbolic reference to {@code null}, so {@code RefUpdate.updateImpl} compares the expected id with
+     * {@link ObjectId#zeroId()} and reports {@code LOCK_FAILURE} whatever the reference points at.
+     * {@code RefDirectoryUpdate.tryLock} re-reads the reference under its lock and keeps the resolved id, so on the file
+     * backend a {@code LOCK_FAILURE} after a comparison has an old id and is a real one; but when another writer holds
+     * the lock, {@code RefDirectoryUpdate.tryLock} returns {@code false} before it calls {@code setOldObjectId}, so the
+     * old id is unset there too. That case also reaches the batch, which the file backend refuses
+     * ({@code PackedBatchRefUpdate}), and it is reported as the same {@code LOCK_FAILURE}, a lost race.
      */
     private static boolean unresolvedUnderLock(RefUpdate update, RefUpdate.Result result) {
         return result == RefUpdate.Result.LOCK_FAILURE && update.getRef().isSymbolic()

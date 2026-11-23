@@ -44,6 +44,8 @@ import java.util.stream.Stream;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.errors.LargeObjectException;
+import org.eclipse.jgit.internal.storage.dfs.DfsRepository;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -487,6 +489,77 @@ class GitNotesTest {
             } finally {
                 pool.shutdownNow();
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("name conflicts and large trees")
+    class ConflictsAndLargeTrees {
+
+        /**
+         * A stream threshold between the size of a commit (a few hundred bytes) and the size of the root tree of a
+         * fanned-out note map (256 entries of about 29 bytes each), so only the notes tree is a large object.
+         */
+        private static final int STREAM_THRESHOLD = 4096;
+
+        @Test
+        @DisplayName("GDR-CORE-10: a notes reference nested below an existing one is rejected, not a lost race")
+        void nestedBelowExisting(@InMemory Repository repository) throws Exception {
+            var existing = notesRef();
+            var commit = TestCommits.commit(repository, null);
+            var existingHead = ObjectId.fromString(write(repository, existing, commit, noteContent()));
+            var nested = existing + "/" + TestCommits.name();
+
+            var result = notes.write(repository, nested, commit.name(), noteContent(), metadata(), 3);
+
+            assertAll(
+                    () -> assertEquals(GitResult.of(GitOutcome.REJECTED, "refName: name conflict"), result,
+                            "the name conflict is rejected, never a conflict after every attempt"),
+                    () -> assertNull(repository.exactRef(nested), "the nested notes reference is not created"),
+                    () -> assertEquals(existingHead, refId(repository, existing),
+                            "the existing notes reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-10: a notes reference that is the directory of an existing one is rejected")
+        void directoryOfExisting(@InMemory Repository repository) throws Exception {
+            var directory = notesRef();
+            var nested = directory + "/" + TestCommits.name();
+            var commit = TestCommits.commit(repository, null);
+            var nestedHead = ObjectId.fromString(write(repository, nested, commit, noteContent()));
+
+            var result = notes.write(repository, directory, commit.name(), noteContent(), metadata(), 3);
+
+            assertAll(
+                    () -> assertEquals(GitResult.of(GitOutcome.REJECTED, "refName: name conflict"), result,
+                            "the name conflict is rejected"),
+                    () -> assertNull(repository.exactRef(directory), "the notes reference is not created"),
+                    () -> assertEquals(nestedHead, refId(repository, nested), "the nested reference is unchanged"));
+        }
+
+        /**
+         * A notes tree too large to be read in one piece, through the real JGit path: the in-memory database streams
+         * every object at or above its reader's stream threshold ({@code DfsReaderOptions.setStreamFileThreshold}), and
+         * JGit 7.8.0 {@code NoteMap.readTree} parses the tree through {@code CanonicalTreeParser.reset}, whose
+         * {@code ObjectLoader.getCachedBytes()} throws a {@code LargeObjectException} for a streamed object.
+         */
+        @Test
+        @DisplayName("GDR-CORE-10: a notes tree too large to be read in one piece is a failure naming the class")
+        void largeNotesTree(@InMemory Repository repository) throws Exception {
+            var notesRef = notesRef();
+            var noted = TestCommits.commit(repository, null);
+            var other = TestCommits.commit(repository, null);
+            fannedOutNotes(repository, notesRef, noted);
+            var head = refId(repository, notesRef);
+            ((DfsRepository) repository).getObjectDatabase().getReaderOptions()
+                    .setStreamFileThreshold(STREAM_THRESHOLD);
+
+            var result = notes.write(repository, notesRef, other.name(), noteContent(), metadata(), 2);
+
+            assertAll(
+                    () -> assertEquals(GitResult.of(GitOutcome.FAILED, LargeObjectException.class.getSimpleName()),
+                            result, "the large tree is a failure naming the exception class"),
+                    () -> assertEquals(head, refId(repository, notesRef), "the notes reference is unchanged"));
         }
     }
 

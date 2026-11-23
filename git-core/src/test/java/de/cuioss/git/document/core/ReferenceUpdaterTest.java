@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +42,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -63,6 +65,7 @@ import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.BatchRefUpdate;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
@@ -73,6 +76,7 @@ import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.ReflogReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.ReceiveCommand;
 import org.jspecify.annotations.Nullable;
@@ -999,6 +1003,212 @@ class ReferenceUpdaterTest {
                             "a negative number of attempts is rejected"),
                     () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
         }
+    }
+
+    @Nested
+    @DisplayName("guards of the reference name, the attempts and the caller's code")
+    class Guards {
+
+        /** A reference name that climbs out of the git directory, which JGit 7.8.0 isValidRefName rejects. */
+        private static final String ESCAPING = "refs/heads/../../../outside/x";
+
+        @Test
+        @DisplayName("GDR-CORE-5: Integer.MAX_VALUE attempts are a bound like any other, the loop retries every lost race")
+        void maximalAttempts(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            TestCommits.commitOn(repository, refName);
+            int lostRaces = 5;
+            var calls = new ArrayList<ObjectId>();
+            var end = new IllegalStateException("the double ends the loop");
+            TreeOperation racing = tree -> {
+                if (calls.size() == lostRaces) {
+                    throw end;
+                }
+                calls.add(commitOnRef(repository, refName));
+                return List.of(put(TestCommits.name(), content()));
+            };
+            var metadata = metadata();
+
+            var thrown = assertThrows(IllegalStateException.class,
+                    () -> updater.compareAndSwap(repository, refName, metadata, racing, Integer.MAX_VALUE),
+                    "the loop runs until the double ends it");
+
+            assertAll(
+                    () -> assertSame(end, thrown, "the double's exception ends the loop"),
+                    () -> assertEquals(lostRaces, calls.size(),
+                            "every one of the 5 lost races is retried, none ends the loop"),
+                    () -> assertEquals(calls.getLast(), refId(repository, refName),
+                            "the reference stays at the last competing commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a reference whose name conflicts with an existing one is rejected, never retried")
+        void nameConflict(@InMemory Repository repository) throws Exception {
+            var existing = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, existing);
+            var nested = existing + "/" + TestCommits.name();
+            var operation = new Recording();
+            var source = new RecordingSource();
+            var expected = initial.name();
+
+            var swapped = updater.compareAndSwap(repository, nested, metadata(), operation, 3);
+            var swappedTree = updater.compareAndSwapTree(repository, nested, metadata(), source, 3);
+            var deleted = updater.compareAndDelete(repository, nested, expected, 3);
+
+            assertAll(
+                    () -> assertEquals(GitResult.of(GitOutcome.REJECTED, "refName: name conflict"), swapped,
+                            "compareAndSwap rejects the name conflict"),
+                    () -> assertEquals(GitResult.of(GitOutcome.REJECTED, "refName: name conflict"), swappedTree,
+                            "compareAndSwapTree rejects the name conflict"),
+                    () -> assertEquals(GitResult.of(GitOutcome.REJECTED, "refName: name conflict"), deleted,
+                            "compareAndDelete rejects the name conflict"),
+                    () -> assertTrue(operation.treeIds().isEmpty(), "the operation is decided before it runs"),
+                    () -> assertTrue(source.treeIds().isEmpty(), "the source is decided before it runs"),
+                    () -> assertNull(repository.exactRef(nested), "the conflicting reference is not created"),
+                    () -> assertEquals(initial, refId(repository, existing), "the existing reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a reference name climbing out of the git directory is refused before any file is touched")
+        void escapingNameRefused(@LocalRepository Repository repository) throws Exception {
+            var existing = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, existing);
+            var root = directoryOf(repository).toPath();
+            // the target lies beside the repository, in the shared temporary-file directory, so the test compares it
+            // with its own state before the calls instead of requiring it absent
+            var outside = root.resolve("refs/heads/../../../outside/x").normalize();
+            var outsideLock = outside.resolveSibling("x.lock");
+            var outsideBefore = contentOf(outside);
+            var lockBefore = contentOf(outsideLock);
+            var before = filesBelow(root);
+            var operation = new Recording();
+            var source = new RecordingSource();
+            var refused = GitResult.<String>of(GitOutcome.REFUSED_BY_POLICY, "refName: not a valid reference name");
+
+            var swapped = updater.compareAndSwap(repository, ESCAPING, metadata(), operation, 2);
+            var swappedTree = updater.compareAndSwapTree(repository, ESCAPING, metadata(), source, 2);
+            var deleted = updater.compareAndDelete(repository, ESCAPING, initial.name(), 2);
+
+            assertAll(
+                    () -> assertEquals(refused, swapped, "compareAndSwap refuses the name"),
+                    () -> assertEquals(refused, swappedTree, "compareAndSwapTree refuses the name"),
+                    () -> assertEquals(refused, deleted, "compareAndDelete refuses the name"),
+                    () -> assertTrue(operation.treeIds().isEmpty(), "the operation is never called"),
+                    () -> assertTrue(source.treeIds().isEmpty(), "the source is never called"),
+                    () -> assertEquals(outsideBefore, contentOf(outside),
+                            "the reference file outside the git directory is neither created nor written"),
+                    () -> assertEquals(lockBefore, contentOf(outsideLock),
+                            "no lock file is created outside the git directory"),
+                    () -> assertEquals(before, filesBelow(root), "no file of the repository changed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a reference at an annotated tag is rejected, the tag is never peeled or moved")
+        void referenceAtAnnotatedTag(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var tag = InCoreMergerTest.annotatedTag(repository, TestCommits.commit(repository, null));
+            TestCommits.setRef(repository, refName, tag);
+            var operation = new Recording();
+            var source = new RecordingSource();
+            var rejected = GitResult.<String>of(GitOutcome.REJECTED, refName + ": points at no commit");
+
+            var swapped = updater.compareAndSwap(repository, refName, metadata(), operation, 2);
+            var swappedTree = updater.compareAndSwapTree(repository, refName, metadata(), source, 2);
+
+            assertAll(
+                    () -> assertEquals(rejected, swapped, "compareAndSwap rejects the tag"),
+                    () -> assertEquals(rejected, swappedTree, "compareAndSwapTree rejects the tag"),
+                    () -> assertTrue(operation.treeIds().isEmpty(), "the operation is never called"),
+                    () -> assertTrue(source.treeIds().isEmpty(), "the source is never called"),
+                    () -> assertEquals(tag, refId(repository, refName), "the reference stays at the tag"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: an exception of the operation propagates unchanged, the reference is unchanged")
+        void operationExceptionPropagates(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var failure = new IllegalStateException(TestCommits.name());
+            var metadata = metadata();
+
+            var thrown = assertThrows(IllegalStateException.class, () -> updater.compareAndSwap(repository, refName,
+                    metadata, tree -> {
+                        throw failure;
+                    }, 2), "the operation's exception is not mapped to an outcome");
+
+            assertAll(
+                    () -> assertSame(failure, thrown, "the very exception of the operation propagates"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: a null list or element of the operation propagates as NullPointerException")
+        void operationNullPropagates(@InMemory Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            var metadata = metadata();
+            List<@Nullable TreeEdit> withNull = new ArrayList<>();
+            withNull.add(null);
+            TreeOperation nullList = tree -> nonNull(null);
+            TreeOperation nullElement = tree -> nonNull(withNull);
+
+            assertAll(
+                    () -> assertThrows(NullPointerException.class,
+                            () -> updater.compareAndSwap(repository, refName, metadata, nullList, 2),
+                            "a null list propagates"),
+                    () -> assertThrows(NullPointerException.class,
+                            () -> updater.compareAndSwap(repository, refName, metadata, nullElement, 2),
+                            "a null element propagates"),
+                    () -> assertEquals(initial, refId(repository, refName), "the reference is unchanged"));
+        }
+
+        /**
+         * Pins the message JGit 7.8.0 {@code ReftableBatchRefUpdate.execute} sets on the first command when it catches
+         * an {@link IOException}: the updater tells a storage failure of its guarded batch from a lost race by this
+         * text alone, so a JGit that changes it must fail here, not silently turn a failure into a retry.
+         */
+        @Test
+        @DisplayName("GDR-CORE-5: JGit reports an I/O failure of a reftable batch as LOCK_FAILURE with the message io error")
+        void reftableIoErrorMessage() throws Exception {
+            try (var repository = new BatchFailingRepository()) {
+                var commit = TestCommits.commit(repository, null);
+                repository.failBatches();
+                var command = new ReceiveCommand(ObjectId.zeroId(), commit, GitIdentity.branchRef(TestCommits.name()));
+                BatchRefUpdate batch = repository.getRefDatabase().newBatchUpdate();
+                batch.setAtomic(true);
+                batch.addCommand(command);
+
+                try (var walk = new RevWalk(repository)) {
+                    batch.execute(walk, NullProgressMonitor.INSTANCE);
+                }
+
+                assertAll(
+                        () -> assertEquals(ReceiveCommand.Result.LOCK_FAILURE, command.getResult(),
+                                "the storage failure is reported as a lock failure"),
+                        () -> assertEquals("io error", command.getMessage(),
+                                "the message is the one the updater recognises"));
+            }
+        }
+    }
+
+    /** Every path of a regular file below a directory, relative to it. */
+    private static Set<String> filesBelow(Path root) throws IOException {
+        try (var paths = Files.walk(root)) {
+            Set<String> files = new HashSet<>();
+            paths.filter(Files::isRegularFile).forEach(file -> files.add(root.relativize(file).toString()));
+            return files;
+        }
+    }
+
+    /** The content of a regular file; empty when there is none. */
+    private static Optional<String> contentOf(Path file) throws IOException {
+        return Files.isRegularFile(file) ? Optional.of(Files.readString(file)) : Optional.empty();
+    }
+
+    /** Hands a value past the null-marked signature unchecked, to exercise the null checks. */
+    @SuppressWarnings("unchecked")
+    private static <T> T nonNull(@Nullable Object value) {
+        return (T) value;
     }
 
     /** Creates a symbolic reference {@code alias} pointing at {@code target}. */

@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -48,6 +50,9 @@ import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.eclipse.jgit.errors.LargeObjectException;
+import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.GpgConfig;
@@ -598,6 +603,238 @@ class InCoreWriterTest {
                     () -> writer.writeTree(repository, parents, metadata, nullValue()))
                     .<Executable>map(call -> () -> assertThrows(NullPointerException.class, call, "null is rejected")));
         }
+    }
+
+    @Nested
+    @DisplayName("one path strictness on every host")
+    class PathStrictness {
+
+        /**
+         * Paths the checks for Windows or macOS refuse and the platform check of Linux accepts, so each is refused on
+         * every host only because the writer applies one strictness: a Windows device name, also with an extension
+         * and below a directory, a component ending in a dot or a space, a character Windows forbids, and a name HFS+
+         * folds to {@code .git} (a zero-width non-joiner inside it).
+         *
+         * @return the paths
+         */
+        static Stream<String> refusedOnEveryHost() {
+            return Stream.of("CON", "aux.txt", "dir/nul", "trailing.", "trailing ", "colon:name", "back\\slash",
+                    "pipe|name", ".g‌it");
+        }
+
+        @ParameterizedTest(name = "[{0}]")
+        @MethodSource("refusedOnEveryHost")
+        @DisplayName("GDR-CORE-4: a path refused on Windows or macOS is refused on every host, nothing is written")
+        void refusedOnEveryHost(String path, @InMemory Repository repository) {
+            var content = content();
+
+            var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: invalid path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: two paths equal without case are a duplicate, nothing is written")
+        void caseFoldDuplicate(@InMemory Repository repository) {
+            var path = TestCommits.name();
+            var content = content();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(path, content), put(path.toUpperCase(Locale.ROOT), "upper-" + content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: duplicate path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a path that is a directory of another edit's path is refused, nothing is written")
+        void overlappingPaths(@InMemory Repository repository) {
+            var directory = TestCommits.name();
+            var below = directory + "/" + TestCommits.name();
+            var deeper = below + "/" + TestCommits.name();
+            var content = content();
+            List<List<TreeEdit>> overlapping = List.of(
+                    List.of(put(directory, content), put(below, content)),
+                    List.of(put(below, content), put(directory, content)),
+                    List.of(put(directory, content), put(deeper, content)),
+                    List.of(new TreeEdit.Delete(directory), put(below, content)),
+                    List.of(put(directory.toUpperCase(Locale.ROOT), content), put(below, content)));
+
+            assertAll(overlapping.stream().<Executable>map(edits -> () -> NotFound.assertNothingWritten(repository,
+                    writer.write(repository, List.of(), metadata(), edits), "edits: overlapping path", content)));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a path that only shares a prefix of characters with another is no overlap")
+        void sharedPrefixIsNoOverlap(@InMemory Repository repository) throws Exception {
+            var name = TestCommits.name();
+            var sibling = name + "-" + TestCommits.name() + "/" + TestCommits.name();
+            var first = "first-" + content();
+            var second = "second-" + content();
+
+            var result = writer.write(repository, List.of(), metadata(), List.of(put(name, first), put(sibling, second)));
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            assertEquals(Map.of(name, first, sibling, second), files(repository, commit),
+                    "both paths are written, the shared characters are no directory");
+        }
+    }
+
+    @Nested
+    @DisplayName("failures JGit raises unchecked")
+    class UncheckedFailures {
+
+        /**
+         * Names JGit's path check refuses on every host, so a tree holding one can only have been written by another
+         * tool, through an {@link ObjectInserter}.
+         *
+         * @return the names
+         */
+        static Stream<String> namesRefusedInATree() {
+            return Stream.of(".GIT", ".Git", "git~1", "GIT~1");
+        }
+
+        @ParameterizedTest(name = "[{0}]")
+        @MethodSource("namesRefusedInATree")
+        @DisplayName("GDR-CORE-4: a parent tree holding a path JGit refuses is a failure naming the class only")
+        void parentTreeWithRefusedPath(String name, @InMemory Repository repository) throws Exception {
+            var parent = commitWithTree(repository, Map.of(name, content(), TestCommits.name(), content()));
+            var content = "put-" + content();
+
+            var result = writer.write(repository, List.of(parent.name()), metadata(),
+                    List.of(put(TestCommits.name(), content)));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the refused path is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals("InvalidPathException", result.detail(),
+                            "the detail names the exception class, never the path"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "the content of the put is not written"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: an invalid gpg.format of a signed commit is a failure, and the signer is not called")
+        void invalidGpgFormat(@InMemory Repository repository) throws Exception {
+            repository.getConfig().setString(ConfigConstants.CONFIG_GPG_SECTION, null,
+                    ConfigConstants.CONFIG_KEY_FORMAT, "bogus-" + TestCommits.name());
+            var signer = TestSigner.signing();
+            var plain = metadata();
+            var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
+                    new CommitSigning(signer, TestSigner.KEY, null));
+            var content = "signed-" + content();
+
+            var result = writer.write(repository, List.of(), signed, List.of(put(TestCommits.name(), content)));
+            var unsigned = writer.write(repository, List.of(), metadata(),
+                    List.of(put(TestCommits.name(), "unsigned-" + content())));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the invalid format is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals(IllegalArgumentException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class, never the value"),
+                    () -> assertTrue(signer.payloads().isEmpty(), "the signer is not called"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "the content of the put is not written"),
+                    () -> assertEquals(GitOutcome.OK, unsigned.outcome(),
+                            "an unsigned commit does not read gpg.format and is written"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: an unchecked exception of the caller's signer propagates unchanged")
+        void signerExceptionPropagates(@InMemory Repository repository) {
+            var failure = new IllegalStateException(TestCommits.name());
+            var plain = metadata();
+            var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
+                    new CommitSigning(throwing(failure), null, null));
+            var content = "thrown-" + content();
+            var edits = List.of(put(TestCommits.name(), content));
+            List<String> parents = List.of();
+
+            var thrown = assertThrows(IllegalStateException.class, () -> writer.write(repository, parents, signed,
+                    edits), "the signer's exception is not mapped to an outcome");
+
+            assertAll(
+                    () -> assertSame(failure, thrown, "the very exception of the signer propagates"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "nothing is flushed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a tree of the source too large to be read in one piece is a failure naming the class")
+        void largeTreeOfTheSource(@InMemory Repository repository) {
+            var result = writer.writeTree(repository, List.of(), metadata(), (reader, inserter, parentTree) -> {
+                throw new LargeObjectException();
+            });
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the large tree is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals(LargeObjectException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: any other unchecked exception of the source propagates unchanged")
+        void otherSourceExceptionPropagates(@InMemory Repository repository) {
+            var failure = new IllegalStateException(TestCommits.name());
+            var metadata = metadata();
+            List<String> parents = List.of();
+
+            var thrown = assertThrows(IllegalStateException.class,
+                    () -> writer.writeTree(repository, parents, metadata, (reader, inserter, parentTree) -> {
+                        throw failure;
+                    }), "the source's exception is not mapped to an outcome");
+
+            assertSame(failure, thrown, "the very exception of the source propagates");
+        }
+    }
+
+    /**
+     * Writes a commit whose tree holds exactly the regular files, through a {@link TreeFormatter}, so no path check of
+     * JGit runs: the way another tool could have written a tree JGit refuses to read into a {@code DirCache}.
+     *
+     * @param repository the repository receiving the commit
+     * @param files      the content of each file by its name, a single path component each
+     * @param parents    the parents of the commit
+     * @return the id of the commit
+     * @throws IOException if an object cannot be inserted
+     */
+    static ObjectId commitWithTree(Repository repository, Map<String, String> files, ObjectId... parents)
+            throws IOException {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            var tree = new TreeFormatter();
+            for (var file : new TreeMap<>(files).entrySet()) {
+                tree.append(file.getKey(), FileMode.REGULAR_FILE,
+                        inserter.insert(Constants.OBJ_BLOB, file.getValue().getBytes(UTF_8)));
+            }
+            var commit = new CommitBuilder();
+            commit.setTreeId(inserter.insert(tree));
+            commit.setParentIds(parents);
+            commit.setAuthor(person());
+            commit.setCommitter(person());
+            commit.setMessage(message());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            return id;
+        }
+    }
+
+    /** A signer that throws the given unchecked exception from every signing. */
+    private static Signer throwing(RuntimeException failure) {
+        return new Signer() {
+
+            @Override
+            public GpgSignature sign(Repository repository, GpgConfig config, byte[] data, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
+                throw failure;
+            }
+
+            @Override
+            public boolean canLocateSigningKey(Repository repository, GpgConfig config, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
+                return true;
+            }
+        };
     }
 
     /**

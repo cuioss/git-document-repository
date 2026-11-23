@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 
+import org.eclipse.jgit.dircache.InvalidPathException;
 import org.eclipse.jgit.errors.NoMergeBaseException;
 import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.FileMode;
@@ -91,8 +92,10 @@ public final class InCoreMerger {
      * ({@code ours} or {@code theirs});</li>
      * <li>{@link MergeResult.NotMerged} with {@link GitOutcome#CONFLICT}: the commits have more than one merge base;
      * detail {@code merge base: more than one}, no paths, because none were computed;</li>
-     * <li>{@link MergeResult.NotMerged} with {@link GitOutcome#FAILED}: an I/O failure; the detail names the exception
-     * class.</li>
+     * <li>{@link MergeResult.NotMerged} with {@link GitOutcome#FAILED}: an I/O failure, or a tree of the merge base or
+     * a tip holding a path JGit refuses, such as {@code .GIT} or {@code git~1} (JGit 7.8.0
+     * {@code StrategySimpleTwoWayInCore} builds a {@code DirCacheEntry} per entry it takes, whose path check throws an
+     * {@code InvalidPathException}); the detail names the exception class.</li>
      * </ul>
      *
      * @param repository the repository holding both commits
@@ -137,7 +140,7 @@ public final class InCoreMerger {
                 return new MergeResult.NotMerged(GitOutcome.CONFLICT, "merge base: more than one");
             }
             return notMerged(e);
-        } catch (IOException e) {
+        } catch (IOException | InvalidPathException e) {
             return notMerged(e);
         }
     }
@@ -194,7 +197,7 @@ public final class InCoreMerger {
         return mode != 0 && !FileMode.TREE.equals(mode);
     }
 
-    private static MergeResult notMerged(IOException e) {
+    private static MergeResult notMerged(Exception e) {
         GitResult<String> failure = JGitRepositoryOperations.failure(e);
         return new MergeResult.NotMerged(failure.outcome(), Objects.requireNonNull(failure.detail()));
     }
