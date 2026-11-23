@@ -66,6 +66,7 @@ import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.easymock.EasyMock;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.errors.TransportException;
@@ -85,6 +86,7 @@ import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.HttpConfig;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
+import org.eclipse.jgit.transport.TrackingRefUpdate;
 import org.eclipse.jgit.transport.TransportHttp;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
@@ -238,6 +240,32 @@ class JGitRepositoryOperationsTest {
                     () -> assertEquals(List.of(third.name()), one.stream().map(CommitInfo::id).toList(),
                             "a count of one yields the newest commit"),
                     () -> assertEquals(1, atLeastOne.size(), "a count below one is taken as one"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-11: log reads nothing past the parents of the listed commits; a missing parent fails")
+        void logBoundedByLimit(@LocalRepository Repository repository) throws Exception {
+            var ref = branchRef();
+            var lost = TestCommits.commitOn(repository, ref);
+            TestCommits.commitOn(repository, ref);
+            var newest = TestCommits.commitOn(repository, ref);
+            var name = lost.name();
+            // the commit is written as a loose object; deleting it is a repository that lost it
+            Files.delete(dir(repository).resolve("objects").resolve(name.substring(0, 2)).resolve(name.substring(2)));
+
+            var limited = operations.log(dir(repository), newest.name(), 1);
+            var reaching = operations.log(dir(repository), newest.name(), 2);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, limited.outcome(),
+                            "a commit missing behind the parent of the last listed commit is never read"),
+                    () -> assertEquals(List.of(newest.name()),
+                            Objects.requireNonNull(limited.value()).stream().map(CommitInfo::id).toList(),
+                            "the limit lists the newest commit only"),
+                    () -> assertEquals(GitOutcome.FAILED, reaching.outcome(),
+                            "a missing parent of a listed commit fails the log"),
+                    () -> assertEquals("MissingObjectException", reaching.detail(),
+                            "the detail names the failure class"));
         }
 
         @Test
@@ -1254,6 +1282,87 @@ class JGitRepositoryOperationsTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-3, GDR-NFR-3: the stored origin of a clone carries no query data and no fragment")
+        void cloneStoresNoQueryData(@Remote LocalRemote remote) throws Exception {
+            var ref = branchRef();
+            var commit = TestCommits.commitOn(remote.repository(), ref);
+            // long enough that it cannot occur by chance in the configuration text
+            var token = Generators.strings("ghijklmnopqrstuvwxyz", 32, 32).next();
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+            var url = remote.uri() + "?access_token=" + token + "#" + token;
+
+            var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir).url(url)
+                    .pushRefSpecs(List.of()).build());
+
+            var config = Files.readString(gitDir.resolve(Constants.CONFIG));
+            try (Repository clone = openBare(gitDir)) {
+                assertAll(
+                        () -> assertEquals(GitOutcome.OK, result.outcome(), "the clone fetches from the stored origin"),
+                        () -> assertEquals(commit, refId(clone, ref), "the clone mirrors the remote"),
+                        () -> assertFalse(config.contains(token),
+                                "the configuration file holds neither the query nor the fragment"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-3, GDR-NFR-3: a URL with an upper-case scheme, read as a local path, is refused unstored")
+        void upperCaseSchemeRefused() throws Exception {
+            var credential = GitGenerators.credentials().next();
+            var parent = Files.createDirectories(temp.resolve(TestCommits.name()));
+            var gitDir = parent.resolve(TestCommits.name() + ".git");
+            // JGit 7.8.0 URIish matches its scheme in lower case only, so this URL is a local path holding the secret
+            var url = "HTTPS://" + credential.username() + ":" + new String(credential.token()) + "@" + FOREIGN_HOST
+                    + "/" + TestCommits.name() + ".git";
+
+            var result = operations.cloneIfMissing(CloneInput.builder().gitDir(gitDir).url(url)
+                    .pushRefSpecs(List.of()).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(),
+                            "a URL whose user information cannot be separated is refused"),
+                    () -> assertEquals("not a URL", result.detail(), "the detail carries nothing of the URL"),
+                    () -> assertEquals(List.of(), entries(parent), "neither a clone nor a staging directory is made"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a fetch whose reference update is no fast-forward is REJECTED, the reference unchanged")
+        void fetchUpdateRejected(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            TestCommits.commitOn(remote.repository(), ref);
+            // an unrelated history under the same name: the update without force is no fast-forward
+            var local = TestCommits.commitOn(client, ref);
+
+            var fetched = operations.fetch(FetchInput.builder().root(dir(client)).remote(ORIGIN)
+                    .refSpecs(List.of(ref + ":" + ref)).build());
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REJECTED, fetched.outcome(), "the rejected update rejects the fetch"),
+                    () -> assertEquals(ref + ": REJECTED", fetched.detail(),
+                            "the detail names the local reference and the result"),
+                    () -> assertEquals(local, refId(client, ref), "the local reference is unchanged"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a reference update without a result is FAILED, never taken as written")
+        void updateWithoutResult() {
+            var localName = branchRef();
+            // JGit 7.8.0 TrackingRefUpdate holds no result until its command was applied
+            TrackingRefUpdate update = EasyMock.mock(TrackingRefUpdate.class);
+            EasyMock.expect(update.getResult()).andStubReturn(null);
+            EasyMock.expect(update.getLocalName()).andStubReturn(localName);
+            EasyMock.replay(update);
+
+            Optional<GitResult<Void>> result = JGitRepositoryOperations.notWritten(update);
+
+            var notWritten = result.orElseThrow();
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, notWritten.outcome(), "an update without result fails"),
+                    () -> assertEquals(localName + ": no result", notWritten.detail(),
+                            "the detail names the local reference"));
+        }
+
+        @Test
         @DisplayName("PLAN-02 (g): an anonymous exception class is named by its binary name, never a blank detail")
         void anonymousFailureNamed() {
             var anonymous = new IOException() {
@@ -1437,7 +1546,9 @@ class JGitRepositoryOperationsTest {
         void publishLosesRace(@Remote LocalRemote remote) throws Exception {
             var ref = branchRef();
             TestCommits.commitOn(remote.repository(), ref);
-            var marker = TestCommits.name();
+            // the marker occurs in the delegate's own path, the case that once recursed into a StackOverflowError:
+            // the intercepting protocol must not select itself for the fetch from its delegate
+            var marker = Path.of(remote.uri().getPath()).getFileName().toString();
             var parent = Files.createDirectories(temp.resolve(TestCommits.name()));
             var gitDir = parent.resolve(TestCommits.name() + ".git");
             var concurrentRef = branchRef();
@@ -1546,38 +1657,34 @@ class JGitRepositoryOperationsTest {
         }
 
         @Override
-        public HttpConnection create(URL url) {
+        public HttpConnection create(URL url) throws IOException {
             return create(url, Proxy.NO_PROXY);
         }
 
+        /**
+         * A nice EasyMock double of the connection: every call it does not record answers the type's default, as a
+         * connection that was never opened.
+         */
         @Override
-        public HttpConnection create(URL url, @Nullable Proxy proxy) {
-            return (HttpConnection) java.lang.reflect.Proxy.newProxyInstance(HttpConnection.class.getClassLoader(),
-                    new Class<?>[]{HttpConnection.class}, (instance, method, args) -> switch (method.getName()) {
-                        case "setRequestProperty", "addRequestProperty" -> {
-                            sent.add(args[0] + ": " + args[1]);
-                            yield null;
-                        }
-                        case "getURL" -> url;
-                        case "connect", "getResponseCode", "getInputStream", "getOutputStream" ->
-                            throw new IOException("the recording connection connects nowhere");
-                        case "toString" -> "RecordingConnection[" + url.getHost() + "]";
-                        case "hashCode" -> System.identityHashCode(instance);
-                        case "equals" -> instance == args[0];
-                        default -> defaultValue(method.getReturnType());
-                    });
+        public HttpConnection create(URL url, @Nullable Proxy proxy) throws IOException {
+            HttpConnection connection = EasyMock.niceMock(HttpConnection.class);
+            connection.setRequestProperty(EasyMock.anyString(), EasyMock.anyString());
+            EasyMock.expectLastCall().andStubAnswer(this::recordHeader);
+            EasyMock.expect(connection.getURL()).andStubReturn(url);
+            var nowhere = new IOException("the recording connection connects nowhere");
+            connection.connect();
+            EasyMock.expectLastCall().andStubThrow(nowhere);
+            EasyMock.expect(connection.getResponseCode()).andStubThrow(nowhere);
+            EasyMock.expect(connection.getInputStream()).andStubThrow(nowhere);
+            EasyMock.expect(connection.getOutputStream()).andStubThrow(nowhere);
+            EasyMock.replay(connection);
+            return connection;
         }
 
-        private static @Nullable Object defaultValue(Class<?> type) {
-            if (type == boolean.class) {
-                return false;
-            }
-            if (type == int.class) {
-                return 0;
-            }
-            if (type == long.class) {
-                return 0L;
-            }
+        /** Records the header of the current call to the double as {@code name: value}. */
+        private @Nullable Object recordHeader() {
+            Object[] header = EasyMock.getCurrentArguments();
+            sent.add(header[0] + ": " + header[1]);
             return null;
         }
     }

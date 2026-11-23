@@ -69,11 +69,17 @@ public interface RepositoryOperations {
      * remote {@code origin} is configured with the mirroring fetch reference specifications
      * {@code +refs/heads/*:refs/heads/*}, {@code +refs/tags/*:refs/tags/*} and {@code +refs/notes/*:refs/notes/*} and
      * the caller's push reference specifications, and it is fetched. A clone that could not be completed is removed.
+     * <p>
+     * The origin is stored without user information, query data and fragment: scheme, host, port and path of the URL
+     * only, so no secret the caller passed in the URL reaches the clone's configuration. A URL that cannot be stored
+     * that way, such as one with an upper-case scheme that JGit reads as a local path with its user information in it,
+     * is refused.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the repository facts, {@link GitOutcome#NOT_A_REPOSITORY} if the directory
-     *         holds anything but a bare repository, {@link GitOutcome#REFUSED_BY_POLICY} if the policy does not admit
-     *         the URL (nothing was sent) or a capability was refused, {@link GitOutcome#UNREACHABLE},
+     *         holds anything but a bare repository, {@link GitOutcome#REFUSED_BY_POLICY} if the URL is no URL that can
+     *         be stored without its user information, the policy does not admit the URL (nothing was sent) or a
+     *         capability was refused, {@link GitOutcome#UNREACHABLE},
      *         {@link GitOutcome#CREDENTIALS_INVALID} or {@link GitOutcome#FAILED}
      */
     GitResult<RepositoryInfo> cloneIfMissing(CloneInput input);
@@ -82,6 +88,10 @@ public interface RepositoryOperations {
      * The history of a revision, newest first. The revision is classified by {@link GitIdentity}: an ambiguous name is
      * refused with its candidates in the detail, and only a supported identity is resolved, exactly one reference or
      * a full commit id; an abbreviated commit id and a revision expression are never resolved (GDR-CORE-11).
+     * <p>
+     * No commit past {@code maxCount} is listed or read beyond the parents of the listed ones, which the walk reads to
+     * order the history: a commit missing further back does not matter, and a missing parent of a listed commit ends
+     * {@link GitOutcome#FAILED}.
      *
      * @param root     a working-tree root or the git directory of a bare repository
      * @param revision the start revision: {@code HEAD}, a reference by its short or full name, or a full commit id
@@ -161,11 +171,16 @@ public interface RepositoryOperations {
     /**
      * Reads the raw blob of a path at a commit of a cache repository, as it is stored: no filter runs, so a file kept
      * in Git LFS is read as its pointer (GDR-CORE-8).
+     * <p>
+     * A blob is read only up to a size of 16 MiB ({@link JGitRepositoryOperations#READ_FILE_LIMIT_BYTES}), a blob of
+     * exactly that size included. The size is checked before the content is read, so a larger blob is never loaded into
+     * memory and ends {@link GitOutcome#REFUSED_BY_POLICY}.
      *
      * @param input the input
-     * @return {@link GitOutcome#OK} with the bytes, {@link GitOutcome#NOT_FOUND} if the commit is not in the cache or
-     *         the path is no regular file at the commit, {@link GitOutcome#NOT_A_REPOSITORY} if the cache is no
-     *         repository, or {@link GitOutcome#FAILED}
+     * @return {@link GitOutcome#OK} with the bytes, {@link GitOutcome#REFUSED_BY_POLICY} if the blob is larger than
+     *         16 MiB, {@link GitOutcome#NOT_FOUND} if the commit is not in the cache or the path is no regular file at
+     *         the commit, {@link GitOutcome#NOT_A_REPOSITORY} if the cache is no repository, or
+     *         {@link GitOutcome#FAILED}
      */
     GitResult<byte[]> readFile(ReadFileInput input);
 

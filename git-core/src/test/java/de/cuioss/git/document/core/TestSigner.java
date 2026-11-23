@@ -18,7 +18,6 @@ package de.cuioss.git.document.core;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -45,7 +44,11 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * Every call to {@link #sign(Repository, GpgConfig, byte[], PersonIdent, String, CredentialsProvider)} is recorded, so a
  * test can compare the signed payload with the payload it reconstructs from the commit, and see the identity and key
- * the signer was called with. A {@linkplain #failing(String) failing} signer throws an {@link IOException} instead.
+ * the signer was called with.
+ * <p>
+ * It stays a hand-written fake instead of an EasyMock double: it computes a signature that the written commit carries
+ * and that {@link #verify(RevCommit)} checks against the commit's own bytes, which an expectation-based double does not
+ * produce. A signer that only fails is an EasyMock double in the test that needs it.
  */
 final class TestSigner implements Signer {
 
@@ -58,13 +61,12 @@ final class TestSigner implements Signer {
      */
     private static final byte[] GPGSIG_HEADER = "gpgsig ".getBytes(US_ASCII);
 
-    private final @Nullable String failure;
     private final List<byte[]> payloads = new ArrayList<>();
     private final List<PersonIdent> committers = new ArrayList<>();
     private final List<Optional<String>> signingKeys = new ArrayList<>();
 
-    private TestSigner(@Nullable String failure) {
-        this.failure = failure;
+    private TestSigner() {
+        // created by signing() only
     }
 
     /**
@@ -73,25 +75,12 @@ final class TestSigner implements Signer {
      * @return the signer
      */
     static TestSigner signing() {
-        return new TestSigner(null);
-    }
-
-    /**
-     * Creates a signer that fails every signing with an {@link IOException}.
-     *
-     * @param message the message of the exception, so a test can check it never reaches a result
-     * @return the signer
-     */
-    static TestSigner failing(String message) {
-        return new TestSigner(message);
+        return new TestSigner();
     }
 
     @Override
     public GpgSignature sign(Repository repository, GpgConfig config, byte[] data, PersonIdent committer,
-            @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) throws IOException {
-        if (failure != null) {
-            throw new IOException(failure);
-        }
+            @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
         payloads.add(data.clone());
         committers.add(committer);
         signingKeys.add(Optional.ofNullable(signingKey));
@@ -101,7 +90,7 @@ final class TestSigner implements Signer {
     @Override
     public boolean canLocateSigningKey(Repository repository, GpgConfig config, PersonIdent committer,
             @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
-        return failure == null;
+        return true;
     }
 
     /**

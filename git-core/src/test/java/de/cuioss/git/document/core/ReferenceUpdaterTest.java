@@ -55,6 +55,7 @@ import java.util.concurrent.TimeUnit;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.easymock.EasyMock;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheEditor;
 import org.eclipse.jgit.dircache.DirCacheEntry;
@@ -63,6 +64,7 @@ import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.NullProgressMonitor;
@@ -283,6 +285,52 @@ class ReferenceUpdaterTest {
                     () -> assertEquals(attempts, unrelated.size(), "every attempt re-reads and re-applies"),
                     () -> assertEquals(unrelated.getLast(), refId(repository, refName),
                             "the reference stays at the unrelated commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: the update never sets the force flag and disables the reflog, observed on the update")
+        void neverForcesObserved(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            int attempts = 2;
+            // a default EasyMock double fails every call it does not expect, setForceUpdate included
+            RefUpdate update = EasyMock.mock(RefUpdate.class);
+            update.setExpectedOldObjectId(initial);
+            EasyMock.expectLastCall().times(attempts);
+            update.setNewObjectId(EasyMock.anyObject());
+            EasyMock.expectLastCall().times(attempts);
+            update.disableRefLog();
+            EasyMock.expectLastCall().times(attempts);
+            EasyMock.expect(update.update()).andReturn(RefUpdate.Result.LOCK_FAILURE).times(attempts);
+            try (Repository observed = updatingThrough(repository, refName, false, update, attempts)) {
+                EasyMock.replay(update, observed);
+
+                var result = updater.compareAndSwap(observed, refName, metadata(), new Recording(), attempts);
+
+                assertEquals(GitOutcome.CONFLICT, result.outcome(), "every attempt meets the lost race of the double");
+            }
+            EasyMock.verify(update);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-5: compare-and-swap writes no reflog, also in a repository that logs every update")
+        void writesNoReflog(@LocalRepository Repository repository) throws Exception {
+            var config = repository.getConfig();
+            config.setBoolean(ConfigConstants.CONFIG_CORE_SECTION, null, ConfigConstants.CONFIG_KEY_LOGALLREFUPDATES,
+                    true);
+            config.save();
+            var refName = GitIdentity.branchRef(TestCommits.name());
+
+            var created = updater.compareAndSwap(repository, refName, metadata(), new Recording(), 1);
+            var moved = updater.compareAndSwap(repository, refName, metadata(), new Recording(), 1);
+
+            var ref = Objects.requireNonNull(repository.exactRef(refName), "the reference exists");
+            var reflog = repository.getRefDatabase().getReflogReader(ref);
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, created.outcome(), "the reference is created"),
+                    () -> assertEquals(GitOutcome.OK, moved.outcome(), "the reference is moved"),
+                    () -> assertTrue(reflog == null || reflog.getReverseEntries().isEmpty(),
+                            "neither update wrote a reflog entry"));
         }
 
         @Test
@@ -812,6 +860,28 @@ class ReferenceUpdaterTest {
                     () -> assertNull(refId(repository, refName), "the reference is gone"));
         }
 
+        @Test
+        @DisplayName("GDR-CORE-5: the delete compares the expected id, forces as JGit requires and disables the reflog")
+        void deleteWritesNoReflog(@LocalRepository Repository repository) throws Exception {
+            var refName = GitIdentity.branchRef(TestCommits.name());
+            var initial = TestCommits.commitOn(repository, refName);
+            // a default EasyMock double fails every call it does not expect; the file backend deletes a reference's
+            // log file with the reference, so the disabled reflog is observed on the update, not on the disk
+            RefUpdate delete = EasyMock.mock(RefUpdate.class);
+            delete.setExpectedOldObjectId(initial);
+            delete.setForceUpdate(true);
+            delete.disableRefLog();
+            EasyMock.expect(delete.delete()).andReturn(RefUpdate.Result.FORCED);
+            try (Repository observed = updatingThrough(repository, refName, true, delete, 1)) {
+                EasyMock.replay(delete, observed);
+
+                var result = updater.compareAndDelete(observed, refName, initial.name(), 1);
+
+                assertEquals(GitOutcome.OK, result.outcome(), "the delete the double reports is a success");
+            }
+            EasyMock.verify(delete);
+        }
+
         /** One test for both databases, which check the expected id of a symbolic reference differently. */
         @Test
         @DisplayName("GDR-CORE-5: deleting a symbolic reference removes it and keeps the reference it points at, on both databases")
@@ -1263,6 +1333,22 @@ class ReferenceUpdaterTest {
                 }
             };
         }
+    }
+
+    /**
+     * An EasyMock repository double: a partial mock of a second {@link FileRepository} on the fixture's directory
+     * whose {@code updateRef(refName, detach)} hands out the given update double the given number of times, every other
+     * method being the real one, so the updater reads and writes objects in the real repository.
+     *
+     * @return the double, not yet replayed
+     */
+    private static Repository updatingThrough(Repository repository, String refName, boolean detach,
+            RefUpdate update, int times) throws IOException {
+        FileRepository observed = EasyMock.partialMockBuilder(FileRepository.class)
+                .withConstructor(File.class).withArgs(directoryOf(repository))
+                .addMockedMethod("updateRef", String.class, boolean.class).createMock();
+        EasyMock.expect(observed.updateRef(refName, detach)).andReturn(update).times(times);
+        return observed;
     }
 
     private static File directoryOf(Repository repository) {

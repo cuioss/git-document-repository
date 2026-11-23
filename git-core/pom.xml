@@ -71,6 +71,13 @@
             <artifactId>cui-test-mockwebserver-junit5</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test doubles of the tests of this module (AGENTS.md conventions, approval of 2026-11-17 in GDR-GEN-1); the
+             version comes from cui-java-parent. -->
+        <dependency>
+            <groupId>org.easymock</groupId>
+            <artifactId>easymock</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

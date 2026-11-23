@@ -179,9 +179,20 @@ namespaces, whatever fetch refspecs the clone's configuration holds (JGit 7.8.0 
 configured fetch refspecs only for an empty list, and `FetchProcess.deleteStaleTrackingRefs` deletes only references
 matching the destination of a fetched refspec).
 
-The stored origin carries no user information: the URL is configured without user name and password
-(`URIish.setUser(null).setPass(null)`), so no credential reaches the persistent configuration of the clone; the
-credentials of a call come from its `CredentialsProvider` only (<<GDR-CORE-7>>).
+The stored origin carries no secret the caller passed in the URL: it is built from an allowlist of the URL's components,
+scheme, host, port and path, as a URL is rendered for a detail (<<GDR-CORE-7>>), so neither user information nor query
+data nor a fragment reaches the persistent configuration of the clone, and the clone fetches from that origin. JGit's
+`URIish` keeps query data and a fragment in its path, so removing user name and password alone would store a token
+passed in the query. The raw path is kept, so its escaping is unchanged. The credentials of a call come from its
+`CredentialsProvider` only (<<GDR-CORE-7>>).
+
+A URL that JGit parses as a local path although it starts like an authority, a scheme and `//` or `//` alone, is
+`REFUSED_BY_POLICY` with the detail `not a URL` before anything is created: JGit's `URIish` matches its scheme pattern
+`[a-z][a-z0-9+-]+://` in lower case only, so `HTTPS://user:secret@host/repo.git` falls through to its local-file
+pattern and the whole string, user information included, becomes the path
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/URIish.java[JGit
+7.8.0 `URIish`]), where it cannot be told apart from the rest of the path. A remote policy that admits local
+repositories would otherwise admit it and store it.
 
 Accepted exception: an existing bare repository at the git directory is opened without comparing its `origin` with the
 URL of the call. The clone is a disposable cache owned by its caller
@@ -467,7 +478,9 @@ the detail without value, so the conflicting paths are not carried over.
   a distinct outcome.
 
 Credentials are a `@Nullable org.eclipse.jgit.transport.CredentialsProvider` per call, in `FetchInput`, `PushInput`
-and `CloneInput`. The outcomes:
+and `CloneInput`. A secret in the URL of a clone is not stored: the origin of a clone carries no user information,
+query data or fragment, and a URL whose user information cannot be separated is refused (<<GDR-CORE-3>>). The
+outcomes:
 
 * `REJECTED`: the remote refuses the update (non-fast-forward, a protected branch or another refusal; JGit's
   `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or `REJECTED_NODELETE`);
@@ -490,8 +503,11 @@ an update was not written
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
 7.8.0 `FetchProcess`]). The `RefUpdate.Result` values `NEW`, `FORCED`, `FAST_FORWARD` and `NO_CHANGE` are written;
 `REJECTED`, `REJECTED_CURRENT_BRANCH`, `REJECTED_MISSING_OBJECT` and `REJECTED_OTHER_REASON` end the fetch `REJECTED`;
-`LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`. The detail names the local reference and the
-result.
+`LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`, and so does an update without a result, which
+JGit's `TrackingRefUpdate` holds until its command was applied
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TrackingRefUpdate.java[JGit
+7.8.0 `TrackingRefUpdate`]; detail `<reference>: no result`). The detail names the local reference and the result. The
+fetch of a clone checks its mirrored references by the same rule (<<GDR-CORE-3>>).
 
 A fetch with `FetchInput.prune` set (`false` by default) also deletes every local reference that lies in the
 destination of one of its reference specifications and whose source the remote no longer advertises, through
@@ -567,8 +583,16 @@ configuration describes it and refuse anything but a bare repository as `NOT_A_R
 working tree is never used as a cache; JGit's `BaseRepositoryBuilder.setBare()` would override `core.bare`
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/BaseRepositoryBuilder.java[JGit 7.8.0 `BaseRepositoryBuilder`]).
 
-Accepted exception: `readFile` reads a blob without a size bound. The cache holds pinned commits of a source the remote
-policy admitted, and a bound would need a compiled limit that no requirement asks for.
+`readFile` reads a blob of at most 16 MiB (`JGitRepositoryOperations.READ_FILE_LIMIT_BYTES`, 16 × 1024 × 1024 bytes), a
+blob of exactly that size included. The size is taken from the object header through `ObjectLoader.getSize()` before
+the content is read
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectLoader.java[JGit
+7.8.0 `ObjectLoader`]), and a larger blob is `REFUSED_BY_POLICY` with the detail
+`path: larger than the limit of 16 MiB`, so it is never loaded into memory. The reason is the caller's memory: the
+operation returns the whole blob as one byte array, and the cache holds commits of a source the remote policy admits but
+whose content the library does not control, so without a bound one large file of a pinned commit would load into the
+heap of the process in full. The value lies far above the configuration files and documents the cache serves and below
+the JGit default `core.streamFileThreshold` of 50 MiB, above which JGit no longer keeps a blob in one array itself.
 
 [#GDR-CORE-9]
 == GDR-CORE-9: Reading
@@ -693,6 +717,16 @@ an abbreviation from two digits on and an expression on an abbreviated base
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/AbbreviatedObjectId.java[`AbbreviatedObjectId.isId`]),
 so none of them reaches it. A full commit id absent from the repository is `NOT_FOUND`, not `FAILED`; a full commit id
 that reaches another commit is `IDENTITY_MISMATCH`.
+
+`log` lists at most `maxCount` commits (a value below 1 counts as 1), newest first. The walk advances with
+`RevWalk.next()` and stops once `maxCount` commits are listed, so it reads no commit past the limit beyond the parents of
+the listed ones, which the walk parses to order the history. JGit's `RevWalk.iterator()` would read one commit ahead of
+the one it returns and rethrow a read failure as the unchecked `RevWalkException`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/RevWalk.java[JGit
+7.8.0 `RevWalk`]), so a missing commit past the limit would escape the operation. A commit missing further back than
+the parents of the listed commits does not affect the result; a missing parent of a listed commit ends `FAILED`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/PendingGenerator.java[JGit
+7.8.0 `PendingGenerator`]).
 
 [#working-trees]
 == Working Trees
@@ -1000,3 +1034,20 @@ the requirement it checks. Three tests guard contracts that span the module:
   components: a failed working-tree result carries no value but a detail, the listed main working tree has no name
   while a linked one has its name, a detached addition has no branch but a head, and the main working tree of an
   unborn repository has no head but its branch.
+
+Test doubles are EasyMock doubles (scope `test`, xref:general.adoc#GDR-GEN-1[GDR-GEN-1]): the HTTP connection of the
+recording connection factory and the failing signer of `InCoreWriterTest`, the reference update and the partially
+mocked repository through which `ReferenceUpdaterTest` observes that compare-and-swap never sets the force flag and
+that both operations disable the reflog, and the tracking reference update without a result of
+`JGitRepositoryOperationsTest`. Three hand-written doubles stay, each for a reason EasyMock cannot meet:
+
+* `InterceptingTransportProtocol` and `RecordingTransportProtocol` are JGit `TransportProtocol` subclasses registered
+  through `Transport.register`, ahead of the built-in protocols. JGit selects them from its registry and opens a real
+  `Transport` whose state, the URL, the credentials provider and the timeout the operations set, the test reads back
+  through that transport's own getters; a mocked abstract `Transport` would replace exactly the setters and getters
+  under observation. `InterceptingTransportProtocol` never handles its own delegate URL, so a marker that also occurs
+  in the delegate's path cannot make it select itself again: that recursion was the `StackOverflowError` of
+  `publishLosesRace`, which the test now reproduces with such a marker.
+* `TestSigner` is a working fake: it computes a signature over the payload JGit hands it, which the written commit
+  carries and `TestSigner.verify` checks against the commit's own bytes. An expectation-based double records calls but
+  produces no signature a commit could carry.
