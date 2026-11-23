@@ -743,11 +743,12 @@ class AnchorEngineTest {
             var refusing = executor();
             refusing.shutdown();
             try (var fixture = open(remote)) {
-                var first = fixture.writer().anchorPeriodically(executor);
+                var writer = fixture.writer();
+                var first = writer.anchorPeriodically(executor);
 
-                assertThrows(RejectedExecutionException.class, () -> fixture.writer().anchorPeriodically(refusing),
+                assertThrows(RejectedExecutionException.class, () -> writer.anchorPeriodically(refusing),
                         "the refusal of the executor propagates");
-                save(fixture.writer(), key);
+                save(writer, key);
                 boolean ran = fixture.anchors().awaitCalls(1, WAIT);
                 first.cancel();
 
