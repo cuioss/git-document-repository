@@ -31,7 +31,9 @@ import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.Extension
  * Resolves a test parameter annotated with {@link InMemory}: a new repository of JGit's in-memory DFS storage, one per
  * annotated parameter, returned only as {@link Repository}. No directory is created. The repository starts like the
  * bare fixtures, with {@code HEAD} linked to the unborn branch {@code refs/heads/master}. It is closed when the
- * extension context of the test closes.
+ * extension context of the test closes. A constructor parameter of a test class with the default per-method lifecycle
+ * is resolved per test method as well. A test class with {@code Lifecycle.PER_CLASS} has one instance, created once in
+ * the context of the class, so its constructor fixture lives for the whole class and is closed when the class has run.
  * <p>
  * The extension only resolves parameters that carry {@link InMemory}; the parameter type alone never selects it. It
  * is registered by the annotation and needs no {@code @ExtendWith} of its own.
@@ -68,7 +70,9 @@ public final class InMemoryRepositoryExtension implements ParameterResolver {
     /**
      * Resolves a constructor parameter in the extension context of the test method, so that a constructor fixture of
      * a test class with the default per-method lifecycle is created and closed per test, not once in the class
-     * context where the next test's fixture would replace its closing.
+     * context where the next test's fixture would replace its closing. Under {@code Lifecycle.PER_CLASS} Jupiter
+     * hands the resolver the context of the test class instead (observed with junit-jupiter-api 6.1.3), so the one
+     * constructor fixture lives for the class.
      *
      * @param rootContext the context of the test class
      * @return {@link ExtensionContextScope#TEST_METHOD}

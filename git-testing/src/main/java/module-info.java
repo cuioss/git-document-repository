@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 /**
- * Generators and fixtures for local and in-memory Git repositories and a local remote.
+ * Generators and fixtures for local and in-memory Git repositories, a local remote and a git configuration isolated
+ * from the host.
  */
 module de.cuioss.git.document.testing {
     exports de.cuioss.git.document.testing;

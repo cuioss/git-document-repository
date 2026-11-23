@@ -43,6 +43,12 @@ No directory is created; the repository is closed when the test ends
 ends, also when it fails
 |===
 
+A constructor parameter of a test class with the default per-method lifecycle receives a fixture per test method; a
+test class with `Lifecycle.PER_CLASS` has one instance, so its constructor fixture lives for the whole class and is
+cleaned up when the class has run (see <<_tests_of_the_module>>). The directory of a local repository or remote is
+deleted also when closing its repository fails; when both fail, the closing failure is the one thrown and the deletion
+failure is added to it as a suppressed exception, so the first failure is never replaced by the second.
+
 [#GDR-TEST-2]
 == GDR-TEST-2: Credential Generator
 
@@ -56,6 +62,46 @@ name and the content of the token, and `toString()` masks the token and never re
 the generators of the module in one place: the factory method `GitGenerators.credentials()` returns a fresh
 `GitCredentialGenerator` and is the method that
 `@TypeGeneratorFactorySource(factoryClass = GitGenerators.class, factoryMethod = "credentials")` names.
+
+[#GDR-TEST-3]
+== GDR-TEST-3: Distinct Text Generator
+
+* The module must provide a `cui-test-generator` generator whose values are distinct by construction and occur in no
+  text a test did not put them in.
+
+A test that asserts a generated value absent from a text the code under test produced, or that relies on two generated
+values differing, must not draw the value from a letters-only generator (`Generators.letterStrings`,
+`Generators.nonEmptyStrings`): a short value of letters occurs by chance in free text, and two such values can be equal.
+Three plans met a flake of that kind, a letters-only value found in an unrelated message and two generated fixture
+contents that were equal. Such a test draws its values from `DistinctTextGenerator` instead, through
+`GitGenerators.distinctTexts()` (`factoryMethod = "distinctTexts"`).
+
+Every value is the fixed marker `gdrdistinct` (`DistinctTextGenerator.MARKER`), the number of the value within its
+generator instance, the separator `-` and three to eight generated lower-case letters, for example
+`gdrdistinct7-kqp`. The marker makes a value found in a text one the test put there; the number makes two values of one
+instance differ; the separator keeps one value from being the start of another (value 1 is no prefix of value 12). A
+value consists of lower-case letters, digits and `-`, so it is a valid reference name component and file name and
+never reads as a commit id. The numbering belongs to the instance, so a test draws the values it compares from one
+instance; the generator is safe for use by several threads.
+
+[#GDR-TEST-4]
+== GDR-TEST-4: Hermetic Git Configuration
+
+* The module must provide a fixture that isolates a test from the git configuration of the host.
+
+JGit reads the user, system and JGit configuration through the JVM-wide `SystemReader`, so a setting of the machine
+that runs the build, such as `http.followRedirects` in `~/.gitconfig`, reaches every repository a test opens. The
+annotation `@HermeticGitConfiguration`, on a test class or method, registers `HermeticGitConfigurationExtension`, which
+installs before each test method a `SystemReader.Delegate` that delegates to the reader installed before but opens an
+empty user, system and JGit configuration, backed by no file, and restores the previous reader after the test method
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java[JGit
+7.8.0 `SystemReader`]). The configuration of a repository itself is read as before. `@BeforeEach` and `@AfterEach`
+methods run inside the isolation, `@BeforeAll` and `@AfterAll` methods outside it.
+
+Usage limit: the `SystemReader` is one per JVM, so the fixture must not be used by tests that run concurrently in one
+JVM; a concurrent test would read the empty configuration as well, and the reader one test restores could end the
+isolation of another. The reactor configures no concurrent run: neither a `junit.jupiter.execution.parallel` setting
+nor a Surefire `parallel` or `forkCount` setting is declared in this repository.
 
 == Module Descriptor and Module Path
 
