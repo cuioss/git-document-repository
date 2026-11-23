@@ -64,8 +64,10 @@ YAML file per independently edited part instead (see below).
 == Template
 
 A template per kind of document produces the AsciiDoc output. A numbered kind (a register) may do without one; then
-it has no generated output. With a template, each entry's output lies next to its entry file. The template engine is
-not chosen yet.
+it has no generated output. With a template, each entry's output lies next to its entry file. The template needs no
+third-party engine: by the owner's decision of 2026-11-23 it is written in an own minimal template language of
+`git-forms`, a strict subset of the Mustache syntax without lambdas and without partials loaded at run time, so the
+library adds no dependency for it (xref:../specification/git-forms.adoc#GDR-FORMS-4[GDR-FORMS-4]).
 
 == Workflow
 
@@ -140,7 +142,6 @@ modelled.
 
 == Open Questions
 
-. Choose the template engine for the AsciiDoc output.
 . Choose the form renderer; it must support JSON Schema Draft 2020-12.
 . Extend the deadline rules of xref:../specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6] to what the first
   application needs: a condition on a field, a due time of a date field plus a period, the field that meets a
