@@ -219,11 +219,11 @@ public final class AllowedSigners {
             return new Line.Refused("key type not supported");
         }
         if (!(SshSignatures.parsePublicKeyLine(fields.get(keyType) + " " + fields.get(keyType + 1))
-                instanceof SshSignatures.AcceptedKey accepted)) {
+                instanceof SshSignatures.AcceptedKey(var key))) {
             return new Line.Refused("key malformed");
         }
-        return options == null ? new Line.Parsed(new Entry(accepted.key(), null, null, null))
-                : parseOptions(options, accepted.key());
+        return options == null ? new Line.Parsed(new Entry(key, null, null, null))
+                : parseOptions(options, key);
     }
 
     /** Whether a field names a key type of the format, so it is not an options field. */
