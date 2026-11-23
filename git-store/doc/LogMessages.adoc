@@ -63,6 +63,12 @@ before its tag is pushed; a failed tag push is logged as `GIT_STORE-112`.
 |Logged when the note of an anchor proof was pushed to the remote
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17]): the repository alias and the full id of the
 anchored commit, a release commit or a checkpoint; never a reference name, which may carry a document id, or the proof.
+|GIT_STORE-10 |GIT_STORE |Verified the anchors of provider %s: %s checkpoints, %s subjects, %s proofs, %s findings
+|Logged once when an anchor verification (`AnchorVerification.verifyAnchors`) finished
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17],
+xref:../../doc/specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]): the provider id, the number of checkpoint
+tags, of subjects (checkpoint and release commits), of proofs verified in chain order and of findings; counts only,
+never a commit id, a reference name or a proof.
 |===
 
 == WARN Level (100-199)

@@ -462,12 +462,15 @@ class AnchorEngineTest {
                 var released = fixture.writer().release(Author.of(pseudonym()), CLAIMS, key);
                 var fetched = fixture.writer().fetch();
                 assertTrue(fixture.anchors().awaitCalls(1, WAIT), "a due check ran after the operations");
+                // no handed-over due check may run once the provider recovers: only the due checks below count
+                schedule.cancel();
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
                 var pending = fixture.anchor();
                 var notesRef = StoreReferences.anchorNotes(fixture.anchors().id());
                 var noteBefore = remote.repository().exactRef(notesRef);
                 fixture.anchors().recover();
                 var retried = fixture.anchor();
-                schedule.cancel();
 
                 var releaseCommit = Objects.requireNonNull(released.value(), "the release").commitId();
                 assertAll(

@@ -122,6 +122,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(9)
                 .build();
+
+        /**
+         * An anchor verification finished (GDR-STORE-17, GDR-STORE-18): the provider id, the number of checkpoints, of
+         * subjects, of proofs verified and of findings, never a commit id, a reference or a proof.
+         */
+        public static final LogRecord ANCHORS_VERIFIED = LogRecordModel.builder()
+                .template("Verified the anchors of provider %s: %s checkpoints, %s subjects, %s proofs, %s findings")
+                .prefix(PREFIX)
+                .identifier(10)
+                .build();
     }
 
     /**
