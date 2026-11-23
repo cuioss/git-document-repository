@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 import java.io.File;
 import java.io.IOException;
@@ -45,6 +46,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 import org.eclipse.jgit.errors.ConfigInvalidException;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.Config;
@@ -56,8 +59,10 @@ import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ParameterContext;
@@ -71,6 +76,16 @@ class LocalRepositoryExtensionTest {
 
     /** Directories handed to the tests, asserted gone once the extension's per-test cleanup has run. */
     private static final List<Path> RECEIVED_DIRECTORIES = new CopyOnWriteArrayList<>();
+
+    /** The Jupiter setting that the Surefire execution {@code store-autoclose-off} switches off. */
+    private static final String AUTO_CLOSE_SETTING = "junit.jupiter.extensions.store.close.autocloseable.enabled";
+
+    /** The namespace of the plain {@link AutoCloseable} the auto-close test stores. */
+    private static final ExtensionContext.Namespace AUTO_CLOSE_NAMESPACE =
+            ExtensionContext.Namespace.create(LocalRepositoryExtensionTest.class, "auto-close");
+
+    /** Plain {@link AutoCloseable} values stored by {@link AutoCloseSetting}, checked after the class. */
+    private static final List<PlainCloseable> PLAIN_CLOSEABLES = new CopyOnWriteArrayList<>();
 
     @RegisterExtension
     static final ParameterResolver EXTENSION_CONTEXT = new ExtensionContextResolver();
@@ -262,7 +277,9 @@ class LocalRepositoryExtensionTest {
      * A creation that fails after the temporary directory exists: the directory is deleted again and the failure
      * names the annotation. JGit reads the user configuration and the platform through its replaceable
      * {@link SystemReader}, so a reader that fails at one of these points drives the failure; it is installed for the
-     * one call only, and the class runs isolated from every other test because the reader is global.
+     * one call only, and the class runs isolated from every other test because the reader is global. Both tests go
+     * through {@link LocalRepositoryExtension#createBareRepository(Class)} itself, so they observe its wiring to
+     * {@link LocalRepositoryExtension#rollBack}: without that call the directory would remain.
      */
     @Nested
     @Isolated
@@ -359,6 +376,41 @@ class LocalRepositoryExtensionTest {
         }
 
         @Test
+        @DisplayName("Should keep the closing failure and suppress the deletion failure when both fail")
+        void shouldKeepFirstFailureWhenClosingAndDeletionFail() {
+            var closingFailure = new IllegalStateException("The repository cannot be closed");
+            var deletionFailure = new IOException("The entries of the directory cannot be read");
+            var repository = repositoryExpectingOneClosing(closingFailure);
+            var fileSystem = new FailingListingFileSystem(deletionFailure);
+            var cleanup = new LocalRepositoryExtension.TemporaryRepository(repository, fileSystem.directory());
+
+            var thrown = assertThrows(IllegalStateException.class, cleanup::close,
+                    "The failure of the closing, the first one, is thrown");
+
+            assertAll("cleanup after a failed closing and a failed deletion",
+                    () -> assertSame(closingFailure, thrown, "The failure of the closing propagates itself"),
+                    () -> assertArrayEquals(new Throwable[]{deletionFailure}, thrown.getSuppressed(),
+                            "The failure of the deletion is suppressed on it instead of replacing it"),
+                    () -> verify(repository));
+        }
+
+        @Test
+        @DisplayName("Should propagate the deletion failure when only the deletion fails")
+        void shouldPropagateDeletionFailureWhenClosingSucceeds() {
+            var deletionFailure = new IOException("The entries of the directory cannot be read");
+            var repository = repositoryExpectingOneClosing(null);
+            var fileSystem = new FailingListingFileSystem(deletionFailure);
+            var cleanup = new LocalRepositoryExtension.TemporaryRepository(repository, fileSystem.directory());
+
+            var thrown = assertThrows(IOException.class, cleanup::close, "The failure of the deletion is thrown");
+
+            assertAll("cleanup after a failed deletion",
+                    () -> assertSame(deletionFailure, thrown, "The failure of the deletion propagates itself"),
+                    () -> assertEquals(0, thrown.getSuppressed().length, "Nothing is suppressed on it"),
+                    () -> verify(repository));
+        }
+
+        @Test
         @DisplayName("Should close the repository and delete its directory on the rollback of a failed creation")
         void shouldCloseRepositoryAndDeleteDirectoryOnRollBack() throws Exception {
             var repository = repositoryExpectingOneClosing(null);
@@ -396,6 +448,59 @@ class LocalRepositoryExtensionTest {
             var directory = TemporaryDirectories.create();
             Files.writeString(directory.resolve("HEAD"), "ref: refs/heads/main\n");
             return directory;
+        }
+    }
+
+    /**
+     * The setting of the second Surefire execution {@code store-autoclose-off} of {@code git-testing/pom.xml}, under
+     * which the fixtures must clean up as well. A plain {@link AutoCloseable}, which Jupiter closes only with the
+     * setting on, is stored in the context of a test factory; {@link #plainCloseablesFollowTheSetting()} checks after
+     * the class that Jupiter closed it exactly when the setting the run received is on, so the setting is observed as
+     * applied by Jupiter, not only as a string. One run cannot tell which Surefire execution it is; that the second
+     * execution receives the setting was shown once by requiring the value closed in both executions, which failed in
+     * {@code store-autoclose-off} alone.
+     */
+    @Nested
+    @DisplayName("Store auto-close setting of the run")
+    class AutoCloseSetting {
+
+        @TestFactory
+        @DisplayName("Should run with the auto-close setting the Surefire execution configures")
+        Stream<DynamicTest> shouldReceiveAutoCloseSetting(ExtensionContext context) {
+            var setting = context.getConfigurationParameter(AUTO_CLOSE_SETTING);
+            var autoClosing = setting.map(Boolean::parseBoolean).orElse(true);
+            var closeable = new PlainCloseable(autoClosing, new AtomicBoolean());
+            context.getStore(AUTO_CLOSE_NAMESPACE).put(PlainCloseable.class, closeable);
+            PLAIN_CLOSEABLES.add(closeable);
+            var name = "auto-closing " + (autoClosing ? "on" : "off") + " (" + AUTO_CLOSE_SETTING + "="
+                    + setting.orElse("unset") + ")";
+            return Stream.of(dynamicTest(name, () -> assertTrue(setting.isEmpty() || "false".equals(setting.get()),
+                    "The run either keeps the default or receives exactly the value false: " + setting)));
+        }
+    }
+
+    @AfterAll
+    static void plainCloseablesFollowTheSetting() {
+        assertAll("plain AutoCloseable values stored by the test factory",
+                () -> assertEquals(1, PLAIN_CLOSEABLES.size(), "The test factory stored one plain AutoCloseable"),
+                () -> assertAll(PLAIN_CLOSEABLES.stream()
+                        .map(closeable -> () -> assertEquals(closeable.autoClosing(), closeable.closed().get(),
+                                "Jupiter closes a plain AutoCloseable exactly when auto-closing is on: "
+                                        + closeable))));
+    }
+
+    /**
+     * A store value that is an {@link AutoCloseable} only, not a {@code CloseableResource}, so Jupiter closes it only
+     * while {@code junit.jupiter.extensions.store.close.autocloseable.enabled} is on.
+     *
+     * @param autoClosing whether the run received auto-closing on
+     * @param closed      set when Jupiter closes the value
+     */
+    record PlainCloseable(boolean autoClosing, AtomicBoolean closed) implements AutoCloseable {
+
+        @Override
+        public void close() {
+            closed.set(true);
         }
     }
 

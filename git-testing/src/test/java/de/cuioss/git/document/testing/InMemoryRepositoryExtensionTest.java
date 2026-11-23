@@ -271,17 +271,26 @@ class InMemoryRepositoryExtensionTest {
                         "The message names the expected type"));
     }
 
+    /**
+     * The fixture's contract is a new repository of JGit's in-memory DFS storage without a directory, initialised like
+     * the bare fixtures; the declared parameter type alone says nothing about it, since every value assignable to the
+     * parameter is a {@link Repository}.
+     */
     @Test
-    @DisplayName("Should resolve an annotated parameter declared exactly as Repository")
+    @DisplayName("Should resolve an annotated Repository parameter to a fresh initialised in-memory repository")
     void shouldResolveParameterDeclaredAsRepository(ExtensionContext context) throws Exception {
         var declared = new ReflectedParameter(signatureParameter(3), 3);
 
         var resolved = extension.resolveParameter(declared, context);
 
+        var inMemory = assertInstanceOf(InMemoryRepository.class, resolved,
+                "The resolved value is a repository of JGit's in-memory DFS storage");
         assertAll("resolved repository",
-                () -> assertEquals(Repository.class, declared.getParameter().getType(),
-                        "The parameter is declared exactly as Repository"),
-                () -> assertInstanceOf(Repository.class, resolved, "The resolved value is a Repository"));
+                () -> assertNull(inMemory.getDirectory(), "The resolved repository has no directory"),
+                () -> assertEquals(Constants.R_HEADS + Constants.MASTER, inMemory.getFullBranch(),
+                        "The resolved repository is initialised with HEAD linked to refs/heads/master"),
+                () -> assertEquals(List.of(), inMemory.getRefDatabase().getRefs(),
+                        "The resolved repository holds no reference"));
     }
 
     /**

@@ -18,8 +18,9 @@ package de.cuioss.git.document.testing;
 import de.cuioss.test.generator.TypedGenerator;
 
 /**
- * Registers the generators of this module in one place: one factory method per {@link TypedGenerator}. The factory is
- * named for {@code @TypeGeneratorFactorySource(factoryClass = GitGenerators.class, factoryMethod = "credentials")}.
+ * Registers the generators of this module in one place: one factory method per {@link TypedGenerator}. A factory is
+ * named for {@code @TypeGeneratorFactorySource(factoryClass = GitGenerators.class, factoryMethod = "credentials")} or
+ * {@code factoryMethod = "distinctTexts"}.
  *
  * @since 0.1
  */
@@ -36,5 +37,15 @@ public final class GitGenerators {
      */
     public static TypedGenerator<GitCredential> credentials() {
         return new GitCredentialGenerator();
+    }
+
+    /**
+     * Creates a generator of text values that are distinct by construction and occur in no text a test did not put
+     * them in; see {@link DistinctTextGenerator}.
+     *
+     * @return a new generator, numbering its values from 1
+     */
+    public static TypedGenerator<String> distinctTexts() {
+        return new DistinctTextGenerator();
     }
 }

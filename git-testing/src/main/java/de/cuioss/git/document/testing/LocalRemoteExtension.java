@@ -27,7 +27,10 @@ import org.junit.jupiter.api.extension.TestInstantiationAwareExtension.Extension
 /**
  * Resolves a test parameter annotated with {@link Remote}: a {@link LocalRemote} holding a new bare repository in a
  * fresh temporary directory and its {@code file:} URL, one per annotated parameter. The repository is closed and the
- * directory deleted when the extension context of the test closes, also when the test fails.
+ * directory deleted when the extension context of the test closes, also when the test fails. A constructor parameter
+ * of a test class with the default per-method lifecycle is resolved per test method as well. A test class with
+ * {@code Lifecycle.PER_CLASS} has one instance, created once in the context of the class, so its constructor fixture
+ * lives for the whole class and is cleaned up when the class has run.
  * <p>
  * The extension only resolves parameters that carry {@link Remote}; the parameter type alone never selects it. It is
  * registered by the annotation and needs no {@code @ExtendWith} of its own.
@@ -60,7 +63,9 @@ public final class LocalRemoteExtension implements ParameterResolver {
     /**
      * Resolves a constructor parameter in the extension context of the test method, so that a constructor fixture of
      * a test class with the default per-method lifecycle is created and cleaned up per test, not once in the class
-     * context where the next test's fixture would replace its cleanup.
+     * context where the next test's fixture would replace its cleanup. Under {@code Lifecycle.PER_CLASS} Jupiter hands
+     * the resolver the context of the test class instead (observed with junit-jupiter-api 6.1.3), so the one
+     * constructor fixture lives for the class.
      *
      * @param rootContext the context of the test class
      * @return {@link ExtensionContextScope#TEST_METHOD}

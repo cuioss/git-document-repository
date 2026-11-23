@@ -34,8 +34,10 @@ Planned but not yet created: `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
-(`GitCredentialGenerator`, `GitGenerators`) and the three repository fixtures (`@LocalRepository`, `@InMemory`,
-`@Remote`). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
+(`GitCredentialGenerator`, `GitGenerators`), the distinct-value generator `DistinctTextGenerator` (through
+`GitGenerators.distinctTexts()`, for a value asserted absent from a text or two values that must differ), the three
+repository fixtures (`@LocalRepository`, `@InMemory`, `@Remote`) and the host-configuration isolation
+`@HermeticGitConfiguration` with `HermeticGitConfigurationExtension` (not for tests that run concurrently in one JVM). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
 `pm-provider-git` as a plain copy: `RefusingFS` with `CapabilityRefusedException`, `RemotePolicy`, `GitIdentity`,
 `GitResult` and `GitOutcome`, `RepositoryOperations` with `JGitRepositoryOperations` (open, init, `cloneIfMissing`,
 log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
