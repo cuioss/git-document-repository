@@ -343,7 +343,7 @@ final class AnchorNotes {
      * @return whether the reference points at the blob of the proof now
      * @throws IOException if the blob or the reference cannot be written
      */
-    boolean keep(ObjectId subject, Kept proof) throws IOException {
+    private boolean keep(ObjectId subject, Kept proof) throws IOException {
         Repository repository = clone.repository();
         ObjectId blob;
         try (ObjectInserter inserter = repository.newObjectInserter()) {
