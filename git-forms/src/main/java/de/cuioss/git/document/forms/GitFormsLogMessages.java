@@ -53,5 +53,27 @@ public final class GitFormsLogMessages {
                 .prefix(PREFIX)
                 .identifier(1)
                 .build();
+
+        /**
+         * A transition of a workflow was performed (GDR-FORMS-5): the mechanism it maps onto and the full id of the
+         * commit it wrote, the draft commit, the save commit or the release commit; never the name of the transition, a
+         * state, a pseudonym or a claim.
+         */
+        public static final LogRecord TRANSITION_PERFORMED = LogRecordModel.builder()
+                .template("Performed a transition on the mechanism %s, commit %s")
+                .prefix(PREFIX)
+                .identifier(2)
+                .build();
+
+        /**
+         * A transition of a workflow was not performed (GDR-FORMS-5, GDR-FORMS-7): the mechanism it maps onto, or
+         * {@code none} when the transition was not found, and the name of the outcome, for example
+         * {@code STEP_UP_REQUIRED}; never the name of the transition, a state, a pseudonym, a claim or a finding.
+         */
+        public static final LogRecord TRANSITION_NOT_PERFORMED = LogRecordModel.builder()
+                .template("Did not perform a transition on the mechanism %s: %s")
+                .prefix(PREFIX)
+                .identifier(3)
+                .build();
     }
 }

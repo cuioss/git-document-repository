@@ -227,8 +227,16 @@ public final class OutputCheck {
         return List.copyOf(units);
     }
 
-    /** The data of one document, joined with its parts, or of one entry. */
-    private FormsResult<Map<String, @Nullable Object>> data(DocumentFiles files, String unit) {
+    /**
+     * Reads the data of one document, joined with its parts, or of one entry, from the files of a commit or of an
+     * attempt of a save.
+     *
+     * @param files the files
+     * @param unit  the ULID of a document of a per-document kind, or the running number of an entry
+     * @return {@link FormsOutcome#OK} with the data; {@link FormsOutcome#INVALID} for a unit that is no name segment;
+     *         the passed-on {@link StoreOutcome#MALFORMED} for data or a part that is missing or cannot be read
+     */
+    FormsResult<Map<String, @Nullable Object>> data(DocumentFiles files, String unit) {
         FormsResult<String> path = kind.isNumbered() ? layout.entry(unit) : layout.document(unit);
         if (!path.isOk()) {
             return new FormsResult<>(path.outcome(), null, path.detail());
