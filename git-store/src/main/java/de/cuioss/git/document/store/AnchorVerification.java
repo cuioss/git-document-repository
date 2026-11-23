@@ -25,7 +25,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeMap;
@@ -65,7 +64,9 @@ import org.jspecify.annotations.Nullable;
  * </ul>
  * A repository with a shallow boundary (JGit 7.8.0 {@code ObjectDatabase.getShallowCommits}) is
  * {@link StoreOutcome#INCOMPLETE}, never a success, because the reachability of a listed object cannot be decided
- * beyond it. The verification changes no reference and writes no object. A finished verification is logged once as
+ * beyond it. A checkpoint or release tag that points at no commit, or at a missing object, cannot be verified and
+ * ends the verification as a failure, never as a clean report. The verification changes no reference and writes no
+ * object. A finished verification is logged once as
  * {@code GIT_STORE-10} with the provider id and the counts only.
  *
  * @since 0.1
@@ -168,7 +169,8 @@ public final class AnchorVerification {
      * @param provider   the anchor provider whose notes reference {@code refs/notes/anchors/<id>} holds the proofs
      * @return {@link StoreOutcome#OK} with the report; {@link StoreOutcome#INCOMPLETE} with {@value #SHALLOW} for a
      *         repository with a shallow boundary; the passed-on {@link GitOutcome#FAILED} with
-     *         {@code anchors: <simple class name of the exception>} when the repository cannot be read
+     *         {@code anchors: <simple class name of the exception>} when the repository cannot be read, a checkpoint or
+     *         release tag included that points at no commit or at a missing object
      * @throws NullPointerException if an argument is {@code null}
      */
     public static StoreResult<Report> verifyAnchors(Repository repository, AnchorProvider provider) {
@@ -194,13 +196,12 @@ public final class AnchorVerification {
                 missingCheckpoints(checkpoints, findings);
                 List<RevCommit> checkpointCommits = new ArrayList<>();
                 for (ObjectId target : checkpoints.values()) {
-                    commit(walk, target).ifPresent(commit -> {
-                        checkpointCommits.add(commit);
-                        subjects.add(commit.copy());
-                    });
+                    RevCommit commit = commit(walk, target);
+                    checkpointCommits.add(commit);
+                    subjects.add(commit.copy());
                 }
                 for (ObjectId target : releases) {
-                    commit(walk, target).ifPresent(commit -> subjects.add(commit.copy()));
+                    subjects.add(commit(walk, target).copy());
                 }
                 String notesRef = StoreReferences.anchorNotes(provider.id());
                 int proofs = verifyChain(repository, reader, walk, notesRef, provider, subjects, findings);
@@ -241,48 +242,67 @@ public final class AnchorVerification {
     private static int verifyChain(Repository repository, ObjectReader reader, RevWalk walk, String notesRef,
             AnchorProvider provider, Set<ObjectId> subjects, List<Finding> findings) throws IOException {
         Ref ref = repository.exactRef(notesRef);
-        NoteMap current = NoteMap.newEmptyMap();
-        List<RevCommit> notesCommits = new ArrayList<>();
-        if (ref != null && ref.getObjectId() != null) {
-            RevCommit tip = walk.parseCommit(ref.getObjectId());
-            current = NoteMap.read(reader, tip);
-            for (RevCommit commit = tip; commit != null;
-                 commit = commit.getParentCount() == 0 ? null : walk.parseCommit(commit.getParent(0))) {
-                notesCommits.add(commit);
-            }
-            Collections.reverse(notesCommits);
-        }
+        @Nullable ObjectId tipId = ref == null ? null : ref.getObjectId();
+        @Nullable RevCommit tip = tipId == null ? null : walk.parseCommit(tipId);
         byte[] previous = new byte[0];
         NoteMap before = NoteMap.newEmptyMap();
         int proofs = 0;
-        for (RevCommit notesCommit : notesCommits) {
+        for (RevCommit notesCommit : firstParents(walk, tip)) {
             NoteMap after = NoteMap.read(reader, notesCommit);
-            List<Note> added = new ArrayList<>();
-            for (Note note : after) {
-                if (!note.getData().equals(before.get(note))) {
-                    added.add(note);
-                }
-            }
-            added.sort(Comparator.comparing(ObjectId::name));
-            for (Note note : added) {
-                byte[] raw = reader.open(note.getData()).getBytes();
-                byte[] proof = AnchorNotes.decode(raw);
+            for (Note note : added(before, after)) {
+                previous = verifyProof(reader, provider, note, previous, findings);
                 proofs++;
-                StoreOutcome outcome = proof == null ? StoreOutcome.SIGNATURE_INVALID
-                        : verify(provider, note.copy(), proof, previous);
-                if (outcome != StoreOutcome.OK) {
-                    findings.add(new Finding(Kind.PROOF_REJECTED, note.name(), null, outcome));
-                }
-                previous = proof == null ? raw : proof;
             }
             before = after;
         }
+        NoteMap current = tip == null ? NoteMap.newEmptyMap() : NoteMap.read(reader, tip);
         for (ObjectId subject : subjects) {
             if (!current.contains(subject)) {
                 findings.add(new Finding(Kind.NO_PROOF, subject.name(), null, null));
             }
         }
         return proofs;
+    }
+
+    /** The notes commits along the first parents of the tip, oldest first; none without a tip. */
+    private static List<RevCommit> firstParents(RevWalk walk, @Nullable RevCommit tip) throws IOException {
+        List<RevCommit> commits = new ArrayList<>();
+        for (RevCommit commit = tip; commit != null;
+             commit = commit.getParentCount() == 0 ? null : walk.parseCommit(commit.getParent(0))) {
+            commits.add(commit);
+        }
+        Collections.reverse(commits);
+        return commits;
+    }
+
+    /** The notes a notes commit added or changed against its first parent, by subject id. */
+    private static List<Note> added(NoteMap before, NoteMap after) throws IOException {
+        List<Note> added = new ArrayList<>();
+        for (Note note : after) {
+            if (!note.getData().equals(before.get(note))) {
+                added.add(note);
+            }
+        }
+        added.sort(Comparator.comparing(ObjectId::name));
+        return added;
+    }
+
+    /**
+     * Verifies one stored proof with the proof before it and reports a rejection; a note that is no base64 is
+     * rejected as {@link StoreOutcome#SIGNATURE_INVALID}.
+     *
+     * @return the {@code previous} of the next proof: this proof, or the raw note when it is no base64
+     */
+    private static byte[] verifyProof(ObjectReader reader, AnchorProvider provider, Note note, byte[] previous,
+            List<Finding> findings) throws IOException {
+        byte[] raw = reader.open(note.getData()).getBytes();
+        byte[] proof = AnchorNotes.decode(raw);
+        StoreOutcome outcome = proof == null ? StoreOutcome.SIGNATURE_INVALID
+                : verify(provider, note.copy(), proof, previous);
+        if (outcome != StoreOutcome.OK) {
+            findings.add(new Finding(Kind.PROOF_REJECTED, note.name(), null, outcome));
+        }
+        return proof == null ? raw : proof;
     }
 
     /** The outcome of the provider for one proof; an exception of the provider rejects the proof. */
@@ -335,12 +355,17 @@ public final class AnchorVerification {
         }
     }
 
-    /** The commit a tag points at, peeled; empty for a tag that points at no commit or at a missing object. */
-    private static Optional<RevCommit> commit(RevWalk walk, ObjectId target) throws IOException {
-        try {
-            return Optional.of(walk.parseCommit(target));
-        } catch (IncorrectObjectTypeException | MissingObjectException e) {
-            return Optional.empty();
+    /**
+     * The commit a checkpoint or release tag points at, an annotated tag peeled. A tag that points at no commit or at a
+     * missing object cannot be verified, so its exception ends the verification as {@link GitOutcome#FAILED} and never
+     * as a clean report.
+     */
+    private static RevCommit commit(RevWalk walk, @Nullable ObjectId target) throws IOException {
+        if (target == null) {
+            throw new MissingObjectException(ObjectId.zeroId(), "tag target");
         }
+        // JGit 7.8.0 RevWalk.parseCommit peels annotated tags and throws IncorrectObjectTypeException for a blob or
+        // tree, MissingObjectException for an absent object
+        return walk.parseCommit(target);
     }
 }

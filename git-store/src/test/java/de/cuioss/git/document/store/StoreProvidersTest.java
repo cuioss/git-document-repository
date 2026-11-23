@@ -294,7 +294,7 @@ class StoreProvidersTest {
                 @Nullable String allowedSigners) {
             return new StoreConfiguration(EMPTY_REGISTRY, new Save(1), new Drafts(Period.ofDays(1)),
                     new Fetch(Duration.ofMinutes(1)), new Signing(COMMIT_SOURCE, commitReference, null),
-                    new Anchor(SignedAnchorProvider.ID, true, Anchor.DEFAULT_CHECKPOINT_INTERVAL,
+                    new Anchor(SignedAnchorProvider.PROVIDER_ID, true, Anchor.DEFAULT_CHECKPOINT_INTERVAL,
                             Anchor.DEFAULT_RETRY_INTERVAL, new Anchor.Signed(anchorKeySource, anchorKey,
                                     allowedSigners, Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)),
                     new Directory(TestPersonDirectory.ID), new Commit(Commit.DEFAULT_EMAIL));
@@ -312,7 +312,7 @@ class StoreProvidersTest {
             var anchorKey = TestKeys.ed25519();
 
             var providers = providers(select(configuration(ANCHOR_SOURCE, anchorReference, null),
-                    new KeyedSource(COMMIT_SOURCE, commitKey), new KeyedSource(ANCHOR_SOURCE, anchorKey)));
+                    new KeyedSource(COMMIT_SOURCE, commitKey, commitReference), new KeyedSource(ANCHOR_SOURCE, anchorKey, anchorReference)));
 
             var anchor = assertInstanceOf(SignedAnchorProvider.class, providers.anchor(), "the provider signed");
             byte[] proof = Objects.requireNonNull(anchor.obtain("alias", ObjectId.zeroId(), Instant.now(),
@@ -320,7 +320,7 @@ class StoreProvidersTest {
             var signature = assertInstanceOf(SshSignatures.DecodedSignature.class,
                     SshSignatures.decode(AnchorStatement.split(proof).orElseThrow().signature()), "the signature");
             assertAll(
-                    () -> assertEquals(SignedAnchorProvider.ID, anchor.id(), "the id"),
+                    () -> assertEquals(SignedAnchorProvider.PROVIDER_ID, anchor.id(), "the id"),
                     () -> assertArrayEquals(anchorKey.publicKeyBlob(), signature.publicKeyBlob(),
                             "signed with the anchor key"));
             LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO, "anchor provider signed");
@@ -332,8 +332,9 @@ class StoreProvidersTest {
         @DisplayName("GDR-STORE-18: without anchor.signed.key-source the anchor key source is file")
         void defaultKeySource() {
             var providers = providers(select(configuration(null, anchorReference, null),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()),
-                    new KeyedSource(StoreConfiguration.Signing.DEFAULT_KEY_SOURCE, TestKeys.ed25519())));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference),
+                    new KeyedSource(StoreConfiguration.Signing.DEFAULT_KEY_SOURCE, TestKeys.ed25519(),
+                            anchorReference)));
 
             assertInstanceOf(SignedAnchorProvider.class, providers.anchor(), "the provider signed");
         }
@@ -342,8 +343,8 @@ class StoreProvidersTest {
         @DisplayName("GDR-STORE-18: a missing anchor.signed.key is MALFORMED")
         void missingKey() {
             var result = select(configuration(ANCHOR_SOURCE, null, null),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()),
-                    new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519()));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference),
+                    new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519(), anchorReference));
 
             assertRefused("anchor.signed.key is missing", result);
         }
@@ -354,7 +355,8 @@ class StoreProvidersTest {
             var key = TestKeys.ed25519();
 
             var result = select(configuration(ANCHOR_SOURCE, anchorReference, null),
-                    new KeyedSource(COMMIT_SOURCE, key), new KeyedSource(ANCHOR_SOURCE, key));
+                    new KeyedSource(COMMIT_SOURCE, key, commitReference),
+                    new KeyedSource(ANCHOR_SOURCE, key, anchorReference));
 
             assertRefused("anchor.signed.key equals the commit-signing key", result);
             assertSecretAbsent(anchorReference, result);
@@ -365,9 +367,9 @@ class StoreProvidersTest {
         @DisplayName("GDR-STORE-18: a candidate anchor provider with the id signed is a duplicate")
         void duplicateSigned() {
             var result = StoreProviders.select(configuration(ANCHOR_SOURCE, anchorReference, null),
-                    List.of(new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()),
-                            new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519())),
-                    List.of(new TestAnchorProvider(SignedAnchorProvider.ID)), List.of(new TestPersonDirectory()));
+                    List.of(new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference),
+                            new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519(), anchorReference)),
+                    List.of(new TestAnchorProvider(SignedAnchorProvider.PROVIDER_ID)), List.of(new TestPersonDirectory()));
 
             assertRefused("AnchorProvider: more than one provider with the id of anchor.provider", result);
         }
@@ -376,7 +378,7 @@ class StoreProvidersTest {
         @DisplayName("GDR-STORE-18: an anchor key source no candidate carries is MALFORMED naming the key")
         void unknownKeySource() {
             var result = select(configuration(id(), anchorReference, null),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference));
 
             assertRefused("SigningKeySource: no provider with the id of anchor.signed.key-source", result);
         }
@@ -385,7 +387,7 @@ class StoreProvidersTest {
         @DisplayName("GDR-STORE-18: an anchor key source that hands out no public key stops the start with its outcome")
         void unreachableKeySource() {
             var result = select(configuration(ANCHOR_SOURCE, anchorReference, null),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()), new UnreachableSource(ANCHOR_SOURCE));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference), new UnreachableSource(ANCHOR_SOURCE));
 
             assertAll(
                     () -> assertEquals(StoreResult.of(StoreOutcome.UNAVAILABLE,
@@ -401,8 +403,8 @@ class StoreProvidersTest {
             var missing = directory.resolve(Generators.letterStrings(12, 20).next());
 
             var result = select(configuration(ANCHOR_SOURCE, anchorReference, missing.toString()),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()),
-                    new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519()));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference),
+                    new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519(), anchorReference));
 
             assertAll(
                     () -> assertEquals(StoreResult.of(StoreOutcome.UNAVAILABLE,
@@ -417,7 +419,7 @@ class StoreProvidersTest {
             var allowed = Files.writeString(directory.resolve("allowed"),
                     "anchor@example.invalid " + anchorKey.publicKeyLine() + "\n");
             var providers = providers(select(configuration(ANCHOR_SOURCE, anchorReference, allowed.toString()),
-                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519()), new KeyedSource(ANCHOR_SOURCE, anchorKey)));
+                    new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference), new KeyedSource(ANCHOR_SOURCE, anchorKey, anchorReference)));
             var anchor = Objects.requireNonNull(providers.anchor());
             var subject = ObjectId.zeroId();
 
@@ -433,17 +435,25 @@ class StoreProvidersTest {
                 .noneMatch(logRecord -> carries(logRecord, secret)), "no log record carries the secret");
     }
 
-    /** A signing key source under a chosen id over a generated key. */
-    private record KeyedSource(String id, TestKeys.Ed25519 key) implements SigningKeySource {
+    /**
+     * A signing key source under a chosen id over a generated key, which answers only for the key reference it expects,
+     * so a store that asks it under another reference, for example the one of the other key, is refused.
+     */
+    private record KeyedSource(String id, TestKeys.Ed25519 key, String expectedReference) implements SigningKeySource {
+
+        /** The detail of a request under a key reference the source does not expect. */
+        static final String UNEXPECTED_REFERENCE = "keyed: unexpected key reference";
 
         @Override
         public StoreResult<byte[]> sign(String keyReference, byte[] data) {
-            return StoreResult.ok(key.sign(data));
+            return expectedReference.equals(keyReference) ? StoreResult.ok(key.sign(data))
+                    : StoreResult.of(StoreOutcome.REFUSED, UNEXPECTED_REFERENCE);
         }
 
         @Override
         public StoreResult<String> publicKey(String keyReference) {
-            return StoreResult.ok(key.publicKeyLine());
+            return expectedReference.equals(keyReference) ? StoreResult.ok(key.publicKeyLine())
+                    : StoreResult.of(StoreOutcome.REFUSED, UNEXPECTED_REFERENCE);
         }
     }
 

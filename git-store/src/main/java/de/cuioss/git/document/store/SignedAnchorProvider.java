@@ -41,7 +41,7 @@ import org.jspecify.annotations.Nullable;
  * <a href="https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig">PROTOCOL.sshsig</a>, so a single
  * proof can be checked with {@code ssh-keygen -Y verify -n git-document-anchor}. {@link StoreProviders} builds the
  * provider from {@code anchor.signed.key-source} and {@code anchor.signed.key} when {@code anchor.provider} is
- * {@value #ID}, reading the public key of the anchor key once at start; {@link #verifier(AllowedSigners)} builds an
+ * {@value #PROVIDER_ID}, reading the public key of the anchor key once at start; {@link #verifier(AllowedSigners)} builds an
  * instance that only verifies, for CI.
  * <p>
  * {@link #obtain(String, ObjectId, Instant, byte[])} refuses ({@link StoreOutcome#REFUSED}, nothing signed) when the
@@ -60,7 +60,7 @@ import org.jspecify.annotations.Nullable;
 public final class SignedAnchorProvider implements AnchorProvider {
 
     /** The id of the provider, the value of {@code anchor.provider} that selects it. */
-    public static final String ID = "signed";
+    public static final String PROVIDER_ID = "signed";
 
     /** The namespace of the SSH signature of a proof. */
     public static final String NAMESPACE = "git-document-anchor";
@@ -152,7 +152,7 @@ public final class SignedAnchorProvider implements AnchorProvider {
 
     @Override
     public String id() {
-        return ID;
+        return PROVIDER_ID;
     }
 
     /**

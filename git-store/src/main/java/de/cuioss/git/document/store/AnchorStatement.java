@@ -76,10 +76,17 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
     /** The length of a SHA-256 hash. */
     static final int HASH_LENGTH = 32;
 
-    private static final String OBJECT = "object ";
-    private static final String TIME = "time ";
-    private static final String SEQUENCE = "sequence ";
-    private static final String PREVIOUS = "previous ";
+    /** The key of the line of the object id, with its separating space. */
+    private static final String OBJECT_KEY = "object ";
+
+    /** The key of the line of the time, with its separating space. */
+    private static final String TIME_KEY = "time ";
+
+    /** The key of the line of the sequence number, with its separating space. */
+    private static final String SEQUENCE_KEY = "sequence ";
+
+    /** The key of the line of the previous hash, with its separating space. */
+    private static final String PREVIOUS_KEY = "previous ";
 
     private static final Pattern OBJECT_ID = Pattern.compile("[0-9a-f]{40}");
     private static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
@@ -158,10 +165,10 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
     byte[] encode() {
         var hex = HexFormat.of();
         String text = HEADER + '\n'
-                + OBJECT + object.name() + '\n'
-                + TIME + TIME_FORMAT.format(LocalDateTime.ofInstant(time, ZoneOffset.UTC)) + '\n'
-                + SEQUENCE + sequence + '\n'
-                + PREVIOUS + (previous == null ? NONE : hex.formatHex(previous)) + '\n';
+                + OBJECT_KEY + object.name() + '\n'
+                + TIME_KEY + TIME_FORMAT.format(LocalDateTime.ofInstant(time, ZoneOffset.UTC)) + '\n'
+                + SEQUENCE_KEY + sequence + '\n'
+                + PREVIOUS_KEY + (previous == null ? NONE : hex.formatHex(previous)) + '\n';
         return text.getBytes(UTF_8);
     }
 
@@ -180,9 +187,9 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
         if (lines.length != LINES || !HEADER.equals(lines[0])) {
             return Optional.empty();
         }
-        String object = value(lines[1], OBJECT, OBJECT_ID);
-        String time = value(lines[2], TIME, TIMESTAMP);
-        String sequence = value(lines[3], SEQUENCE, NUMBER);
+        String object = value(lines[1], OBJECT_KEY, OBJECT_ID);
+        String time = value(lines[2], TIME_KEY, TIMESTAMP);
+        String sequence = value(lines[3], SEQUENCE_KEY, NUMBER);
         if (object == null || time == null || sequence == null) {
             return Optional.empty();
         }
@@ -194,10 +201,10 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
         } catch (DateTimeException | NumberFormatException e) {
             return Optional.empty();
         }
-        if (!lines[4].startsWith(PREVIOUS)) {
+        if (!lines[4].startsWith(PREVIOUS_KEY)) {
             return Optional.empty();
         }
-        String previous = lines[4].substring(PREVIOUS.length());
+        String previous = lines[4].substring(PREVIOUS_KEY.length());
         if (number == 1) {
             return NONE.equals(previous)
                     ? Optional.of(new AnchorStatement(ObjectId.fromString(object), instant, number, null))

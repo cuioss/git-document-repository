@@ -56,6 +56,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * The anchor provider {@code signed} (GDR-STORE-18): the statement and its sequence chaining, the SSH signature in the
@@ -243,7 +245,7 @@ class SignedAnchorProviderTest {
 
         @Test
         @DisplayName("GDR-STORE-18: an unreachable key source is UNAVAILABLE, a refusing one REFUSED, neither detail passed on")
-        void keySourceFailures() throws Exception {
+        void keySourceFailures() {
             String secret = "ghp_" + Generators.letterStrings(24, 32).next();
             var unavailable = provider(new FailingSource(StoreOutcome.UNAVAILABLE, secret), source.key(), null);
             var refusing = provider(new FailingSource(StoreOutcome.REFUSED, secret), source.key(), null);
@@ -261,7 +263,7 @@ class SignedAnchorProviderTest {
 
         @Test
         @DisplayName("GDR-STORE-18: a signature that does not match the public key read at start is REFUSED")
-        void keyMismatch() throws Exception {
+        void keyMismatch() {
             var provider = provider(TestKeys.ed25519().source(), source.key(), null);
 
             var result = provider.obtain(alias, objectId(), START, new byte[0]);
@@ -556,17 +558,21 @@ class SignedAnchorProviderTest {
             assertEquals(invalid(), result, "refused");
         }
 
-        @Test
-        @DisplayName("GDR-STORE-18: a signature blob of another version is refused (sshsig.c: unsupported version)")
-        void otherVersion() throws Exception {
+        @ParameterizedTest(name = "{3}")
+        @CsvSource({
+                "2, sha512, ssh-ed25519, another version (sshsig.c: unsupported version)",
+                "1, sha1, ssh-ed25519, a hash algorithm other than sha512 or sha256 (sshsig.c: unsupported hash)",
+                "1, sha512, rsa-sha2-512, a signature type other than the key type (sshsig.c: signature type)"})
+        @DisplayName("GDR-STORE-18: a signature blob with one field off the format is refused")
+        void fieldOffFormat(int version, String hashAlgorithm, String signatureType, String field) throws Exception {
             var subject = objectId();
             byte[] statement = new AnchorStatement(subject, START, 1, null).encode();
             byte[] raw = source.key().sign(SshSignatures.signedData(SignedAnchorProvider.NAMESPACE, statement));
 
-            var result = verifyWith(subject, statement, armor(MAGIC, 2, source.key().publicKeyBlob(),
-                    SignedAnchorProvider.NAMESPACE, "sha512", "ssh-ed25519", raw, new byte[0]));
+            var result = verifyWith(subject, statement, armor(MAGIC, version, source.key().publicKeyBlob(),
+                    SignedAnchorProvider.NAMESPACE, hashAlgorithm, signatureType, raw, new byte[0]));
 
-            assertEquals(invalid(), result, "refused");
+            assertEquals(invalid(), result, () -> "refused: " + field);
         }
 
         @Test
@@ -578,32 +584,6 @@ class SignedAnchorProviderTest {
 
             var result = verifyWith(subject, statement, armor(MAGIC, 1, source.key().publicKeyBlob(),
                     SshSignatures.NAMESPACE_GIT, "sha512", "ssh-ed25519", raw, new byte[0]));
-
-            assertEquals(invalid(), result, "refused");
-        }
-
-        @Test
-        @DisplayName("GDR-STORE-18: a hash algorithm other than sha512 or sha256 is refused (sshsig.c: unsupported hash)")
-        void otherHashAlgorithm() throws Exception {
-            var subject = objectId();
-            byte[] statement = new AnchorStatement(subject, START, 1, null).encode();
-            byte[] raw = source.key().sign(SshSignatures.signedData(SignedAnchorProvider.NAMESPACE, statement));
-
-            var result = verifyWith(subject, statement, armor(MAGIC, 1, source.key().publicKeyBlob(),
-                    SignedAnchorProvider.NAMESPACE, "sha1", "ssh-ed25519", raw, new byte[0]));
-
-            assertEquals(invalid(), result, "refused");
-        }
-
-        @Test
-        @DisplayName("GDR-STORE-18: a signature type other than the key type is refused (sshsig.c: signature type)")
-        void otherSignatureType() throws Exception {
-            var subject = objectId();
-            byte[] statement = new AnchorStatement(subject, START, 1, null).encode();
-            byte[] raw = source.key().sign(SshSignatures.signedData(SignedAnchorProvider.NAMESPACE, statement));
-
-            var result = verifyWith(subject, statement, armor(MAGIC, 1, source.key().publicKeyBlob(),
-                    SignedAnchorProvider.NAMESPACE, "sha512", "rsa-sha2-512", raw, new byte[0]));
 
             assertEquals(invalid(), result, "refused");
         }
@@ -661,8 +641,10 @@ class SignedAnchorProviderTest {
             assumeTrue(ExternalTools.verifiesSignatures(keygen.get(), directory),
                     "the ssh-keygen on the path signs and verifies SSH signatures (-Y sign, -Y verify)");
             var split = split(value(provider().obtain(alias, objectId(), START, new byte[0])));
+            // the key is allowed in both namespaces, so the run in the namespace git fails only because the proof was
+            // signed in the namespace git-document-anchor
             Path allowed = Files.writeString(directory.resolve("allowed_signers"), PRINCIPAL
-                    + " namespaces=\"git-document-anchor\" " + source.key().publicKeyLine() + "\n", US_ASCII);
+                    + " namespaces=\"git-document-anchor,git\" " + source.key().publicKeyLine() + "\n", US_ASCII);
             Path signature = Files.writeString(directory.resolve("statement.sig"), split.signature(), US_ASCII);
             Path statement = Files.write(directory.resolve("statement"), split.statementBytes());
 

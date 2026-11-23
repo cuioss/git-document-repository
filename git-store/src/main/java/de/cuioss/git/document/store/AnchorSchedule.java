@@ -25,7 +25,9 @@ import java.util.concurrent.ScheduledFuture;
  * <p>
  * It wraps the {@link ScheduledFuture} that {@code ScheduledExecutorService.scheduleWithFixedDelay} returns (Java SE 21
  * API), as {@link FetchSchedule} does, and offers ending the schedule and telling whether it ended. Ending it also ends
- * the due checks the writer hands to the executor after a save, a release or a fetch.
+ * the due checks the writer hands to the executor after a save, a release or a fetch, those already handed over and not
+ * started yet included. Each schedule ends only its own registration: cancelling an earlier schedule, also again and on
+ * the executor of a later one, leaves the later schedule in place.
  *
  * @since 0.1
  */
@@ -38,8 +40,8 @@ public final class AnchorSchedule {
      * Wraps the future of a schedule.
      *
      * @param future   the future of the schedule
-     * @param onCancel what {@link #cancel()} runs besides cancelling the future: the end of the due checks after a
-     *                 save, a release or a fetch
+     * @param onCancel what {@link #cancel()} runs besides cancelling the future: the end of the registration of this
+     *                 schedule, so no due check after a save, a release or a fetch starts through it any more
      * @throws NullPointerException if an argument is {@code null}
      */
     AnchorSchedule(ScheduledFuture<?> future, Runnable onCancel) {
@@ -48,7 +50,9 @@ public final class AnchorSchedule {
     }
 
     /**
-     * Ends the schedule: no further due check starts; a due check that is running is not interrupted and completes.
+     * Ends the schedule: no further due check starts, neither a periodic one nor one handed to the executor after a
+     * save, a release or a fetch that has not started yet; a due check that is running is not interrupted and
+     * completes.
      *
      * @return {@code false} when the schedule had ended already, {@code true} otherwise
      */

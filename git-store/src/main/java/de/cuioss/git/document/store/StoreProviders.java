@@ -153,7 +153,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         SigningKeySource signingSource = Objects.requireNonNull(source.value());
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
-        if (SignedAnchorProvider.ID.equals(anchorId)) {
+        if (SignedAnchorProvider.PROVIDER_ID.equals(anchorId)) {
             var provider = signed(configuration, signingSource, signing, anchors);
             if (!provider.isOk()) {
                 return refuse(provider);
@@ -250,7 +250,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
     private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
             Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
         for (AnchorProvider candidate : anchors) {
-            if (SignedAnchorProvider.ID.equals(Objects.requireNonNull(candidate, "candidate").id())) {
+            if (SignedAnchorProvider.PROVIDER_ID.equals(Objects.requireNonNull(candidate, "candidate").id())) {
                 return StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
                         + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER);
             }

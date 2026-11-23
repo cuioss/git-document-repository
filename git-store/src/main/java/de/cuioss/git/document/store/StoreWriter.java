@@ -29,7 +29,6 @@ import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
 import org.eclipse.jgit.lib.Repository;
-import org.jspecify.annotations.Nullable;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
@@ -124,7 +123,8 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations,
             Clock clock) {
-        return open(storeRepository, gitDir, user, configuration, signing, null, operations, clock);
+        return open(storeRepository, gitDir, user, configuration, new CloneOpening.Providers(signing, null),
+                operations, clock);
     }
 
     /**
@@ -148,22 +148,20 @@ public final class StoreWriter implements AutoCloseable {
             StoreConfiguration configuration, StoreProviders providers, RepositoryOperations operations,
             Clock clock) {
         Objects.requireNonNull(providers, "providers");
-        return open(storeRepository, gitDir, user, configuration, providers.signing(), providers.anchor(), operations,
-                clock);
+        return open(storeRepository, gitDir, user, configuration,
+                new CloneOpening.Providers(providers.signing(), providers.anchor()), operations, clock);
     }
 
     private static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, SigningKeySource signing, @Nullable AnchorProvider anchor,
-            RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, CloneOpening.Providers providers, RepositoryOperations operations,
+            Clock clock) {
         Objects.requireNonNull(storeRepository, "storeRepository");
         Objects.requireNonNull(gitDir, "gitDir");
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(configuration, "configuration");
-        Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, signing, anchor, operations,
-                clock);
+        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, providers, operations, clock);
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }

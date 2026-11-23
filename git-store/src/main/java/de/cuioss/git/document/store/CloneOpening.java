@@ -49,6 +49,26 @@ final class CloneOpening {
     }
 
     /**
+     * The providers a clone is opened with.
+     *
+     * @param signing the active signing key source
+     * @param anchor  the active anchor provider; {@code null} when none is active, so nothing is anchored
+     */
+    record Providers(SigningKeySource signing, @Nullable AnchorProvider anchor) {
+
+        /**
+         * Checks the signing key source.
+         *
+         * @param signing the signing key source
+         * @param anchor  the anchor provider, or {@code null}
+         * @throws NullPointerException if {@code signing} is {@code null}
+         */
+        Providers {
+            Objects.requireNonNull(signing, "signing");
+        }
+    }
+
+    /**
      * Opens the bare clone of a repository, cloning its remote first if it does not exist yet; see
      * {@link StoreWriter#open}.
      *
@@ -56,15 +76,15 @@ final class CloneOpening {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user
      * @param configuration   the configuration of the store
-     * @param signing         the active signing key source
-     * @param anchor          the active anchor provider; {@code null} when none is active, so nothing is anchored
+     * @param providers       the active signing key source and anchor provider
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return the results of {@link StoreWriter#open}, with the clone as the value
      */
     static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, SigningKeySource signing, @Nullable AnchorProvider anchor,
-            RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, Providers providers, RepositoryOperations operations, Clock clock) {
+        SigningKeySource signing = providers.signing();
+        @Nullable AnchorProvider anchor = providers.anchor();
         String keyReference = configuration.signing().key();
         if (keyReference == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.SIGNING_KEY_MISSING);
@@ -106,7 +126,8 @@ final class CloneOpening {
                 new DocumentRelease(bareClone, operations, user, committing, attempts, events),
                 new DraftExpiry(storeRepository.alias(), repository, guard, updater, configuration.drafts().expiry(),
                         attempts),
-                new AnchorEngine(bareClone, anchor, configuration.anchor(), operations, user, committing, attempts));
+                new AnchorEngine(bareClone, new AnchorEngine.Selection(anchor, configuration.anchor()), operations,
+                        user, committing, attempts, events));
         return StoreResult.ok(new StoreClone(bareClone, new StoreClone.Transport(operations, user,
                 configuration.fetch().interval(), configuration.anchor().retryInterval()), parts));
     }

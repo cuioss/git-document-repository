@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -78,8 +79,10 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code refs/notes/anchors/<provider>}, in a signed notes commit of the technical user without identity trailers,
  * pushed one note per push with the lease of the notes reference as the last fetch mirrored it, separately from the
  * commits of a save; the pending subjects are derived from the remote notes as of the last fetch; a proof whose push
- * failed is kept locally, pushed by the next due check and not requested again; and {@code previous} is the newest
- * anchored proof.
+ * failed is kept locally, pushed by the next due check and not requested again; {@code previous} is the newest
+ * anchored proof; every proof is bound to the notes tip it extends, so a moved tip ends the due check and a kept proof
+ * of a moved tip is requested anew; a proof that cannot be kept is not published; and the fetch of a due check reaches
+ * the listeners.
  * <p>
  * Names, ids and contents are generated; the reference layout, the message prefix and the outcomes are the specified
  * vocabulary and kept as literals.
@@ -234,6 +237,60 @@ class AnchorNotesTest {
                      .build()) {
             return tip(clone, ref);
         }
+    }
+
+    private static byte[] cloneBlob(Fixture fixture, ObjectId blob) throws IOException {
+        try (Repository clone = new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true)
+                     .build()) {
+            return clone.open(blob, Constants.OBJ_BLOB).getBytes();
+        }
+    }
+
+    /** Writes a reference in the clone of a fixture onto a new blob, forcing the reference. */
+    private static void cloneRef(Fixture fixture, String ref) throws IOException {
+        try (Repository clone = new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true)
+                     .build(); ObjectInserter inserter = clone.newObjectInserter()) {
+            var blob = inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8));
+            inserter.flush();
+            RefUpdate update = clone.updateRef(ref);
+            update.setNewObjectId(blob);
+            update.setForceUpdate(true);
+            assertEquals(RefUpdate.Result.NEW, update.update(), "the fixture reference is written");
+        }
+    }
+
+    /** Writes the base64 of a proof as the note of a subject onto a notes reference, as another clone would. */
+    private static ObjectId note(Repository repository, String notesRef, ObjectId subject, byte[] proof)
+            throws IOException {
+        @Nullable ObjectId parent = tip(repository, notesRef);
+        try (ObjectInserter inserter = repository.newObjectInserter(); ObjectReader reader = repository.newObjectReader();
+             RevWalk walk = new RevWalk(reader)) {
+            NoteMap notes = parent == null ? NoteMap.newEmptyMap() : NoteMap.read(reader, walk.parseCommit(parent));
+            notes.set(subject, inserter.insert(Constants.OBJ_BLOB, Base64.getEncoder().encode(proof)));
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(word(), "", Instant.ofEpochSecond(100_000), ZoneOffset.UTC);
+            commit.setTreeId(notes.writeTree(inserter));
+            if (parent != null) {
+                commit.setParentId(parent);
+            }
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(notesRef);
+            update.setNewObjectId(id);
+            update.setForceUpdate(true);
+            var result = update.update();
+            assertTrue(result == RefUpdate.Result.NEW || result == RefUpdate.Result.FORCED
+                    || result == RefUpdate.Result.FAST_FORWARD, () -> "the fixture note is written: " + result);
+            return id;
+        }
+    }
+
+    private static List<PushInput> notePushes(Fixture fixture) {
+        return fixture.operations().pushes().stream().filter(push -> push.remoteRef().equals(fixture.notesRef()))
+                .toList();
     }
 
     @Test
@@ -391,6 +448,132 @@ class AnchorNotesTest {
                             "across due checks: the newest anchored proof, not the newest commit time"),
                     () -> assertEquals(Instant.ofEpochSecond(250_000), calls.get(3).commitTime(),
                             "the commit time of the subject is passed along"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a tip that moved while the proof was obtained ends the due check; the next one chains on")
+    void movedTipEndsDueCheckAndNextChainsOnRemoteProof(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        var release = commit(repository, StoreReferences.releaseTag(document(), 1), Instant.ofEpochSecond(200_000));
+        byte[] foreign = ("foreign " + word()).getBytes(StandardCharsets.US_ASCII);
+
+        try (var fixture = open(remote)) {
+            ObjectId[] foreignTip = new ObjectId[1];
+            fixture.provider().beforeNextObtain(() -> {
+                try {
+                    foreignTip[0] = note(repository, fixture.notesRef(), main, foreign);
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+                value(fixture.writer().fetch());
+            });
+
+            var moved = fixture.anchor();
+            var checkpoint = checkpoint(repository, 1);
+            var keptAfterMove = cloneTip(fixture,
+                    StoreReferences.retainedProofs(fixture.provider().id()) + release.name());
+            int pushesAfterMove = notePushes(fixture).size();
+            var chained = fixture.anchor();
+
+            var calls = fixture.provider().calls();
+            var pushes = notePushes(fixture);
+            var firstNotes = parse(repository, ObjectId.fromString(pushes.getFirst().localRef()));
+            assertAll(
+                    () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(release.name(), checkpoint.name())),
+                            moved, "the moved tip ends the due check before any note is written"),
+                    () -> assertNull(keptAfterMove, "a proof of a moved tip is not kept"),
+                    () -> assertEquals(0, pushesAfterMove, "and its note is not pushed"),
+                    () -> assertEquals(List.of(release.name(), checkpoint.name()), chained.anchored(),
+                            "the next due check anchors both"),
+                    () -> assertArrayEquals(foreign, calls.get(1).previous(),
+                            "with the proof the remote tip added as previous"),
+                    () -> assertEquals(release, calls.get(1).subject(), "for a new proof of the subject"),
+                    () -> assertEquals(foreignTip[0].name(), pushes.getFirst().expectedRemoteHead(),
+                            "the push leases the tip the proof extends"),
+                    () -> assertEquals(List.of(foreignTip[0]), List.of(firstNotes.getParents()),
+                            "the note is written onto that tip"),
+                    () -> assertArrayEquals(foreign, AnchorNotes.decode(notes(repository, fixture.notesRef())
+                            .get(main)), "the note of the other clone is kept"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a kept proof whose tip moved is dropped and a new proof is obtained on the new tip")
+    void keptProofOfMovedTipRerequested(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        byte[] foreign = ("foreign " + word()).getBytes(StandardCharsets.US_ASCII);
+
+        try (var fixture = open(remote)) {
+            fixture.operations().failPushTo(fixture.notesRef(), GitOutcome.UNREACHABLE);
+            fixture.anchor();
+            var subject = checkpoint(repository, 1);
+            String keptRef = StoreReferences.retainedProofs(fixture.provider().id()) + subject.name();
+            byte[] keptBlob = cloneBlob(fixture, Objects.requireNonNull(cloneTip(fixture, keptRef), "the kept proof"));
+            var foreignTip = note(repository, fixture.notesRef(), main, foreign);
+
+            var anchoring = fixture.anchor();
+
+            var calls = fixture.provider().calls();
+            var notesTip = Objects.requireNonNull(tip(repository, fixture.notesRef()), "the notes reference");
+            String expectedKept = ObjectId.zeroId().name() + "\n"
+                    + new String(ScriptedAnchorProvider.proofOf(subject), StandardCharsets.US_ASCII);
+            assertAll(
+                    () -> assertEquals(expectedKept, new String(keptBlob, StandardCharsets.US_ASCII),
+                            "the kept blob names the tip the proof extends, none here, then the proof"),
+                    () -> assertEquals(List.of(subject.name()), anchoring.anchored(), "the subject is anchored"),
+                    () -> assertEquals(List.of(subject, subject), fixture.provider().subjects(),
+                            "with a new proof, since the kept one extends a tip that moved"),
+                    () -> assertArrayEquals(foreign, calls.get(1).previous(), "chained on the new tip"),
+                    () -> assertEquals(List.of(foreignTip), List.of(parse(repository, notesTip).getParents()),
+                            "the note is written onto the new tip"),
+                    () -> assertNull(cloneTip(fixture, keptRef), "the kept proof is gone"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a proof whose local-only reference cannot be written is neither noted nor pushed")
+    void unkeptProofNotPublished(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        var release = commit(repository, StoreReferences.releaseTag(document(), 1), Instant.ofEpochSecond(200_000));
+
+        try (var fixture = open(remote)) {
+            // a reference below the name of the kept reference makes its creation fail with LOCK_FAILURE
+            cloneRef(fixture, StoreReferences.retainedProofs(fixture.provider().id()) + release.name() + "/"
+                    + word());
+
+            var anchoring = fixture.anchor();
+
+            var checkpoint = checkpoint(repository, 1);
+            assertAll(
+                    () -> assertEquals(
+                            new StoreWriter.Anchoring(List.of(), List.of(release.name(), checkpoint.name())),
+                            anchoring, "the subject stays pending and ends the due check"),
+                    () -> assertEquals(List.of(), notePushes(fixture), "no note is pushed"),
+                    () -> assertNull(cloneTip(fixture, fixture.notesRef()), "no note is written"),
+                    () -> assertNull(tip(repository, fixture.notesRef()), "nothing reached the remote"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-9: the references the fetch of a due check moved reach the listeners")
+    void dueCheckFetchReachesListeners(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+
+        try (var fixture = open(remote)) {
+            List<String> received = new CopyOnWriteArrayList<>();
+            try (var subscription = fixture.writer().subscribe(StoreReferences.MAIN,
+                         (branch, commitId) -> received.add(commitId))) {
+                var moved = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(150_000), main);
+
+                fixture.anchor();
+
+                assertEquals(List.of(moved.name()), received, "the commit the due check fetched is delivered");
+            }
         }
     }
 }

@@ -567,9 +567,23 @@ class WritePathSecretsTest {
         }
     }
 
-    @Test
-    @DisplayName("GDR-NFR-3: the anchoring leaks no credential, address, person name, key, document id or provider detail")
-    void anchoringCarriesNoSecretAndNoThrowable(@Remote LocalRemote remote) throws Exception {
+    /**
+     * What the anchoring scenario left behind.
+     *
+     * @param results the results of its five due checks, in order
+     * @param records the log records from the first due check on
+     * @param texts   every rendered text: the results, their details, the log messages and their parameters
+     * @param secrets every secret of the scenario
+     */
+    private record AnchoringRun(List<StoreResult<StoreWriter.Anchoring>> results, List<LogRecord> records,
+    List<String> texts, List<String> secrets) {
+    }
+
+    /**
+     * Saves and releases a document with secrets in every input, then runs five due checks against a provider whose
+     * answers carry a secret: unavailable, throwing, an unpushed note, a failed fetch, and the final one.
+     */
+    private AnchoringRun anchoringRun(LocalRemote remote) throws IOException {
         var key = key();
         var target = StoreReferences.target(key);
         var path = word();
@@ -594,6 +608,7 @@ class WritePathSecretsTest {
         var configuration = value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
         List<String> texts = new ArrayList<>();
+        List<StoreResult<StoreWriter.Anchoring>> results = new ArrayList<>();
         int firstRecord;
         String releaseTag;
 
@@ -607,7 +622,6 @@ class WritePathSecretsTest {
             releaseTag = value(writer.release(author, claims(), key)).tag();
             firstRecord = TestLoggerFactory.getTestHandler().getRecords().size();
 
-            List<StoreResult<StoreWriter.Anchoring>> results = new ArrayList<>();
             results.add(writer.anchor());
             results.add(writer.anchor());
             operations.failPushTo(StoreReferences.anchorNotes(provider.id()), GitOutcome.UNREACHABLE);
@@ -615,15 +629,6 @@ class WritePathSecretsTest {
             operations.failFetch(GitOutcome.UNREACHABLE);
             results.add(writer.anchor());
             results.add(writer.anchor());
-
-            assertAll(
-                    () -> assertEquals(2, value(results.getFirst()).pending().size(),
-                            "the release commit and the checkpoint are pending"),
-                    () -> assertTrue(value(results.getFirst()).anchored().isEmpty(), "unavailable: nothing anchored"),
-                    () -> assertTrue(value(results.get(1)).anchored().isEmpty(), "throwing: nothing anchored"),
-                    () -> assertTrue(value(results.get(2)).anchored().isEmpty(), "unpushed: nothing anchored"),
-                    () -> assertFalse(results.get(3).isOk(), "the failed fetch ends the due check"),
-                    () -> assertEquals(List.of(), value(results.get(4)).pending(), "finally everything anchored"));
             for (StoreResult<StoreWriter.Anchoring> result : results) {
                 texts.add(String.valueOf(result));
                 texts.add(String.valueOf(result.detail()));
@@ -643,13 +648,36 @@ class WritePathSecretsTest {
         List<String> secrets = List.of(userName, password, userAddress, authorAddress, personName, keyReference,
                 Base64.getEncoder().encodeToString(signing.key().publicKey()), providerDetail, key.id(), releaseTag,
                 target);
-        for (String secret : secrets) {
-            for (String text : texts) {
+        return new AnchoringRun(results, records, texts, secrets);
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: in the anchoring scenario every failure leaves the subjects pending until the last due check")
+    void anchoringScenarioOutcomes(@Remote LocalRemote remote) throws Exception {
+        var results = anchoringRun(remote).results();
+
+        assertAll(
+                () -> assertEquals(2, value(results.getFirst()).pending().size(),
+                        "the release commit and the checkpoint are pending"),
+                () -> assertTrue(value(results.getFirst()).anchored().isEmpty(), "unavailable: nothing anchored"),
+                () -> assertTrue(value(results.get(1)).anchored().isEmpty(), "throwing: nothing anchored"),
+                () -> assertTrue(value(results.get(2)).anchored().isEmpty(), "unpushed: nothing anchored"),
+                () -> assertFalse(results.get(3).isOk(), "the failed fetch ends the due check"),
+                () -> assertEquals(List.of(), value(results.get(4)).pending(), "finally everything anchored"));
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: the anchoring leaks no credential, address, person name, key, document id or provider detail")
+    void anchoringCarriesNoSecretAndNoThrowable(@Remote LocalRemote remote) throws Exception {
+        var run = anchoringRun(remote);
+
+        for (String secret : run.secrets()) {
+            for (String text : run.texts()) {
                 assertFalse(text.contains(secret), () -> "a rendered text carries a secret: " + text);
             }
         }
         assertAll(
-                () -> assertTrue(records.stream().noneMatch(logRecord -> logRecord.getThrown() != null),
+                () -> assertTrue(run.records().stream().noneMatch(logRecord -> logRecord.getThrown() != null),
                         "no log record of the anchoring carries a throwable"),
                 () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
                         GitStoreLogMessages.INFO.CHECKPOINT_CREATED.resolveIdentifierString()),

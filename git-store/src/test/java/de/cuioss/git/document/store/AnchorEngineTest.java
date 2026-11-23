@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +42,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 import de.cuioss.git.document.core.RemotePolicy;
@@ -283,8 +285,8 @@ class AnchorEngineTest {
 
     private static ObjectId checkpoint(Repository repository, int number) throws IOException {
         Ref ref = repository.exactRef(StoreReferences.checkpoint(number));
-        assertTrue(ref != null, () -> "checkpoint " + number + " exists");
-        return Objects.requireNonNull(ref).getObjectId();
+        assertNotNull(ref, () -> "checkpoint " + number + " exists");
+        return ref.getObjectId();
     }
 
     private static ScheduledExecutorService executor() {
@@ -519,11 +521,14 @@ class AnchorEngineTest {
             var key = forked(remote.repository());
             var executor = executor();
             var release = new CountDownLatch(1);
+            // the provider waits on the executor thread; what its wait ended with is asserted on the JUnit thread
+            var awaited = new AtomicReference<@Nullable Boolean>();
             try (var fixture = open(remote)) {
                 fixture.anchors().beforeNextObtain(() -> {
                     try {
-                        assertTrue(release.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the test releases the provider");
+                        awaited.set(release.await(WAIT.toSeconds(), TimeUnit.SECONDS));
                     } catch (InterruptedException e) {
+                        awaited.set(false);
                         Thread.currentThread().interrupt();
                     }
                 });
@@ -537,11 +542,17 @@ class AnchorEngineTest {
                 var notesWhileBlocked = remote.repository()
                         .exactRef(StoreReferences.anchorNotes(fixture.anchors().id()));
                 int callsWhileBlocked = fixture.anchors().calls().size();
+                boolean providerStillWaiting = awaited.get() == null;
                 release.countDown();
+                // the anchoring lock lets this due check start only once the blocked one ended
                 var anchoring = fixture.anchor();
                 schedule.cancel();
 
                 assertAll(
+                        () -> assertTrue(providerStillWaiting,
+                                "the save, release, fetch and second save finished before the provider wait ended"),
+                        () -> assertEquals(Boolean.TRUE, awaited.get(),
+                                "the provider was released by the test, not by the end of its wait"),
                         () -> assertFalse(saved.commitId().isEmpty(), "the first save is saved"),
                         () -> assertTrue(released.isOk(), "the release returns while the provider blocks"),
                         () -> assertTrue(fetched.isOk(), "the fetch returns while the provider blocks"),
@@ -622,6 +633,59 @@ class AnchorEngineTest {
                         () -> assertEquals(List.of(checkpoint(remote.repository(), 1)), subjects,
                                 "the first checkpoint only: no due check after the cancel"));
             } finally {
+                stop(executor);
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: cancelling an earlier schedule again leaves a later one on the same executor in place")
+        void earlierScheduleCancelLeavesLaterOne(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var executor = executor();
+            try (var fixture = open(remote)) {
+                var first = fixture.writer().anchorPeriodically(executor);
+                first.cancel();
+                var second = fixture.writer().anchorPeriodically(executor);
+                first.cancel();
+
+                save(fixture.writer(), key);
+                boolean ran = fixture.anchors().awaitCalls(1, WAIT);
+                second.cancel();
+
+                assertTrue(ran, "the later schedule still hands the due check after the save to its executor");
+            } finally {
+                stop(executor);
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a due check handed over and not started when the schedule is cancelled does not run")
+        void queuedDueCheckRejectedAfterCancel(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var executor = executor();
+            var busy = new CountDownLatch(1);
+            var occupied = new CountDownLatch(1);
+            try (var fixture = open(remote)) {
+                var schedule = fixture.writer().anchorPeriodically(executor);
+                executor.execute(() -> {
+                    occupied.countDown();
+                    try {
+                        assertTrue(busy.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the test frees the executor");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                assertTrue(occupied.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor is occupied");
+
+                save(fixture.writer(), key);
+                schedule.cancel();
+                busy.countDown();
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
+
+                assertEquals(List.of(), fixture.anchors().calls(), "the queued due check did not run");
+            } finally {
+                busy.countDown();
                 stop(executor);
             }
         }

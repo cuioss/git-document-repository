@@ -62,8 +62,11 @@ final class StoreClone {
     private final DraftExpiry expiry;
     private final AnchorEngine anchors;
 
-    /** The executor of the due checks after a save, a release or a fetch; {@code null} until one is registered. */
-    private final AtomicReference<@Nullable Executor> anchorExecutor = new AtomicReference<>();
+    /**
+     * The registration of the schedule whose executor runs the due checks after a save, a release or a fetch;
+     * {@code null} until a schedule is registered and after it was cancelled.
+     */
+    private final AtomicReference<@Nullable Registration> anchorRegistration = new AtomicReference<>();
 
     /** Whether a due check is handed to the executor and has not started yet, so further triggers coalesce. */
     private final AtomicBoolean anchorQueued = new AtomicBoolean();
@@ -200,35 +203,64 @@ final class StoreClone {
      * the executor for the due checks after a save, a release or a fetch; see {@link StoreWriter#anchorPeriodically}.
      */
     AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
-        anchorExecutor.set(executor);
+        var registration = new Registration(executor);
+        anchorRegistration.set(registration);
         long interval = nanos(transport.retryInterval());
         try {
             return new AnchorSchedule(executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
-                    TimeUnit.NANOSECONDS), () -> anchorExecutor.compareAndSet(executor, null));
+                    TimeUnit.NANOSECONDS), () -> end(registration));
         } catch (RejectedExecutionException e) {
-            anchorExecutor.compareAndSet(executor, null);
+            end(registration);
             throw e;
         }
     }
 
     /**
-     * Hands one due check to the registered executor after the locks of a save, a release or a fetch were released;
-     * a trigger while one is handed over and not started yet coalesces with it. Without an executor or a provider
-     * nothing happens, and a refusal of the executor is ignored: the next trigger or the schedule retries.
+     * Ends a registration: a due check it handed over and that has not started yet does not run, and the registration
+     * is removed unless a later schedule replaced it already.
+     */
+    private void end(Registration registration) {
+        registration.ended = true;
+        anchorRegistration.compareAndSet(registration, null);
+    }
+
+    /**
+     * Hands one due check to the executor of the registered schedule after the locks of a save, a release or a fetch
+     * were released; a trigger while one is handed over and not started yet coalesces with it. Without a registration
+     * or a provider nothing happens, a handed-over due check whose registration ended before it started does not run,
+     * and a refusal of the executor is ignored: the next trigger or the schedule retries.
      */
     private void triggerDueCheck() {
-        Executor executor = anchorExecutor.get();
-        if (executor == null || !anchors.active() || !anchorQueued.compareAndSet(false, true)) {
+        Registration registration = anchorRegistration.get();
+        if (registration == null || !anchors.active() || !anchorQueued.compareAndSet(false, true)) {
             return;
         }
         try {
-            executor.execute(() -> {
+            registration.executor.execute(() -> {
                 anchorQueued.set(false);
-                safeDueCheck();
+                if (!registration.ended) {
+                    safeDueCheck();
+                }
             });
         } catch (RejectedExecutionException e) {
             anchorQueued.set(false);
             LOGGER.debug("The executor refused the due check of the anchoring");
+        }
+    }
+
+    /**
+     * The registration of one schedule of the due check: its identity is the token that only its own schedule
+     * removes, whatever executor a later schedule uses.
+     */
+    private static final class Registration {
+
+        private final Executor executor;
+
+        /** Whether the schedule was cancelled; a due check it handed over and that has not started yet then ends. */
+        private volatile boolean ended;
+
+        Registration(Executor executor) {
+            this.executor = executor;
         }
     }
 

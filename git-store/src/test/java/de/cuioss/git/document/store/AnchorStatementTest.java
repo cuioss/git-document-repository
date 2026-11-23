@@ -205,25 +205,29 @@ class AnchorStatementTest {
     void components() {
         var object = objectId();
         byte[] previous = hash();
+        byte[] expected = previous.clone();
         var statement = new AnchorStatement(object, TIME, 2, previous);
         previous[0] ^= 1;
         Objects.requireNonNull(statement.previous())[1] ^= 1;
+        var fractional = TIME.plusMillis(1);
+        byte[] firstHash = hash();
+        byte[] shortHash = new byte[31];
 
         assertAll(
-                () -> assertArrayEquals(statement.previous(), new AnchorStatement(object, TIME, 2,
-                        statement.previous()).previous(), "copies"),
+                () -> assertArrayEquals(expected, statement.previous(),
+                        "neither the input array nor a returned array changed the statement"),
                 () -> assertNotEquals(previous[0], Objects.requireNonNull(statement.previous())[0],
                         "the input array changed after construction changes nothing"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new AnchorStatement(object, TIME.plusMillis(1), 1, null), "fractional seconds"),
+                        () -> new AnchorStatement(object, fractional, 1, null), "fractional seconds"),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new AnchorStatement(object, TIME, 0, null), "sequence 0"),
                 () -> assertThrows(IllegalArgumentException.class,
                         () -> new AnchorStatement(object, TIME, 2, null), "no hash after 1"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new AnchorStatement(object, TIME, 1, hash()), "a hash for 1"),
+                        () -> new AnchorStatement(object, TIME, 1, firstHash), "a hash for 1"),
                 () -> assertThrows(IllegalArgumentException.class,
-                        () -> new AnchorStatement(object, TIME, 2, new byte[31]), "a short hash"),
+                        () -> new AnchorStatement(object, TIME, 2, shortHash), "a short hash"),
                 () -> assertEquals("AnchorStatement[object=" + object.name() + ", time=" + TIME + ", sequence=2]",
                         statement.toString(), "the rendering"));
     }

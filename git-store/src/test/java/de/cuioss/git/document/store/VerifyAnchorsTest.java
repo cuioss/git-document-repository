@@ -143,7 +143,7 @@ class VerifyAnchorsTest {
         tree.put("drafts", Map.of("expiry", Period.ofDays(30).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(5).toString()));
         tree.put("signing", Map.of("key", word()));
-        tree.put("anchor", Map.of("provider", SignedAnchorProvider.ID));
+        tree.put("anchor", Map.of("provider", SignedAnchorProvider.PROVIDER_ID));
         var configuration = value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
         var clock = Clock.fixed(now, ZoneOffset.UTC);
         var accepted = assertInstanceOf(SshSignatures.AcceptedKey.class,

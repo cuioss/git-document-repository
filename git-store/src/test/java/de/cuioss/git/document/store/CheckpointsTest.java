@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -41,6 +42,7 @@ import java.util.TreeMap;
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RemotePolicy;
+import de.cuioss.git.document.core.RepositoryOperations.PushInput;
 import de.cuioss.git.document.testing.LocalRemote;
 import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
@@ -57,6 +59,7 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.TagBuilder;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -142,7 +145,7 @@ class CheckpointsTest {
 
     /** The writer under test with its doubles. */
     private record Fixture(StoreWriter writer, ScriptedRepositoryOperations operations, TestKeys.Source signing,
-    TechnicalUser user, MovableClock clock, Path gitDir) implements AutoCloseable {
+    ScriptedAnchorProvider provider, TechnicalUser user, MovableClock clock, Path gitDir) implements AutoCloseable {
 
         StoreWriter.Anchoring anchor() {
             return value(writer.anchor());
@@ -164,7 +167,7 @@ class CheckpointsTest {
         var gitDir = temp.resolve(word() + ".git");
         var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()),
                 new StoreProviders(signing, new TestPersonDirectory(), provider), operations, clock));
-        return new Fixture(writer, operations, signing, user, clock, gitDir);
+        return new Fixture(writer, operations, signing, provider, user, clock, gitDir);
     }
 
     /** Writes a commit holding one generated file at a time onto a reference, forcing the reference. */
@@ -407,6 +410,130 @@ class CheckpointsTest {
                             "no new checkpoint was made instead"),
                     () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
                             GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a kept checkpoint whose tag push fails again blocks a new checkpoint of its number")
+    void keptCheckpointBlocksCreation(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN);
+        String tag = StoreReferences.checkpoint(1);
+
+        try (var fixture = open(remote)) {
+            fixture.operations().failPushTo(tag, GitOutcome.UNREACHABLE, GitOutcome.UNREACHABLE);
+            fixture.anchor();
+            var kept = Objects.requireNonNull(cloneTip(fixture, StoreReferences.retainedCheckpoints() + 1),
+                    "the checkpoint is kept");
+            commit(repository, StoreReferences.MAIN, main);
+            fixture.clock().advance(INTERVAL);
+
+            var blocked = fixture.anchor();
+            var keptWhileBlocked = cloneTip(fixture, StoreReferences.retainedCheckpoints() + 1);
+            var repaired = fixture.anchor();
+
+            List<String> tagPushes = fixture.operations().pushes().stream()
+                    .filter(push -> push.remoteRef().equals(tag)).map(PushInput::localRef).toList();
+            assertAll(
+                    () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), blocked,
+                            "nothing is anchored while the kept checkpoint waits"),
+                    () -> assertEquals(kept, keptWhileBlocked, "no new checkpoint took its number"),
+                    () -> assertEquals(List.of(kept.name(), kept.name(), kept.name()), tagPushes,
+                            "every push of tag 1 carries the kept checkpoint"),
+                    () -> assertEquals(kept, tip(repository, tag), "the kept checkpoint got its tag"),
+                    () -> assertEquals(kept.name(), repaired.anchored().getFirst(), "and is anchored first"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a checkpoint whose kept reference cannot be written gets no tag")
+    void unkeptCheckpointNotPushed(@Remote LocalRemote remote) throws Exception {
+        commit(remote.repository(), StoreReferences.MAIN);
+        String tag = StoreReferences.checkpoint(1);
+
+        try (var fixture = open(remote)) {
+            // a reference at the name of the kept prefix makes the creation of every kept checkpoint fail
+            String prefix = StoreReferences.retainedCheckpoints();
+            cloneRef(fixture, prefix.substring(0, prefix.length() - 1), Objects.requireNonNull(
+                    tip(remote.repository(), StoreReferences.MAIN)));
+
+            var anchoring = fixture.anchor();
+
+            assertAll(
+                    () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), anchoring,
+                            "nothing is anchored"),
+                    () -> assertTrue(fixture.operations().pushes().stream()
+                            .noneMatch(push -> push.remoteRef().equals(tag)), "no tag push"),
+                    () -> assertNull(tip(remote.repository(), tag), "no tag on the remote"),
+                    () -> assertNull(cloneTip(fixture, tag), "no local tag"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a local tag left after a failed push ends the due check before subject discovery")
+    void strandedTagEndsDueCheck(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        String tag = StoreReferences.checkpoint(1);
+
+        try (var fixture = open(remote)) {
+            Path lock = fixture.gitDir().resolve(tag + ".lock");
+            fixture.operations().beforeNextPush(() -> {
+                try {
+                    // the remote takes the number, so the push fails; the lock keeps the local tag from being deleted
+                    setRef(repository, tag, main);
+                    Files.createFile(lock);
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+
+            var result = fixture.writer().anchor();
+            Files.delete(lock);
+
+            assertAll(
+                    () -> assertEquals(StoreOutcome.INCOMPLETE, result.outcome(), "the due check ends incomplete"),
+                    () -> assertEquals(1, fixture.operations().pushes().size(), "after the one failed tag push"),
+                    () -> assertNotNull(cloneTip(fixture, tag), "the local tag stayed"),
+                    () -> assertEquals(List.of(), fixture.provider().calls(), "no proof is asked for"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: an annotated checkpoint tag is peeled, so the next checkpoint follows its commit")
+    void annotatedCheckpointTagPeeled(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            var annotated = new TagBuilder();
+            annotated.setObjectId(main, Constants.OBJ_COMMIT);
+            annotated.setTag("checkpoints/1");
+            annotated.setTagger(new PersonIdent(word(), "", Instant.ofEpochSecond(100_000), ZoneOffset.UTC));
+            annotated.setMessage(word());
+            var tagObject = inserter.insert(annotated);
+            inserter.flush();
+            setRef(repository, StoreReferences.checkpoint(1), tagObject);
+        }
+
+        try (var fixture = open(remote)) {
+            fixture.anchor();
+
+            var second = parse(repository, checkpoint(repository, 2));
+            assertEquals(List.of(main), List.of(second.getParents()), "the parent is the peeled commit");
+        }
+    }
+
+    private static @Nullable ObjectId cloneTip(Fixture fixture, String ref) throws IOException {
+        try (Repository clone = new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true)
+                     .build()) {
+            return tip(clone, ref);
+        }
+    }
+
+    private static void cloneRef(Fixture fixture, String ref, ObjectId id) throws IOException {
+        try (Repository clone = new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true)
+                     .build()) {
+            setRef(clone, ref, id);
         }
     }
 }

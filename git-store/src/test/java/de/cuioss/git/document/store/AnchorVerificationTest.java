@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -43,6 +44,7 @@ import java.util.Objects;
 import java.util.Set;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.store.AnchorVerification.Finding;
 import de.cuioss.git.document.store.AnchorVerification.Kind;
@@ -63,6 +65,7 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.TagBuilder;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.notes.NoteMap;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -148,7 +151,7 @@ class AnchorVerificationTest {
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
         tree.put("signing", Map.of("key", word()));
-        tree.put("anchor", Map.of("provider", SignedAnchorProvider.ID, "checkpoint-interval", INTERVAL.toString(),
+        tree.put("anchor", Map.of("provider", SignedAnchorProvider.PROVIDER_ID, "checkpoint-interval", INTERVAL.toString(),
                 "retry-interval", Duration.ofHours(12).toString()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
@@ -222,8 +225,8 @@ class AnchorVerificationTest {
 
     private static ObjectId tip(Repository repository, String ref) throws IOException {
         Ref found = repository.exactRef(ref);
-        assertTrue(found != null, () -> "the reference exists: " + ref);
-        return Objects.requireNonNull(found).getObjectId();
+        assertNotNull(found, () -> "the reference exists: " + ref);
+        return found.getObjectId();
     }
 
     private static String releaseTag() {
@@ -341,6 +344,75 @@ class AnchorVerificationTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-17: an annotated release tag on a commit is peeled and verifies clean")
+        void annotatedReleaseTagVerifies(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            var release = commit(repository, "refs/heads/" + word(), Instant.ofEpochSecond(200_000));
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var annotated = new TagBuilder();
+                annotated.setObjectId(release, Constants.OBJ_COMMIT);
+                annotated.setTag(word());
+                annotated.setTagger(new PersonIdent(word(), "", Instant.ofEpochSecond(200_000), ZoneOffset.UTC));
+                annotated.setMessage(word());
+                var tagObject = inserter.insert(annotated);
+                inserter.flush();
+                setRef(repository, releaseTag(), tagObject);
+            }
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 1);
+            }
+
+            var report = verify(remote);
+
+            assertAll(
+                    () -> assertEquals(List.of(), report.findings(), "no finding"),
+                    () -> assertEquals(2, report.subjects(), "the checkpoint and the peeled release commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: a release tag on a blob fails the verification, never a clean report")
+        void releaseTagOnBlobFails(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 1);
+            }
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var blob = inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8));
+                inserter.flush();
+                setRef(repository, releaseTag(), blob);
+            }
+
+            var result = AnchorVerification.verifyAnchors(repository, SignedAnchorProvider.verifier(anchorSigners()));
+
+            assertAll(
+                    () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), result.outcome(), "a failure"),
+                    () -> assertEquals("anchors: IncorrectObjectTypeException", result.detail(),
+                            "the target is no commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: a checkpoint tag on a missing object fails the verification, never a clean report")
+        void checkpointTagOnMissingObjectFails(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 1);
+            }
+            // JGit refuses a reference update onto a missing object, so the loose reference is written as a file
+            Path loose = repository.getDirectory().toPath().resolve(StoreReferences.checkpoint(2));
+            Files.writeString(loose, Generators.strings("0123456789abcdef", 40, 40).next() + "\n", US_ASCII);
+
+            var result = AnchorVerification.verifyAnchors(repository, SignedAnchorProvider.verifier(anchorSigners()));
+
+            assertAll(
+                    () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), result.outcome(), "a failure"),
+                    () -> assertEquals("anchors: MissingObjectException", result.detail(),
+                            "the target is missing"));
+        }
+
+        @Test
         @DisplayName("GDR-STORE-14: the checkpoint and notes commits of the engine verify under SignatureVerification")
         void engineCommitsVerifyAsSigned(@Remote LocalRemote remote) throws Exception {
             var repository = remote.repository();
@@ -353,7 +425,7 @@ class AnchorVerificationTest {
             var checkpoints = value(SignatureVerification.verify(repository, StoreReferences.checkpoint(2),
                     commitSigners));
             var notes = value(SignatureVerification.verify(repository,
-                    StoreReferences.anchorNotes(SignedAnchorProvider.ID), commitSigners));
+                    StoreReferences.anchorNotes(SignedAnchorProvider.PROVIDER_ID), commitSigners));
 
             assertAll(
                     () -> assertEquals(List.of(), checkpoints, "every checkpoint commit is signed and valid"),
@@ -365,7 +437,7 @@ class AnchorVerificationTest {
     @DisplayName("The chain of the provider signed (GDR-STORE-18)")
     class Chain {
 
-        private final String notesRef = StoreReferences.anchorNotes(SignedAnchorProvider.ID);
+        private final String notesRef = StoreReferences.anchorNotes(SignedAnchorProvider.PROVIDER_ID);
 
         private byte[] sign(TestKeys.Ed25519 key, AnchorStatement statement) {
             byte[] statementBytes = statement.encode();
@@ -540,7 +612,7 @@ class AnchorVerificationTest {
 
                 @Override
                 public String id() {
-                    return SignedAnchorProvider.ID;
+                    return SignedAnchorProvider.PROVIDER_ID;
                 }
 
                 @Override
@@ -563,7 +635,7 @@ class AnchorVerificationTest {
 
         @Test
         @DisplayName("GDR-STORE-17: a failure that ends the verification is a passed-on failure, never an exception")
-        void failureIsPassedOn(@Remote LocalRemote remote) throws Exception {
+        void failureIsPassedOn(@Remote LocalRemote remote) {
             var repository = remote.repository();
             String secret = word();
             var failing = new AnchorProvider() {

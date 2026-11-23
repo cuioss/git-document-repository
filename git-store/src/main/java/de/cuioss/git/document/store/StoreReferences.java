@@ -58,6 +58,13 @@ public final class StoreReferences {
     public static final List<String> PUSH_REF_SPECS =
             List.of("refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*", "refs/notes/*:refs/notes/*");
 
+    /**
+     * The namespaces a checkpoint lists, derived from the source side of {@link #PUSH_REF_SPECS} without its wildcard:
+     * the namespaces the clone pushes, which are those {@code JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS} mirrors.
+     */
+    private static final List<String> LISTED_NAMESPACES = PUSH_REF_SPECS.stream()
+            .map(spec -> spec.substring(0, spec.indexOf(':') - 1)).toList();
+
     /** The prefix of every tag, {@code refs/tags/}. */
     public static final String TAGS = "refs/tags/";
 
@@ -86,8 +93,11 @@ public final class StoreReferences {
     /** The number of a checkpoint, from 1 to 999999999 without leading zeros. */
     private static final Pattern CHECKPOINT_NUMBER = Pattern.compile("[1-9]\\d{0,8}");
 
-    /** The form of a release tag, {@code refs/tags/<collection>/<id>/v<n>}. */
-    private static final Pattern RELEASE_TAG = Pattern.compile("refs/tags/[a-z0-9-]+/[A-Za-z0-9-]+/v[1-9]\\d{0,8}");
+    /**
+     * The structure of a release tag, {@code refs/tags/<collection>/<id>/} followed by the last segment, which
+     * {@link #RELEASE_VERSION} parses.
+     */
+    private static final Pattern RELEASE_TAG = Pattern.compile("refs/tags/[a-z0-9-]+/[A-Za-z0-9-]+/([^/]*)");
 
     /** The form of a pseudonym. */
     private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
@@ -162,7 +172,12 @@ public final class StoreReferences {
         if (!ref.startsWith(prefix)) {
             return OptionalInt.empty();
         }
-        var version = RELEASE_VERSION.matcher(ref.substring(prefix.length()));
+        return version(ref.substring(prefix.length()));
+    }
+
+    /** Parses the last segment of a release tag, {@code v<n>}; empty for any other segment. */
+    private static OptionalInt version(String segment) {
+        var version = RELEASE_VERSION.matcher(segment);
         return version.matches() ? OptionalInt.of(Integer.parseInt(version.group(1))) : OptionalInt.empty();
     }
 
@@ -175,7 +190,8 @@ public final class StoreReferences {
      * @throws NullPointerException if {@code ref} is {@code null}
      */
     public static boolean isReleaseTag(String ref) {
-        return RELEASE_TAG.matcher(Objects.requireNonNull(ref, "ref")).matches();
+        var tag = RELEASE_TAG.matcher(Objects.requireNonNull(ref, "ref"));
+        return tag.matches() && version(tag.group(1)).isPresent();
     }
 
     /**
@@ -226,7 +242,8 @@ public final class StoreReferences {
      *
      * @param provider the id of the provider
      * @return {@code refs/anchoring/<provider>/proofs/}, followed by the full id of the anchored commit; each such
-     *         reference points at a blob holding the proof
+     *         reference points at a blob holding the id of the notes commit the proof extends (the zero id for none), a
+     *         line feed and the proof
      */
     static String retainedProofs(String provider) {
         return ANCHORING + provider + "/proofs/";
@@ -242,8 +259,9 @@ public final class StoreReferences {
     }
 
     /**
-     * Tells whether a reference is listed by a checkpoint: a branch, a tag or a notes reference, but neither a
-     * checkpoint tag nor a notes reference of anchor proofs, which the anchoring itself moves (GDR-STORE-16).
+     * Tells whether a reference is listed by a checkpoint: a reference in a namespace of {@link #PUSH_REF_SPECS} (a
+     * branch, a tag or a notes reference), but neither a checkpoint tag nor a notes reference of anchor proofs, which
+     * the anchoring itself moves (GDR-STORE-16).
      *
      * @param ref the full name of a reference
      * @return whether a checkpoint lists it
@@ -251,8 +269,8 @@ public final class StoreReferences {
      */
     public static boolean listedByCheckpoint(String ref) {
         Objects.requireNonNull(ref, "ref");
-        return (ref.startsWith(HEADS) || ref.startsWith(TAGS) || ref.startsWith("refs/notes/"))
-                && !ref.startsWith(CHECKPOINTS) && !ref.startsWith(ANCHOR_NOTES);
+        return LISTED_NAMESPACES.stream().anyMatch(ref::startsWith) && !ref.startsWith(CHECKPOINTS)
+                && !ref.startsWith(ANCHOR_NOTES);
     }
 
     /**
