@@ -2,10 +2,10 @@
   "id": "PLAN-23",
   "slug": "forms-hardening",
   "workstream": "WS-03",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
-  "pr": "",
-  "landing": "",
+  "plan_marshall_plan_id": "plan-23-forms-hardening",
+  "pr": "59",
+  "landing": "landings/PLAN-23.md",
   "seq": 23
 }
