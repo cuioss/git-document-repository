@@ -28,7 +28,7 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners; signing and its verification; anchoring: checkpoints, proofs as notes, the provider `signed`, anchor verification | `git-core` |
-| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec | `git-store` |
+| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec, template and generated output with its check, workflow with its transitions over the store mechanisms, step-up per transition | `git-store` |
 
 Planned but not yet created: `git-timestamp`, `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
@@ -97,7 +97,14 @@ and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNo
 `SchemaResources` (the schema resources of a file and the resolution of references), `SchemaChecks` (the refusals of
 a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to the same value), `MandatoryFields` and
 `EvaluatedLocations` (the check of `required`) and
-`YamlWriter` (the canonical emitter); its tests run on the class path as well.
+`YamlWriter` (the canonical emitter); and with the generated output, the workflow and step-up:
+`DocumentTemplate` (the own minimal template language, a strict subset of Mustache, decided by the owner on
+2026-11-23, so no template engine is a dependency), `OutputCheck` and the CI main class `VerifyOutput` (GDR-FORMS-4),
+`Workflow` with `Transition`, `Mechanism` and `Deadline` (GDR-FORMS-5, deadlines read but not evaluated),
+`StepUpPolicy` (the step-up setting the application passes in, GDR-FORMS-7) and `DocumentTransitions` (the transition
+operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`), over the
+package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt);
+its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
