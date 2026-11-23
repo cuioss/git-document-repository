@@ -20,8 +20,13 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 import de.cuioss.git.document.core.JGitRepositoryOperations;
@@ -38,6 +43,9 @@ import org.jspecify.annotations.Nullable;
  * writer is the public face of the store and delegates every operation here; the behaviour, the locks and their order
  * are those its documentation states. {@link CloneOpening} opens the clone and builds these parts.
  */
+// S6539 counts the parts this class delegates to; it is the one place that wires the parts of the clone, so its
+// coupling is its purpose, and splitting it would only move the wiring
+@SuppressWarnings("java:S6539")
 final class StoreClone {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreClone.class);
@@ -53,6 +61,13 @@ final class StoreClone {
     private final ExplicitSave saves;
     private final DocumentRelease releases;
     private final DraftExpiry expiry;
+    private final AnchorEngine anchors;
+
+    /**
+     * The registration of the schedule whose executor runs the due checks after a save, a release or a fetch;
+     * {@code null} until a schedule is registered and after it was cancelled.
+     */
+    private final AtomicReference<@Nullable Registration> anchorRegistration = new AtomicReference<>();
 
     /**
      * Holds an opened clone with the parts that work on it.
@@ -70,6 +85,7 @@ final class StoreClone {
         this.saves = parts.saves();
         this.releases = parts.releases();
         this.expiry = parts.expiry();
+        this.anchors = parts.anchors();
     }
 
     /**
@@ -78,8 +94,10 @@ final class StoreClone {
      * @param operations    the repository operations of {@code git-core}
      * @param user          the technical user, holder of the credentials of every fetch
      * @param fetchInterval the interval of the periodic fetch ({@code fetch.interval})
+     * @param retryInterval the interval of the periodic due check of the anchoring ({@code anchor.retry-interval})
      */
-    record Transport(RepositoryOperations operations, TechnicalUser user, Duration fetchInterval) {
+    record Transport(RepositoryOperations operations, TechnicalUser user, Duration fetchInterval,
+    Duration retryInterval) {
     }
 
     /**
@@ -91,9 +109,10 @@ final class StoreClone {
      * @param saves     the explicit save
      * @param releases  the release
      * @param expiry    the draft expiry
+     * @param anchors   the anchoring engine
      */
     record Parts(StoreEvents events, ListenerDispatch listeners, DraftReferences drafts, ExplicitSave saves,
-    DocumentRelease releases, DraftExpiry expiry) {
+    DocumentRelease releases, DraftExpiry expiry, AnchorEngine anchors) {
     }
 
     /**
@@ -136,12 +155,20 @@ final class StoreClone {
     /** Saves a draft; see {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, SaveStep)}. */
     SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message, @Nullable SaveStep step) {
-        return saves.save(author, claims, key, expectedBlobIds, message, step);
+        SaveResult result = saves.save(author, claims, key, expectedBlobIds, message, step);
+        if (result instanceof SaveResult.Saved) {
+            triggerDueCheck();
+        }
+        return result;
     }
 
     /** Releases a document or entry; see {@link StoreWriter#release}. */
     StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        return releases.release(author, claims, key);
+        var result = releases.release(author, claims, key);
+        if (result.isOk() || result.outcome() == StoreOutcome.INCOMPLETE) {
+            triggerDueCheck();
+        }
+        return result;
     }
 
     /** Expires the drafts; see {@link StoreWriter#expireDrafts}. */
@@ -158,7 +185,107 @@ final class StoreClone {
         RepositoryGuard guard = clone.guard();
         StoreResult<List<String>> result = guard.shared(() -> guard.transport(() -> mirror(updates)));
         events.emit(updates);
+        if (result.isOk()) {
+            triggerDueCheck();
+        }
         return result;
+    }
+
+    /** Runs one due check of the anchoring on the calling thread; see {@link StoreWriter#anchor()}. */
+    StoreResult<StoreWriter.Anchoring> anchor() {
+        return anchors.dueCheck();
+    }
+
+    /**
+     * Schedules the due check of the anchoring on the caller's executor at {@code anchor.retry-interval} and registers
+     * the executor for the due checks after a save, a release or a fetch; see {@link StoreWriter#anchorPeriodically}.
+     * The executor is registered only once the schedule exists: when it refuses the schedule, the refusal propagates
+     * and the schedule registered before stays in effect.
+     */
+    AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
+        var registration = new Registration(executor);
+        long interval = nanos(transport.retryInterval());
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
+                TimeUnit.NANOSECONDS);
+        anchorRegistration.set(registration);
+        return new AnchorSchedule(future, () -> end(registration));
+    }
+
+    /**
+     * Ends a registration: a due check it handed over and that has not started yet does not run, and the registration
+     * is removed unless a later schedule replaced it already.
+     */
+    private void end(Registration registration) {
+        registration.ended = true;
+        anchorRegistration.compareAndSet(registration, null);
+    }
+
+    /**
+     * Hands one due check to the executor of the registered schedule after the locks of a save, a release or a fetch
+     * were released; a trigger while one is handed over through the same registration and not started yet coalesces
+     * with it. Without a registration or a provider nothing happens, a handed-over due check whose registration ended
+     * before it started does not run, and a refusal of the executor is ignored: the next trigger or the schedule
+     * retries. A handed-over due check that its executor discards never clears the flag of its registration, so it
+     * holds back only the triggers of that registration, never those of a later schedule.
+     */
+    private void triggerDueCheck() {
+        Registration registration = anchorRegistration.get();
+        if (registration == null || !anchors.active() || !registration.queued.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            registration.executor.execute(() -> {
+                registration.queued.set(false);
+                if (!registration.ended) {
+                    safeDueCheck();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            registration.queued.set(false);
+            LOGGER.debug("The executor refused the due check of the anchoring");
+        }
+    }
+
+    /**
+     * The registration of one schedule of the due check: its identity is the token that only its own schedule
+     * removes, whatever executor a later schedule uses.
+     */
+    private static final class Registration {
+
+        private final Executor executor;
+
+        /**
+         * Whether a due check is handed to the executor through this registration and has not started yet, so further
+         * triggers coalesce with it.
+         */
+        private final AtomicBoolean queued = new AtomicBoolean();
+
+        /** Whether the schedule was cancelled; a due check it handed over and that has not started yet then ends. */
+        private volatile boolean ended;
+
+        Registration(Executor executor) {
+            this.executor = executor;
+        }
+    }
+
+    /** One due check off the caller's thread: a failure is logged and never escapes to the executor. */
+    private void safeDueCheck() {
+        try {
+            anchors.dueCheck();
+        }
+        // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (RuntimeException e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, alias(), e.getClass().getSimpleName());
+        }
+    }
+
+    private static long nanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     private StoreResult<List<String>> mirror(List<StoreEvents.Update> updates) {

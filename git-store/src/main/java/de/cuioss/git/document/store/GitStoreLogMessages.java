@@ -98,6 +98,40 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(6)
                 .build();
+
+        /**
+         * The anchor provider {@code signed} signed a proof (GDR-STORE-18): the repository alias, the object id of the
+         * subject, the time of the statement, its sequence number and the SHA-256 of the proof, nothing else.
+         */
+        public static final LogRecord PROOF_SIGNED = LogRecordModel.builder()
+                .template("Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s")
+                .prefix(PREFIX)
+                .identifier(7)
+                .build();
+
+        /** A checkpoint commit was written (GDR-STORE-16): the repository alias, its number and its commit id. */
+        public static final LogRecord CHECKPOINT_CREATED = LogRecordModel.builder()
+                .template("Created a checkpoint of repository %s: number %s at commit %s")
+                .prefix(PREFIX)
+                .identifier(8)
+                .build();
+
+        /** The note of an anchor proof is on the remote (GDR-STORE-17): the repository alias and the anchored commit. */
+        public static final LogRecord SUBJECT_ANCHORED = LogRecordModel.builder()
+                .template("Anchored a commit of repository %s: %s")
+                .prefix(PREFIX)
+                .identifier(9)
+                .build();
+
+        /**
+         * An anchor verification finished (GDR-STORE-17, GDR-STORE-18): the provider id, the number of checkpoints, of
+         * subjects, of proofs verified and of findings, never a commit id, a reference or a proof.
+         */
+        public static final LogRecord ANCHORS_VERIFIED = LogRecordModel.builder()
+                .template("Verified the anchors of provider %s: %s checkpoints, %s subjects, %s proofs, %s findings")
+                .prefix(PREFIX)
+                .identifier(10)
+                .build();
     }
 
     /**
@@ -217,6 +251,26 @@ public final class GitStoreLogMessages {
                 .template("Did not sign the commit of repository %s, reference %s: %s")
                 .prefix(PREFIX)
                 .identifier(110)
+                .build();
+
+        /**
+         * A due check of the anchoring left subjects pending, to be retried by the next one (GDR-STORE-15): the
+         * repository alias and the outcome, never a reference name, a proof or the detail of the provider.
+         */
+        public static final LogRecord ANCHORING_PENDING = LogRecordModel.builder()
+                .template("Left anchor subjects of repository %s pending: %s")
+                .prefix(PREFIX)
+                .identifier(111)
+                .build();
+
+        /**
+         * The push of a checkpoint tag or an anchor note failed; it is kept locally and pushed by the next due check
+         * (GDR-STORE-16, GDR-STORE-17): the repository alias and the outcome.
+         */
+        public static final LogRecord ANCHOR_PUSH_INCOMPLETE = LogRecordModel.builder()
+                .template("Did not push an anchoring reference of repository %s, kept for the next due check: %s")
+                .prefix(PREFIX)
+                .identifier(112)
                 .build();
     }
 }

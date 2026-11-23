@@ -48,6 +48,27 @@ release tag and the full id of the release commit.
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the full name of the reference, the number of
 commits reachable from it and the number of those without a signature valid at their committer time, never a
 principal, a key or a commit message.
+|GIT_STORE-7 |GIT_STORE |Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s
+|Logged once per proof the anchor provider `signed` signed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]): the repository alias, the full object id of
+the subject, the time of the statement (UTC, ISO 8601 with seconds), its sequence number and the SHA-256 of the proof
+in lowercase hex, nothing else; never the key reference, key material or the detail of the anchor key source. The
+record lets the operator's log pipeline keep a copy of the chain outside Git.
+|GIT_STORE-8 |GIT_STORE |Created a checkpoint of repository %s: number %s at commit %s
+|Logged when a due check wrote a checkpoint commit
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16]): the repository alias, the number `n` of its
+tag `refs/tags/checkpoints/<n>` and the full id of the checkpoint commit. It is logged when the commit is written,
+before its tag is pushed; a failed tag push is logged as `GIT_STORE-112`.
+|GIT_STORE-9 |GIT_STORE |Anchored a commit of repository %s: %s
+|Logged when the note of an anchor proof was pushed to the remote
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17]): the repository alias and the full id of the
+anchored commit, a release commit or a checkpoint; never a reference name, which may carry a document id, or the proof.
+|GIT_STORE-10 |GIT_STORE |Verified the anchors of provider %s: %s checkpoints, %s subjects, %s proofs, %s findings
+|Logged once when an anchor verification (`AnchorVerification.verifyAnchors`) finished
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17],
+xref:../../doc/specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]): the provider id, the number of checkpoint
+tags, of subjects (checkpoint and release commits), of proofs verified in chain order and of findings; counts only,
+never a commit id, a reference name or a proof.
 |===
 
 == WARN Level (100-199)
@@ -108,6 +129,18 @@ be reached for the public key or the signature, or handed out a key of another t
 repository alias, the target reference or the working or collection branch, and the name of the outcome (`REFUSED` or
 `UNAVAILABLE`); never the key reference, a key path, key material, the detail of the source or a claim. No throwable is
 attached. Nothing of the save or release is on the remote.
+|GIT_STORE-111 |GIT_STORE |Left anchor subjects of repository %s pending: %s
+|Logged when a due check of the anchoring ended with subjects still pending
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15]): the fetch failed, the anchor provider refused
+or could not be reached, or the note of a proof was not pushed. It names the repository alias and the name of the
+outcome, never a reference name, a proof or the detail of the provider; no throwable is attached. The save, release or
+fetch that triggered the due check is unaffected, and the next due check retries.
+|GIT_STORE-112 |GIT_STORE |Did not push an anchoring reference of repository %s, kept for the next due check: %s
+|Logged when the push of a checkpoint tag or of the notes reference of an anchor proof failed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16],
+xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17]): the repository alias and the name of the
+outcome. The checkpoint commit or the proof is kept under a local-only reference below `refs/anchoring/`, and the next
+due check pushes it instead of making a new checkpoint or requesting a new proof.
 |===
 
 == ERROR Level (200-299)

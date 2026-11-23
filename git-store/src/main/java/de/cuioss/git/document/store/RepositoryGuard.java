@@ -39,6 +39,13 @@ import java.util.function.Supplier;
  * maintenance lock, then, for a save, the draft lock, then the transport lock per attempt; a release takes no draft
  * lock, and the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
  * <p>
+ * The transport lock also serialises the writes and pushes of the anchoring (GDR-STORE-16, GDR-STORE-17): the fetch of
+ * a due check, the checkpoint commit with its local tag and the tag push, and each anchor note with the push of its
+ * notes reference run in one transport section, so no pruning fetch of a concurrent save deletes a local checkpoint tag
+ * or overwrites a local notes commit before its push. One anchoring lock serialises the due checks of the clone; it is
+ * taken first, before the shared side of the maintenance lock and the transport lock, and a save, a release or a fetch
+ * never takes it, so no cycle arises and a slow anchor provider holds no lock those operations need.
+ * <p>
  * The guard does not close the check-then-act window between reading a draft reference and moving it: that window is
  * closed by the lock-held expected-id comparison of {@link de.cuioss.git.document.core.ReferenceUpdater}, which also
  * protects against a writer outside this process.
@@ -50,6 +57,7 @@ final class RepositoryGuard {
 
     private final ReentrantReadWriteLock maintenance = new ReentrantReadWriteLock();
     private final ReentrantLock transport = new ReentrantLock();
+    private final ReentrantLock anchoring = new ReentrantLock();
 
     /**
      * The lock of every draft reference saved through the clone, by its full name; never removed, so two saves of one
@@ -126,6 +134,19 @@ final class RepositoryGuard {
      */
     <T> T transport(Supplier<T> action) {
         return locked(transport, action);
+    }
+
+    /**
+     * Runs an action under the anchoring lock: one due check of the anchoring, so two due checks of the clone never
+     * request a proof for the same subject. It is taken before the shared side of the maintenance lock and the
+     * transport lock, and no save, release or fetch takes it.
+     *
+     * @param action the action
+     * @param <T>    the result type
+     * @return the result of the action
+     */
+    <T> T anchoring(Supplier<T> action) {
+        return locked(anchoring, action);
     }
 
     private static <T> T locked(Lock lock, Supplier<T> action) {

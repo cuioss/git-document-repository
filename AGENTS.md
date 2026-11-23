@@ -27,7 +27,7 @@ released together and consumed separately.
 |---|---|---|
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
-| `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners | `git-core` |
+| `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners; signing and its verification; anchoring: checkpoints, proofs as notes, the provider `signed`, anchor verification | `git-core` |
 | `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec | `git-store` |
 
 Planned but not yet created: `git-timestamp`, `git-directory` (see
@@ -69,7 +69,16 @@ collection, over the package-private `DraftReferences`, `ExplicitSave`, `Documen
 commit is signed in the SSH signature format (GDR-STORE-12) through the package-private `SshSignatures` (an own
 SSHSIG encoder, no dependency), `SourceSigner` and `CommitSignatures`, and carries the identity trailers of
 `IdentityTrailers` (GDR-STORE-13); draft commits are neither. The signature verification (GDR-STORE-14) is
-`AllowedSigners` (Git's `allowed_signers` format), `SignatureVerification` and the CI main class `VerifySignatures`. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
+`AllowedSigners` (Git's `allowed_signers` format), `SignatureVerification` and the CI main class `VerifySignatures`.
+The anchoring (GDR-STORE-15 to GDR-STORE-18) is `StoreWriter.open` with the selected `StoreProviders`, `anchor()`
+(one due check, returning `StoreWriter.Anchoring`) and `anchorPeriodically` on the caller's executor returning an
+`AnchorSchedule`, over the package-private `AnchorEngine` (due check under the clone's anchoring lock, a coalesced due
+check after every save, release and fetch), `Checkpoints` (checkpoint commits with the file `refs`, never-moved tags
+`refs/tags/checkpoints/<n>`) and `AnchorNotes` (base64 proofs as notes under `refs/notes/anchors/<provider>`, an
+unpushed proof or checkpoint kept under the local-only `refs/anchoring/`); the built-in anchor provider
+`SignedAnchorProvider` (id `signed`, statement codec `AnchorStatement`, SSH signature in the namespace
+`git-document-anchor`, `AllowedSigners.fromAnchor`), and the verification `AnchorVerification.verifyAnchors` with the
+CI main class `VerifyAnchors`. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
 `git-store` only, for `IndexFootprintTest` (GDR-NFR-1). Its tests run on the class path against
 the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
 `FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as

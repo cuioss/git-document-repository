@@ -51,15 +51,21 @@ public interface AnchorProvider {
 
     /**
      * Obtains a proof that the subject exists now.
+     * <p>
+     * The store reads the commit time of the subject, the committer time of the anchored commit, from the commit and
+     * passes it along: the provider {@code signed} refuses when its clock is more than
+     * {@code anchor.signed.max-clock-skew} behind it (GDR-STORE-18). A provider whose authority keeps its own time, such
+     * as {@code rfc3161}, may ignore it.
      *
      * @param repository the alias of the repository of the subject
      * @param subject    the object id of the subject
+     * @param commitTime the commit time of the subject
      * @param previous   the previous proof of this provider in the repository; empty for the first
      * @return {@link StoreOutcome#OK} with the proof, {@link StoreOutcome#UNAVAILABLE} when the provider cannot be
      * reached, or {@link StoreOutcome#REFUSED} when it refuses or answers with an error; the subject stays pending
      * on a non-success
      */
-    StoreResult<byte[]> obtain(String repository, ObjectId subject, byte[] previous);
+    StoreResult<byte[]> obtain(String repository, ObjectId subject, Instant commitTime, byte[] previous);
 
     /**
      * Verifies a stored proof of the subject.

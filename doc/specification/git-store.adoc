@@ -19,8 +19,10 @@ author, committer and credentials (<<GDR-STORE-8>>); and the read side: the in-m
 fetch and snapshots (<<GDR-STORE-9>>) and the per-branch post-commit listeners (<<GDR-STORE-10>>); and the commit
 signature with the signing key source `file` (<<GDR-STORE-12>>), the identity trailers (<<GDR-STORE-13>>) and the
 signature verification against allowed signers (<<GDR-STORE-14>>): every save and release commit is signed and carries
-the identity trailers, draft commits are neither. Planned are the requirements from <<GDR-STORE-15>> to
-<<GDR-STORE-19>> and the anchor provider `signed`.
+the identity trailers, draft commits are neither; and the anchoring: the provider interface and the due check
+(<<GDR-STORE-15>>), the subjects and checkpoints (<<GDR-STORE-16>>), the proofs as notes with their verification
+(<<GDR-STORE-17>>) and the anchor provider `signed` (<<GDR-STORE-18>>), see <<anchoring-implementation>>. Planned is
+<<GDR-STORE-19>>.
 Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
 `GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
@@ -60,8 +62,10 @@ Each interface has `String id()`, the value the configuration names the provider
   (the field `publickey` of the signature blob,
   link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). Non-success:
   `UNAVAILABLE` or `REFUSED`; the private key never leaves the source.
-* `AnchorProvider`: `obtain(repository, subject, previous)`, the proof for the object id `subject` of the repository
-  with that alias (`UNAVAILABLE`, `REFUSED`); `verify(subject, proof, previous)`, the time the proof establishes
+* `AnchorProvider`: `obtain(repository, subject, commitTime, previous)`, the proof for the object id `subject` of the
+  repository with that alias, `commitTime` the committer time of the subject, which the provider `signed` checks its
+  clock against and a provider whose authority keeps its own time may ignore (`UNAVAILABLE`, `REFUSED`);
+  `verify(subject, proof, previous)`, the time the proof establishes
   (`IMPRINT_MISMATCH`, `SIGNATURE_INVALID`, `CHAIN_BROKEN`). `previous` is the provider's previous proof as bytes,
   empty for the first. The id names the notes reference `refs/notes/anchors/<id>`, so `anchor.provider` takes the
   alphabet of a repository alias, `[a-z0-9-]+` (<<GDR-STORE-1>>), and a configured id outside it is refused at start
@@ -892,6 +896,79 @@ other than the Git administration, for example the security team's KMS. The log 
 pipeline keep a copy outside Git. A single proof can be checked with a stock OpenSSH installation:
 `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
 (https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
+
+[#anchoring-implementation]
+=== Implementation of the anchoring
+
+The requirements from <<GDR-STORE-15>> to <<GDR-STORE-18>> are implemented in `git-store`; `git-core` is used and not
+changed (JGit 7.8.0).
+
+* *Opening and triggering.* `StoreWriter.open(storeRepository, gitDir, user, configuration, providers, operations,
+  clock)` takes the `StoreProviders` of the start: the signing key source signs the save and release commits, and the
+  active anchor provider, when there is one, anchors. `StoreWriter.anchor()` runs one due check on the calling thread
+  and returns a `StoreResult` of `StoreWriter.Anchoring` (the commits whose note it pushed, and those left pending,
+  oldest first). `StoreWriter.anchorPeriodically(executor)` runs a due check every `anchor.retry-interval` on the
+  caller's `ScheduledExecutorService`, returns an `AnchorSchedule` to cancel it, and registers the executor for the due
+  checks after every save, release and fetch: those are handed to the executor once the operation released every lock,
+  coalesced while one is waiting, so a slow or failing provider never delays or fails the operation. Without a
+  registered executor only `anchor()` and the schedule run a due check; without an active provider nothing is fetched,
+  written or pushed.
+* *Due check.* The package-private `AnchorEngine` runs a due check under the anchoring lock of the clone, so two due
+  checks never request a proof for the same subject. Under the shared side of the maintenance lock and the transport
+  lock (`RepositoryGuard`) it fetches with prune, pushes what an earlier due check kept, makes a due checkpoint and
+  derives the pending subjects; it then asks the provider without holding a lock of the clone; and it writes and pushes
+  each proof under those locks again. A save, a release and a fetch take no anchoring lock, so the order of the locks
+  has no cycle. A failure of the provider (also an exception it throws) or of a push leaves the subject pending, ends
+  the due check, and is logged as `GIT_STORE-111` with the alias and the outcome only.
+* *Checkpoints.* The package-private `Checkpoints` writes the checkpoint commit of <<GDR-STORE-16>> in core, signed
+  through `CommitSignatures` without identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), writes its tag locally by
+  an update that expects it absent, and pushes the tag against the zero-id lease, so a tag on the remote is never moved.
+  The first checkpoint is due as soon as a listed reference exists. A checkpoint whose tag push failed keeps its commit
+  under the local-only reference `refs/anchoring/checkpoints/<n>` and loses its local tag, so the clone lists only the
+  checkpoints the remote has; the next due check pushes that tag when the kept commit still follows the newest
+  checkpoint of the remote and drops it otherwise. `git-core` pushes one reference per call; this incomplete state is
+  logged as `GIT_STORE-112` and repaired by the next due check.
+* *Notes.* The package-private `AnchorNotes` writes the base64 of a proof as the note of the subject under
+  `refs/notes/anchors/<provider>` through `GitNotes` of `git-core`, in a notes commit of the technical user signed like
+  a checkpoint, one note per notes commit and per push, with the lease of the notes reference as the last fetch mirrored
+  it. Before its note is written a proof is kept under the local-only reference
+  `refs/anchoring/<provider>/proofs/<commit id>`, a blob outside `refs/heads/`, `refs/tags/` and `refs/notes/`, so it is
+  never pushed, never fetched and never pruned; a proof whose push failed stays kept, the local notes reference is set
+  back to its fetched id, and the next due check pushes the kept proof instead of requesting a new one. `previous` is
+  the proof whose note the newest notes commit added, or within a due check the proof obtained just before; the commit
+  time of the subject is passed to `obtain`. Checkpoint commits, their tags and the notes commits are written and pushed
+  in one transport section, so no pruning fetch of a concurrent save deletes a local checkpoint tag or overwrites a local
+  notes commit before its push (`AnchorInterleavingTest`).
+* *The provider `signed`.* `SignedAnchorProvider` (id `signed`) composes the statement of <<GDR-STORE-18>> with the
+  package-private codec `AnchorStatement`, signs it through the anchor key source in the namespace
+  `git-document-anchor` with the SSH signature encoder of `git-store`
+  (https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]), and logs every proof as
+  `GIT_STORE-7`. Its verification mirrors the refusals of OpenSSH `sshsig.c`
+  (https://github.com/openssh/openssh-portable/blob/master/sshsig.c[sshsig.c]: namespace, hash algorithm, version,
+  magic, signature type) and checks the key against `anchor.signed.allowed-signers` (`AllowedSigners.fromAnchor`, a key
+  being usable for the namespace when it has no `namespaces` option or lists the namespace) at the time of the
+  statement. `StoreProviders.select` builds it when `anchor.provider` is `signed` and refuses an anchor key whose public
+  key equals that of the commit-signing key; `SignedAnchorProvider.verifier(allowedSigners)` builds an instance that
+  only verifies, for CI.
+* *Verification.* `AnchorVerification.verifyAnchors(repository, provider)` reads only and returns a `StoreResult` of an
+  `AnchorVerification.Report` (the numbers of checkpoints, subjects and proofs, and the findings). A `Finding` is one
+  constant of the closed enum `AnchorVerification.Kind`: `CHECKPOINT_MISSING` for every gap in the checkpoint numbers
+  below the highest (`refs/tags/checkpoints/<n>`, or `refs/tags/checkpoints/<n>..<m>` for a gap of several); `NO_PROOF`
+  for a checkpoint or release commit without a note; `PROOF_REJECTED`, with the outcome, for a proof the provider does
+  not verify, the proofs being verified in chain order (the order in which the notes commits added them along their first
+  parents) with the proof before as `previous`, and a note that is no base64 being `SIGNATURE_INVALID`;
+  `REFERENCE_UNREACHABLE` for a branch or notes reference a checkpoint lists that no longer reaches the listed id or no
+  longer exists (JGit 7.8.0 `RevWalk.isMergedInto`); and `TAG_RETARGETED` for a listed tag that no longer points at the
+  listed id. A repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with
+  the detail `anchors: history is shallow`; a read failure is the passed-on `FAILED` naming the class of the exception.
+  A finished verification is logged as `GIT_STORE-10` with the counts only.
+* *CI.* The public main class `VerifyAnchors <git-dir> <anchor-allowed-signers>` verifies the provider `signed`: it
+  opens the repository read-only on `RefusingFS`, prints one line `<kind> <subject>` per finding, followed by the
+  listed reference or the outcome where the finding carries one, and exits `0` when there is no finding, `1` when there
+  is one and `2` for a usage error, an argument that is no valid path, a repository that cannot be opened or another
+  non-success, with the conventions of `VerifySignatures` (<<GDR-STORE-14>>): UTF-8 output, no path, key or principal
+  printed, the allowed-signers file taken from the trusted CI configuration. The checkpoint and notes commits verify
+  under `VerifySignatures` with the commit-signing key.
 
 [#GDR-STORE-19]
 == GDR-STORE-19: Person Directory Interface
