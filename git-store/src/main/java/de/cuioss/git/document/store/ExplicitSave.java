@@ -89,8 +89,10 @@ import org.jspecify.annotations.Nullable;
  * {@link CommitSignatures} (GDR-STORE-12), and pushed to the target with the lease of the base. A blank message is
  * replaced by the subject {@code Save <collection>/<id>} ({@link #defaultSubject}), so the trailers never become the
  * subject; a message whose first paragraph is the subject of a release of the document
- * ({@link DocumentRelease#isReleaseSubject}) is {@link StoreOutcome#MALFORMED} with the detail
- * {@value #RELEASE_SUBJECT}, so the release recovery never takes a save commit for a release. The signing is prepared
+ * ({@link DocumentRelease#isReleaseSubject}), and on a save onto {@code main}, where every release commit lands, one
+ * with the form of a release subject of any document ({@link DocumentRelease#isAnyReleaseSubject}), is
+ * {@link StoreOutcome#MALFORMED} with the detail {@value #RELEASE_SUBJECT}, so the release recovery never takes a save
+ * commit for a release. The signing is prepared
  * at most once per save, by the first attempt that writes a commit, and re-used by the later attempts, so the public
  * key is fetched once and a save of an unchanged draft never asks the source; a source that refuses or cannot be
  * reached ends the save with {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} before anything is
@@ -251,7 +253,8 @@ final class ExplicitSave {
      * @param step            the per-attempt step; {@code null} for none
      * @return {@link SaveResult.Saved} with the commit the target branch points at; {@link SaveResult.Conflicting}
      *         with every path whose blob on the fetched tip differs from its expected id; {@link SaveResult.NotSaved}
-     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message,
+     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message (of
+     *         the document, and onto {@code main} of any document),
      *         {@link StoreOutcome#REFUSED} for a refusal
      *         of the step or of the signing key source, {@link StoreOutcome#UNAVAILABLE} for a signing key source that
      *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
@@ -280,7 +283,7 @@ final class ExplicitSave {
             return report(target, SaveResult.NotSaved.of(draftRef));
         }
         String subject = message.isBlank() ? defaultSubject(key) : message;
-        if (DocumentRelease.isReleaseSubject(key, subject)) {
+        if (isReservedSubject(target, key, subject)) {
             return report(target, new SaveResult.NotSaved(StoreOutcome.MALFORMED, RELEASE_SUBJECT));
         }
         var composed = IdentityTrailers.append(subject, author.pseudonym(), claims);
@@ -419,6 +422,16 @@ final class ExplicitSave {
         draftEdits.forEach(edit -> merged.put(edit.path(), edit));
         stepEdits.forEach(edit -> merged.put(edit.path(), edit));
         return List.copyOf(merged.values());
+    }
+
+    /**
+     * Whether a save message is reserved for a release: onto {@code main}, where every release commit lands, a first
+     * paragraph with the form of a release subject of any document; onto another branch, a release subject of the
+     * save's own document.
+     */
+    private static boolean isReservedSubject(String target, DocumentKey key, String message) {
+        return StoreReferences.MAIN.equals(target) ? DocumentRelease.isAnyReleaseSubject(message)
+                : DocumentRelease.isReleaseSubject(key, message);
     }
 
     /**

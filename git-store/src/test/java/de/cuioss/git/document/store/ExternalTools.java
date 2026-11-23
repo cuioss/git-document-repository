@@ -42,7 +42,7 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * A process writes its standard output and standard error into a file, never into a pipe, so a child that keeps a
  * pipe open cannot block the test before its deadline; a process that outlives the deadline is destroyed and fails the
- * test. A probe makes its signature with {@code ssh-keygen -Y sign} itself, so its verdict says what the tool can do and
+ * test, and a process still running when the wait ends otherwise, for example by an interrupt, is destroyed as well. A probe makes its signature with {@code ssh-keygen -Y sign} itself, so its verdict says what the tool can do and
  * never depends on the encoder under test.
  */
 final class ExternalTools {
@@ -97,13 +97,20 @@ final class ExternalTools {
             builder.redirectInput(input.toFile());
         }
         Process process = builder.start();
-        if (input == null) {
-            process.getOutputStream().close();
-        }
-        if (!process.waitFor(DEADLINE.toSeconds(), TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            process.waitFor(DEADLINE.toSeconds(), TimeUnit.SECONDS);
-            fail("the process " + builder.command().getFirst() + " did not end within " + DEADLINE);
+        try {
+            if (input == null) {
+                process.getOutputStream().close();
+            }
+            if (!process.waitFor(DEADLINE.toSeconds(), TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                process.waitFor(DEADLINE.toSeconds(), TimeUnit.SECONDS);
+                fail("the process " + builder.command().getFirst() + " did not end within " + DEADLINE);
+            }
+        } finally {
+            // an interrupted wait or a failed close leaves no child running past the test
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
         }
         return new Finished(process.exitValue(), new String(Files.readAllBytes(output), UTF_8));
     }

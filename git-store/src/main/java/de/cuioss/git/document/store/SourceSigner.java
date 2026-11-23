@@ -99,7 +99,7 @@ final class SourceSigner implements Signer {
             throw new IOException(FAILURE_MESSAGE);
         }
         return new GpgSignature(
-                SshSignatures.encode(publicKeyBlob, SshSignatures.NAMESPACE_GIT, signature).getBytes(US_ASCII));
+                SshSignatures.encode(publicKeyBlob, SshSignatures.NAMESPACE_GIT, made.signature()).getBytes(US_ASCII));
     }
 
     @Override

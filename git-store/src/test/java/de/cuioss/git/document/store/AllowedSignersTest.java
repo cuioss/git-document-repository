@@ -192,6 +192,22 @@ class AllowedSignersTest {
     }
 
     @Test
+    @DisplayName("GDR-STORE-14: each option given once, in any order, with a validity a second long, is read")
+    void singleClausesInAnyOrder() throws Exception {
+        var key = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " namespaces=\"git,git\",valid-before=\"20260101000001Z\","
+                + "valid-after=\"20260101Z\" " + key.publicKeyLine()));
+
+        assertAll(
+                () -> assertEquals(1, signers.size(), "one entry"),
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2026-01-01T00:00:00Z")), "at the start"),
+                () -> assertEquals(AllowedSigners.Match.OUTSIDE_VALIDITY,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2026-01-01T00:00:02Z")), "after the end"));
+    }
+
+    @Test
     @DisplayName("GDR-STORE-14: a leap day is a valid timestamp, in the date and in the date-time form")
     void leapDay() throws Exception {
         var key = TestKeys.ed25519();
@@ -219,7 +235,13 @@ class AllowedSignersTest {
             "namespaces=\"g*\"|namespace pattern not supported",
             "namespaces=\"gi?\"|namespace pattern not supported",
             "no-touch-required|option not supported",
-            "valid-after=\"20260101|quote not closed"})
+            "valid-after=\"20260101|quote not closed",
+            "valid-before=\"20200101Z\",valid-before=\"20300101Z\"|option repeated",
+            "valid-after=\"20300101Z\",Valid-After=\"20200101Z\"|option repeated",
+            "namespaces=\"file\",namespaces=\"git\"|option repeated",
+            "valid-after=\"20260101Z\",valid-before=\"20260101Z\"|validity interval empty",
+            "valid-after=\"20270101Z\",valid-before=\"20260101Z\"|validity interval empty",
+            "valid-before=\"20260101Z\",valid-after=\"202601010000Z\"|validity interval empty"})
     @DisplayName("GDR-STORE-14: a refused option is MALFORMED naming the line number, never a principal or key text")
     void refusedOptions(String scenario) throws Exception {
         var parts = scenario.split("\\|");

@@ -57,6 +57,9 @@ import org.jspecify.annotations.Nullable;
  * entry that contains {@code !}, {@code *} or {@code ?}, so it never accepts a key for commits that OpenSSH would
  * reject. An entry listed twice is read once.</li>
  * </ul>
+ * Each option may be given once; a line that repeats {@code valid-after}, {@code valid-before} or {@code namespaces},
+ * and a line whose {@code valid-before} is not after its {@code valid-after}, is refused, so no later clause silently
+ * widens what an earlier one restricts.
  * The store signs and verifies with Ed25519 only: a line with another key type, a line with {@code cert-authority} or
  * any other option, and a line that cannot be read are refused as {@link StoreOutcome#MALFORMED}. The detail names the
  * line number and the reason, never a principal, an option value or key text.
@@ -81,6 +84,7 @@ public final class AllowedSigners {
     private static final String VALID_BEFORE = "valid-before=";
     private static final String NAMESPACES = "namespaces=";
     private static final String TIMESTAMP_MALFORMED = "timestamp malformed";
+    private static final String OPTION_REPEATED = "option repeated";
     private static final Pattern NAMESPACE_PATTERN = Pattern.compile("[!*?]");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("uuuuMMdd")
             .withResolverStyle(ResolverStyle.STRICT);
@@ -243,6 +247,10 @@ public final class AllowedSigners {
                 return new Line.Refused(refusal);
             }
         }
+        @Nullable String inconsistent = read.complete();
+        if (inconsistent != null) {
+            return new Line.Refused(inconsistent);
+        }
         return new Line.Parsed(new Entry(key, read.validAfter, read.validBefore, read.namespaces));
     }
 
@@ -311,18 +319,40 @@ public final class AllowedSigners {
                 return "cert-authority not supported";
             }
             if (lower.startsWith(VALID_AFTER)) {
+                if (validAfter != null) {
+                    return OPTION_REPEATED;
+                }
                 validAfter = timestamp(unquote(option.substring(VALID_AFTER.length())));
                 return validAfter == null ? TIMESTAMP_MALFORMED : null;
             }
             if (lower.startsWith(VALID_BEFORE)) {
+                if (validBefore != null) {
+                    return OPTION_REPEATED;
+                }
                 validBefore = timestamp(unquote(option.substring(VALID_BEFORE.length())));
                 return validBefore == null ? TIMESTAMP_MALFORMED : null;
             }
             if (lower.startsWith(NAMESPACES)) {
+                if (namespaces != null) {
+                    return OPTION_REPEATED;
+                }
                 namespaces = AllowedSigners.namespaces(unquote(option.substring(NAMESPACES.length())));
                 return namespaces == null ? "namespace pattern not supported" : null;
             }
             return "option not supported";
+        }
+
+        /**
+         * Checks the options together once every option was read.
+         *
+         * @return {@code null} when they are consistent, otherwise the reason of the refusal
+         */
+        @Nullable
+        String complete() {
+            if (validAfter != null && validBefore != null && !validBefore.isAfter(validAfter)) {
+                return "validity interval empty";
+            }
+            return null;
         }
     }
 

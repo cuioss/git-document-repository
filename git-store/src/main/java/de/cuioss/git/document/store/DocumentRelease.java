@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.regex.Pattern;
 
 
 import de.cuioss.git.document.core.CommitMetadata;
@@ -67,8 +68,9 @@ import org.jspecify.annotations.Nullable;
  * text before the first blank line) is that store-composed subject and that has the shape of a release of the document
  * is a release {@code v<n>} whose tag is missing: the attempt creates and pushes only the tag on that commit and never
  * merges again. No trailer is read for that decision, and a save refuses a message whose first paragraph is a release
- * subject of its document ({@link #isReleaseSubject}), so no caller-written message can make a save commit a release,
- * however it imitates the subject and the trailers. The shape tells a release from a commit written before that
+ * subject of its document ({@link #isReleaseSubject}), and a save onto {@code main} one with the form of a release
+ * subject of any document ({@link #isAnyReleaseSubject}), so no caller-written message can make a save commit a
+ * release, however it imitates the subject and the trailers. The shape tells a release from a commit written before that
  * refusal or by another writer: a per-document release has the tip of the working branch at its time as its second parent (or, onto an
  * absent {@code main}, as its only parent with the same tree), reachable from the working branch now; a numbered release
  * has at most one parent and changes no path outside the entry. Otherwise the attempt merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
@@ -110,6 +112,12 @@ final class DocumentRelease {
 
     /** The detail of a key of content without release. */
     private static final String NO_RELEASE = "key: content without release";
+
+    /**
+     * The form of the subject of a release of any document: a collection name ({@code [a-z0-9-]+}), an id
+     * ({@code [A-Za-z0-9-]+}, which a ULID fits) and a version.
+     */
+    private static final Pattern ANY_RELEASE_SUBJECT = Pattern.compile("Release [a-z0-9-]+/[A-Za-z0-9-]+ v[0-9]+");
 
     private final ExplicitSave.Clone clone;
     private final RepositoryOperations operations;
@@ -439,6 +447,19 @@ final class DocumentRelease {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether the first paragraph of a message has the form of the subject of a release of any document,
+     * {@code Release <collection>/<id> v<digits>} with a collection name and an id of their alphabets. Every release
+     * commit lands on {@code main}, so a save onto {@code main} refuses such a message whatever its own key
+     * ({@link ExplicitSave}): no save commit on {@code main} can be taken for a release whose tag is missing.
+     *
+     * @param message the commit message
+     * @return whether the message carries the subject of a release of some document
+     */
+    static boolean isAnyReleaseSubject(String message) {
+        return ANY_RELEASE_SUBJECT.matcher(firstParagraph(message)).matches();
     }
 
     /** The text of a commit message before its first blank line, stripped. */

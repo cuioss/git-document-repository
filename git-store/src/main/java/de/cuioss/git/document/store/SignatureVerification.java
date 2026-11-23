@@ -163,7 +163,9 @@ public final class SignatureVerification {
             LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, reference, commits, unverified.size());
             return StoreResult.ok(List.copyOf(unverified));
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // an unexpected failure reading the repository ends the verification as a result, never as an exception,
+        // naming the class of the failure only (GDR-STORE-14, GDR-NFR-3)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (IOException | RuntimeException e) {
             return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null,
                     reference + ": " + e.getClass().getSimpleName());

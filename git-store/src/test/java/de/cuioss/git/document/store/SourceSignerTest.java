@@ -231,6 +231,64 @@ class SourceSignerTest {
                 () -> assertNull(result.value(), "no commit id is returned"));
     }
 
+    @Test
+    @DisplayName("GDR-STORE-12: the embedded signature is the verified copy, unchanged when the source reuses its array")
+    void sourceReusingItsArray(@InMemory Repository repository) throws Exception {
+        var key = TestKeys.ed25519();
+        var source = new ReusingSource(key);
+        var signer = new SourceSigner(source, keyReference(), key.publicKeyLine());
+
+        var result = write(repository, signer);
+        byte[] made = source.lastSignature();
+        Arrays.fill(source.buffer, (byte) 0);
+
+        assertTrue(result.isOk(), () -> "written: " + result.detail());
+        RevCommit commit = parse(repository, Objects.requireNonNull(result.value()));
+        var decoded = assertInstanceOf(SshSignatures.DecodedSignature.class,
+                SshSignatures.decode(new String(Objects.requireNonNull(commit.getRawGpgSignature()), US_ASCII)),
+                "the header decodes");
+        assertAll(() -> assertArrayEquals(made, decoded.signature(), "the signature the source made and verified"),
+                () -> assertTrue(SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, signedPayload(commit)),
+                        "the embedded signature verifies after the source overwrote its array"));
+    }
+
+    /** A signing key source that writes every signature into one array it keeps and hands out. */
+    private static final class ReusingSource implements SigningKeySource {
+
+        private final TestKeys.Ed25519 key;
+        private byte[] buffer = new byte[0];
+        private byte[] last = new byte[0];
+
+        ReusingSource(TestKeys.Ed25519 key) {
+            this.key = key;
+        }
+
+        byte[] lastSignature() {
+            return last.clone();
+        }
+
+        @Override
+        public String id() {
+            return "reusing";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            byte[] signature = key.sign(data);
+            if (buffer.length != signature.length) {
+                buffer = new byte[signature.length];
+            }
+            System.arraycopy(signature, 0, buffer, 0, signature.length);
+            last = signature.clone();
+            return StoreResult.ok(buffer);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return StoreResult.ok(key.publicKeyLine());
+        }
+    }
+
     /** A signing key source that signs with one key and hands out the public key line of another. */
     private record SigningWith(TestKeys.Ed25519 key, String line) implements SigningKeySource {
 

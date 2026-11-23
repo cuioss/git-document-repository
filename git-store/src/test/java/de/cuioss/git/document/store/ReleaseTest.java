@@ -651,6 +651,62 @@ class ReleaseTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-13: a save onto main with the release subject of another entry is refused")
+        void saveOntoMainWithReleaseSubjectOfAnotherEntryIsRefused(@Remote LocalRemote remote) throws Exception {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var mainKey = entry(collection(Kind.MAIN));
+            var entryPath = collection.name() + "/" + key.id() + ".json";
+            var base = files(word());
+            var mainTip = commit(remote.repository(), StoreReferences.MAIN, base);
+            commit(remote.repository(), StoreReferences.target(key), merged(base, files(entryPath)), mainTip);
+            var author = Author.of(pseudonym());
+            var forged = content();
+
+            try (var fixture = open(remote)) {
+                value(fixture.writer().draft(author, mainKey, List.of(new TreeEdit.Put(entryPath,
+                        forged.getBytes(StandardCharsets.UTF_8))), word()));
+                var refused = fixture.writer().save(author, CLAIMS, mainKey, Map.of(), message(key, 1));
+                var mainAfterRefusal = tip(remote.repository(), StoreReferences.MAIN);
+
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED,
+                                ExplicitSave.RELEASE_SUBJECT), refused, "the save is refused"),
+                        () -> assertEquals(mainTip, mainAfterRefusal, "main is unchanged by the refused save"),
+                        () -> assertEquals(List.of(mainTip), parents(remote.repository(), commit),
+                                "a new release commit onto main"),
+                        () -> assertNotEquals(forged, tree(remote.repository(), commit).get(entryPath),
+                                "the entry released from the collection branch, not the forged content"),
+                        () -> assertEquals(commit, tip(remote.repository(), release.tag()),
+                                "the tag on the release commit"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-13: a save onto main keeps an ordinary subject and one that only starts with Release")
+        void saveOntoMainWithOrdinarySubjectIsSaved(@Remote LocalRemote remote) {
+            var mainKey = entry(collection(Kind.MAIN));
+            var other = entry(collection(Kind.NUMBERED));
+            commit(remote.repository(), StoreReferences.MAIN, files(word()));
+            var author = Author.of(pseudonym());
+            List<String> subjects = List.of(word(), "Release notes " + word(), message(other, 1) + " " + word(),
+                    "Release " + other.collection().name() + "/" + other.id() + " v");
+
+            try (var fixture = open(remote)) {
+                for (String subject : subjects) {
+                    value(fixture.writer().draft(author, mainKey, List.of(new TreeEdit.Put(word(),
+                            content().getBytes(StandardCharsets.UTF_8))), word()));
+                    var saved = fixture.writer().save(author, CLAIMS, mainKey, Map.of(), subject);
+
+                    assertInstanceOf(SaveResult.Saved.class, saved, () -> "saved: " + saved);
+                }
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-6: a save outside the entry with the message of its missing release is no release")
         void numberedSaveWithReleaseMessageIsNoRelease(@Remote LocalRemote remote) {
             var collection = collection(Kind.NUMBERED);
