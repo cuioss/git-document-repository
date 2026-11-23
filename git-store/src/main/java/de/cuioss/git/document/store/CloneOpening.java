@@ -33,12 +33,15 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.URIish;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Opens the bare clone of one {@link StoreWriter}: clones the remote if the clone does not exist yet, opens the clone
  * on a {@link RefusingFS}, refuses a clone whose {@code origin} is not the registered remote, and builds the parts
  * that work on the opened clone into a {@link StoreClone}: among them one {@link CommitSignatures} per clone over the
- * active signing key source and {@code signing.key}, whose presence is checked before anything is cloned.
+ * active signing key source and {@code signing.key}, whose presence is checked before anything is cloned, and the
+ * {@link AnchorEngine} over the active anchor provider, the section {@code anchor}, that signing seam, the technical
+ * user, the guard and the clock.
  */
 final class CloneOpening {
 
@@ -54,12 +57,14 @@ final class CloneOpening {
      * @param user            the technical user
      * @param configuration   the configuration of the store
      * @param signing         the active signing key source
+     * @param anchor          the active anchor provider; {@code null} when none is active, so nothing is anchored
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return the results of {@link StoreWriter#open}, with the clone as the value
      */
     static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, SigningKeySource signing, @Nullable AnchorProvider anchor,
+            RepositoryOperations operations, Clock clock) {
         String keyReference = configuration.signing().key();
         if (keyReference == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.SIGNING_KEY_MISSING);
@@ -100,9 +105,10 @@ final class CloneOpening {
                 new ExplicitSave(bareClone, operations, user, committing, attempts, events),
                 new DocumentRelease(bareClone, operations, user, committing, attempts, events),
                 new DraftExpiry(storeRepository.alias(), repository, guard, updater, configuration.drafts().expiry(),
-                        attempts));
-        return StoreResult.ok(new StoreClone(bareClone,
-                new StoreClone.Transport(operations, user, configuration.fetch().interval()), parts));
+                        attempts),
+                new AnchorEngine(bareClone, anchor, configuration.anchor(), operations, user, committing, attempts));
+        return StoreResult.ok(new StoreClone(bareClone, new StoreClone.Transport(operations, user,
+                configuration.fetch().interval(), configuration.anchor().retryInterval()), parts));
     }
 
     /**

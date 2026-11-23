@@ -27,9 +27,9 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The single signing seam of the store (GDR-STORE-12): every commit the store signs takes its {@link CommitSigning}
- * from here, the save commit ({@link ExplicitSave}) and the release commit ({@link DocumentRelease}) today, the
- * checkpoint and notes commits of GDR-STORE-16 and GDR-STORE-17 once the store writes them. Draft commits are never
- * signed.
+ * from here: the save commit ({@link ExplicitSave}), the release commit ({@link DocumentRelease}), the checkpoint commit
+ * ({@link Checkpoints}, GDR-STORE-16) and the notes commit of an anchor proof ({@link AnchorNotes}, GDR-STORE-17), the
+ * last two prepared once per commit and without identity trailers. Draft commits are never signed.
  * <p>
  * {@link #prepare(String)} runs at most once per save or release, through {@link Lazy}, when the first attempt that
  * writes a commit needs it: it fetches the public key line

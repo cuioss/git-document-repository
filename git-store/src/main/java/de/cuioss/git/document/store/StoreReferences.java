@@ -61,8 +61,33 @@ public final class StoreReferences {
     /** The prefix of every tag, {@code refs/tags/}. */
     public static final String TAGS = "refs/tags/";
 
+    /**
+     * The prefix of every checkpoint tag, {@code refs/tags/checkpoints/} (GDR-STORE-16): {@code refs/tags/checkpoints/<n>}
+     * with {@code n} from 1, never moved or deleted.
+     */
+    public static final String CHECKPOINTS = "refs/tags/checkpoints/";
+
+    /**
+     * The prefix of every notes reference of anchor proofs, {@code refs/notes/anchors/} (GDR-STORE-17):
+     * {@code refs/notes/anchors/<provider>} per anchor provider.
+     */
+    public static final String ANCHOR_NOTES = "refs/notes/anchors/";
+
+    /**
+     * The prefix of the local-only references of the anchoring, {@code refs/anchoring/}: a proof or a checkpoint commit
+     * whose push failed is kept here until the next due check pushes it. Outside {@code refs/heads/},
+     * {@code refs/tags/} and {@code refs/notes/}, so it is never pushed, never fetched and never pruned by a fetch.
+     */
+    static final String ANCHORING = "refs/anchoring/";
+
     /** The prefix of every branch. */
     private static final String HEADS = "refs/heads/";
+
+    /** The number of a checkpoint, from 1 to 999999999 without leading zeros. */
+    private static final Pattern CHECKPOINT_NUMBER = Pattern.compile("[1-9]\\d{0,8}");
+
+    /** The form of a release tag, {@code refs/tags/<collection>/<id>/v<n>}. */
+    private static final Pattern RELEASE_TAG = Pattern.compile("refs/tags/[a-z0-9-]+/[A-Za-z0-9-]+/v[1-9]\\d{0,8}");
 
     /** The form of a pseudonym. */
     private static final Pattern PSEUDONYM = Pattern.compile("[A-Za-z0-9-]+");
@@ -139,6 +164,95 @@ public final class StoreReferences {
         }
         var version = RELEASE_VERSION.matcher(ref.substring(prefix.length()));
         return version.matches() ? OptionalInt.of(Integer.parseInt(version.group(1))) : OptionalInt.empty();
+    }
+
+    /**
+     * Tells whether a reference is a release tag of some document or entry, {@code refs/tags/<collection>/<id>/v<n>}
+     * (GDR-STORE-6); a checkpoint tag is none.
+     *
+     * @param ref the full name of a reference
+     * @return whether it has the form of a release tag
+     * @throws NullPointerException if {@code ref} is {@code null}
+     */
+    public static boolean isReleaseTag(String ref) {
+        return RELEASE_TAG.matcher(Objects.requireNonNull(ref, "ref")).matches();
+    }
+
+    /**
+     * Returns the tag of a checkpoint (GDR-STORE-16).
+     *
+     * @param number the number {@code n} of the checkpoint, counted from 1
+     * @return {@code refs/tags/checkpoints/<n>}
+     * @throws IllegalArgumentException if {@code number} is less than 1
+     */
+    public static String checkpoint(int number) {
+        if (number < 1) {
+            throw new IllegalArgumentException("number: less than 1");
+        }
+        return CHECKPOINTS + number;
+    }
+
+    /**
+     * Parses the number of a checkpoint tag (GDR-STORE-16).
+     *
+     * @param ref the full name of a reference
+     * @return the number {@code n} of {@code refs/tags/checkpoints/<n>}, or empty for any other reference, a number
+     *         with a leading zero or one above 999999999 included
+     * @throws NullPointerException if {@code ref} is {@code null}
+     */
+    public static OptionalInt checkpointNumber(String ref) {
+        Objects.requireNonNull(ref, "ref");
+        if (!ref.startsWith(CHECKPOINTS)) {
+            return OptionalInt.empty();
+        }
+        String number = ref.substring(CHECKPOINTS.length());
+        return CHECKPOINT_NUMBER.matcher(number).matches() ? OptionalInt.of(Integer.parseInt(number))
+                : OptionalInt.empty();
+    }
+
+    /**
+     * Returns the notes reference of the proofs of an anchor provider (GDR-STORE-17).
+     *
+     * @param provider the id of the provider, of the form {@code [a-z0-9-]+}
+     * @return {@code refs/notes/anchors/<provider>}
+     * @throws NullPointerException if {@code provider} is {@code null}
+     */
+    public static String anchorNotes(String provider) {
+        return ANCHOR_NOTES + Objects.requireNonNull(provider, "provider");
+    }
+
+    /**
+     * Returns the prefix of the local-only references of proofs whose note was not pushed yet.
+     *
+     * @param provider the id of the provider
+     * @return {@code refs/anchoring/<provider>/proofs/}, followed by the full id of the anchored commit; each such
+     *         reference points at a blob holding the proof
+     */
+    static String retainedProofs(String provider) {
+        return ANCHORING + provider + "/proofs/";
+    }
+
+    /**
+     * Returns the prefix of the local-only references of checkpoint commits whose tag was not pushed yet.
+     *
+     * @return {@code refs/anchoring/checkpoints/}, followed by the number of the checkpoint
+     */
+    static String retainedCheckpoints() {
+        return ANCHORING + "checkpoints/";
+    }
+
+    /**
+     * Tells whether a reference is listed by a checkpoint: a branch, a tag or a notes reference, but neither a
+     * checkpoint tag nor a notes reference of anchor proofs, which the anchoring itself moves (GDR-STORE-16).
+     *
+     * @param ref the full name of a reference
+     * @return whether a checkpoint lists it
+     * @throws NullPointerException if {@code ref} is {@code null}
+     */
+    public static boolean listedByCheckpoint(String ref) {
+        Objects.requireNonNull(ref, "ref");
+        return (ref.startsWith(HEADS) || ref.startsWith(TAGS) || ref.startsWith("refs/notes/"))
+                && !ref.startsWith(CHECKPOINTS) && !ref.startsWith(ANCHOR_NOTES);
     }
 
     /**

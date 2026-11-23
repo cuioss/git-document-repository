@@ -81,7 +81,10 @@ import org.junit.jupiter.api.io.TempDir;
  * supplied; with {@code commit.email} {@code true} the supplied addresses appear in those fields and nowhere else. No
  * log record, result detail, commit message or further commit header carries the key path of {@code signing.key}, the
  * key bytes or the detail of a refusing or unavailable signing key source, and no log record on the signing path
- * carries a throwable (GDR-STORE-12).
+ * carries a throwable (GDR-STORE-12). Over the anchoring, with an unavailable, a throwing and then an answering
+ * provider, a failed note push and a failed fetch, no log record or result of a due check carries a credential, an
+ * address, a person name, the key path or key bytes, a document id or a reference that carries one, or the detail of
+ * the provider, and none carries a throwable (GDR-STORE-15 to GDR-STORE-17).
  * <p>
  * Credentials, addresses, the person name, pseudonyms, paths and contents are generated; the configuration keys are the
  * specified vocabulary and kept as literals.
@@ -524,5 +527,137 @@ class WritePathSecretsTest {
                 () -> assertEquals(tipBefore, Objects.requireNonNull(remote.repository().exactRef(target))
                         .getObjectId(), "nothing was pushed"),
                 () -> assertNull(remote.repository().exactRef(StoreReferences.MAIN), "no release on main"));
+    }
+
+    /**
+     * An anchor provider whose first answer is unavailable with a detail that carries a secret, whose second throws
+     * with a message that carries it, and which then obtains a proof.
+     */
+    private static final class SecretDetailProvider implements AnchorProvider {
+
+        private final String id = "a" + word();
+        private final String detail;
+        private int calls;
+
+        SecretDetailProvider(String detail) {
+            this.detail = detail;
+        }
+
+        @Override
+        public String id() {
+            return id;
+        }
+
+        @Override
+        public synchronized StoreResult<byte[]> obtain(String repository, ObjectId subject, Instant commitTime,
+                byte[] previous) {
+            calls++;
+            if (calls == 1) {
+                return StoreResult.of(StoreOutcome.UNAVAILABLE, detail + " " + repository);
+            }
+            if (calls == 2) {
+                throw new IllegalStateException(detail);
+            }
+            return StoreResult.ok(("proof " + subject.name()).getBytes(StandardCharsets.US_ASCII));
+        }
+
+        @Override
+        public StoreResult<Instant> verify(ObjectId subject, byte[] proof, byte[] previous) {
+            return StoreResult.of(StoreOutcome.SIGNATURE_INVALID, detail);
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: the anchoring leaks no credential, address, person name, key, document id or provider detail")
+    void anchoringCarriesNoSecretAndNoThrowable(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var path = word();
+        var personName = new FullNameGenerator().next();
+        commit(remote.repository(), target, path, word() + " " + personName);
+        var signing = TestKeys.ed25519().source();
+        var keyReference = keyPath();
+        var userName = "u" + secret();
+        var password = secret();
+        var userAddress = address();
+        var authorAddress = address();
+        var providerDetail = secret();
+        var provider = new SecretDetailProvider(providerDetail);
+        var user = new TechnicalUser(word(), userAddress, new UsernamePasswordCredentialsProvider(userName, password));
+        var operations = new ScriptedRepositoryOperations();
+        Map<String, Object> tree = new LinkedHashMap<>();
+        tree.put("save", Map.of("max-attempts", 3));
+        tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
+        tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", keyReference));
+        tree.put("anchor", Map.of("provider", provider.id()));
+        var configuration = value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
+        var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
+        List<String> texts = new ArrayList<>();
+        int firstRecord;
+        String releaseTag;
+
+        try (var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
+                     temp.resolve(word() + ".git"), user, configuration,
+                     new StoreProviders(signing, new TestPersonDirectory(), provider), operations,
+                     Clock.fixed(now, ZoneOffset.UTC)))) {
+            var author = new Author(pseudonym(), authorAddress);
+            value(writer.draft(author, key, put(path + "x", personName + " " + word()), word()));
+            assertInstanceOf(SaveResult.Saved.class, writer.save(author, claims(), key, Map.of(), word()), "saved");
+            releaseTag = value(writer.release(author, claims(), key)).tag();
+            firstRecord = TestLoggerFactory.getTestHandler().getRecords().size();
+
+            List<StoreResult<StoreWriter.Anchoring>> results = new ArrayList<>();
+            results.add(writer.anchor());
+            results.add(writer.anchor());
+            operations.failPushTo(StoreReferences.anchorNotes(provider.id()), GitOutcome.UNREACHABLE);
+            results.add(writer.anchor());
+            operations.failFetch(GitOutcome.UNREACHABLE);
+            results.add(writer.anchor());
+            results.add(writer.anchor());
+
+            assertAll(
+                    () -> assertEquals(2, value(results.getFirst()).pending().size(),
+                            "the release commit and the checkpoint are pending"),
+                    () -> assertTrue(value(results.getFirst()).anchored().isEmpty(), "unavailable: nothing anchored"),
+                    () -> assertTrue(value(results.get(1)).anchored().isEmpty(), "throwing: nothing anchored"),
+                    () -> assertTrue(value(results.get(2)).anchored().isEmpty(), "unpushed: nothing anchored"),
+                    () -> assertFalse(results.get(3).isOk(), "the failed fetch ends the due check"),
+                    () -> assertEquals(List.of(), value(results.get(4)).pending(), "finally everything anchored"));
+            for (StoreResult<StoreWriter.Anchoring> result : results) {
+                texts.add(String.valueOf(result));
+                texts.add(String.valueOf(result.detail()));
+            }
+        }
+
+        var records = recordsFrom(firstRecord);
+        for (LogRecord logRecord : records) {
+            texts.add(String.valueOf(logRecord.getMessage()));
+            Object[] parameters = logRecord.getParameters();
+            if (parameters != null) {
+                for (Object parameter : parameters) {
+                    texts.add(String.valueOf(parameter));
+                }
+            }
+        }
+        List<String> secrets = List.of(userName, password, userAddress, authorAddress, personName, keyReference,
+                Base64.getEncoder().encodeToString(signing.key().publicKey()), providerDetail, key.id(), releaseTag,
+                target);
+        for (String secret : secrets) {
+            for (String text : texts) {
+                assertFalse(text.contains(secret), () -> "a rendered text carries a secret: " + text);
+            }
+        }
+        assertAll(
+                () -> assertTrue(records.stream().noneMatch(logRecord -> logRecord.getThrown() != null),
+                        "no log record of the anchoring carries a throwable"),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
+                        GitStoreLogMessages.INFO.CHECKPOINT_CREATED.resolveIdentifierString()),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
+                        GitStoreLogMessages.INFO.SUBJECT_ANCHORED.resolveIdentifierString()),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                        GitStoreLogMessages.WARN.ANCHORING_PENDING.resolveIdentifierString()),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                        GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()));
     }
 }

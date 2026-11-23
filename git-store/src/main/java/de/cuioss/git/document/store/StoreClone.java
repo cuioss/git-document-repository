@@ -20,8 +20,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 import de.cuioss.git.document.core.JGitRepositoryOperations;
@@ -53,6 +57,13 @@ final class StoreClone {
     private final ExplicitSave saves;
     private final DocumentRelease releases;
     private final DraftExpiry expiry;
+    private final AnchorEngine anchors;
+
+    /** The executor of the due checks after a save, a release or a fetch; {@code null} until one is registered. */
+    private final AtomicReference<@Nullable Executor> anchorExecutor = new AtomicReference<>();
+
+    /** Whether a due check is handed to the executor and has not started yet, so further triggers coalesce. */
+    private final AtomicBoolean anchorQueued = new AtomicBoolean();
 
     /**
      * Holds an opened clone with the parts that work on it.
@@ -70,6 +81,7 @@ final class StoreClone {
         this.saves = parts.saves();
         this.releases = parts.releases();
         this.expiry = parts.expiry();
+        this.anchors = parts.anchors();
     }
 
     /**
@@ -78,8 +90,10 @@ final class StoreClone {
      * @param operations    the repository operations of {@code git-core}
      * @param user          the technical user, holder of the credentials of every fetch
      * @param fetchInterval the interval of the periodic fetch ({@code fetch.interval})
+     * @param retryInterval the interval of the periodic due check of the anchoring ({@code anchor.retry-interval})
      */
-    record Transport(RepositoryOperations operations, TechnicalUser user, Duration fetchInterval) {
+    record Transport(RepositoryOperations operations, TechnicalUser user, Duration fetchInterval,
+    Duration retryInterval) {
     }
 
     /**
@@ -91,9 +105,10 @@ final class StoreClone {
      * @param saves     the explicit save
      * @param releases  the release
      * @param expiry    the draft expiry
+     * @param anchors   the anchoring engine
      */
     record Parts(StoreEvents events, ListenerDispatch listeners, DraftReferences drafts, ExplicitSave saves,
-    DocumentRelease releases, DraftExpiry expiry) {
+    DocumentRelease releases, DraftExpiry expiry, AnchorEngine anchors) {
     }
 
     /**
@@ -136,12 +151,20 @@ final class StoreClone {
     /** Saves a draft; see {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, SaveStep)}. */
     SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message, @Nullable SaveStep step) {
-        return saves.save(author, claims, key, expectedBlobIds, message, step);
+        SaveResult result = saves.save(author, claims, key, expectedBlobIds, message, step);
+        if (result instanceof SaveResult.Saved) {
+            triggerDueCheck();
+        }
+        return result;
     }
 
     /** Releases a document or entry; see {@link StoreWriter#release}. */
     StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        return releases.release(author, claims, key);
+        var result = releases.release(author, claims, key);
+        if (result.isOk() || result.outcome() == StoreOutcome.INCOMPLETE) {
+            triggerDueCheck();
+        }
+        return result;
     }
 
     /** Expires the drafts; see {@link StoreWriter#expireDrafts}. */
@@ -158,7 +181,72 @@ final class StoreClone {
         RepositoryGuard guard = clone.guard();
         StoreResult<List<String>> result = guard.shared(() -> guard.transport(() -> mirror(updates)));
         events.emit(updates);
+        if (result.isOk()) {
+            triggerDueCheck();
+        }
         return result;
+    }
+
+    /** Runs one due check of the anchoring on the calling thread; see {@link StoreWriter#anchor()}. */
+    StoreResult<StoreWriter.Anchoring> anchor() {
+        return anchors.dueCheck();
+    }
+
+    /**
+     * Schedules the due check of the anchoring on the caller's executor at {@code anchor.retry-interval} and registers
+     * the executor for the due checks after a save, a release or a fetch; see {@link StoreWriter#anchorPeriodically}.
+     */
+    AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
+        anchorExecutor.set(executor);
+        long interval = nanos(transport.retryInterval());
+        try {
+            return new AnchorSchedule(executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
+                    TimeUnit.NANOSECONDS), () -> anchorExecutor.compareAndSet(executor, null));
+        } catch (RejectedExecutionException e) {
+            anchorExecutor.compareAndSet(executor, null);
+            throw e;
+        }
+    }
+
+    /**
+     * Hands one due check to the registered executor after the locks of a save, a release or a fetch were released;
+     * a trigger while one is handed over and not started yet coalesces with it. Without an executor or a provider
+     * nothing happens, and a refusal of the executor is ignored: the next trigger or the schedule retries.
+     */
+    private void triggerDueCheck() {
+        Executor executor = anchorExecutor.get();
+        if (executor == null || !anchors.active() || !anchorQueued.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                anchorQueued.set(false);
+                safeDueCheck();
+            });
+        } catch (RejectedExecutionException e) {
+            anchorQueued.set(false);
+            LOGGER.debug("The executor refused the due check of the anchoring");
+        }
+    }
+
+    /** One due check off the caller's thread: a failure is logged and never escapes to the executor. */
+    private void safeDueCheck() {
+        try {
+            anchors.dueCheck();
+        }
+        // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (RuntimeException e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, alias(), e.getClass().getSimpleName());
+        }
+    }
+
+    private static long nanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     private StoreResult<List<String>> mirror(List<StoreEvents.Update> updates) {

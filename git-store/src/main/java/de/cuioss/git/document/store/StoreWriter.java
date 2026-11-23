@@ -29,6 +29,7 @@ import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
 import org.eclipse.jgit.lib.Repository;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
@@ -68,6 +69,14 @@ import org.eclipse.jgit.lib.Repository;
  * collection of one writer never runs while another writer of the clone holds objects not yet referenced. No
  * operation takes a credential: every fetch and push uses those of the technical user (GDR-STORE-8). The writer holds
  * the opened clone and releases it on {@link #close()}.
+ * <p>
+ * Opened with the {@link StoreProviders} of the start, the writer anchors through the active
+ * {@link AnchorProvider} (GDR-STORE-15 to GDR-STORE-17): {@link #anchor()} runs a due check on demand, and
+ * {@link #anchorPeriodically} runs one every {@code anchor.retry-interval} and after every save, release and fetch on
+ * the caller's executor. A due check pushes checkpoint tags {@code refs/tags/checkpoints/<n>} and notes under
+ * {@code refs/notes/anchors/<provider>} in their own pushes, separately from save commits, under the transport lock;
+ * the checkpoint and notes commits are signed like save commits and carry no identity trailers. A failing or
+ * unreachable provider never blocks or fails a save, a release or a fetch.
  *
  * @since 0.1
  */
@@ -117,9 +126,45 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(signing, "signing");
+        return open(storeRepository, gitDir, user, configuration, signing, null, operations, clock);
+    }
+
+    /**
+     * Opens the write path of a repository like
+     * {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)},
+     * with the providers selected at start: the signing key source signs every save and release commit, and the anchor
+     * provider, when one is active, anchors the release commits and checkpoints of the repository (GDR-STORE-15).
+     *
+     * @param storeRepository the repository of the registry
+     * @param gitDir          the git directory of the bare clone
+     * @param user            the technical user: committer and holder of the transport credentials
+     * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param providers       the selected providers ({@link StoreProviders#load} or {@link StoreProviders#select})
+     * @param operations      the repository operations of {@code git-core}
+     * @param clock           the clock of every commit time and of the due checks of the anchoring
+     * @return the results of
+     *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)}
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
+            StoreConfiguration configuration, StoreProviders providers, RepositoryOperations operations,
+            Clock clock) {
+        Objects.requireNonNull(providers, "providers");
+        return open(storeRepository, gitDir, user, configuration, providers.signing(), providers.anchor(), operations,
+                clock);
+    }
+
+    private static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
+            StoreConfiguration configuration, SigningKeySource signing, @Nullable AnchorProvider anchor,
+            RepositoryOperations operations, Clock clock) {
+        Objects.requireNonNull(storeRepository, "storeRepository");
+        Objects.requireNonNull(gitDir, "gitDir");
+        Objects.requireNonNull(user, "user");
+        Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, signing, operations, clock);
+        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, signing, anchor, operations,
+                clock);
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
@@ -327,6 +372,65 @@ public final class StoreWriter implements AutoCloseable {
     public FetchSchedule fetchPeriodically(ScheduledExecutorService executor) {
         Objects.requireNonNull(executor, "executor");
         return clone.fetchPeriodically(executor);
+    }
+
+    /**
+     * Runs one due check of the anchoring on the calling thread (GDR-STORE-15, GDR-STORE-16, GDR-STORE-17). Without an
+     * active anchor provider nothing is anchored. Otherwise the due check fetches, pushes the checkpoint tag and the
+     * notes a former due check kept because their push failed, creates a checkpoint when
+     * {@code anchor.checkpoint-interval} has passed since the previous one and a reference it lists changed, and asks
+     * the provider for a proof of every pending subject, the commit of each release tag (unless
+     * {@code anchor.releases} is {@code false}) and each checkpoint without a note in
+     * {@code refs/notes/anchors/<provider>}, oldest first; each proof is written as a base64 note and pushed with lease
+     * right after. A failure of the provider or of a push leaves the subject pending and is logged
+     * ({@code GIT_STORE-111}).
+     *
+     * @return {@link StoreOutcome#OK} with the anchored and the pending subjects; or the non-success that ended the
+     *         due check before any subject was asked for, for example the passed-on outcome of its fetch
+     */
+    public StoreResult<Anchoring> anchor() {
+        return clone.anchor();
+    }
+
+    /**
+     * Schedules the due check of {@link #anchor()} on the caller's executor at {@code anchor.retry-interval}, the
+     * first run one interval from now, and registers the executor for the due checks that follow every save, release
+     * and fetch of this writer: those are handed to the executor once the operation released every lock, coalesced
+     * while one is waiting, so a slow or failing provider never delays or fails the operation. The writer starts no
+     * thread of its own; a failed due check is logged and never ends the schedule. The caller cancels the returned
+     * {@link AnchorSchedule} or shuts the executor down before it closes the writer.
+     *
+     * @param executor the executor of the caller
+     * @return the schedule, to cancel it
+     * @throws NullPointerException                                if {@code executor} is {@code null}
+     * @throws java.util.concurrent.RejectedExecutionException if the executor refuses the schedule
+     */
+    public AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
+        Objects.requireNonNull(executor, "executor");
+        return clone.anchorPeriodically(executor);
+    }
+
+    /**
+     * The result of a due check of the anchoring.
+     *
+     * @param anchored the full ids of the commits whose note this due check pushed, in order
+     * @param pending  the full ids of the commits left without a pushed proof, oldest first, retried by the next due
+     *                 check
+     * @since 0.1
+     */
+    public record Anchoring(List<String> anchored, List<String> pending) {
+
+        /**
+         * Copies the lists.
+         *
+         * @param anchored the anchored commits
+         * @param pending  the pending commits
+         * @throws NullPointerException if a list or an element is {@code null}
+         */
+        public Anchoring {
+            anchored = List.copyOf(anchored);
+            pending = List.copyOf(pending);
+        }
     }
 
     /**
