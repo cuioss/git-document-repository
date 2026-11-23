@@ -299,8 +299,9 @@ digits (leading zeros not counted), in a decimal, octal or hexadecimal integer a
 first significant digit, exceeds 1,000 in magnitude is refused as `MALFORMED` with the detail
 `a number whose exponent exceeds 1000 in magnitude`; neither detail names the number. `1e1000` is read, `1e1001` and
 `1e2147483647` are refused. The bounds apply to text the reader reads, documents, schema files and `kinds.yaml`
-alike; a `BigDecimal` or `BigInteger` a caller builds in memory is not bounded, and under `multipleOf` a large exponent
-can still stall its validation. The library then compares the remainder, converted to `double`, with zero
+alike; a `BigDecimal` or `BigInteger` a caller builds in memory is not bounded for `validate`, `required` and the data
+model, and under `multipleOf` a large exponent can still stall its validation, while `encode` of `YamlDocumentCodec`
+refuses such a number beyond the bounds, naming the limit (<<GDR-FORMS-3>>). The library then compares the remainder, converted to `double`, with zero
 (`remainder(factor).doubleValue() == 0` in `MultipleOfEvaluator`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]); a remainder of a magnitude below the smallest positive `double` (about `4.9e-324`; below about `1e-308` it already
@@ -461,9 +462,14 @@ timestamp (link:https://yaml.org/type/timestamp.html[YAML 1.1, `timestamp`]), an
 such as `1_000` or `0b101`, as a number (link:https://yaml.org/type/int.html[YAML 1.1, `int`]). Each of these is a
 string under the YAML 1.2 core schema, so `YamlWriter` writes it plain. A sexagesimal-like string such as `1:30` is
 double-quoted, because `:` is not among the characters of a plain string. By the owner's decision the byte output stays
-as it is: these strings are not quoted for a YAML 1.1 reader. `encode` refuses with an `IllegalArgumentException` a value whose YAML would
-be longer than the 3,145,728 code points (3 Mi) that `YamlReader` sets as the code point limit of snakeyaml-engine
-and decoding therefore reads, so for every value `encode` accepts, `decode(encode(v))` succeeds and `encode(decode(encode(v)))` equals
+as it is: these strings are not quoted for a YAML 1.1 reader. `encode` refuses with an `IllegalArgumentException`
+what decoding would refuse: a value whose YAML would be longer than the 3,145,728 code points (3 Mi) that `YamlReader`
+sets as the code point limit of snakeyaml-engine, and a `BigDecimal` or `BigInteger` a caller builds in memory whose
+written form exceeds a number bound of `YamlReader` (more than 1,000 significant digits, or an adjusted exponent
+beyond 1,000 in magnitude, for example `new BigDecimal("1e1001")` or `BigInteger.TEN.pow(1000)`). The number refusal
+takes its bounds from `YamlReader` itself, so the two cannot drift, is checked before anything is ordered or written,
+and its message names the limit (`value: a number with more than 1000 digits, which decode refuses`), never the
+number. So for every value `encode` accepts, `decode(encode(v))` succeeds and `encode(decode(encode(v)))` equals
 `encode(v)` byte for byte. Decoding reads through `YamlReader`, so content outside the JSON data model of ADR-0008 (an
 anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite number, a number with more
 than 1,000 digits or whose exponent exceeds 1,000 in magnitude, a double-quoted string whose escape yields a lone surrogate, a nesting deeper than

@@ -119,6 +119,10 @@ final class YamlReader {
     /** The problem of a number with too many digits. */
     private static final String TOO_MANY_DIGITS = "a number with more than " + MAX_NUMBER_DIGITS + " digits";
 
+    /** The problem of a number whose exponent is too large in magnitude. */
+    private static final String TOO_LARGE_EXPONENT = "a number whose exponent exceeds " + MAX_EXPONENT
+            + " in magnitude";
+
     /** The load settings: comments not parsed, marks kept for the details, the limit of the text. */
     private final LoadSettings settings = LoadSettings.builder().setUseMarks(true)
             .setCodePointLimit(CODE_POINT_LIMIT).build();
@@ -297,30 +301,63 @@ final class YamlReader {
     }
 
     /**
-     * Converts a float of the core schema. An infinity and not-a-number are refused, and so are, before the text is
-     * parsed, more than {@value #MAX_NUMBER_DIGITS} significant digits and an adjusted exponent (that of the first
-     * significant digit, as {@link BigDecimal} counts it) of a magnitude above {@value #MAX_EXPONENT}.
+     * Tells which bound of this reader the plain scalar of a number exceeds: more than {@value #MAX_NUMBER_DIGITS}
+     * significant digits, or an adjusted exponent of a magnitude above {@value #MAX_EXPONENT}. The one source of the
+     * number bounds: the reader refuses with it, and {@link YamlDocumentCodec#encode(Map)} refuses with it what the
+     * reader would refuse, so that the two cannot drift.
+     *
+     * @param text the plain scalar, as {@link YamlWriter} writes a number
+     * @return the problem, naming the bound and never the number, or empty when the text is within the bounds or no
+     *         number of the core schema
+     */
+    static Optional<String> exceededNumberBound(String text) {
+        Tag tag = RESOLVER.resolve(text, Boolean.TRUE);
+        if (Tag.INT.equals(tag)) {
+            return integerBound(text);
+        }
+        if (Tag.FLOAT.equals(tag)) {
+            return floatBound(text);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Converts a float of the core schema. An infinity and not-a-number are refused, and so is, before the text is
+     * parsed, a text beyond the bounds of {@link #floatBound(String)}.
      */
     private static BigDecimal decimal(String text, ScalarEvent event) {
         String lower = text.toLowerCase(Locale.ROOT);
         if (lower.contains("inf") || lower.contains("nan")) {
             throw new Refusal(event, "a number outside the JSON data model");
         }
-        int marker = lower.indexOf('e');
+        Optional<String> exceeded = floatBound(text);
+        if (exceeded.isPresent()) {
+            throw new Refusal(event, exceeded.get());
+        }
+        return new BigDecimal(text);
+    }
+
+    /**
+     * The bound a finite float of the core schema exceeds: more than {@value #MAX_NUMBER_DIGITS} significant digits, or
+     * an adjusted exponent (that of the first significant digit, as {@link BigDecimal} counts it) of a magnitude above
+     * {@value #MAX_EXPONENT}; computed from the text, without parsing it.
+     */
+    private static Optional<String> floatBound(String text) {
+        int marker = text.toLowerCase(Locale.ROOT).indexOf('e');
         String mantissa = marker < 0 ? text : text.substring(0, marker);
         int point = mantissa.indexOf('.');
         int fractionDigits = point < 0 ? 0 : mantissa.length() - point - 1;
         String digitText = point < 0 ? mantissa : mantissa.substring(0, point) + mantissa.substring(point + 1);
         int digits = significantDigits(digitText);
         if (digits > MAX_NUMBER_DIGITS) {
-            throw new Refusal(event, TOO_MANY_DIGITS);
+            return Optional.of(TOO_MANY_DIGITS);
         }
         long exponent = marker < 0 ? 0 : boundedExponent(text.substring(marker + 1));
         long adjusted = exponent - fractionDigits + Math.max(digits, 1) - 1;
         if (Math.abs(adjusted) > MAX_EXPONENT) {
-            throw new Refusal(event, "a number whose exponent exceeds " + MAX_EXPONENT + " in magnitude");
+            return Optional.of(TOO_LARGE_EXPONENT);
         }
-        return new BigDecimal(text);
+        return Optional.empty();
     }
 
     /** The number of digits of a digit string after its sign and its leading zeros. */
@@ -360,20 +397,34 @@ final class YamlReader {
      * {@value #MAX_NUMBER_DIGITS} digits in the text, leading zeros not counted, are refused before it is parsed.
      */
     private static Object integer(String text, ScalarEvent event) {
-        int radix = 10;
-        String digits = text;
-        if (text.startsWith(OCTAL)) {
-            radix = 8;
-            digits = text.substring(OCTAL.length());
-        } else if (text.startsWith(HEXADECIMAL)) {
-            radix = 16;
-            digits = text.substring(HEXADECIMAL.length());
+        Optional<String> exceeded = integerBound(text);
+        if (exceeded.isPresent()) {
+            throw new Refusal(event, exceeded.get());
         }
-        if (significantDigits(digits) > MAX_NUMBER_DIGITS) {
-            throw new Refusal(event, TOO_MANY_DIGITS);
-        }
-        BigInteger value = new BigInteger(digits, radix);
+        BigInteger value = new BigInteger(integerDigits(text), radix(text));
         return value.bitLength() < Long.SIZE ? (Object) value.longValueExact() : value;
+    }
+
+    /** The bound an integer of the core schema exceeds: more than {@value #MAX_NUMBER_DIGITS} significant digits. */
+    private static Optional<String> integerBound(String text) {
+        return significantDigits(integerDigits(text)) > MAX_NUMBER_DIGITS ? Optional.of(TOO_MANY_DIGITS)
+                : Optional.empty();
+    }
+
+    /** The radix of an integer of the core schema, given by its prefix. */
+    private static int radix(String text) {
+        if (text.startsWith(OCTAL)) {
+            return 8;
+        }
+        return text.startsWith(HEXADECIMAL) ? 16 : 10;
+    }
+
+    /** The digits of an integer of the core schema, with its sign and without its prefix. */
+    private static String integerDigits(String text) {
+        if (text.startsWith(OCTAL)) {
+            return text.substring(OCTAL.length());
+        }
+        return text.startsWith(HEXADECIMAL) ? text.substring(HEXADECIMAL.length()) : text;
     }
 
     /** Renders the position of a mark, counted from 1. */

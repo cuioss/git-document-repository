@@ -358,6 +358,70 @@ class YamlDocumentCodecTest {
         }
     }
 
+    /**
+     * A number a caller builds in memory beyond the number bounds of {@link YamlReader}: {@code encode} refuses it, so
+     * that it never writes text that {@code decode} refuses, and accepts the numbers at the bounds. The numbers are the
+     * bounds themselves and kept as literals.
+     */
+    @Nested
+    @DisplayName("Number bounds")
+    class NumberBounds {
+
+        static Stream<Arguments> beyondTheBounds() {
+            return Stream.of(
+                    Arguments.of("an exponent beyond 1000", new BigDecimal("1e1001"),
+                            "a number whose exponent exceeds 1000 in magnitude"),
+                    Arguments.of("more than 1000 digits", BigInteger.TEN.pow(1000),
+                            "a number with more than 1000 digits"));
+        }
+
+        static Stream<Arguments> atTheBounds() {
+            return Stream.of(
+                    Arguments.of("an exponent of 1000", new BigDecimal("1e1000")),
+                    Arguments.of("1000 digits", BigInteger.TEN.pow(999)));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-3: encode refuses a number with {0}, naming the limit and not the number")
+        @MethodSource("beyondTheBounds")
+        void refused(String description, Number number, String problem) {
+            var data = map(word(), number);
+
+            var refusal = assertThrows(IllegalArgumentException.class, () -> codec.encode(data));
+
+            var message = String.valueOf(refusal.getMessage());
+            assertAll(
+                    () -> assertEquals("value: " + problem + ", which decode refuses", message, "the limit named"),
+                    () -> assertFalse(message.contains(number.toString()), "no number in the message"),
+                    () -> assertEquals(StoreOutcome.MALFORMED,
+                            codec.decode(new YamlWriter().write(data).getBytes(StandardCharsets.UTF_8)).outcome(),
+                            "decode refuses the text encode would have written"));
+        }
+
+        @ParameterizedTest(name = "GDR-FORMS-3: a number with {0} round-trips byte for byte")
+        @MethodSource("atTheBounds")
+        void atTheBound(String description, Number number) {
+            var data = map(word(), number);
+
+            var encoded = codec.encode(data);
+
+            assertAll(
+                    () -> assertEquals(data, decoded(codec.decode(encoded)), "the number reads back"),
+                    () -> assertArrayEquals(encoded, codec.encode(decoded(codec.decode(encoded))),
+                            "the round trip is byte-identical"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: encode refuses a number beyond the bounds inside a list and inside a map")
+        void nested() {
+            var inList = map(word(), List.of(1L, map(word(), List.of(new BigDecimal("1e1001")))));
+            var inMap = map(word(), map(word(), map(word(), BigInteger.TEN.pow(1000))));
+
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(inList), "inside a list"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> codec.encode(inMap), "inside a map"));
+        }
+    }
+
     @Nested
     @DisplayName("Arrays and keys")
     class ArraysAndKeys {
