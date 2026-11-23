@@ -16,10 +16,11 @@ the selection of their providers, and the write path of `StoreWriter`: drafts (<
 (<<GDR-STORE-3>>) with its optional per-attempt step, its conflicts (<<GDR-STORE-4>>) and change detection
 (<<GDR-STORE-5>>), the release of a document with its tag (<<GDR-STORE-6>>), the draft expiry (<<GDR-STORE-7>>), and
 author, committer and credentials (<<GDR-STORE-8>>); and the read side: the in-memory index with its contributors,
-fetch and snapshots (<<GDR-STORE-9>>) and the per-branch post-commit listeners (<<GDR-STORE-10>>). Until
-<<GDR-STORE-12>> and <<GDR-STORE-13>> are implemented, the commits the store writes are unsigned and carry no
-trailers. Planned are the signature and the identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), the requirements
-from <<GDR-STORE-14>> to <<GDR-STORE-19>>, and the providers themselves (`file`, `signed`).
+fetch and snapshots (<<GDR-STORE-9>>) and the per-branch post-commit listeners (<<GDR-STORE-10>>); and the commit
+signature with the signing key source `file` (<<GDR-STORE-12>>), the identity trailers (<<GDR-STORE-13>>) and the
+signature verification against allowed signers (<<GDR-STORE-14>>): every save and release commit is signed and carries
+the identity trailers, draft commits are neither. Planned are the requirements from <<GDR-STORE-15>> to
+<<GDR-STORE-19>> and the anchor provider `signed`.
 Its third-party dependencies are `cui-java-tools` for `CuiLogger`, required transitively because the public holder
 `GitStoreLogMessages` exposes its `LogRecord`, Lombok (scope `provided`) and
 `org.jspecify:jspecify`, see xref:general.adoc#GDR-GEN-1[GDR-GEN-1]; JGit comes through `git-core`, which the module
@@ -204,8 +205,10 @@ it starts the suffix. A path whose segment after the collection starts with a do
 `<collection>/.counter` of a numbered collection, belongs to no document. The release of a numbered entry
 (<<GDR-STORE-6>>) takes exactly the paths that belong to it.
 
-`StoreWriter.open(repository, gitDir, user, configuration, operations, clock)` clones the remote into a bare clone if
-none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user. An existing clone is reused only
+`StoreWriter.open(repository, gitDir, user, configuration, signing, operations, clock)` clones the remote into a bare
+clone if none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user; `signing` is the active
+`SigningKeySource` (<<GDR-STORE-12>>), and a configuration without `signing.key` is `MALFORMED` with the detail
+`signing.key is missing`, checked before anything is cloned. An existing clone is reused only
 when its `origin` has exactly one fetch URL and every push URL (the fetch URL when none is configured) equal to the
 registered remote, read through JGit 7.8.0 `RemoteConfig`, which applies `insteadOf` and `pushInsteadOf`; a clone of
 another repository at the path is the passed-on `NOT_A_REPOSITORY` with the detail
@@ -263,12 +266,13 @@ then expects the branch to be absent on the remote. Content that has no release 
 (xref:git-directory.adoc#GDR-DIR-3[GDR-DIR-3], xref:git-directory.adoc#GDR-DIR-6[GDR-DIR-6],
 xref:git-directory.adoc#GDR-DIR-7[GDR-DIR-7]).
 
-`StoreWriter.save(author, key, expectedBlobIds, message)` returns a `SaveResult`, a sealed type of three variants a
+`StoreWriter.save(author, claims, key, expectedBlobIds, message)` returns a `SaveResult`, a sealed type of three variants a
 caller branches on with a pattern-matching `switch`: `Saved` with the commit the target branch points at,
 `Conflicting` with the conflicting paths (<<GDR-STORE-4>>), and `NotSaved` with any other outcome and its detail;
 `toResult()` gives the plain `StoreResult` shape. The save reads the draft tip once, and every attempt re-applies that
 draft commit, so a draft written during the save is kept for the next save and not published with the expected blob
-ids and the message of this one. An attempt fetches with the mirror reference specifications of `git-core`
+ids and the message of this one. The save commit is signed (<<GDR-STORE-12>>) and its message is the caller's message
+followed by the identity trailers of the author's pseudonym and the `IdentityClaims` `claims` (<<GDR-STORE-13>>). An attempt fetches with the mirror reference specifications of `git-core`
 (`JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, xref:git-core.adoc#GDR-CORE-3[GDR-CORE-3]), passed explicitly,
 and the credentials of the technical user, so it fetches and prunes `refs/heads/`, `refs/tags/` and `refs/notes/`
 only: it prunes every reference there the remote no longer has (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). JGit
@@ -301,8 +305,9 @@ the applied draft commit. Every Git outcome is passed on as
 `StoreResult.PassedOn`. A save is logged as `GIT_STORE-2`, a save that ended without a commit for another reason than
 a conflict as `GIT_STORE-101`, naming the outcome, never a credential (`git-store/doc/LogMessages.adoc`).
 
-`StoreWriter.save(author, key, expectedBlobIds, message, step)` saves the same way with a `SaveStep`, a functional
-interface of the caller; the four-argument `save` is that save without a step. The attempt loop of `ExplicitSave`
+`StoreWriter.save(author, claims, key, expectedBlobIds, message, step)` saves the same way with a `SaveStep`, a
+functional interface of the caller; the five-argument `save` is that save without a step. The step's edits are written
+into the one signed, trailer-carrying save commit. The attempt loop of `ExplicitSave`
 calls the step on every attempt, the first and each re-application onto a new tip, after the conflict check and
 before the save commit is written, so a step that derives its edits from the tip, such as a counter, sees the tip the
 commit is written on. The step receives a read-only `SaveStep.Attempt`: the full id of that tip (`null` for a root
@@ -390,7 +395,7 @@ The store merges every release itself. `main` is protected on the Git server so 
 push to it and nobody may force-push; a refused push of `main` returns rejected. The release commit carries the
 identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the approver.
 
-`StoreWriter.release(author, key)` returns a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
+`StoreWriter.release(author, claims, key)` returns a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
 full id of the release commit and the version `n`. Content without release (a key of a `MAIN` collection) is
 `MALFORMED` with the detail `key: content without release`. A release runs under the shared side of the clone's
 maintenance lock and takes no draft lock; each attempt runs under the transport lock (<<GDR-STORE-3>>), from its fetch
@@ -401,7 +406,8 @@ release tags of the document once. A missing working or collection branch is the
 
 * *Version and message.* `n` is one more than the highest `v<k>` below `refs/tags/<collection>/<id>/` (a `k` without
   leading zero, at most 999999999), so the first release is `v1`. The message of the release commit is always
-  `Release <collection>/<id> v<n>`, composed by the store; a release takes no message of the caller.
+  `Release <collection>/<id> v<n>`, composed by the store and followed by the identity trailers of the releasing
+  user (<<GDR-STORE-13>>); a release takes no message of the caller.
 * *Release commit.* For a per-document collection, `InCoreMerger` of `git-core` merges the working branch into `main`
   at path level (xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]), and the release commit has the tip of `main` and the tip of
   the working branch as its parents and the edits from the tree of `main` to the merged tree; a conflicting merge ends
@@ -410,9 +416,9 @@ release tags of the document once. A missing working or collection branch is the
   every file of the entry that differs or is new is put, every file of the entry the collection branch lacks is
   deleted, and the files of other entries and the counter file stay as `main` has them. Without `main` the release
   commit of a per-document collection has the working branch as its only parent and its tree, and that of a numbered
-  collection is a root commit holding the entry's files. The commit is written by `InCoreWriter`, unsigned and without
-  trailers, with the author and committer of <<GDR-STORE-8>>; one method of `DocumentRelease` builds its metadata, the
-  seam <<GDR-STORE-13>> extends with the identity trailers.
+  collection is a root commit holding the entry's files. The commit is written by `InCoreWriter` with the author and
+  committer of <<GDR-STORE-8>>, signed (<<GDR-STORE-12>>) and carrying the identity trailers (<<GDR-STORE-13>>); one
+  method of `DocumentRelease` builds its metadata.
 * *Push order.* The local tag is written by a reference update that expects it absent and writes no reflog. Then `main`
   is pushed with the lease of the fetched tip (the zero id when `main` is absent), and only after the remote accepted it
   the local `main` moves and the tag is pushed against the zero-id lease. `RepositoryOperations.push` of `git-core`
@@ -422,8 +428,10 @@ release tags of the document once. A missing working or collection branch is the
   (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); no tag on the remote is ever moved or deleted.
 * *Incomplete and its recovery.* When the remote accepted `main` and the push of the tag failed, the release is
   `INCOMPLETE` with the detail `<tag>: not pushed (<outcome>)`. A repeated release finds the release commit by its
-  message and its shape: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, that carries the
-  message of `v<n>` and has the shape of a release of the document, is a release whose tag is missing; the release then
+  subject and its shape: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, whose first
+  paragraph (the text before the first blank line) is the subject of `v<n>` and that has the shape of a release of the
+  document, is a release whose tag is missing; no trailer is read for that decision, so a caller-written message that
+  imitates the subject and the trailers cannot make a commit a release. The release then
   writes and pushes only the tag on that commit and merges nothing. The shape tells the release commit from a commit
   of an ordinary save to a `MAIN` collection that uses the same message: for a per-document collection the commit has
   two parents, the second reachable from the working branch, or, written onto an absent `main`, one parent reachable
@@ -638,11 +646,37 @@ without repeating the content.
 * The private key must be used only through the active `SigningKeySource`; the store must ship the source `file`, and
   an application must be able to supply another (KMS, HSM) without a change of the store.
 
-`git-store` implements JGit's `org.eclipse.jgit.lib.Signer` (since JGit 7.0) and passes it to the in-core writing of
-`git-core`; the signer delegates the signing operation to the source. `signing.key-source` names the source (default
-`file`), `signing.key` is the key reference passed to it (for `file` the path of an SSH private key). With a KMS or
-HSM the application never holds the private key. Whether the store uses JGit's SSH signer of
-`org.eclipse.jgit.ssh.apache` for the signature encoding is open and needs the owner's approval.
+`git-store` implements JGit's `org.eclipse.jgit.lib.Signer` (since JGit 7.0, checked against JGit 7.8.0) as the
+package-private `SourceSigner` and passes it to the in-core writing of `git-core` through `CommitSigning`; the signer
+delegates the signing operation to the source. `signing.key-source` names the source (default `file`), `signing.key`
+is the key reference passed to it (for `file` the path of an SSH private key). With a KMS or HSM the application never
+holds the private key.
+
+*Decision (2026-11-23):* the signature encoding is an own encoder in `git-store`, the package-private
+`SshSignatures`; JGit's SSH signer of `org.eclipse.jgit.ssh.apache` is not adopted, and the store adds no dependency
+for signatures: SSHSIG and Ed25519 come from the JDK (xref:general.adoc#GDR-GEN-1[GDR-GEN-1]).
+
+* *Format.* The signature is the SSH signature format of
+  link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]: the signed blob is
+  `"SSHSIG" || string("git") || string("") || string("sha512") || string(SHA-512(commit))`, the commit being the raw
+  commit without its `gpgsig` header, in the namespace `git` with the hash `sha512`, and the armored
+  `-----BEGIN SSH SIGNATURE-----` block is written by JGit as the `gpgsig` header. The store signs with Ed25519 only.
+* *Once per operation.* The public key line is read from the source once per save or release, before its first
+  attempt; a key of another type than `ssh-ed25519` is `REFUSED` with the detail `signing: key type not supported`.
+  Only the signature itself is made per attempt, since the signed commit depends on the fetched base.
+* *Outcomes.* A source that refuses ends the save or release with `REFUSED` and the detail
+  `signing: key source refused`, a source that cannot be reached with `UNAVAILABLE` and
+  `signing: key source unavailable`; a signature that fails while an attempt writes its commit ends it with the
+  outcome of the source and the detail `<reference>: signing: not signed`. Nothing is pushed, the draft and the
+  branches stay as they are, and the refusal is logged as `GIT_STORE-110`; no detail and no log record names the key
+  reference, key material or the detail of the source (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+* *Drafts.* Draft commits (<<GDR-STORE-2>>) are unsigned; they never leave the clone.
+* *The source `file`.* `FileSigningKeySource` reads an unencrypted OpenSSH Ed25519 private key (`openssh-key-v1` of
+  link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key[PROTOCOL.key], as
+  `ssh-keygen -t ed25519 -N ""` writes it) at `signing.key` on every call and keeps no key between calls. A file that
+  cannot be read is `UNAVAILABLE` (`signing: key unavailable`); another key type (`signing: key type not supported`),
+  an encrypted key (`signing: encrypted key not supported`) and a file that is no valid key
+  (`signing: key malformed`) are `REFUSED`. No detail names the path or a key byte.
 
 [#GDR-STORE-13]
 == GDR-STORE-13: Identity Trailers
@@ -668,6 +702,27 @@ the session id of
 link:https://openid.net/specs/openid-connect-backchannel-1_0.html[OpenID Connect Back-Channel Logout 1.0] (2.1). The
 caller supplies the claims; the store never receives the access token.
 
+The caller passes the claims as the public record `IdentityClaims(issuer, authTime, acr, amr)` to `save` and
+`release`; it has no component for `sub` or `sid`. Each component is checked so that it fits on one trailer line: the
+issuer not blank and without whitespace or control characters, `acr` not blank and without control characters and
+`;`, each `amr` not blank and without whitespace, control characters, `,` and `;`; a violation is an
+`IllegalArgumentException` naming the component, never the value. The package-private `IdentityTrailers` appends the
+block to the message, its trailing line breaks stripped, after one blank line, in the trailer form of
+`git interpret-trailers`:
+
+[source]
+----
+<message>
+
+Actor: <pseudonym>
+Actor-Issuer: <iss>
+Auth-Time: <auth_time, ISO 8601 in UTC, whole seconds, for example 2026-03-01T08:15:30Z>
+Auth-Context: acr=<acr>; amr=<amr>,<amr>
+----
+
+A part of `Auth-Context` is left out when its claim is absent, and the trailer when both are. The release recovery of
+<<GDR-STORE-6>> compares only the first paragraph of a commit message and never reads a trailer.
+
 [#GDR-STORE-14]
 == GDR-STORE-14: Signature Verification
 
@@ -684,7 +739,30 @@ link:https://git-scm.com/docs/git-config[git-config(1)]; Git passes the timestam
 link:https://github.com/git/git/blob/v2.35.0/gpg-interface.c[`gpg-interface.c` at v2.35.0]). A Git administrator who rewrites the repository therefore
 cannot make a key of their own trusted. A single signature can also be checked with a stock Git installation of version
 2.35 or later: `git -c gpg.ssh.allowedSignersFile=<file> verify-commit <id>`
-(link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]).
+(link:https://git-scm.com/docs/git-verify-commit[git-verify-commit(1)]); `GitVerifyCommitCompatibilityTest` checks
+that a stock Git accepts a commit the store signed and rejects it outside the validity.
+
+* *Allowed signers.* The public `AllowedSigners` parses the format with `read(path)` or `from(configuration)`, the
+  latter reading `signing.allowed-signers` (absent: `MALFORMED`, `signing.allowed-signers is missing`). A line is
+  `<principals> [<options>] <key type> <base64 key> [<comment>]`, fields may be quoted with `"`, blank lines and `#`
+  comments are skipped. The options `valid-after` and `valid-before` take `YYYYMMDD` or `YYYYMMDDHHMM[SS]`, in UTC with
+  a trailing `Z` and in the system time zone otherwise, and bound the validity inclusively; `namespaces` restricts a
+  key, which is used for commits only when the list contains `git`. Another key type than `ssh-ed25519`,
+  `cert-authority`, any other option and a line that cannot be read are `MALFORMED` with the detail
+  `line <n>: <reason>`; a file that cannot be read is `UNAVAILABLE`. No detail names a principal, key text or a path.
+* *Verification.* The public `SignatureVerification.verify(repository, reference, allowedSigners)` walks every commit
+  reachable from the reference (JGit 7.8.0 `RevWalk`) and returns a `StoreResult` with the list of
+  `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. A commit is valid
+  when its `gpgsig` decodes, verifies over the commit without that header in the namespace `git`, and its key is
+  listed for commits with a validity that includes the committer time. The closed `Reason` list is `UNSIGNED`,
+  `NOT_SSH`, `MALFORMED`, `UNKNOWN_KEY`, `OUTSIDE_VALIDITY` and `INVALID`; the header, the format, the decoding and the
+  signature are checked before the key. An unknown reference is the passed-on `NOT_FOUND`, a read failure the passed-on
+  `FAILED` naming the class of the exception. A finished verification is logged as `GIT_STORE-6`.
+* *CI.* The public main class `VerifySignatures` runs from CI without the application:
+  `VerifySignatures <git-dir> <allowed-signers> <reference>...` opens the repository read-only on `RefusingFS`, prints
+  one line `<commit id> <reason>` per unverified commit, and exits `0` when every commit is valid, `1` when one is not,
+  and `2` for a usage error, a repository that cannot be opened or another non-success, printed as
+  `<outcome> <detail>`.
 
 [#GDR-STORE-15]
 == GDR-STORE-15: Anchor Provider

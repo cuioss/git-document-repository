@@ -54,8 +54,9 @@ reading, notes, working trees
 timestamp (xref:storage-engine.adoc[Storage Engine], xref:identity-and-signing.adoc[Identity and Signing])
 |implemented: repository registry, typed configuration, codec interface, outcome list and result, service interfaces
 and provider selection, drafts, explicit save with lease and per-attempt step, conflicts and change detection,
-release with tag, draft expiry, index with contributors, fetch and snapshots, post-commit listeners; planned:
-signature, trailers, anchoring
+release with tag, draft expiry, index with contributors, fetch and snapshots, post-commit listeners, commit signature
+with the signing key source `file` (provider file), identity trailers, signature verification against allowed signers;
+planned: anchoring
 
 |`git-forms`
 |Schema-driven documents: schema, template, workflow, deadlines, step-up for releases

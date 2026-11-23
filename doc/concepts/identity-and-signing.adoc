@@ -142,7 +142,11 @@ under the default, saves need none. Who may approve is a matter of access, like 
 . *JGit.* Signing runs through an own implementation of JGit's signer interface `org.eclipse.jgit.lib.Signer`
   (`@since 7.0`;
   link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Signer.java[`Signer.java`],
-  checked in JGit 7.8.0), so that the KMS or HSM signs.
+  checked in JGit 7.8.0), so that the KMS or HSM signs. The SSH signature format itself is encoded by `git-store`
+  (decided 2026-11-23): an own encoder of
+  link:https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig] over Ed25519 of the JDK,
+  in place of JGit's SSH signer of `org.eclipse.jgit.ssh.apache`, so the store adds no dependency for signatures
+  (xref:../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]).
 
 [CAUTION]
 ====
@@ -155,8 +159,11 @@ signature is signed outside the application.
 
 == Open Questions
 
-. Prototype the signature: commit signature through a KMS with JGit's signer interface, the trailer schema, and
-  verification against configured keys with validity periods.
+. Sign through a KMS: the signer through `SigningKeySource`, the trailer schema and the verification against
+  configured keys with validity periods are implemented
+  (xref:../specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12] to
+  xref:../specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]), with the source `file`; a source over a KMS or HSM
+  is still to be built and tried.
 . Which claims (`sub`, `acr`, `amr`, `auth_time`) and groups the identity provider delivers decides which trailers can
   be filled; the consuming application clarifies this with Token Sheriff.
 . Deferred: a `Session` trailer (an HMAC of the session id) to correlate a commit with the login logs of the identity

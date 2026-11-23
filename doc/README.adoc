@@ -128,11 +128,14 @@ xref:specification/git-store.adoc#GDR-STORE-4[GDR-STORE-4], xref:specification/g
 xref:specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6], xref:specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]
 and xref:specification/git-store.adoc#GDR-STORE-8[GDR-STORE-8], the index
 xref:specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9] and the listeners
-xref:specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10] of `git-store`, together with its configuration, its
+xref:specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10], the commit signature
+xref:specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12] with the signing key source `file`, the identity trailers
+xref:specification/git-store.adoc#GDR-STORE-13[GDR-STORE-13] and the signature verification
+xref:specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14] of `git-store`, together with its configuration, its
 outcome list and its service interfaces; xref:specification/general.adoc#GDR-NFR-1[GDR-NFR-1],
 xref:specification/general.adoc#GDR-NFR-2[GDR-NFR-2] and the part of
-xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] that the write path, the release, the index and the listeners
-touch are covered by tests of `git-store`. The module `git-forms`
+xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] that the write path, the signature, the release, the index and
+the listeners touch are covered by tests of `git-store`. The module `git-forms`
 holds the kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome
 list and its result (xref:specification/general.adoc#GDR-GEN-3[GDR-GEN-3]), and so implements
 xref:specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1], xref:specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]
