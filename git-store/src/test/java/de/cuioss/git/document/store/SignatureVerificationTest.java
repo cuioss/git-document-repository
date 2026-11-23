@@ -22,7 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,12 +56,14 @@ import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.GpgSignature;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -78,7 +82,7 @@ import org.junit.jupiter.api.io.TempDir;
  * an unknown key, a key outside its validity at the committer time and a key whose namespaces exclude {@code git} are
  * listed with their {@link Reason}, in the order of the walk, newest first; an allowed-signers file inside the
  * repository is never consulted; an unknown reference is the passed-on {@code NOT_FOUND}; a walk that reaches a shallow
- * commit is {@code INCOMPLETE}.
+ * commit, or over a shallow boundary that changed while it ran, is {@code INCOMPLETE}.
  * <p>
  * The commit time of the store is fixed per test, and every validity bound lies a day away from it, so the fixture
  * times differ by construction. Principals, paths, contents and pseudonyms are generated; the reasons, the outcomes and
@@ -368,6 +372,55 @@ class SignatureVerificationTest {
 
             assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE, StoreReferences.MAIN + ": history is shallow"),
                     result, "incomplete, not an empty list");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a shallow boundary that appears while the walk runs is INCOMPLETE, never a result")
+    void shallowBoundaryChangedDuringWalk(@Remote LocalRemote remote) throws Exception {
+        try (var store = open(remote)) {
+            commit(remote.repository(), StoreReferences.MAIN, store.now().minus(Duration.ofDays(1)), null);
+            var saved = store.save();
+            var signers = allowed(line("", store.source().key()));
+            try (var racing = new BoundaryAddedOnWalk(remote.repository().getDirectory(), saved)) {
+
+                var result = SignatureVerification.verify(racing, StoreReferences.MAIN, signers);
+
+                assertAll(
+                        () -> assertTrue(racing.added, "the boundary was added after the first read"),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                        StoreReferences.MAIN + ": shallow boundary changed"), result,
+                                "incomplete, no list of verified commits"));
+            }
+        }
+    }
+
+    /**
+     * A repository that makes a commit shallow when the walk opens its reader: after the verification has read the
+     * shallow commits and before the walk parses the start commit, which reads the boundary itself.
+     */
+    private static final class BoundaryAddedOnWalk extends FileRepository {
+
+        private final ObjectId boundary;
+
+        private boolean added;
+
+        BoundaryAddedOnWalk(File gitDir, ObjectId boundary) throws IOException {
+            super(gitDir);
+            this.boundary = boundary;
+        }
+
+        @Override
+        public ObjectReader newObjectReader() {
+            if (!added) {
+                added = true;
+                try {
+                    getObjectDatabase().setShallowCommits(Set.of(boundary));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            return super.newObjectReader();
         }
     }
 }

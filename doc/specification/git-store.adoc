@@ -646,7 +646,8 @@ without repeating the content.
 [#GDR-STORE-12]
 == GDR-STORE-12: Commit Signature
 
-* Every commit the store writes must be signed by the application in the SSH signature format.
+* Every commit the store writes, except the draft commits of <<GDR-STORE-2>> that never leave the clone, must be
+  signed by the application in the SSH signature format.
 * The private key must be used only through the active `SigningKeySource`; the store must ship the source `file`, and
   an application must be able to supply another (KMS, HSM) without a change of the store.
 
@@ -773,7 +774,10 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   be read is `UNAVAILABLE`. No detail names a principal, key text or a path.
 * *Verification.* The public `SignatureVerification.verify(repository, reference, allowedSigners)` walks every commit
   reachable from the reference (JGit 7.8.0 `RevWalk`) and returns a `StoreResult` with the list of
-  `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. A commit is valid
+  `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. The verification
+  has no start boundary: a commit without a `gpgsig` header, written before signing was enabled or by another tool, is
+  listed as `UNSIGNED` like any other unverified commit, so `VerifySignatures` exits `1` for a reference whose
+  reachable history contains one, and no option skips it. A commit is valid
   when its `gpgsig` decodes, verifies over the commit without that header in the namespace `git`, and its key is
   listed for commits with a validity that includes the committer time. Why a commit is not valid is one constant of
   the closed enum `SignatureVerification.Reason`, which is the authoritative list and documents each constant; the
@@ -782,14 +786,19 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   commit header is ignored. An unknown reference is the passed-on `NOT_FOUND`, a read failure the passed-on `FAILED`
   naming the class of the exception. A walk that reaches a shallow commit, one listed in the repository's `shallow`
   file (JGit 7.8.0 `ObjectDatabase.getShallowCommits`, whose parents `RevWalk` treats as absent), is `INCOMPLETE` with
-  the detail `<reference>: history is shallow`, never a success, because no commit beyond the boundary is checked. A
+  the detail `<reference>: history is shallow`, never a success, because no commit beyond the boundary is checked. The
+  shallow commits are read again after the walk, and a boundary that changed while the walk ran is `INCOMPLETE` with
+  the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A
   finished verification is logged as `GIT_STORE-6`.
 * *CI.* The public main class `VerifySignatures` runs from CI without the application:
   `VerifySignatures <git-dir> <allowed-signers> <reference>...` opens the repository read-only on `RefusingFS`, prints
   one line `<commit id> <reason>` per unverified commit, and exits `0` when every commit is valid, `1` when one is not,
   and `2` for a usage error, an argument that is no valid path (`MALFORMED arguments: not a valid path`, naming no
   argument), a repository that cannot be opened or another non-success, such as a shallow history, printed as
-  `<outcome> <detail>`. It writes standard output and standard error in UTF-8.
+  `<outcome> <detail>`. It writes standard output and standard error in UTF-8. The allowed-signers file must come
+  from the trusted CI configuration (a secret, a pinned file or the protected base branch), never from the checkout of
+  the repository being verified: `VerifySignatures` does not check where the path points, and a file taken from that
+  checkout would let a change of the repository add a trusted key.
 
 [#GDR-STORE-15]
 == GDR-STORE-15: Anchor Provider

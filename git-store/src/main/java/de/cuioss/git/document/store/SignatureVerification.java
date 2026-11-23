@@ -51,7 +51,8 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * A walk that reaches a shallow commit (JGit 7.8.0 {@code ObjectDatabase.getShallowCommits}, whose parents
  * {@code RevWalk} treats as absent) is {@link StoreOutcome#INCOMPLETE}, never a success, because the commits beyond
- * the boundary cannot be checked.
+ * the boundary cannot be checked. The shallow commits are read again after the walk; a boundary that changed while the
+ * walk ran is {@link StoreOutcome#INCOMPLETE} as well.
  * <p>
  * The verification reads only: it changes no reference and writes no object. A finished verification is logged as
  * {@code GIT_STORE-6} with the reference and the counts.
@@ -66,6 +67,9 @@ public final class SignatureVerification {
 
     /** The detail, after the reference, of a history that reaches a shallow boundary. */
     static final String SHALLOW = "history is shallow";
+
+    /** The detail, after the reference, of a shallow boundary that changed while the walk ran. */
+    static final String SHALLOW_CHANGED = "shallow boundary changed";
 
     private SignatureVerification() {
     }
@@ -128,7 +132,9 @@ public final class SignatureVerification {
      * @return {@link StoreOutcome#OK} with the commits without a valid signature in the order of the walk, newest
      *         first, empty when every commit is valid; {@link StoreOutcome#INCOMPLETE} with
      *         {@code <reference>: history is shallow} when the walk reaches a shallow commit, whose parents the
-     *         repository lacks, so that no commit beyond the boundary can pass unchecked; the passed-on
+     *         repository lacks, so that no commit beyond the boundary can pass unchecked, or with
+     *         {@code <reference>: shallow boundary changed} when the shallow commits read again after the walk differ
+     *         from those read before it; the passed-on
      *         {@link GitOutcome#NOT_FOUND} with
      *         {@code <reference>: not found} for an unknown reference; the passed-on {@link GitOutcome#FAILED} with
      *         {@code <reference>: <simple class name of the exception>} when the repository cannot be read
@@ -145,7 +151,7 @@ public final class SignatureVerification {
                 return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.NOT_FOUND), null,
                         reference + ": not found");
             }
-            Set<ObjectId> shallow = repository.getObjectDatabase().getShallowCommits();
+            Set<ObjectId> shallow = Set.copyOf(repository.getObjectDatabase().getShallowCommits());
             List<UnverifiedCommit> unverified = new ArrayList<>();
             int commits = 0;
             try (RevWalk walk = new RevWalk(repository)) {
@@ -160,6 +166,11 @@ public final class SignatureVerification {
                         unverified.add(new UnverifiedCommit(commit.getId().name(), reason));
                     }
                 }
+            }
+            // the walk reads the shallow boundary itself when it parses the start commit; a boundary that changed in
+            // between may have let it skip parents the check above did not see, so the verification fails closed
+            if (!shallow.equals(Set.copyOf(repository.getObjectDatabase().getShallowCommits()))) {
+                return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW_CHANGED);
             }
             LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, reference, commits, unverified.size());
             return StoreResult.ok(List.copyOf(unverified));

@@ -53,6 +53,10 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
  * </ul>
  * Nothing printed names a key, a principal or a path. Standard output and standard error are written in UTF-8 and
  * flushed per line.
+ * <p>
+ * The allowed-signers file must come from the trusted CI configuration (a secret, a pinned file or the protected base
+ * branch), never from the checkout of the repository being verified: this class does not check where the path
+ * points, and a file taken from that checkout would let a change of the repository add a trusted key.
  *
  * @since 0.1
  */
@@ -68,7 +72,8 @@ public final class VerifySignatures {
     public static final int FAILED = 2;
 
     /** The usage line printed for a usage error. */
-    static final String USAGE = "usage: VerifySignatures <git-dir> <allowed-signers> <reference>...";
+    static final String USAGE = "usage: VerifySignatures <git-dir> <allowed-signers> <reference>..."
+            + " (allowed-signers from the trusted CI configuration, never from the checkout under verification)";
 
     /** The diagnostic of an argument that is no valid path; it names neither the argument nor the path. */
     static final String INVALID_PATH = "MALFORMED arguments: not a valid path";

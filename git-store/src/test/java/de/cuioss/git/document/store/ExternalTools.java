@@ -43,8 +43,8 @@ import org.jspecify.annotations.Nullable;
  * A process writes its standard output and standard error into a file, never into a pipe, so a child that keeps a
  * pipe open cannot block the test before its deadline; a process that outlives the deadline is destroyed and fails the
  * test, and a process still running when the wait ends otherwise, for example by an interrupt, is destroyed as well. A
- * probe makes its signature with {@code ssh-keygen -Y sign} itself, so its verdict says what the tool can do and never
- * depends on the encoder under test.
+ * probe generates its key with {@code ssh-keygen -t ed25519} and makes its signature with {@code ssh-keygen -Y sign}
+ * itself, so its verdict says what the tool can do and never depends on the encoders under test.
  */
 final class ExternalTools {
 
@@ -164,9 +164,15 @@ final class ExternalTools {
         }
         Path dir = Files.createTempDirectory(directory, "probe");
         Path keyFile = dir.resolve("key");
-        TestKeys.Ed25519 key = TestKeys.ed25519();
-        key.writePrivateKey(keyFile);
+        // the probed tool generates its own key, so a fault of the store's key encoding cannot make the probe fail
+        var generated = run(new ProcessBuilder(keygen.toString(), "-t", "ed25519", "-N", "", "-q", "-f",
+                keyFile.toString()), dir.resolve("keygen.out"), null);
+        Path publicKeyFile = dir.resolve("key.pub");
+        if (generated.code() != 0 || !Files.exists(keyFile) || !Files.exists(publicKeyFile)) {
+            return false;
+        }
         Files.setPosixFilePermissions(keyFile, PosixFilePermissions.fromString("rw-------"));
+        String publicKeyLine = Files.readString(publicKeyFile, US_ASCII).strip();
         Path message = Files.writeString(dir.resolve("message"), "probe\n", US_ASCII);
         var signed = run(new ProcessBuilder(keygen.toString(), "-Y", "sign", "-f", keyFile.toString(), "-n", "git",
                 message.toString()), dir.resolve("sign.out"), null);
@@ -176,7 +182,7 @@ final class ExternalTools {
         }
         // timestamps without the suffix Z, which OpenSSH 8.8 and 8.9 refuse; local time, days apart from each other
         String options = lifetimes ? "valid-before=\"20200101\" " : "";
-        Path allowed = Files.writeString(dir.resolve("allowed"), PRINCIPAL + " " + options + key.publicKeyLine() + "\n",
+        Path allowed = Files.writeString(dir.resolve("allowed"), PRINCIPAL + " " + options + publicKeyLine + "\n",
                 US_ASCII);
         if (!lifetimes) {
             return verify(keygen, dir, allowed, signature, message, null).code() == 0;
