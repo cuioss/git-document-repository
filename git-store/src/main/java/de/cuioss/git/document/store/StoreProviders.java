@@ -37,7 +37,7 @@ import org.jspecify.annotations.Nullable;
  * the service interface and the configuration key, never the configured id (GDR-NFR-3); two providers with an id nobody
  * configured do not stop it.
  * <p>
- * The anchor provider {@value SignedAnchorProvider#ID} is built in: when {@code anchor.provider} names it, the store
+ * The anchor provider {@value SignedAnchorProvider#PROVIDER_ID} is built in: when {@code anchor.provider} names it, the store
  * builds a {@link SignedAnchorProvider} from the section {@code anchor.signed} (GDR-STORE-18), its anchor key taken from
  * the candidate signing key source that {@code anchor.signed.key-source} names, and a candidate anchor provider that
  * also carries that id is a second provider with the id of {@code anchor.provider}.
@@ -114,7 +114,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * A success is logged as {@code GIT_STORE-1} with the three ids, a refusal as {@code GIT_STORE-100} with its
      * detail.
      * <p>
-     * When {@code anchor.provider} is {@value SignedAnchorProvider#ID}, the anchor key source is selected among the
+     * When {@code anchor.provider} is {@value SignedAnchorProvider#PROVIDER_ID}, the anchor key source is selected among the
      * signing candidates by the effective {@code anchor.signed.key-source} (default
      * {@value StoreConfiguration.Signing#DEFAULT_KEY_SOURCE}), {@code anchor.signed.key} is required (detail
      * {@code anchor.signed.key is missing}), and the start is refused when the public key of the anchor key equals the
@@ -127,9 +127,9 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * @param persons       the candidate person directories
      * @return {@link StoreOutcome#OK} with the selected providers; {@link StoreOutcome#MALFORMED} naming the service
      * interface and the configuration key whose id no candidate or more than one candidate carries, or the refusal of
-     * the provider {@value SignedAnchorProvider#ID}; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED}
+     * the provider {@value SignedAnchorProvider#PROVIDER_ID}; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED}
      * with {@code <key>: key source unavailable} or {@code <key>: key source refused} when a public key the provider
-     * {@value SignedAnchorProvider#ID} needs cannot be read, the key being {@code anchor.signed.key} or
+     * {@value SignedAnchorProvider#PROVIDER_ID} needs cannot be read, the key being {@code anchor.signed.key} or
      * {@code signing.key}
      * @throws NullPointerException if an argument or a candidate is {@code null}
      */
@@ -240,7 +240,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * is read for the verification. No detail names a key reference or key material (GDR-NFR-3).
      *
      * @return {@link StoreOutcome#OK} with the provider; {@link StoreOutcome#MALFORMED} for a candidate that also carries
-     * the id {@value SignedAnchorProvider#ID}, a missing {@code anchor.signed.key}, an anchor key source no candidate or
+     * the id {@value SignedAnchorProvider#PROVIDER_ID}, a missing {@code anchor.signed.key}, an anchor key source no candidate or
      * more than one candidate carries, a key of another type than Ed25519, an anchor key equal to the commit-signing key
      * or a refused allowed-signers file; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED} for a key
      * source that handed out no public key, or the result of a file that cannot be read

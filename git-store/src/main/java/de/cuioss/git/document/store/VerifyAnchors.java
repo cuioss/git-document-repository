@@ -32,7 +32,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 /**
- * The main class of the anchor verification of the provider {@value SignedAnchorProvider#ID} (GDR-STORE-17,
+ * The main class of the anchor verification of the provider {@value SignedAnchorProvider#PROVIDER_ID} (GDR-STORE-17,
  * GDR-STORE-18), runnable from CI without the application:
  *
  * <pre>
