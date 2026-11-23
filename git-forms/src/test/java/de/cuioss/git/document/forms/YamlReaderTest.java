@@ -35,6 +35,7 @@ import java.util.stream.Stream;
 
 
 import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
@@ -53,7 +54,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@link StoreOutcome#MALFORMED} with a detail that names the position (line and column, counted from 1) and the
  * problem, never the content (GDR-NFR-3): an anchor, an alias, an explicit tag, a key that is not a string, a duplicate
  * key, an infinite number or not-a-number, an exponent beyond the range of {@code int}, a lone surrogate from an
- * escape, more than one document, a document without a value, and text that is not well-formed YAML.
+ * escape, more than one document, a document without a value, and text that is not well-formed YAML; and
+ * {@link YamlReader#readMapping(String, String)}, which returns the root mapping typed and refuses any other root with
+ * the detail its caller names.
  * <p>
  * Keys, anchor and tag names are generated from lower-case letters, at least twelve long, so that a plain key always
  * resolves to a string and no generated text can occur in the fixed text of a detail; values are generated between
@@ -172,11 +175,54 @@ class YamlReaderTest {
         }
 
         @Test
+        @DisplayName("ADR-0008: readMapping returns the root mapping as read, typed")
+        void readMapping() {
+            var key = name();
+            var value = marker();
+            var notMapping = marker();
+
+            var result = reader.readMapping(key + ": " + quoted(value) + "\n", notMapping);
+
+            assertAll(
+                    () -> assertTrue(result.isOk(), () -> "the text is read: " + result.detail()),
+                    () -> assertEquals(Map.of(key, value), result.value(), "the root mapping"),
+                    () -> assertInstanceOf(LinkedHashMap.class, result.value(), "the mapping the reader built"));
+        }
+
+        @Test
+        @DisplayName("ADR-0008: readMapping refuses a root that is not a mapping with the given detail")
+        void readMappingRefusesOtherRoots() {
+            var notMapping = marker();
+
+            assertAll(Stream.of("- " + name() + "\n", name() + "\n", "42\n").<Executable>map(yaml -> () -> assertEquals(
+                    FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, notMapping)),
+                    reader.readMapping(yaml, notMapping), "the root is refused: " + yaml)));
+        }
+
+        @Test
+        @DisplayName("ADR-0008: readMapping passes on a refusal of the text unchanged")
+        void readMappingPassesOnRefusal() {
+            var key = name();
+
+            var result = reader.readMapping(key + ": 1\n" + key + ": 2\n", marker());
+
+            assertAll(
+                    () -> assertEquals(MALFORMED, result.outcome(), "the text is refused as MALFORMED"),
+                    () -> assertEquals("line 2, column 1: a duplicate key", result.detail(), "the reader's detail"));
+        }
+
+        @Test
         @DisplayName("GDR-GEN-3: a null text is refused")
         void nullText() {
             String nullText = nullValue();
+            var notMapping = marker();
 
-            assertThrows(NullPointerException.class, () -> reader.read(nullText), "a null text");
+            assertAll(
+                    () -> assertThrows(NullPointerException.class, () -> reader.read(nullText), "a null text"),
+                    () -> assertThrows(NullPointerException.class, () -> reader.readMapping(nullText, notMapping),
+                            "a null text of a mapping"),
+                    () -> assertThrows(NullPointerException.class, () -> reader.readMapping(name(), nullText),
+                            "a null detail"));
         }
     }
 
@@ -255,8 +301,7 @@ class YamlReaderTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
-    private static <T> T nullValue() {
-        return (T) null;
+    private static <T> @Nullable T nullValue() {
+        return null;
     }
 }

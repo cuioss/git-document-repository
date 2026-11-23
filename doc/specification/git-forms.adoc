@@ -43,6 +43,19 @@ launcher stays in the unnamed module, and the launcher fails with an `IllegalAcc
 the module path, with `dev.harrel:json-schema` as the automatic module `dev.harrel.jsonschema`, is therefore not
 exercised by the tests; javac still compiles and checks `module-info.java`.
 
+The code of `git-forms` holds no `@SuppressWarnings`, its tests included: `YamlReader.readMapping` returns the root of
+a document whose root must be a mapping typed as the reader builds it, so `FormSchema.parse` and
+`YamlDocumentCodec.decode` cast nothing, `KindConfiguration` copies each mapping of `kinds.yaml` with every key checked
+as a string, and the helper by which a test passes `null` returns a `@Nullable` type variable instead of casting. One
+marker
+remains, `cui-rewrite:disable InvalidExceptionUsageRecipe` on the `catch (RuntimeException e)` of
+`SchemaValidator.prepare`, which keeps the OpenRewrite recipe of the build from narrowing that catch: the validator
+signals a schema it refuses not only by its own `JsonSchemaException` types but also by exceptions of the JDK, for
+example the `IllegalArgumentException` the constructor of its `PatternEvaluator` throws for a `pattern` that is not a
+string and the `PatternSyntaxException` of `Pattern.compile` for one that is no regular expression (checked against
+the class files of `dev.harrel:json-schema` 1.9.1), and such a message may quote the schema, so the catch must be
+broad and the refusal quotes nothing.
+
 The template engine is still open and needs the owner's approval.
 
 [#GDR-FORMS-1]

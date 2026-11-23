@@ -132,6 +132,35 @@ final class YamlReader {
      * @throws NullPointerException if {@code yaml} is {@code null}
      */
     FormsResult<Object> read(String yaml) {
+        FormsResult<Root> root = root(yaml);
+        if (!root.isOk()) {
+            return new FormsResult<>(root.outcome(), null, root.detail());
+        }
+        return FormsResult.ok(Objects.requireNonNull(root.value()).value());
+    }
+
+    /**
+     * Reads one YAML document whose root must be a mapping, typed as the reader builds it, so that a caller needs no
+     * cast of the root.
+     *
+     * @param yaml       the text
+     * @param notMapping the detail of the refusal of a document whose root is not a mapping
+     * @return {@link FormsOutcome#OK} with the root mapping, or the passed-on {@link StoreOutcome#MALFORMED} whose detail
+     *         names the position and the problem, or is {@code notMapping}
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    FormsResult<Map<String, @Nullable Object>> readMapping(String yaml, String notMapping) {
+        Objects.requireNonNull(notMapping, "notMapping");
+        FormsResult<Root> root = root(yaml);
+        if (!root.isOk()) {
+            return new FormsResult<>(root.outcome(), null, root.detail());
+        }
+        @Nullable MappingContainer mapping = Objects.requireNonNull(root.value()).mapping();
+        return mapping == null ? malformed(notMapping) : FormsResult.ok(mapping.entries);
+    }
+
+    /** Reads the one document of a text, keeping the mapping that built its root. */
+    private FormsResult<Root> root(String yaml) {
         Objects.requireNonNull(yaml, "yaml");
         try {
             return build(new ParserImpl(settings, new StreamReader(settings, yaml)));
@@ -163,10 +192,11 @@ final class YamlReader {
         }
     }
 
-    /** Builds the value of the one document of the event stream. */
-    private static FormsResult<Object> build(Parser events) {
+    /** Builds the value of the one document of the event stream, with the mapping that built it, if it is one. */
+    private static FormsResult<Root> build(Parser events) {
         Deque<Container> open = new ArrayDeque<>();
         List<@Nullable Object> roots = new ArrayList<>(1);
+        @Nullable MappingContainer rootMapping = null;
         int documents = 0;
         while (events.hasNext()) {
             switch (events.next()) {
@@ -180,6 +210,9 @@ final class YamlReader {
                 case NodeEvent node -> node(open, roots, node);
                 case CollectionEndEvent end -> {
                     Container closed = open.pop();
+                    if (open.isEmpty() && closed instanceof MappingContainer mapping) {
+                        rootMapping = mapping;
+                    }
                     add(open, roots, closed.value(), closed.start());
                 }
                 default -> {
@@ -190,7 +223,7 @@ final class YamlReader {
         if (roots.isEmpty() || roots.getFirst() == null) {
             return malformed("line 1, column 1: a document without a value");
         }
-        return FormsResult.ok(Objects.requireNonNull(roots.getFirst()));
+        return FormsResult.ok(new Root(Objects.requireNonNull(roots.getFirst()), rootMapping));
     }
 
     /** Reads a scalar into the innermost container, or opens a mapping or a sequence. */
@@ -350,8 +383,17 @@ final class YamlReader {
     }
 
     /** The passed-on {@link StoreOutcome#MALFORMED}. */
-    private static FormsResult<Object> malformed(String detail) {
+    private static <V> FormsResult<V> malformed(String detail) {
         return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, detail));
+    }
+
+    /**
+     * The value of a document, and the mapping that built it when its root is a mapping.
+     *
+     * @param value   the value of the document
+     * @param mapping the mapping of the root, or {@code null} when the root is a sequence or a scalar
+     */
+    private record Root(Object value, @Nullable MappingContainer mapping) {
     }
 
     /** A refusal of the reader, carrying the detail: the position and the problem, never the content. */

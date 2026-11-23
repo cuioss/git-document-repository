@@ -166,14 +166,11 @@ public final class FormSchema {
         if (text == null) {
             return malformed(path, "not UTF-8");
         }
-        FormsResult<Object> read = YAML.read(text);
+        FormsResult<Map<String, @Nullable Object>> read = YAML.readMapping(text, "the root: not an object");
         if (!read.isOk()) {
             return malformed(path, Objects.requireNonNull(read.detail()));
         }
-        if (!(read.value() instanceof Map<?, ?> root)) {
-            return malformed(path, "the root: not an object");
-        }
-        @SuppressWarnings("unchecked") Map<String, @Nullable Object> schema = (Map<String, @Nullable Object>) root;
+        Map<String, @Nullable Object> schema = Objects.requireNonNull(read.value());
         @Nullable Object dialect = schema.get("$schema");
         if (schema.containsKey("$schema") && !DIALECT.equals(dialect)) {
             return malformed(path, "$schema: not the dialect Draft 2020-12");

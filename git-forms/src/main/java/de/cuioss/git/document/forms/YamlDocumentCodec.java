@@ -127,15 +127,12 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
         if (text == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, "not UTF-8");
         }
-        FormsResult<Object> read = READER.read(text);
+        FormsResult<Map<String, @Nullable Object>> read = READER.readMapping(text,
+                "line 1, column 1: a document that is not a mapping");
         if (!read.isOk()) {
             return StoreResult.of(StoreOutcome.MALFORMED, Objects.requireNonNull(read.detail()));
         }
-        if (!(read.value() instanceof Map<?, ?> root)) {
-            return StoreResult.of(StoreOutcome.MALFORMED, "line 1, column 1: a document that is not a mapping");
-        }
-        @SuppressWarnings("unchecked") Map<String, @Nullable Object> data = (Map<String, @Nullable Object>) root;
-        return StoreResult.ok(data);
+        return StoreResult.ok(Objects.requireNonNull(read.value()));
     }
 
     /** A copy of a value with every mapping in schema order, the undeclared keys after the declared ones, sorted. */

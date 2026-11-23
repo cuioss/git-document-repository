@@ -287,18 +287,22 @@ public final class KindConfiguration {
         return new Numbering(prefix, count.intValue());
     }
 
-    /** Checks that a value is a mapping that holds no key outside the allowed ones. */
-    @SuppressWarnings("unchecked")
+    /**
+     * Checks that a value is a mapping that holds no key outside the allowed ones, and copies it with each key checked
+     * as a string, so that no unchecked cast is needed; the mappings of the configuration are small.
+     */
     private static Map<String, @Nullable Object> mapping(@Nullable Object value, String path, Set<String> allowed) {
         if (!(value instanceof Map<?, ?> map)) {
             throw new Malformed(path + ": not a mapping");
         }
-        for (Object key : map.keySet()) {
-            if (!allowed.contains(key)) {
+        Map<String, @Nullable Object> keys = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!(entry.getKey() instanceof String key) || !allowed.contains(key)) {
                 throw new Malformed(path + ": unknown key");
             }
+            keys.put(key, entry.getValue());
         }
-        return (Map<String, @Nullable Object>) map;
+        return keys;
     }
 
     /** The value of a required key; a key with the value {@code null} counts as missing. */

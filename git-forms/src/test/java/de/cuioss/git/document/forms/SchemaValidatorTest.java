@@ -424,8 +424,7 @@ class SchemaValidatorTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
-    private static <T> T nullValue() {
-        return (T) null;
+    private static <T> @Nullable T nullValue() {
+        return null;
     }
 }

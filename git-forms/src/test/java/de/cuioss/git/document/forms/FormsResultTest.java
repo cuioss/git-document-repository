@@ -32,6 +32,7 @@ import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -62,9 +63,8 @@ class FormsResultTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
-    private static <T> T nullValue() {
-        return (T) null;
+    private static <T> @Nullable T nullValue() {
+        return null;
     }
 
     @Nested
