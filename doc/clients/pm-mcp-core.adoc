@@ -203,17 +203,24 @@ the libraries demand it (xref:../specification/git-core.adoc#working-trees[`git-
   skips an entry without `gitdir` or `HEAD` when listing, and resolves a relative `gitdir` against the administration
   directory.
 * *Concurrent additions.* `worktreeAdd` claims its target exclusively and reserves every branch, a new one like an
-  existing one, until the new working tree names it; a refused or failed addition removes only what it created, a
+  existing one, until the new working tree is complete; a refused or failed addition removes only what it created, a
   branch it created only while the branch still points at the start. An unknown start point is not found, also for an
-  existing branch. `releaseBranchReservation` is new: it releases a reservation an ended process left behind
+  existing branch. A failed release of the reservation after a complete addition ends `OK` with the working tree kept
+  and the reservation left for `releaseBranchReservation`, and is logged as `GIT_CORE-105` without an argument.
+  `releaseBranchReservation` is new: it releases a reservation an ended process or a failed release left behind
   (xref:../specification/git-core.adoc#GDR-CORE-15[GDR-CORE-15]).
+* *Guards.* `worktreeAdd` refuses a bare root `PATH_REFUSED`, since its root is the git directory, and guards the
+  branch name more strictly than the source: besides the reference names JGit refuses, `HEAD`, `@`, a leading `-`, a
+  component ending `.lock` and a name starting `refs/` end `REFUSED_BY_POLICY`, for an addition as for
+  `releaseBranchReservation`.
 * *Removal.* `worktreeRemove` ends `WORKTREE_NOT_FOUND`, no longer `IDENTITY_MISMATCH`, for a repository at the root
   that is not the registered working tree, compares the registered paths as real paths and removes a prunable working
   tree by its administration directory only.
 * *Commit.* `commit` refuses a present `pre-commit`, `commit-msg` or `post-commit` hook before anything is staged, does
   not stage the root of a linked working tree inside the committing one, and writes the `HEAD` reflog entry of a
   commit in a linked working tree to that working tree's own log; a reflog entry that cannot be written keeps the
-  created commit `OK`.
+  created commit `OK`, whatever the failure, so the reflog step no longer reports a stored commit as thrown. An
+  invalid `core.autocrlf` ends `FAILED` with the failure class for `commit`, `worktreeStatus` and `worktreeRemove`.
 * *Log messages.* The INFO messages carry no path and no administrative name; the add message names the start commit,
   and the release of a branch reservation is logged without an argument. The WARN message `GIT_CORE-103` names
   the commit id of a commit whose reflog entry was not written.

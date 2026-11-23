@@ -679,10 +679,28 @@ full commit id is resolved, an abbreviated or unknown start point never, also no
 
 Before an addition claims anything it is guarded in this order: the root must be the main working tree, not a linked
 one (`PATH_REFUSED`); the branch, new or existing, must form a valid reference name `refs/heads/<branch>` by JGit 7.8.0
-`Repository.isValidRefName` (`REFUSED_BY_POLICY`, the detail naming the field, never the string); the target must lie
-inside the root, outside the common directory with its administration area `worktrees/` and outside every registered
-linked working tree, compared by real paths (`PATH_REFUSED`). Only then is the start point classified and the target
-claimed.
+`Repository.isValidRefName` and be a branch name git accepts (`REFUSED_BY_POLICY`, the detail naming the field, never
+the string); the target must lie inside the root, outside the common directory with its administration area
+`worktrees/` and outside every registered linked working tree, compared by real paths (`PATH_REFUSED`). Only then is
+the start point classified and the target claimed.
+
+* *Branch name.* JGit 7.8.0 `Repository.isValidRefName` checks the full reference: it refuses `.lock` only at the end
+  of the whole name and accepts `refs/heads/HEAD`, `refs/heads/@`, `refs/heads/-<name>` and `refs/heads/refs/<name>`.
+  The guard refuses these short names as well: `HEAD`, a leading `-` and a component ending `.lock`, which git refuses
+  as a branch name (`git check-ref-format --branch` of git 2.56.1 ends with "not a valid branch name"; a component
+  ending `.lock` is rule 1 of link:https://git-scm.com/docs/git-check-ref-format[git-check-ref-format(1)]); the name
+  `@`, which git accepts as a branch but reads as `HEAD`
+  (link:https://git-scm.com/docs/gitrevisions[gitrevisions(7)], "`@` alone is a shortcut for `HEAD`"); and a name
+  starting `refs/`, which git accepts but which reads as a full reference name, a rule of the library beyond git. So
+  no name reaches the repository that git would refuse or read as something other than the branch.
+  `GitWorktreeListCompatibilityTest` checks the guard against an installed git.
+* *Bare root.* A bare repository has no main working tree: its root is its git directory, so every target inside the
+  root lies inside the git directory and is refused `PATH_REFUSED` before anything is claimed, rather than registering
+  a working tree whose administration area would hold it.
+* *Real paths.* A path is resolved with `Path.toRealPath`, or, where it is missing, through its nearest existing
+  ancestor, without a prior existence test: a working tree removed concurrently moves the resolution to its ancestor
+  instead of failing the operation, and a prunable working tree registered or named through a symbolic link is found
+  by its real path.
 
 Concurrent additions on one repository do not interfere:
 
@@ -694,7 +712,9 @@ Concurrent additions on one repository do not interfere:
   the new working tree is checked out and unlocked, or, for a refused or failed addition, until its rollback has
   deleted the branch it created; a branch another addition reserved ends `BRANCH_CHECKED_OUT`. A new branch is
   created by a compare-and-swap from the zero id. A reservation left by a process that ended during an addition stays
-  until <<GDR-CORE-15>> releases it.
+  until <<GDR-CORE-15>> releases it. So does the reservation of a complete addition whose release fails: the working
+  tree is registered and checked out, so the addition ends `OK` with the working tree kept, and the failed release is
+  logged as `GIT_CORE-105` without an argument, never rolled back.
 * The administration directory is claimed atomically under the next free numeric suffix; its files are written
   completely before they appear under their names, `HEAD` last, and it stays locked while the start commit is checked
   out.
@@ -704,8 +724,17 @@ Concurrent additions on one repository do not interfere:
   `LOCK_FAILURE` both for a held reference lock and for a branch no longer at the expected commit, so after a lock
   failure or a rejection the branch is read again: an absent branch was deleted, a branch at another commit was
   advanced by another writer and is kept, and a branch still at the start commit is left behind and reported as an
-  incomplete rollback, logged as `GIT_CORE-104`, never silently. An unchecked exception during an addition is
-  rolled back in the same way and ends as a result, `FAILED` with the failure class.
+  incomplete rollback, logged as `GIT_CORE-104`, never silently. Every step of the rollback runs, also after an
+  earlier step failed with an unchecked exception; the first failure is reported with the later ones suppressed, and the
+  branch is deleted before the reservation is released. An unchecked exception during an addition is rolled back in the
+  same way and ends as a result, `FAILED` with the failure class.
+
+An invalid configuration value a working-tree operation reads ends `FAILED` with the failure class only. JGit 7.8.0
+reads `core.autocrlf` and the other keys of `WorkingTreeOptions` with `Config.getEnum`, which throws
+`IllegalArgumentException` for a value that names no constant
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/treewalk/WorkingTreeOptions.java[JGit 7.8.0 `WorkingTreeOptions`]),
+wherever a `FileTreeIterator` or a checkout is built: in `commit`, in `worktreeStatus`, in the status check of
+`worktreeRemove` and in the checkout of `worktreeAdd`, which is rolled back first.
 
 `worktreeList` skips an administration directory whose `gitdir` or `HEAD` is not present, one being initialized or
 removed, so it does not fail the list or the removal of another working tree; a locked working tree with complete files
@@ -720,10 +749,12 @@ addition or an existing branch to create; `BRANCH_CHECKED_OUT` for a branch chec
 working tree, also for a branch another addition reserved; `NOT_FOUND` for an unknown branch or an unknown, absent or
 abbreviated start point; `AMBIGUOUS` with the candidates; `IDENTITY_MISMATCH` for a full commit id the existing branch
 is not at, or one that reaches another commit; `PATH_REFUSED` for a path outside the main working tree or the main
-working tree itself, for a root that is a linked working tree, and for a target inside the common directory, its
-administration area or another linked working tree; `REFUSED_BY_POLICY` for a branch name that is no valid branch name
-and for a refused capability; `NOT_A_REPOSITORY`; `FAILED`. A refused or failed checkout leaves neither the working
-tree nor its administration directory behind.
+working tree itself, for a root that is a linked working tree, for a bare root, and for a target inside the common
+directory, its administration area or another linked working tree; `REFUSED_BY_POLICY` for a branch name that is no
+valid branch name, also `HEAD`, `@`, a leading `-`, a component ending `.lock` and a name starting `refs/`, and for a
+refused capability; `NOT_A_REPOSITORY`; `FAILED`, also for an invalid configuration value the checkout
+reads. A refused or failed checkout leaves neither the working tree nor its administration directory behind. A failed
+release of the reservation after a complete addition ends `OK` with the working tree kept.
 |`worktreeList` |`OK` with the main working tree first, then the linked working trees by administrative name, each with
 its branch, its `HEAD` where recorded as a commit id, and whether it is locked or prunable; `NOT_A_REPOSITORY`;
 `FAILED`, also for a repository without a working tree
@@ -731,7 +762,8 @@ its branch, its `HEAD` where recorded as a commit id, and whether it is locked o
 prunable one by its administration directory only, so a directory that reuses its path is kept; `WORKTREE_NOT_FOUND`,
 also when the repository at the registered path is not the registered working tree; `WORKTREE_DIRTY`;
 `WORKTREE_LOCKED`; `PATH_REFUSED` for the main working tree; `REFUSED_BY_POLICY`; `NOT_A_REPOSITORY`; `FAILED`, also
-for a repository without a working tree. The registered paths are compared as real paths, and a working tree
+for a repository without a working tree and for an invalid configuration value the status check reads. The registered
+paths are compared as real paths, and a working tree
 registered through a symbolic link is deleted at its real root. The removal is never forced.
 |===
 
@@ -743,7 +775,8 @@ it.
 `linkedRootRefused`, `targetInsideAdministrationRefused`), the reservation of new and existing branches
 (`reservedBranchCheckedOut`, `concurrentAdditions`), the comparison by real paths (`removeThroughSymlink`,
 `replacedRepositoryAndReusedPath`) and the result contract (`bareRepositoryFails`, `uncheckedFailureRolledBack`,
-`branchDeletionResultRead`, `reservationOutlivesRollback`, `heldRefLockReported`). `GitWorktreeListCompatibilityTest`
+`branchDeletionResultRead`, `reservationOutlivesRollback`, `heldRefLockReported`, `uncheckedRollbackStepContinues`,
+`failedReservationReleaseKeepsWorktree`, `invalidAutoCrlfFails`). `GitWorktreeListCompatibilityTest`
 asserts that `git worktree list --porcelain` of an installed Git lists the added working trees with path, branch and
 `HEAD`, a locked one `locked` and one whose directory is gone `prunable`, and that `git worktree remove` removes a
 working tree the library added. It is skipped through a JUnit assumption when no `git` binary is found; only this test
@@ -758,7 +791,8 @@ starts a process, never the library.
 `commit` stages every addition, modification and deletion of the main or a linked working tree and commits it on the
 working tree's branch, never signed, whatever the repository configuration asks. Its outcomes are `OK` with the commit,
 `NOTHING_TO_COMMIT`, `REFUSED_BY_POLICY` for a present hook, which is never run (`RefusingFS`), `NOT_A_REPOSITORY` and
-`FAILED`, also for a repository without a working tree.
+`FAILED`, also for a repository without a working tree and for an invalid configuration value the staging reads, such
+as `core.autocrlf` (<<GDR-CORE-12>>), before anything is committed.
 
 * *Hooks.* JGit 7.8.0 `CommitCommand` runs the `post-commit` hook after it updated the branch and only logs its
   failure
@@ -777,13 +811,13 @@ working tree's branch, never signed, whatever the repository configuration asks.
   `HEAD` entry to `logs/HEAD` of the linked working tree's own git directory and its branch entry to the branch's log
   in the common directory: `HEAD` is a ref of each working tree, the branches are shared
   (link:https://git-scm.com/docs/git-worktree[git-worktree(1)], REFS). The commit and its branch are stored before
-  these entries are appended, so an entry that cannot be written does not fail the created commit: the result stays
-  `OK` with the commit, and the omission is logged as `GIT_CORE-103` with the commit id only. An invalid
+  these entries are appended, so no failure of an entry, an unchecked one included, fails the created commit: the
+  result stays `OK` with the commit, and the omission is logged as `GIT_CORE-103` with the commit id only. An invalid
   `core.logAllRefUpdates` value is such a case: JGit 7.8.0 `Config.getEnum` throws `IllegalArgumentException` for a
   value that names no constant of `CoreConfig.LogRefUpdates`.
 
-The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit` and
-`invalidLogAllRefUpdatesKeepsCommit` the reflog choice, and its secrets test asserts with a JUL log capture and on the
+The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit`,
+`invalidLogAllRefUpdatesKeepsCommit` and `uncheckedReflogFailureKeepsCommit` the reflog choice, and its secrets test asserts with a JUL log capture and on the
 result details that no author or committer name, e-mail address or message reaches a log message or a detail, and no
 raw working-tree path an INFO message.
 
@@ -796,7 +830,8 @@ raw working-tree path an INFO message.
 
 `worktreeStatus` returns the record `WorktreeStatus(changed, untracked, deleted)`: three unmodifiable sets of
 repository-relative paths with `/` separators, sorted by path; its outcomes are `OK`, `REFUSED_BY_POLICY`,
-`NOT_A_REPOSITORY` and `FAILED`, also for a repository without a working tree. `REFUSED_BY_POLICY` follows from the
+`NOT_A_REPOSITORY` and `FAILED`, also for a repository without a working tree and for an invalid configuration value
+the status reads, such as `core.autocrlf` (<<GDR-CORE-12>>). `REFUSED_BY_POLICY` follows from the
 `RefusingFS` guarantee: the repository is opened on `RefusingFS`, so a capability the policy refuses, such as a process
 start, reaches the caller as `REFUSED_BY_POLICY` with the capability as detail (<<GDR-CORE-1>>). The sets are mapped
 from JGit's `Status` by its definitions in JGit 7.8.0
@@ -840,8 +875,9 @@ record's null checks, its equality over the paths, its defensive copy and its im
 
 An addition reserves its branch with the reservation file `worktree-branch-<SHA-1 of the full branch name>.lock` in
 the common directory (<<GDR-CORE-12>>); the name is the hash of `refs/heads/<branch>`, so no caller string forms a file
-name. A process that ends between the reservation and its release leaves the file behind, and every later addition of
-that branch ends `BRANCH_CHECKED_OUT` although no working tree has it checked out.
+name. The reservation is held until the new working tree is complete. A process that ends between the reservation and
+its release leaves the file behind, as does a complete addition whose release fails (`GIT_CORE-105`), and every later
+addition of that branch ends `BRANCH_CHECKED_OUT` although no working tree has it checked out.
 
 `releaseBranchReservation(root, branch)` takes any working-tree root of the repository and the short branch name as
 given to `worktreeAdd`; both are required. It opens the repository on `RefusingFS`, guards the branch name before any
@@ -854,8 +890,9 @@ so of two concurrent releases exactly one reports it.
 
 |`OK` |The reservation was deleted; the value is the full branch name `refs/heads/<branch>`
 |`NOT_FOUND` |The branch has no reservation; the detail is `branch: no reservation`
-|`REFUSED_BY_POLICY` |The branch name is no valid branch name by JGit 7.8.0 `Repository.isValidRefName`; the detail
-names the field only, and no file is deleted
+|`REFUSED_BY_POLICY` |The branch name is no valid branch name, by JGit 7.8.0 `Repository.isValidRefName` or by the
+branch-name rule of an addition (`HEAD`, `@`, a leading `-`, a component ending `.lock`, a name starting `refs/`,
+<<GDR-CORE-12>>); the detail names the field only, and no file is deleted
 |`NOT_A_REPOSITORY` |The root holds no repository
 |`FAILED` |An I/O failure, also a repository without a working tree, with the failure class only
 |===
@@ -876,12 +913,16 @@ named reservation only (`onlyNamedReservation`).
 == Tests
 
 The tests of `git-core` run on the class path against the fixtures of xref:git-testing.adoc[`git-testing`]; each names
-the requirement it checks. Two tests guard contracts that span the module:
+the requirement it checks. Three tests guard contracts that span the module:
 
 * `GitOutcomeSpecificationTest` reads the `GitOutcome` table of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] and asserts that
   its first column lists exactly the constants of `GitOutcome`, in their order, so a constant added without a row, a
   row without a constant, a renamed or a reordered one fails the build.
-* `AbsenceContractsTest` asserts the `@Nullable` values of the results on absences that real operations produce:
-  opening a bare repository yields no working-tree root, `init` an unborn branch without head, a detached `HEAD` no
-  branch, a push that creates the remote reference no old id, a failed operation no value, and a local-only remote
-  policy no origin.
+* `AbsenceContractsTest` of the package `de.cuioss.git.document.core` asserts the `@Nullable` values of the results on
+  absences that real operations produce: opening a bare repository yields no working-tree root, `init` an unborn
+  branch without head, a detached `HEAD` no branch, a push that creates the remote reference no old id, a failed
+  operation no value, and a local-only remote policy no origin.
+* `AbsenceContractsTest` of the package `de.cuioss.git.document.core.worktrees` asserts the same for the working-tree
+  components: a failed working-tree result carries no value but a detail, the listed main working tree has no name
+  while a linked one has its name, a detached addition has no branch but a head, and the main working tree of an
+  unborn repository has no head but its branch.

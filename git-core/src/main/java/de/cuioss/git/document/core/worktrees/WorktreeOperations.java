@@ -54,21 +54,29 @@ public interface WorktreeOperations {
      * the branch are classified by {@code GitIdentity}: an ambiguous name is refused with its candidates in the detail,
      * and an abbreviated or unknown start point is never resolved, also not for an existing branch. The target is
      * claimed exclusively and the branch, a new one like an existing one, is reserved until the new working tree is
-     * registered, so of two concurrent additions for one target or one branch exactly one succeeds. A refused or failed addition removes only
+     * complete, registered and checked out, so of two concurrent additions for one target or one branch exactly one
+     * succeeds. A refused or failed addition removes only
      * what it created itself: the target directory or its contents, its administration directory and the branch it
      * created, the latter only while it still points at the start. A reservation left by a process that ended during an
      * addition keeps its branch {@link GitOutcome#BRANCH_CHECKED_OUT}; {@link #releaseBranchReservation(Path, String)}
-     * is the way out of it.
+     * is the way out of it. The same holds for a reservation whose release fails once the working tree is complete:
+     * the addition ends {@link GitOutcome#OK} with the working tree kept, the failure is logged without an argument,
+     * and the reservation left behind is released by {@link #releaseBranchReservation(Path, String)}. An invalid
+     * configuration value the checkout reads, such as {@code core.autocrlf}, ends {@link GitOutcome#FAILED} with the
+     * failure class only, after the addition was rolled back.
      *
      * @param input the input
-     * @return {@link GitOutcome#OK} with the new working tree, {@link GitOutcome#ALREADY_EXISTS} if the path is not
+     * @return {@link GitOutcome#OK} with the new working tree, also if its branch reservation could not be released,
+     *         {@link GitOutcome#ALREADY_EXISTS} if the path is not
      *         empty or claimed by another addition, or the branch to create exists,
      *         {@link GitOutcome#BRANCH_CHECKED_OUT} also for a branch another addition reserved,
      *         {@link GitOutcome#NOT_FOUND} for an unknown branch or an unknown or abbreviated start point,
      *         {@link GitOutcome#AMBIGUOUS}, {@link GitOutcome#IDENTITY_MISMATCH}, {@link GitOutcome#PATH_REFUSED} for a
-     *         path outside the main working tree, for a root that is a linked working tree and for a path inside the
-     *         git directory or inside another linked working tree, {@link GitOutcome#REFUSED_BY_POLICY} for a branch
-     *         name that is no valid branch name and for a refused capability, {@link GitOutcome#NOT_A_REPOSITORY} or
+     *         path outside the main working tree, for a root that is a linked working tree, for a bare root, whose
+     *         root is its git directory, and for a path inside the git directory or inside another linked working
+     *         tree, {@link GitOutcome#REFUSED_BY_POLICY} for a branch name that is no valid branch name (also
+     *         {@code HEAD}, {@code @}, a leading {@code -}, a component ending {@code .lock} and a name starting
+     *         {@code refs/}) and for a refused capability, {@link GitOutcome#NOT_A_REPOSITORY} or
      *         {@link GitOutcome#FAILED}
      */
     GitResult<Worktree> worktreeAdd(WorktreeAddInput input);
@@ -98,7 +106,8 @@ public interface WorktreeOperations {
      *         repository at the registered path, {@link GitOutcome#WORKTREE_DIRTY}, {@link GitOutcome#WORKTREE_LOCKED},
      *         {@link GitOutcome#PATH_REFUSED} for the main working tree, {@link GitOutcome#REFUSED_BY_POLICY},
      *         {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}, also for a repository without a
-     *         working tree
+     *         working tree and for an invalid configuration value the status check reads, such as
+     *         {@code core.autocrlf}, with the failure class only
      */
     GitResult<Path> worktreeRemove(Path root, Path worktree);
 
@@ -107,13 +116,16 @@ public interface WorktreeOperations {
      * root of a registered linked working tree inside it is not staged. A present {@code pre-commit},
      * {@code commit-msg} or {@code post-commit} hook ends the operation before anything is staged or committed. A
      * commit in a linked working tree writes its {@code HEAD} reflog entry to that working tree's own log, as git
-     * does. A reflog entry that cannot be written does not fail a created commit: the result is
-     * {@link GitOutcome#OK} with the commit, and the omission is logged with the commit id.
+     * does. A reflog entry that cannot be written does not fail a created commit, whatever the failure: the result is
+     * {@link GitOutcome#OK} with the commit, and the omission is logged with the commit id. An invalid configuration
+     * value the staging reads, such as {@code core.autocrlf}, ends {@link GitOutcome#FAILED} with the failure class
+     * only, before anything is committed.
      *
      * @param input the input
      * @return {@link GitOutcome#OK} with the commit, {@link GitOutcome#NOTHING_TO_COMMIT},
      *         {@link GitOutcome#REFUSED_BY_POLICY} for a present hook, {@link GitOutcome#NOT_A_REPOSITORY} or
-     *         {@link GitOutcome#FAILED}, also for a repository without a working tree
+     *         {@link GitOutcome#FAILED}, also for a repository without a working tree and for an invalid
+     *         configuration value
      */
     GitResult<CommitInfo> commit(CommitInput input);
 
@@ -125,7 +137,8 @@ public interface WorktreeOperations {
      * @param root the working-tree root, of the main or of a linked working tree
      * @return {@link GitOutcome#OK} with the status, {@link GitOutcome#REFUSED_BY_POLICY} for a capability the
      *         policy refuses, {@link GitOutcome#NOT_A_REPOSITORY} or {@link GitOutcome#FAILED}, also for a repository
-     *         without a working tree
+     *         without a working tree and for an invalid configuration value the status reads, such as
+     *         {@code core.autocrlf}, with the failure class only
      */
     GitResult<WorktreeStatus> worktreeStatus(Path root);
 
@@ -133,7 +146,8 @@ public interface WorktreeOperations {
      * Releases the reservation of a branch (GDR-CORE-15). An addition reserves its branch, a new one like an existing one,
      * with a reservation file in the common git directory, {@code worktree-branch-<SHA-1 of the full branch name>.lock},
      * and deletes it once the new working tree is registered or the addition ended. A process that ends between the two
-     * leaves the reservation behind, and every later addition of that branch ends
+     * leaves the reservation behind, as does a complete addition whose release of it failed, and every later addition
+     * of that branch ends
      * {@link GitOutcome#BRANCH_CHECKED_OUT} although no working tree has it checked out; this operation is the way out.
      * <p>
      * The caller guarantees that no addition of that branch runs, in any process, from the call until it returns: a
@@ -223,7 +237,8 @@ public interface WorktreeOperations {
      * Input of {@link #worktreeAdd(WorktreeAddInput)}.
      *
      * @param root         the main working-tree root
-     * @param path         the new working-tree root; must lie inside {@code root} and not exist or be empty
+     * @param path         the new working-tree root; must lie inside {@code root}, outside its git directory and
+     *                     outside every linked working-tree root, and not exist or be empty
      * @param branch       the branch to check out; {@code null} for a detached working tree
      * @param createBranch whether to create {@code branch} at {@code startPoint}
      * @param startPoint   the start point: {@code HEAD}, a reference by its short or full name, or a full commit id;

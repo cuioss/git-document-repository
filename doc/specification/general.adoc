@@ -179,7 +179,9 @@ the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
 |`REFUSED_BY_POLICY` |refused by policy |remote policy, refused capability (hook or process start); the detail names
 the refused remote or capability; an invalid branch name (working-tree operations: a new working tree or a
-reservation release) or notes reference (notes), the detail naming the field only; `git-store`: a registered remote
+reservation release; besides the reference names JGit refuses, the names git reads as something other than a branch:
+`HEAD`, `@`, a leading `-`, a component ending `.lock` and a name starting `refs/`) or notes reference (notes), the
+detail naming the field only; `git-store`: a registered remote
 the policy does not permit, the detail naming the alias
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
 log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
@@ -191,7 +193,9 @@ reservation to release (working-tree operations); the detail names which
 where one is required
 |`IDENTITY_MISMATCH` |identity mismatch |a pinned full commit id that reaches another commit; an existing branch not
 at the pinned commit (working-tree operations: `worktreeAdd`)
-|`FAILED` |failed |every operation, for an unexpected I/O failure outside the outcomes above
+|`FAILED` |failed |every operation, for an unexpected I/O failure outside the outcomes above, or for an invalid
+configuration value the operation reads (working-tree operations: `commit`, `worktreeStatus` and `worktreeRemove` for
+`core.autocrlf` and the other `WorkingTreeOptions` keys); the detail names the failure class only
 |`NOTHING_TO_COMMIT` |nothing to commit |working-tree operations: commit from a working tree with nothing changed
 |`ALREADY_EXISTS` |already exists |working-tree operations: the path or the branch of a new working tree exists
 |`BRANCH_CHECKED_OUT` |branch checked out |working-tree operations: the branch is checked out in another working tree
@@ -199,8 +203,9 @@ at the pinned commit (working-tree operations: `worktreeAdd`)
 another repository at the registered path
 |`WORKTREE_DIRTY` |working tree dirty |working-tree operations: uncommitted or untracked changes
 |`WORKTREE_LOCKED` |working tree locked |working-tree operations: the working tree is locked
-|`PATH_REFUSED` |path refused |working-tree operations: a derived path outside the permitted root, or the main working
-tree
+|`PATH_REFUSED` |path refused |working-tree operations: a derived path outside the permitted root, the main working
+tree (its removal, or as the target of an addition), a path inside the git directory, a path inside a linked working
+tree or a root that is a linked one, and `worktreeAdd` on a bare root
 |===
 
 `StoreOutcome` (`git-store`) is the outcome list of `git-store`, used by `git-timestamp` for its provider and by every
@@ -264,8 +269,9 @@ The outcome list of `git-directory`:
 |not bindable |first login, a bind to an entry that is bound or matches none of the entered memberships
 |===
 
-An unexpected I/O failure is the outcome `FAILED` of `GitOutcome`, not an exception. Exceptions remain for programming
-errors (violated preconditions, such as a `null` argument); they are never used for the outcomes above.
+An unexpected I/O failure, and an invalid configuration value an operation reads, is the outcome `FAILED` of
+`GitOutcome`, not an exception. Exceptions remain for programming errors (violated preconditions, such as a `null`
+argument); they are never used for the outcomes above.
 
 [#GDR-GEN-4]
 == GDR-GEN-4: Logging
