@@ -53,6 +53,7 @@ import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -203,8 +204,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     private static final String NOT_A_URL_DETAIL = "not a URL";
 
     /**
-     * The largest blob {@link #readFile(ReadFileInput)} reads, in bytes: 16 MiB. The size is checked from the object
-     * header before the content is read, so a larger blob is never loaded into memory (GDR-CORE-8).
+     * The largest blob {@link #readFile(ReadFileInput)} reads, in bytes: 16 MiB. The size is asked from the object
+     * database before the blob is opened, so a larger blob is never loaded into memory (GDR-CORE-8).
      *
      * @since 0.1
      */
@@ -356,14 +357,28 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * dropped, the credentials of a clone are the caller's provider only, and so are query data and a fragment, which
      * JGit 7.8.0 {@link URIish} keeps in its path and would write into the clone's configuration with it. The raw path
      * is kept, so the escaping of the path the transport uses is unchanged.
+     * <p>
+     * A local path without a scheme and without a host is stored as JGit 7.8.0 {@link URIish} parsed it: its
+     * local-file pattern keeps the whole value literally as the path, so a {@code #}, a {@code ?} or a {@code %} is part
+     * of a file name there, and cutting at the first {@code #} or {@code ?} or percent-decoding the path through
+     * {@link URIish#setRawPath(String)} would store and clone another directory.
      *
      * @param parsed the caller's URL
      * @return the origin; empty for a URL that JGit parsed as a local path although it starts like an authority (see
-     *         {@link #display(URIish)}), whose user information is part of the path and cannot be told apart from it
+     *         {@link #display(URIish)}), whose user information is part of the path and cannot be told apart from it,
+     *         and empty for an explicit port {@code 0}, which JGit 7.8.0 {@link URIish#setPort(int)} would turn into
+     *         the default port, a port the caller did not give
      * @throws URISyntaxException if the raw path without its query data cannot be parsed
      */
     static Optional<URIish> storedOrigin(URIish parsed) throws URISyntaxException {
         if (isUnparsedAuthority(parsed)) {
+            return Optional.empty();
+        }
+        if (parsed.getScheme() == null && parsed.getHost() == null) {
+            return Optional.of(parsed);
+        }
+        // JGit 7.8.0 URIish parses an explicit port of digits only, so 0 is the one explicit port setPort maps to -1
+        if (parsed.getPort() == 0) {
             return Optional.empty();
         }
         var origin = new URIish().setScheme(parsed.getScheme()).setHost(parsed.getHost()).setPort(parsed.getPort());
@@ -753,14 +768,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 if (tree == null || (tree.getRawMode(0) & FileMode.TYPE_MASK) != FileMode.TYPE_FILE) {
                     return GitResult.of(GitOutcome.NOT_FOUND, "path: no file at " + commitId.name());
                 }
-                ObjectLoader blob = repository.open(tree.getObjectId(0), Constants.OBJ_BLOB);
-                // the size comes from the object header, so a blob above the limit is never read
-                if (blob.getSize() > READ_FILE_LIMIT_BYTES) {
-                    return GitResult.of(GitOutcome.REFUSED_BY_POLICY, LARGER_THAN_LIMIT);
-                }
-                try (var content = blob.openStream()) {
-                    return GitResult.ok(content.readAllBytes());
-                }
+                return readBlob(repository, tree.getObjectId(0));
             }
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.cache()));
@@ -768,6 +776,28 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return GitResult.of(GitOutcome.NOT_FOUND, "path: not a valid path");
         } catch (IOException | JGitInternalException e) {
             return failure(e);
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #READ_FILE_LIMIT_BYTES}. The size is asked first, through
+     * {@link ObjectReader#getObjectSize(org.eclipse.jgit.lib.AnyObjectId, int)}, which JGit 7.8.0 reads from the header
+     * of a loose object or from the pack entry without inflating the content; the loader is opened only for a blob
+     * within the limit, because JGit 7.8.0 {@code Repository.open} reads a blob below its streaming threshold
+     * completely into memory before it returns the loader.
+     *
+     * @return the content, or {@link GitOutcome#REFUSED_BY_POLICY} for a blob above the limit
+     * @throws IOException if the blob is missing or cannot be read
+     */
+    private static GitResult<byte[]> readBlob(Repository repository, ObjectId blobId) throws IOException {
+        try (ObjectReader reader = repository.newObjectReader()) {
+            if (reader.getObjectSize(blobId, Constants.OBJ_BLOB) > READ_FILE_LIMIT_BYTES) {
+                return GitResult.of(GitOutcome.REFUSED_BY_POLICY, LARGER_THAN_LIMIT);
+            }
+            ObjectLoader blob = reader.open(blobId, Constants.OBJ_BLOB);
+            try (var content = blob.openStream()) {
+                return GitResult.ok(content.readAllBytes());
+            }
         }
     }
 

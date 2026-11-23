@@ -25,12 +25,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.DeflaterOutputStream;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.FetchCommitInput;
@@ -534,6 +536,50 @@ class JGitCacheRepositoryTest {
                     () -> assertNull(readAbove.value(), "a refused blob carries no content"),
                     () -> assertEquals("path: larger than the limit of 16 MiB", readAbove.detail(),
                             "the detail names the field and the limit, never the path"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-8: a blob above the limit is refused from its size alone, before its content is read")
+        void sizeAskedBeforeOpening() throws Exception {
+            assertTrue(operations.initCache(cache).isOk(), "the cache repository is initialised");
+            var stub = blob(Generators.integers(1, 40).next());
+            ObjectId blobId;
+            try (var formatter = new ObjectInserter.Formatter()) {
+                blobId = formatter.idFor(Constants.OBJ_BLOB, stub);
+            }
+            // a loose blob whose header announces one byte more than the limit while its content ends after the stub:
+            // opening it reads the announced size into memory and fails at the end of the stream, so only a refusal
+            // taken from the header before the blob is opened ends REFUSED_BY_POLICY
+            var loose = cache.resolve("objects").resolve(blobId.name().substring(0, 2))
+                    .resolve(blobId.name().substring(2));
+            Files.createDirectories(loose.getParent());
+            try (var out = new DeflaterOutputStream(Files.newOutputStream(loose))) {
+                out.write((Constants.TYPE_BLOB + " " + (LIMIT + 1) + "\0").getBytes(StandardCharsets.US_ASCII));
+                out.write(stub);
+            }
+            var name = TestCommits.name();
+            String id;
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setMustExist(true)
+                         .build(); ObjectInserter inserter = repository.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                tree.append(name, FileMode.REGULAR_FILE, blobId);
+                var ident = new PersonIdent(TestCommits.name(), TestCommits.name() + "@example.invalid");
+                var builder = new CommitBuilder();
+                builder.setTreeId(inserter.insert(tree));
+                builder.setAuthor(ident);
+                builder.setCommitter(ident);
+                builder.setMessage(line());
+                id = inserter.insert(builder).name();
+                inserter.flush();
+            }
+
+            var refused = read(id, name);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, refused.outcome(),
+                            "the blob is refused by the size of its header"),
+                    () -> assertEquals("path: larger than the limit of 16 MiB", refused.detail(),
+                            "the refusal is the size limit, not a failed read"));
         }
     }
 

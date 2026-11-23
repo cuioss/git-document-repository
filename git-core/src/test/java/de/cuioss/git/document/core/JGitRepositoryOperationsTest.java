@@ -678,6 +678,67 @@ class JGitRepositoryOperationsTest {
                     () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "the URL is refused"),
                     () -> assertFalse(Files.exists(gitDir), "no clone is created"));
         }
+
+        @Test
+        @DisplayName("GDR-CORE-2, GDR-CORE-3: an explicit port 0 is refused, never stored as the default port")
+        void refusesExplicitPortZero() {
+            var marker = TestCommits.name();
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+            var httpsOnly = new JGitRepositoryOperations(RemotePolicy.httpsOrigin(URI.create("https://" + FOREIGN_HOST)));
+
+            try (var recording = new RecordingTransportProtocol(marker)) {
+                var result = httpsOnly.cloneIfMissing(input(gitDir, "https://" + FOREIGN_HOST + ":0/" + marker + ".git"));
+
+                assertAll(
+                        () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, result.outcome(), "port 0 is refused"),
+                        () -> assertEquals("not a URL", result.detail(), "the detail carries nothing of the URL"),
+                        () -> assertFalse(recording.connected(), "the remote is not contacted"),
+                        () -> assertFalse(Files.exists(gitDir), "no clone is created"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-2, GDR-CORE-3: an omitted port is admitted and stored without a port")
+        void admitsOmittedPort() {
+            var marker = TestCommits.name();
+            var httpsOnly = new JGitRepositoryOperations(RemotePolicy.httpsOrigin(URI.create("https://" + FOREIGN_HOST)));
+
+            try (var recording = new RecordingTransportProtocol(marker)) {
+                httpsOnly.cloneIfMissing(input(temp.resolve(TestCommits.name() + ".git"),
+                        "https://" + FOREIGN_HOST + "/" + marker + ".git"));
+
+                // the clone's fetch opens its transport from the stored origin, so its URL is the stored one
+                var stored = recording.uri().orElseThrow();
+                assertAll(
+                        () -> assertEquals(FOREIGN_HOST, stored.getHost(), "the stored origin keeps the host"),
+                        () -> assertEquals(-1, stored.getPort(), "the stored origin carries no port"));
+            }
+        }
+
+        @ParameterizedTest(name = "a {0} in the path")
+        @ValueSource(strings = {"#", "?", "%20"})
+        @DisplayName("GDR-CORE-3: a local path without a scheme is stored and cloned literally")
+        void localPathStoredLiterally(String character) throws Exception {
+            var source = temp.resolve(distinctTexts.next() + character + distinctTexts.next() + ".git");
+            var ref = branchRef();
+            ObjectId commit;
+            try (Git git = Git.init().setBare(true).setGitDir(source.toFile()).call()) {
+                commit = TestCommits.commitOn(git.getRepository(), ref);
+            }
+            var gitDir = temp.resolve(TestCommits.name() + ".git");
+
+            var result = operations.cloneIfMissing(input(gitDir, source.toString()));
+
+            try (Repository clone = openBare(gitDir)) {
+                assertAll(
+                        () -> assertEquals(GitOutcome.OK, result.outcome(), "the literal path is cloned"),
+                        () -> assertEquals(source.toString(),
+                                clone.getConfig().getString(ConfigConstants.CONFIG_REMOTE_SECTION, ORIGIN,
+                                        ConfigConstants.CONFIG_KEY_URL),
+                                "the stored origin is the path as given"),
+                        () -> assertEquals(commit, refId(clone, ref), "the clone mirrors the literal path"));
+            }
+        }
     }
 
     @Nested

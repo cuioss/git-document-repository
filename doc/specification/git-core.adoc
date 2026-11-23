@@ -186,6 +186,16 @@ data nor a fragment reaches the persistent configuration of the clone, and the c
 passed in the query. The raw path is kept, so its escaping is unchanged. The credentials of a call come from its
 `CredentialsProvider` only (<<GDR-CORE-7>>).
 
+A local path without a scheme and without a host is stored as `URIish` parsed it. Its local-file pattern keeps the
+whole value literally as the path, so `#`, `?` and `%` are part of a file name there: cutting the path at the first
+`#` or `?`, or percent-decoding it as `URIish.setRawPath` does, would store and clone `/srv/source` for
+`/srv/source#archive.git` and `/srv/my repo` for `/srv/my%20repo`. Such a path carries no user information, query data
+or fragment that could hold a secret.
+
+An explicit port 0 is `REFUSED_BY_POLICY` with the detail `not a URL` before anything is created: `URIish.setPort`
+maps every value that is not positive to the default port, so the stored origin would name a port the caller did not
+give, and the remote policy of <<GDR-CORE-2>>, which requires an explicit port within 1 to 65535, would admit it.
+
 A URL that JGit parses as a local path although it starts like an authority, a scheme and `//` or `//` alone, is
 `REFUSED_BY_POLICY` with the detail `not a URL` before anything is created: JGit's `URIish` matches its scheme pattern
 `[a-z][a-z0-9+-]+://` in lower case only, so `HTTPS://user:secret@host/repo.git` falls through to its local-file
@@ -584,11 +594,14 @@ working tree is never used as a cache; JGit's `BaseRepositoryBuilder.setBare()` 
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/BaseRepositoryBuilder.java[JGit 7.8.0 `BaseRepositoryBuilder`]).
 
 `readFile` reads a blob of at most 16 MiB (`JGitRepositoryOperations.READ_FILE_LIMIT_BYTES`, 16 × 1024 × 1024 bytes), a
-blob of exactly that size included. The size is taken from the object header through `ObjectLoader.getSize()` before
-the content is read
-(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectLoader.java[JGit
-7.8.0 `ObjectLoader`]), and a larger blob is `REFUSED_BY_POLICY` with the detail
-`path: larger than the limit of 16 MiB`, so it is never loaded into memory. The reason is the caller's memory: the
+blob of exactly that size included. The size is asked through `ObjectReader.getObjectSize` before the blob is opened,
+which reads it from the header of a loose object or from the pack entry without inflating the content
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/WindowCursor.java[JGit
+7.8.0 `WindowCursor`]), and a larger blob is `REFUSED_BY_POLICY` with the detail
+`path: larger than the limit of 16 MiB`, so it is never loaded into memory. Opening the blob first would not do: JGit's
+`Repository.open` reads a blob below the streaming threshold completely into memory before it returns the loader
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/UnpackedObject.java[JGit
+7.8.0 `UnpackedObject`]). The reason is the caller's memory: the
 operation returns the whole blob as one byte array, and the cache holds commits of a source the remote policy admits but
 whose content the library does not control, so without a bound one large file of a pinned commit would load into the
 heap of the process in full. The value lies far above the configuration files and documents the cache serves and below
