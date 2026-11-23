@@ -180,11 +180,21 @@ final class AnchorNotes {
         if (!read.isOk() || note == null) {
             return Optional.empty();
         }
+        return Optional.ofNullable(decode(note));
+    }
+
+    /**
+     * Decodes the base64 content of a note.
+     *
+     * @param note the content of a note
+     * @return the proof, or {@code null} when the note is no base64
+     */
+    static byte @Nullable [] decode(byte[] note) {
         try {
-            return Optional.of(Base64.getDecoder().decode(new String(note, US_ASCII).strip()));
+            return Base64.getDecoder().decode(new String(note, US_ASCII).strip());
         } catch (IllegalArgumentException e) {
             LOGGER.debug("An anchor note is no base64");
-            return Optional.empty();
+            return null;
         }
     }
 

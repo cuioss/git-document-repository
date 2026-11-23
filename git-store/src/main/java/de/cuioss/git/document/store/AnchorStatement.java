@@ -20,6 +20,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -171,7 +172,7 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
      * @return the statement, or empty for any form {@link #encode()} does not produce
      */
     static Optional<AnchorStatement> parse(byte[] bytes) {
-        String text = strictUtf8(bytes);
+        String text = strict(UTF_8, bytes);
         if (text == null || text.indexOf('\r') >= 0 || !text.endsWith("\n")) {
             return Optional.empty();
         }
@@ -229,7 +230,7 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
         }
         byte[] statementBytes = Arrays.copyOfRange(proof, 0, end);
         byte[] signatureBytes = Arrays.copyOfRange(proof, end, proof.length);
-        String signature = strictAscii(signatureBytes);
+        String signature = strict(US_ASCII, signatureBytes);
         if (signature == null || !signature.startsWith(SshSignatures.BEGIN)) {
             return Optional.empty();
         }
@@ -300,18 +301,10 @@ record AnchorStatement(ObjectId object, Instant time, long sequence, byte @Nulla
         return -1;
     }
 
-    private static @Nullable String strictUtf8(byte[] bytes) {
+    /** Decodes bytes in the charset, {@code null} for a byte that is malformed or unmappable in it. */
+    private static @Nullable String strict(Charset charset, byte[] bytes) {
         try {
-            return UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-        } catch (CharacterCodingException e) {
-            return null;
-        }
-    }
-
-    private static @Nullable String strictAscii(byte[] bytes) {
-        try {
-            return US_ASCII.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            return charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
         } catch (CharacterCodingException e) {
             return null;

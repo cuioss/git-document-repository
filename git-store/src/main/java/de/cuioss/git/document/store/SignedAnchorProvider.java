@@ -68,7 +68,7 @@ public final class SignedAnchorProvider implements AnchorProvider {
     /** The detail of {@code obtain} on an instance that only verifies. */
     static final String VERIFY_ONLY = "signed: no anchor key, the provider only verifies";
 
-    /** The detail of a previous proof {@code obtain} cannot read. */
+    /** The detail of a previous proof that {@code obtain} or the chain check of {@code verify} cannot read. */
     static final String PREVIOUS_UNREADABLE = "signed: previous proof unreadable";
 
     /** The detail of a clock before the time of the previous proof. */
@@ -103,9 +103,6 @@ public final class SignedAnchorProvider implements AnchorProvider {
 
     /** The detail of a key the anchor allowed signers do not list for the namespace at the time of the statement. */
     static final String KEY_NOT_ALLOWED = "signed: key not allowed at the statement time";
-
-    /** The detail of a chain whose previous proof cannot be read. */
-    static final String CHAIN_PREVIOUS_UNREADABLE = "signed: previous proof unreadable";
 
     /** The detail of a sequence number that does not follow the previous one. */
     static final String CHAIN_SEQUENCE_GAP = "signed: sequence does not follow the previous proof";
@@ -238,7 +235,7 @@ public final class SignedAnchorProvider implements AnchorProvider {
      * @return {@link StoreOutcome#OK} with the time of the statement; {@link StoreOutcome#SIGNATURE_INVALID} with
      *         {@value #PROOF_UNREADABLE}, {@value #NO_ALLOWED_SIGNERS}, {@value #SIGNATURE_INVALID} or
      *         {@value #KEY_NOT_ALLOWED}; {@link StoreOutcome#IMPRINT_MISMATCH} with {@value #OTHER_OBJECT};
-     *         {@link StoreOutcome#CHAIN_BROKEN} with {@value #CHAIN_PREVIOUS_UNREADABLE}, {@value #CHAIN_SEQUENCE_GAP},
+     *         {@link StoreOutcome#CHAIN_BROKEN} with {@value #PREVIOUS_UNREADABLE}, {@value #CHAIN_SEQUENCE_GAP},
      *         {@value #CHAIN_PREVIOUS_MISMATCH} or {@value #CHAIN_TIME_DECREASES}
      * @throws NullPointerException if an argument is {@code null}
      */
@@ -291,7 +288,7 @@ public final class SignedAnchorProvider implements AnchorProvider {
         }
         var split = AnchorStatement.split(previous);
         if (split.isEmpty()) {
-            return StoreResult.of(StoreOutcome.CHAIN_BROKEN, CHAIN_PREVIOUS_UNREADABLE);
+            return StoreResult.of(StoreOutcome.CHAIN_BROKEN, PREVIOUS_UNREADABLE);
         }
         var before = split.get().statement();
         if (before.sequence() == Long.MAX_VALUE || statement.sequence() != before.sequence() + 1) {

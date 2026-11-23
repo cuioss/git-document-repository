@@ -15,12 +15,10 @@
  */
 package de.cuioss.git.document.store;
 
-import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -268,7 +266,7 @@ public final class AnchorVerification {
             added.sort(Comparator.comparing(ObjectId::name));
             for (Note note : added) {
                 byte[] raw = reader.open(note.getData()).getBytes();
-                byte[] proof = decode(raw);
+                byte[] proof = AnchorNotes.decode(raw);
                 proofs++;
                 StoreOutcome outcome = proof == null ? StoreOutcome.SIGNATURE_INVALID
                         : verify(provider, note.copy(), proof, previous);
@@ -298,14 +296,6 @@ public final class AnchorVerification {
         catch (RuntimeException e) {
             LOGGER.debug("The anchor provider threw %s", e.getClass().getSimpleName());
             return StoreOutcome.SIGNATURE_INVALID;
-        }
-    }
-
-    private static byte @Nullable [] decode(byte[] note) {
-        try {
-            return Base64.getDecoder().decode(new String(note, US_ASCII).strip());
-        } catch (IllegalArgumentException e) {
-            return null;
         }
     }
 

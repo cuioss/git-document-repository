@@ -121,11 +121,6 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations,
             Clock clock) {
-        Objects.requireNonNull(storeRepository, "storeRepository");
-        Objects.requireNonNull(gitDir, "gitDir");
-        Objects.requireNonNull(user, "user");
-        Objects.requireNonNull(configuration, "configuration");
-        Objects.requireNonNull(signing, "signing");
         return open(storeRepository, gitDir, user, configuration, signing, null, operations, clock);
     }
 
@@ -161,6 +156,7 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(gitDir, "gitDir");
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(configuration, "configuration");
+        Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
         var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, signing, anchor, operations,
