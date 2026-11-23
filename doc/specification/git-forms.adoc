@@ -75,21 +75,51 @@ of kinds with the keys of the example:
 * `id`, `repository`, `collection`, `schema` and `workflow` are required, each a string that is not blank; `id` and
   `collection` must match `[a-z0-9-]+`, `id` must be unique, and `repository` must be an alias of the repository
   registry of `git-store`.
+* No two kinds may have the same pair of `repository` and `collection`, whatever the numbering of either. The
+  collection names the branches of its kind (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]): two kinds with one pair
+  would share one branch namespace, and a numbered collection's branch `refs/heads/x` would conflict with the document
+  branches `refs/heads/x/<ulid>` of a per-document collection of the same name, since a reference cannot have a value
+  and be a container for other references at the same time
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefDatabase.java[JGit
+  7.8.0, `RefDatabase.isNameConflicting`]). The same collection in two repositories stays allowed.
 * `template` is required for a per-document kind and optional for a numbered kind.
-* `numbering` holds `prefix`, a string that may be empty (numbers without a prefix), and `digits`, an integer of at
-  least 1.
-* `schema`, `template` and `workflow` are repository-relative references; loading the kinds does not read them.
+* `numbering` holds `prefix` and `digits`. `prefix` must match `[A-Za-z0-9_-]{0,16}`; it may be empty (numbers
+  without a prefix). The number, prefix and counter, appears in reference names and in links
+  (`<alias>:<id>/<number>`), and this set holds no character that either would have to escape or refuse: none of
+  them is excluded from a reference name
+  (link:https://git-scm.com/docs/git-check-ref-format[Git, `git-check-ref-format`]), and all are unreserved in a URI
+  (link:https://www.rfc-editor.org/rfc/rfc3986#section-2.3[RFC 3986, section 2.3]). `digits` is
+  an integer from 1 to 19: the counter is a Java `long`, whose largest value has 19 digits, so more digits would pad
+  with zeros no counter can fill.
+* `schema`, `template` and `workflow` are repository-relative references; loading the kinds does not read them. Each
+  must be a relative path: no leading `/`, no empty, `.` or `..` segment, no backslash and no NUL or other control
+  character, so that a reference cannot leave the configuration or name a file differently on another platform.
 
 The file is read as YAML within the JSON data model (ADR-0008) by the package-private `YamlReader`, built on
 `org.snakeyaml:snakeyaml-engine` 3.2: plain scalars resolve by the YAML 1.2 core schema, and an anchor, an alias, an
 explicit tag, a key that is not a string, a duplicate key, an infinite number or not-a-number, a number with more
 than 1,000 digits or whose exponent exceeds 1,000 in magnitude (<<GDR-FORMS-2>>), a nesting deeper than
-128 mappings and sequences (<<GDR-FORMS-2>>) and more than one document are refused. Every refusal is the outcome `MALFORMED` of `git-store`, passed on: a key that is missing or unknown, a
-value of the wrong type or form, a duplicate id, an unknown alias, a per-document kind without `template`, or text the
-reader refuses. The detail names the file and the key path, positions counted from 0 (`kinds.yaml: kinds[1].template:
-missing key, required for a per-document kind`), or the line and column of the text, never a configured value. A
-missing file is `MALFORMED` as well; an I/O failure is the passed-on `FAILED` of `git-core`, naming the exception class
-only. A successful load is logged as `GIT_FORMS-1` (`git-forms/doc/LogMessages.adoc`).
+128 mappings and sequences (<<GDR-FORMS-2>>) and more than one document are refused.
+
+The file is read only up to a bound of 1,048,576 bytes (1 MiB), far above any list of kinds, so that a configuration
+cannot make the loader hold an arbitrary amount of memory. `fromDirectory` reads through a channel at most one byte more
+than the bound and refuses a larger file without reading it whole; it refuses a `kinds.yaml` that is a symbolic link
+and opens the file with `NOFOLLOW_LINKS`, so that the configuration directory cannot point the loader at a file outside
+it. `fromRepository` checks the size of the blob before reading it: in JGit 7.8.0, `ObjectLoader.getBytes(int)`
+refuses only a large object above its limit and returns an object held in memory whole, so the size from
+`ObjectLoader.getSize()` is compared with the bound first
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectLoader.java[JGit
+7.8.0, `ObjectLoader`]).
+
+Every refusal is the outcome `MALFORMED` of `git-store`, passed on: a symbolic link, a file above the bound, a key that
+is missing or unknown, a value of the wrong type or form (a prefix outside its set, `digits` outside 1 to 19, a
+reference that is not a relative path), a duplicate id, a second kind with the pair of repository and collection of an
+earlier one, an unknown alias, a per-document kind without `template`, or text the reader refuses. The detail names
+the file, the key path and the rule, positions counted from 0 (`kinds.yaml: kinds[1].template: missing key, required
+for a per-document kind`, `kinds.yaml: kinds[1].collection: a collection another kind of the same repository uses`),
+or the line and column of the text, never a configured value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A missing file
+is `MALFORMED` as well; an I/O failure is the passed-on `FAILED` of `git-core`, naming the exception class only. A
+successful load is logged as `GIT_FORMS-1` (`git-forms/doc/LogMessages.adoc`).
 
 [#GDR-FORMS-2]
 == GDR-FORMS-2: Schema Validation
