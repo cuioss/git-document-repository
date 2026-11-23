@@ -260,7 +260,8 @@ class AnchorInterleavingTest {
                 try {
                     result.set(writer.save(author, CLAIMS, key, Map.of(), word()));
                 }
-                /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+                // the failure of the save is kept for the test to assert, whatever its type
+                // cui-rewrite:disable InvalidExceptionUsageRecipe
                 catch (RuntimeException | AssertionError e) {
                     failure.set(e);
                 }
