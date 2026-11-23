@@ -43,6 +43,11 @@ drafts, never a draft reference, which names a pseudonym.
 |Logged when a release completed, `main` and the release tag both accepted by the remote
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
 release tag and the full id of the release commit.
+|GIT_STORE-6 |GIT_STORE |Verified the signatures of reference %s: %s commits, %s unverified
+|Logged when a signature verification of a reference against the allowed signers finished
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the full name of the reference, the number of
+commits reachable from it and the number of those without a signature valid at their committer time, never a
+principal, a key or a commit message.
 |===
 
 == WARN Level (100-199)

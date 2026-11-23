@@ -88,6 +88,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(5)
                 .build();
+
+        /**
+         * A signature verification of a reference finished: the reference, the number of commits walked and the number
+         * of commits without a valid signature, never a principal, a key or a commit message.
+         */
+        public static final LogRecord SIGNATURES_VERIFIED = LogRecordModel.builder()
+                .template("Verified the signatures of reference %s: %s commits, %s unverified")
+                .prefix(PREFIX)
+                .identifier(6)
+                .build();
     }
 
     /**
