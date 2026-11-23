@@ -330,10 +330,9 @@ final class YamlReader {
         if (lower.contains("inf") || lower.contains("nan")) {
             throw new Refusal(event, "a number outside the JSON data model");
         }
-        Optional<String> exceeded = floatBound(text);
-        if (exceeded.isPresent()) {
-            throw new Refusal(event, exceeded.get());
-        }
+        floatBound(text).ifPresent(problem -> {
+            throw new Refusal(event, problem);
+        });
         return new BigDecimal(text);
     }
 
@@ -397,10 +396,9 @@ final class YamlReader {
      * {@value #MAX_NUMBER_DIGITS} digits in the text, leading zeros not counted, are refused before it is parsed.
      */
     private static Object integer(String text, ScalarEvent event) {
-        Optional<String> exceeded = integerBound(text);
-        if (exceeded.isPresent()) {
-            throw new Refusal(event, exceeded.get());
-        }
+        integerBound(text).ifPresent(problem -> {
+            throw new Refusal(event, problem);
+        });
         BigInteger value = new BigInteger(integerDigits(text), radix(text));
         return value.bitLength() < Long.SIZE ? (Object) value.longValueExact() : value;
     }

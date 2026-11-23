@@ -301,7 +301,7 @@ first significant digit, exceeds 1,000 in magnitude is refused as `MALFORMED` wi
 `1e2147483647` are refused. The bounds apply to text the reader reads, documents, schema files and `kinds.yaml`
 alike; a `BigDecimal` or `BigInteger` a caller builds in memory is not bounded for `validate`, `required` and the data
 model, and under `multipleOf` a large exponent can still stall its validation, while `encode` of `YamlDocumentCodec`
-refuses such a number beyond the bounds, naming the limit (<<GDR-FORMS-3>>). The library then compares the remainder, converted to `double`, with zero
+refuses such a number beyond the bounds, naming the limit (<<GDR-FORMS-3>>). That validation compares the remainder, converted to `double`, with zero
 (`remainder(factor).doubleValue() == 0` in `MultipleOfEvaluator`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]); a remainder of a magnitude below the smallest positive `double` (about `4.9e-324`; below about `1e-308` it already
