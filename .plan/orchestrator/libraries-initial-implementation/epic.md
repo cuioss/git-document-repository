@@ -60,8 +60,12 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   say whether the rebase onto PLAN-09's documents conflicted, so the pairing's collision outcome is not recorded. Its two major defects
   (no nesting-depth limit, an unbounded decimal exponent) and its minors went to PLAN-23.
 - PLAN-23 — `git-forms` hardening (staged 2026-11-22 on the operator's word, WS-03): both majors of PLAN-12 first, then the minors
-  and the missing tests. **Not held back**: emitted on 2026-11-22 beside PLAN-10 (three-file overlap, the operator accepted two: on `general.adoc` and `AGENTS.md`,
-  accepted), and PLAN-13 depends on it (strictly sequential in WS-03: PLAN-12, PLAN-23, PLAN-13).
+  and the missing tests. Shipped (PR #59, `bdbb5e4`, `landings/PLAN-23.md`, 29 paths, +2596/-317): the depth limit 128 and the number bounds
+  (1000 digits, exponent 1000) in the reader and in `encode`, the kinds hardening, the once-per-schema validator preparation and a rewritten
+  native-image test; it ran beside PLAN-10 (three-file overlap, the operator accepted two) and merged under an operator override of the review
+  barrier (Sourcery refused on size, CodeRabbit participated). Its own analysis found one major (the JSON Pointer string amplification of
+  `DataNode`, an `OutOfMemoryError` from one small document, mechanism confirmed, size not shown) and five minor defects; routing is the
+  operator's decision and is pending. PLAN-13 depends on it (WS-03: PLAN-12, PLAN-23, PLAN-13) and now waits only for PLAN-10.
 - PLAN-08 — Shipped (PR #48, `c1e02fc`, `landings/PLAN-08.md`): the write path of `git-store` (41 paths, +7661/-54): drafts, explicit save
   with lease, conflicts, `expectedBlobId`, draft expiry with garbage collection, the bound of `save.max-attempts` (100) and the
   `commit.email` setting. It ran alone after PLAN-21. The spec said five deliverables, the lane reported seven (the outline split them);
@@ -415,6 +419,17 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   undecidable on a merged PR; the landing is incomplete at those four keys). Reported to the operator at once. **The operator's answer
   (2026-11-22):** a new PLAN-23 (`git-forms` hardening), emitted at once beside PLAN-10 and ahead of PLAN-13. The three candidate
   messages: 2 recurrences extended, 1 new lesson (`2026-11-22-21-004`); the run's own lessons `2026-11-22-21-001` to `-003` stay as filed.
+- 2026-11-23 — PLAN-10 and PLAN-23 recorded launched, then running, on the operator's word ("both are running"; `auto_emit=false`).
+- 2026-11-23 — PLAN-23 landed (PR #59, `bdbb5e4`) and was analysed on three layers: no blocker; layer 3: one major (the JSON Pointer string
+  amplification of `DataNode`: an `OutOfMemoryError` from one small document under a map-of-maps schema, the mechanism confirmed by reading,
+  the size not run) and five minor (the unbounded `holdsRequired` recursion along a `properties` → `$ref` chain, depth times the in-place chain,
+  the hexadecimal reader/encoder digit drift, a shared-subtree hang, two aliases for one repository); layer 2: four minor (test gaps in
+  `NestingDepthTest` and `NumberBoundsTest`, a doc limit not recorded); layer 1: the spec never says whether a hostile in-memory value is a
+  result or an exception and never bounds depth times chain. The fixes of PLAN-12's two majors hold at the places traced (the reader, `DataNode`
+  and `encode` bounds are consistent, the number bounds have no off-by-one, the kinds are bounded before they are read). The landing is
+  incomplete (`effort` and the three review numbers); the review-gate re-read was decidable this time (0 unresolved, 1 body finding, `handled: 0`).
+  Reported to the operator; routing pending. The session was restarted around this analysis (the anchor carried the state). The 14 candidate
+  messages: 5 recurrences extended, 6 new lessons (`2026-11-23-12-001` to `-006`), 1 folded into the architecture Watch, 1 into PLAN-22, 1 discarded.
 
 ## Open Defects
 
@@ -471,13 +486,26 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   expensive huge-integer parse, YAML 1.1 words written plain, a duplicate kind collection accepted, unchecked `numbering.prefix` and
   paths, an unbounded kinds-file read, a validator rebuilt per call; codec key order that ignores `$ref`/`allOf`, `format` silently not
   asserted, stale wording, missing tests, an automatic module never run on the module path, and a dependency decision recorded without its
-  alternatives. — routed to PLAN-23 on the operator's word (2026-11-22); open until PLAN-23 ships.
+  alternatives. — routed to PLAN-23 on the operator's word (2026-11-22); PLAN-23 shipped (PR #59): both majors are closed at the reader, the
+  encoder and `DataNode` (a nesting limit of 128, number bounds of 1000), the minors are fixed or recorded, and the residue is the entry below.
+  Closed.
+- PLAN-23 defects in `git-forms` (`landings/PLAN-23.md`; one major, five minor): `DataNode.asObject` and `asArray` build a pointer string per
+  child by copying the parent pointer, so a small document with long keys at depth and a wide mapping at the bottom costs gigabytes of strings
+  (an `OutOfMemoryError` under an `additionalProperties`-through-`$ref` schema; the size is not shown); `SchemaChecks.holdsRequired` recurses
+  along a `properties` → `$ref` chain that neither the depth limit nor the in-place chain bound covers (a `StackOverflowError` from a hostile
+  kind schema); data depth times the in-place chain per level can still overflow the stack; a hexadecimal integer of 831 to 1000 digits is
+  read but cannot be encoded (the reader counts digits in the source radix, the encoder in decimal); a caller-built shared-subtree value is
+  walked as a tree (a hang); two registry aliases for one repository pass the duplicate-collection check; and the hostile in-memory value ends in
+  an `IllegalArgumentException`, not a result. — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (a candidate: a
+  `git-forms` hardening plan after PLAN-13, or into PLAN-13 itself).
 - Incomplete landings (PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
   `plan-05-git-core-merge-read-notes-013.md`, PLAN-06 `implement-plan-06-build-guards-014.md`, PLAN-07
-  `plan-07-store-module-registry-spi-011.md`, PLAN-21 `plan-21-merge-worktrees-into-core-008.md`, PLAN-08 `plan-08-store-drafts-save-025.md`, PLAN-12 `plan-12-forms-kinds-schema-layout-004.md`): `inbox landing-check` reports
-  `complete: false`. PLAN-12 misses the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize step records them; the
+  `plan-07-store-module-registry-spi-011.md`, PLAN-21 `plan-21-merge-worktrees-into-core-008.md`, PLAN-08 `plan-08-store-drafts-save-025.md`, PLAN-12 `plan-12-forms-kinds-schema-layout-004.md`, PLAN-23 `plan-23-forms-hardening-015.md`): `inbox landing-check` reports
+  `complete: false`. PLAN-23 misses `effort` and the three review numbers (`unknown`); its `review-gate` re-read was decidable (0 unresolved
+  threads, 1 review-body finding, `handled: 0`) and its Sonar read is undecidable (`head_revision_unavailable`, analysis revision `43dad67`),
+  so `sonar_open_new_issues=0` is not re-verified. PLAN-12 misses the three review numbers and `sonar_open_new_issues` (all `unknown`: no finalize step records them; the
   lane names what it knows from the plan state: 0 open new-code issues on the merged head `a2792c7`); its `review-gate` re-read is
   undecidable (CodeRabbit's review-body section header) and the Sonar read is undecidable (`head_revision_unavailable`, analysis
   revision `a2792c7`), so nothing is re-verified. PLAN-09 was complete (the first). PLAN-08 misses `effort` only (the review and Sonar numbers were supplied: 0 unresolved threads, 2 body findings, 2
@@ -529,8 +557,9 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   has landed (PR #48), so the cut would also publish the draft and save write path, with its public `FetchInput` record change in
   `git-core` (a canonical-constructor break, acceptable only because nothing is released yet); PLAN-09 has landed too (PR #52: release,
   index, listeners, the save step, and `TreeEdit.Mode` in `git-core`, and a test-scope JOL dependency), so the cut would publish those;
-  PLAN-12 has landed too (PR #54): `git-forms` is on `main` and in the reactor, so the cut would publish a module with two open major
-  defects until PLAN-23 ships; PLAN-10, PLAN-11, PLAN-22, PLAN-23 and PLAN-20 are what is still open against it. The operator's #50 (2026-11-21) added the consumer
+  PLAN-12 has landed too (PR #54) and PLAN-23 closed its two majors (PR #59): `git-forms` is on `main` and in the reactor, and its own
+  analysis still carries one major (the pointer-string memory amplification) and five minors, unrouted; PLAN-10, PLAN-11, PLAN-22 and PLAN-20
+  are what is still open against the cut. The operator's #50 (2026-11-21) added the consumer
   propagation block to `.github/project.yml` (no version change).
 - The committed architecture inventory `.plan/project-architecture/` still names the removed module `git-worktrees` (`_project.json`,
   `git-document-repository/enriched.json` and a whole `git-worktrees/enriched.json`) after PLAN-21 (`landings/PLAN-21.md` L2-4). It is
