@@ -319,27 +319,39 @@ public final class AllowedSigners {
                 return "cert-authority not supported";
             }
             if (lower.startsWith(VALID_AFTER)) {
-                if (validAfter != null) {
-                    return OPTION_REPEATED;
-                }
-                validAfter = timestamp(unquote(option.substring(VALID_AFTER.length())));
-                return validAfter == null ? TIMESTAMP_MALFORMED : null;
+                return readValidAfter(option.substring(VALID_AFTER.length()));
             }
             if (lower.startsWith(VALID_BEFORE)) {
-                if (validBefore != null) {
-                    return OPTION_REPEATED;
-                }
-                validBefore = timestamp(unquote(option.substring(VALID_BEFORE.length())));
-                return validBefore == null ? TIMESTAMP_MALFORMED : null;
+                return readValidBefore(option.substring(VALID_BEFORE.length()));
             }
             if (lower.startsWith(NAMESPACES)) {
-                if (namespaces != null) {
-                    return OPTION_REPEATED;
-                }
-                namespaces = AllowedSigners.namespaces(unquote(option.substring(NAMESPACES.length())));
-                return namespaces == null ? "namespace pattern not supported" : null;
+                return readNamespaces(option.substring(NAMESPACES.length()));
             }
             return "option not supported";
+        }
+
+        private @Nullable String readValidAfter(String value) {
+            if (validAfter != null) {
+                return OPTION_REPEATED;
+            }
+            validAfter = timestamp(unquote(value));
+            return validAfter == null ? TIMESTAMP_MALFORMED : null;
+        }
+
+        private @Nullable String readValidBefore(String value) {
+            if (validBefore != null) {
+                return OPTION_REPEATED;
+            }
+            validBefore = timestamp(unquote(value));
+            return validBefore == null ? TIMESTAMP_MALFORMED : null;
+        }
+
+        private @Nullable String readNamespaces(String value) {
+            if (namespaces != null) {
+                return OPTION_REPEATED;
+            }
+            namespaces = AllowedSigners.namespaces(unquote(value));
+            return namespaces == null ? "namespace pattern not supported" : null;
         }
 
         /**

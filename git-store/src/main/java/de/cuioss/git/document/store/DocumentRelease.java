@@ -117,7 +117,7 @@ final class DocumentRelease {
      * The form of the subject of a release of any document: a collection name ({@code [a-z0-9-]+}), an id
      * ({@code [A-Za-z0-9-]+}, which a ULID fits) and a version.
      */
-    private static final Pattern ANY_RELEASE_SUBJECT = Pattern.compile("Release [a-z0-9-]+/[A-Za-z0-9-]+ v[0-9]+");
+    private static final Pattern ANY_RELEASE_SUBJECT = Pattern.compile("Release [a-z0-9-]+/[A-Za-z0-9-]+ v\\d+");
 
     private final ExplicitSave.Clone clone;
     private final RepositoryOperations operations;
