@@ -82,7 +82,7 @@ final class SshSignatures {
     private static final byte[] MAGIC = "SSHSIG".getBytes(US_ASCII);
 
     /** The length of an Ed25519 public key. */
-    private static final int KEY_LENGTH = 32;
+    static final int KEY_LENGTH = 32;
 
     /** The length of an Ed25519 signature. */
     private static final int SIGNATURE_LENGTH = 64;

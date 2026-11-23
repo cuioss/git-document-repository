@@ -20,6 +20,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -230,14 +231,7 @@ public final class SignatureVerification {
     }
 
     private static boolean startsWith(byte[] data, int offset, byte[] prefix) {
-        if (data.length - offset < prefix.length) {
-            return false;
-        }
-        for (int index = 0; index < prefix.length; index++) {
-            if (data[offset + index] != prefix[index]) {
-                return false;
-            }
-        }
-        return true;
+        return data.length - offset >= prefix.length
+                && Arrays.equals(data, offset, offset + prefix.length, prefix, 0, prefix.length);
     }
 }

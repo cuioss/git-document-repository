@@ -85,8 +85,6 @@ public final class FileSigningKeySource implements SigningKeySource {
     /** The DER prefix of the PKCS #8 encoding of an Ed25519 private key (RFC 8410, section 7), followed by the seed. */
     private static final byte[] PKCS8_PREFIX = HexFormat.of().parseHex("302e020100300506032b657004220420");
 
-    private static final int KEY_LENGTH = 32;
-
     /** Creates the source, as {@link java.util.ServiceLoader} does. It holds no state. */
     public FileSigningKeySource() {
         // stateless: the key is read on every call
@@ -215,11 +213,12 @@ public final class FileSigningKeySource implements SigningKeySource {
             return StoreResult.of(StoreOutcome.REFUSED, TYPE_NOT_SUPPORTED);
         }
         // the private key of the format is the 32-byte seed followed by the 32-byte public key
-        if (key.privateKey.length != 2 * KEY_LENGTH || !Arrays.equals(sectionPublicKey, publicKey)
-                || !Arrays.equals(key.privateKey, KEY_LENGTH, 2 * KEY_LENGTH, publicKey, 0, KEY_LENGTH)) {
+        int length = SshSignatures.KEY_LENGTH;
+        if (key.privateKey.length != 2 * length || !Arrays.equals(sectionPublicKey, publicKey)
+                || !Arrays.equals(key.privateKey, length, 2 * length, publicKey, 0, length)) {
             return StoreResult.of(StoreOutcome.REFUSED, MALFORMED);
         }
-        key.seed = Arrays.copyOf(key.privateKey, KEY_LENGTH);
+        key.seed = Arrays.copyOf(key.privateKey, length);
         key.publicKey = publicKey;
         return new StoreResult<>(StoreOutcome.OK, null, null);
     }
@@ -235,9 +234,9 @@ public final class FileSigningKeySource implements SigningKeySource {
     }
 
     private static byte[] ed25519Sign(byte[] seed, byte[] data) {
-        byte[] encoded = Arrays.copyOf(PKCS8_PREFIX, PKCS8_PREFIX.length + KEY_LENGTH);
+        byte[] encoded = Arrays.copyOf(PKCS8_PREFIX, PKCS8_PREFIX.length + SshSignatures.KEY_LENGTH);
         try {
-            System.arraycopy(seed, 0, encoded, PKCS8_PREFIX.length, KEY_LENGTH);
+            System.arraycopy(seed, 0, encoded, PKCS8_PREFIX.length, SshSignatures.KEY_LENGTH);
             var signature = Signature.getInstance("Ed25519");
             signature.initSign(KeyFactory.getInstance("Ed25519").generatePrivate(new PKCS8EncodedKeySpec(encoded)));
             signature.update(data);
