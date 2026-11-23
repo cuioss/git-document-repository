@@ -541,7 +541,10 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   41262d and b4bc7f, accepted), so its tasks ran on persona skills only; the architecture refresh should enrich them (java-core,
   java-null-safety, javadoc, cui-logging; junit-core, cui-testing) or declare them minimal. PLAN-09 raised the same two findings again
   (Q-Gate 0f7b46 and 3f11a5, messages 001 and 002) and the orchestrator added the skills by hand: every `git-store` plan repeats it until
-  the architecture refresh runs.
+  the architecture refresh runs. PLAN-23 raised it for `git-forms` (Q-Gate a061c4 and 5af2f5, the operator accepted both, "no config
+  change"), and the persona resolver reported `module_status=unreadable` for the module `documentation`: the same refresh settles
+  `git-store`, `git-forms` and `documentation` at once, and every later `git-forms`, `git-directory` and `git-timestamp` plan will
+  repeat the finding until it runs.
 - The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicted the AGENTS.md rule "do not merge
   unless the user says so". — resolved by the operator's #42 (`3c609a7`): AGENTS.md on `main` now authorises a plan-marshall run
   to merge its own pull request once the checks are green and every review comment is handled (never a PR that changes
