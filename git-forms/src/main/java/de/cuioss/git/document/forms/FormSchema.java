@@ -328,11 +328,6 @@ public final class FormSchema {
         return SchemaChecks.holdsRequired(resources, subSchema, identitySet());
     }
 
-    /** The resources of the schema file, against which references are resolved. */
-    SchemaResources resources() {
-        return resources;
-    }
-
     /** The schema without the keyword {@code required}, which validation evaluates. */
     Map<String, @Nullable Object> withoutRequired() {
         return withoutRequired;
