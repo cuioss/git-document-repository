@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -67,9 +68,6 @@ final class StoreClone {
      * {@code null} until a schedule is registered and after it was cancelled.
      */
     private final AtomicReference<@Nullable Registration> anchorRegistration = new AtomicReference<>();
-
-    /** Whether a due check is handed to the executor and has not started yet, so further triggers coalesce. */
-    private final AtomicBoolean anchorQueued = new AtomicBoolean();
 
     /**
      * Holds an opened clone with the parts that work on it.
@@ -201,18 +199,16 @@ final class StoreClone {
     /**
      * Schedules the due check of the anchoring on the caller's executor at {@code anchor.retry-interval} and registers
      * the executor for the due checks after a save, a release or a fetch; see {@link StoreWriter#anchorPeriodically}.
+     * The executor is registered only once the schedule exists: when it refuses the schedule, the refusal propagates
+     * and the schedule registered before stays in effect.
      */
     AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
         var registration = new Registration(executor);
-        anchorRegistration.set(registration);
         long interval = nanos(transport.retryInterval());
-        try {
-            return new AnchorSchedule(executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
-                    TimeUnit.NANOSECONDS), () -> end(registration));
-        } catch (RejectedExecutionException e) {
-            end(registration);
-            throw e;
-        }
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
+                TimeUnit.NANOSECONDS);
+        anchorRegistration.set(registration);
+        return new AnchorSchedule(future, () -> end(registration));
     }
 
     /**
@@ -226,24 +222,26 @@ final class StoreClone {
 
     /**
      * Hands one due check to the executor of the registered schedule after the locks of a save, a release or a fetch
-     * were released; a trigger while one is handed over and not started yet coalesces with it. Without a registration
-     * or a provider nothing happens, a handed-over due check whose registration ended before it started does not run,
-     * and a refusal of the executor is ignored: the next trigger or the schedule retries.
+     * were released; a trigger while one is handed over through the same registration and not started yet coalesces
+     * with it. Without a registration or a provider nothing happens, a handed-over due check whose registration ended
+     * before it started does not run, and a refusal of the executor is ignored: the next trigger or the schedule
+     * retries. A handed-over due check that its executor discards never clears the flag of its registration, so it
+     * holds back only the triggers of that registration, never those of a later schedule.
      */
     private void triggerDueCheck() {
         Registration registration = anchorRegistration.get();
-        if (registration == null || !anchors.active() || !anchorQueued.compareAndSet(false, true)) {
+        if (registration == null || !anchors.active() || !registration.queued.compareAndSet(false, true)) {
             return;
         }
         try {
             registration.executor.execute(() -> {
-                anchorQueued.set(false);
+                registration.queued.set(false);
                 if (!registration.ended) {
                     safeDueCheck();
                 }
             });
         } catch (RejectedExecutionException e) {
-            anchorQueued.set(false);
+            registration.queued.set(false);
             LOGGER.debug("The executor refused the due check of the anchoring");
         }
     }
@@ -255,6 +253,12 @@ final class StoreClone {
     private static final class Registration {
 
         private final Executor executor;
+
+        /**
+         * Whether a due check is handed to the executor through this registration and has not started yet, so further
+         * triggers coalesce with it.
+         */
+        private final AtomicBoolean queued = new AtomicBoolean();
 
         /** Whether the schedule was cancelled; a due check it handed over and that has not started yet then ends. */
         private volatile boolean ended;

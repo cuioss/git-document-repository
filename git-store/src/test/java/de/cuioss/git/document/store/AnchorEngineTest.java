@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -40,6 +41,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -686,6 +688,69 @@ class AnchorEngineTest {
                 assertEquals(List.of(), fixture.anchors().calls(), "the queued due check did not run");
             } finally {
                 busy.countDown();
+                stop(executor);
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a later schedule whose executor refuses it leaves the earlier schedule in effect")
+        void refusedScheduleLeavesEarlierOne(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var executor = executor();
+            var refusing = executor();
+            refusing.shutdown();
+            try (var fixture = open(remote)) {
+                var first = fixture.writer().anchorPeriodically(executor);
+
+                assertThrows(RejectedExecutionException.class, () -> fixture.writer().anchorPeriodically(refusing),
+                        "the refusal of the executor propagates");
+                save(fixture.writer(), key);
+                boolean ran = fixture.anchors().awaitCalls(1, WAIT);
+                first.cancel();
+
+                assertTrue(ran, "the earlier schedule still hands the due check after the save to its executor");
+            } finally {
+                stop(executor);
+                stop(refusing);
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a due check its executor discarded holds back no due check of a later schedule")
+        void discardedDueCheckHoldsBackNoLaterSchedule(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var discarding = executor();
+            var executor = executor();
+            var occupied = new CountDownLatch(1);
+            try (var fixture = open(remote)) {
+                var first = fixture.writer().anchorPeriodically(discarding);
+                discarding.execute(() -> {
+                    occupied.countDown();
+                    try {
+                        // ends when shutdownNow interrupts it
+                        new CountDownLatch(1).await(WAIT.toSeconds(), TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                assertTrue(occupied.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor is occupied");
+                save(fixture.writer(), key);
+                first.cancel();
+                var discarded = discarding.shutdownNow();
+                assertTrue(discarding.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
+                int callsBefore = fixture.anchors().calls().size();
+
+                var second = fixture.writer().anchorPeriodically(executor);
+                save(fixture.writer(), key);
+                boolean ran = fixture.anchors().awaitCalls(1, WAIT);
+                second.cancel();
+
+                assertAll(
+                        () -> assertFalse(discarded.isEmpty(), "the handed-over due check was discarded unstarted"),
+                        () -> assertEquals(0, callsBefore, "the discarded due check never ran"),
+                        () -> assertTrue(ran, "the later schedule hands the due check after the save to its executor"));
+            } finally {
+                stop(discarding);
                 stop(executor);
             }
         }
