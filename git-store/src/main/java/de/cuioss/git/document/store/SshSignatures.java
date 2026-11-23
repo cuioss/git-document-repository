@@ -333,11 +333,6 @@ final class SshSignatures {
      */
     record AcceptedKey(byte[] key) implements KeyLine {
 
-        /**
-         * Creates an accepted key from a copy of the key bytes.
-         *
-         * @param key the 32 bytes of the key
-         */
         AcceptedKey {
             key = key.clone();
         }
@@ -420,15 +415,6 @@ final class SshSignatures {
     record DecodedSignature(byte[] publicKeyBlob, String namespace, String hashAlgorithm, String signatureType,
     byte[] signature) implements Decoding {
 
-        /**
-         * Creates a decoded signature from copies of the byte arrays.
-         *
-         * @param publicKeyBlob the public key blob the signature embeds
-         * @param namespace     the namespace the signature was made in
-         * @param hashAlgorithm the hash algorithm of the signed blob
-         * @param signatureType the type of the signature
-         * @param signature     the raw signature bytes
-         */
         DecodedSignature {
             publicKeyBlob = publicKeyBlob.clone();
             signature = signature.clone();
