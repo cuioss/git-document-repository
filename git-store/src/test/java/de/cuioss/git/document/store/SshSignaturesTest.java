@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -253,6 +254,58 @@ class SshSignaturesTest {
                     () -> assertArrayEquals(key.publicKeyBlob(), accepted.blob(), "the blob"),
                     () -> assertFalse(accepted.toString().contains(Base64.getEncoder().encodeToString(key.publicKey())
                             .substring(0, 16)), "the rendering carries no key byte"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Values")
+    class Values {
+
+        @Test
+        @DisplayName("GDR-STORE-12: an accepted key copies its bytes in and out and compares them by content")
+        void acceptedKey() {
+            byte[] bytes = TestKeys.ed25519().publicKey();
+            var accepted = new SshSignatures.AcceptedKey(bytes);
+            byte[] original = bytes.clone();
+
+            bytes[0] ^= 1;
+            accepted.key()[1] ^= 1;
+
+            var same = new SshSignatures.AcceptedKey(original);
+            assertAll(() -> assertArrayEquals(original, accepted.key(), "neither the input nor an output changes it"),
+                    () -> assertEquals(same, accepted, "equal bytes, equal keys"),
+                    () -> assertEquals(same.hashCode(), accepted.hashCode(), "equal bytes, equal hashes"),
+                    () -> assertNotEquals(new SshSignatures.AcceptedKey(bytes), accepted, "other bytes, other key"),
+                    () -> assertEquals("AcceptedKey[ssh-ed25519]", accepted.toString(), "the rendering"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-12: a decoded signature copies its byte arrays in and out and compares them by content")
+        void decodedSignature() {
+            var key = TestKeys.ed25519();
+            String armored = sign(key, SshSignatures.NAMESPACE_GIT, message());
+            var decoded = decoded(armored);
+
+            decoded.publicKeyBlob()[0] ^= 1;
+            decoded.signature()[0] ^= 1;
+            byte[] blob = decoded.publicKeyBlob();
+            byte[] signature = decoded.signature();
+            var built = new SshSignatures.DecodedSignature(blob, SshSignatures.NAMESPACE_GIT,
+                    SshSignatures.HASH_SHA512, SshSignatures.KEY_TYPE, signature);
+            blob[0] ^= 1;
+            signature[0] ^= 1;
+            byte[] otherSignature = decoded.signature();
+            otherSignature[0] ^= 1;
+            var other = new SshSignatures.DecodedSignature(decoded.publicKeyBlob(), SshSignatures.NAMESPACE_GIT,
+                    SshSignatures.HASH_SHA512, SshSignatures.KEY_TYPE, otherSignature);
+
+            assertAll(() -> assertArrayEquals(key.publicKeyBlob(), decoded.publicKeyBlob(), "an output changes nothing"),
+                    () -> assertEquals(decoded(armored), decoded, "the same armor, an equal signature"),
+                    () -> assertEquals(decoded(armored).hashCode(), decoded.hashCode(), "an equal hash"),
+                    () -> assertEquals(decoded, built, "the input arrays changed after construction change nothing"),
+                    () -> assertNotEquals(decoded, other, "other signature bytes, another signature"),
+                    () -> assertEquals("DecodedSignature[namespace=git, hash=sha512, type=ssh-ed25519]",
+                            decoded.toString(), "the rendering names no byte"));
         }
     }
 

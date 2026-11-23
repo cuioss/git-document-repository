@@ -30,6 +30,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Objects;
 import java.util.Optional;
 
 
@@ -325,14 +326,20 @@ final class SshSignatures {
     }
 
     /**
-     * An accepted Ed25519 public key line.
+     * An accepted Ed25519 public key line. The key is copied on the way in and on the way out, and equality compares
+     * its bytes.
+     *
+     * @param key the 32 bytes of the key
      */
-    static final class AcceptedKey implements KeyLine {
+    record AcceptedKey(byte[] key) implements KeyLine {
 
-        private final byte[] key;
-
-        AcceptedKey(byte[] key) {
-            this.key = key.clone();
+        /**
+         * Creates an accepted key from a copy of the key bytes.
+         *
+         * @param key the 32 bytes of the key
+         */
+        AcceptedKey {
+            key = key.clone();
         }
 
         /**
@@ -340,7 +347,8 @@ final class SshSignatures {
          *
          * @return a copy of the 32 key bytes
          */
-        byte[] key() {
+        @Override
+        public byte[] key() {
             return key.clone();
         }
 
@@ -353,6 +361,32 @@ final class SshSignatures {
             return publicKeyBlob(key);
         }
 
+        /**
+         * Compares the key bytes.
+         *
+         * @param other the object to compare with
+         * @return whether {@code other} is an accepted key with the same bytes
+         */
+        @Override
+        public boolean equals(@Nullable Object other) {
+            return other instanceof AcceptedKey(var otherKey) && Arrays.equals(key, otherKey);
+        }
+
+        /**
+         * Hashes the key bytes.
+         *
+         * @return the hash of the content of the key
+         */
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(key);
+        }
+
+        /**
+         * Names the key type only, never a byte of the key.
+         *
+         * @return {@code AcceptedKey[ssh-ed25519]}
+         */
         @Override
         public String toString() {
             return "AcceptedKey[" + KEY_TYPE + "]";
@@ -374,23 +408,30 @@ final class SshSignatures {
     }
 
     /**
-     * A decoded signature.
+     * A decoded signature. The byte arrays are copied on the way in and on the way out, and equality compares their
+     * content.
+     *
+     * @param publicKeyBlob the public key blob the signature embeds
+     * @param namespace     the namespace the signature was made in
+     * @param hashAlgorithm the hash algorithm of the signed blob
+     * @param signatureType the type of the signature
+     * @param signature     the raw signature bytes
      */
-    static final class DecodedSignature implements Decoding {
+    record DecodedSignature(byte[] publicKeyBlob, String namespace, String hashAlgorithm, String signatureType,
+    byte[] signature) implements Decoding {
 
-        private final byte[] publicKeyBlob;
-        private final String namespace;
-        private final String hashAlgorithm;
-        private final String signatureType;
-        private final byte[] signature;
-
-        DecodedSignature(byte[] publicKeyBlob, String namespace, String hashAlgorithm, String signatureType,
-                byte[] signature) {
-            this.publicKeyBlob = publicKeyBlob.clone();
-            this.namespace = namespace;
-            this.hashAlgorithm = hashAlgorithm;
-            this.signatureType = signatureType;
-            this.signature = signature.clone();
+        /**
+         * Creates a decoded signature from copies of the byte arrays.
+         *
+         * @param publicKeyBlob the public key blob the signature embeds
+         * @param namespace     the namespace the signature was made in
+         * @param hashAlgorithm the hash algorithm of the signed blob
+         * @param signatureType the type of the signature
+         * @param signature     the raw signature bytes
+         */
+        DecodedSignature {
+            publicKeyBlob = publicKeyBlob.clone();
+            signature = signature.clone();
         }
 
         /**
@@ -398,35 +439,9 @@ final class SshSignatures {
          *
          * @return a copy of the blob
          */
-        byte[] publicKeyBlob() {
+        @Override
+        public byte[] publicKeyBlob() {
             return publicKeyBlob.clone();
-        }
-
-        /**
-         * Returns the namespace the signature was made in.
-         *
-         * @return the namespace
-         */
-        String namespace() {
-            return namespace;
-        }
-
-        /**
-         * Returns the hash algorithm of the signed blob.
-         *
-         * @return the hash algorithm
-         */
-        String hashAlgorithm() {
-            return hashAlgorithm;
-        }
-
-        /**
-         * Returns the type of the signature.
-         *
-         * @return the signature type
-         */
-        String signatureType() {
-            return signatureType;
         }
 
         /**
@@ -434,10 +449,42 @@ final class SshSignatures {
          *
          * @return a copy of the signature bytes
          */
-        byte[] signature() {
+        @Override
+        public byte[] signature() {
             return signature.clone();
         }
 
+        /**
+         * Compares every component, the byte arrays by content.
+         *
+         * @param other the object to compare with
+         * @return whether {@code other} is a decoded signature with equal components
+         */
+        @Override
+        public boolean equals(@Nullable Object other) {
+            return other instanceof DecodedSignature(var otherBlob, var otherNamespace, var otherHash,
+                    var otherType, var otherSignature)
+                    && Arrays.equals(publicKeyBlob, otherBlob) && namespace.equals(otherNamespace)
+                    && hashAlgorithm.equals(otherHash) && signatureType.equals(otherType)
+                    && Arrays.equals(signature, otherSignature);
+        }
+
+        /**
+         * Hashes every component, the byte arrays by content.
+         *
+         * @return the hash
+         */
+        @Override
+        public int hashCode() {
+            return Objects.hash(Arrays.hashCode(publicKeyBlob), namespace, hashAlgorithm, signatureType,
+                    Arrays.hashCode(signature));
+        }
+
+        /**
+         * Names namespace, hash algorithm and signature type, never a byte of key or signature.
+         *
+         * @return {@code DecodedSignature[namespace=..., hash=..., type=...]}
+         */
         @Override
         public String toString() {
             return "DecodedSignature[namespace=" + namespace + ", hash=" + hashAlgorithm + ", type=" + signatureType
