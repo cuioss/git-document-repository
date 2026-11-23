@@ -60,13 +60,20 @@ public final class HermeticGitConfigurationExtension implements BeforeEachCallba
     }
 
     /**
-     * Restores the reader that was installed before the test method.
+     * Restores the reader that was installed before the test method, provided {@link #beforeEach(ExtensionContext)}
+     * stored one. Jupiter calls this method also when an earlier {@code BeforeEachCallback} failed and this
+     * extension's {@code beforeEach} never ran; the store then holds no reader and the installed one is left as it
+     * is, because JGit 7.8.0 {@code SystemReader.setInstance(null)} would install JGit's default reader and discard a
+     * reader an enclosing fixture installed.
      *
      * @param context the context of the test method
      */
     @Override
     public void afterEach(ExtensionContext context) {
-        SystemReader.setInstance(context.getStore(NAMESPACE).remove(PREVIOUS, SystemReader.class));
+        SystemReader previous = context.getStore(NAMESPACE).remove(PREVIOUS, SystemReader.class);
+        if (previous != null) {
+            SystemReader.setInstance(previous);
+        }
     }
 
     /** A reader that opens an empty user, system and JGit configuration and delegates every other call. */

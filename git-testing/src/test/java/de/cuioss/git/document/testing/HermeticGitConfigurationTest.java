@@ -108,6 +108,23 @@ class HermeticGitConfigurationTest {
         }
     }
 
+    @Test
+    @DisplayName("Should leave the installed reader untouched when no setup stored a previous one")
+    void shouldLeaveReaderUntouchedWithoutSetup(ExtensionContext context) {
+        var original = SystemReader.getInstance();
+        // the reader of an enclosing fixture; this extension's beforeEach never ran, as after a failed earlier callback
+        var enclosing = new SystemReader.Delegate(original);
+        SystemReader.setInstance(enclosing);
+        try {
+            extension.afterEach(context);
+
+            assertSame(enclosing, SystemReader.getInstance(),
+                    "Without a stored reader the installed one is kept, never replaced by JGit's default");
+        } finally {
+            SystemReader.setInstance(original);
+        }
+    }
+
     private static String userSetting() throws Exception {
         return SystemReader.getInstance().getUserConfig().getString(SECTION, null, NAME);
     }

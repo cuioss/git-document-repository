@@ -84,9 +84,6 @@ class LocalRepositoryExtensionTest {
     private static final ExtensionContext.Namespace AUTO_CLOSE_NAMESPACE =
             ExtensionContext.Namespace.create(LocalRepositoryExtensionTest.class, "auto-close");
 
-    /** Plain {@link AutoCloseable} values stored by {@link AutoCloseSetting}, checked after the class. */
-    private static final List<PlainCloseable> PLAIN_CLOSEABLES = new CopyOnWriteArrayList<>();
-
     @RegisterExtension
     static final ParameterResolver EXTENSION_CONTEXT = new ExtensionContextResolver();
 
@@ -459,10 +456,27 @@ class LocalRepositoryExtensionTest {
      * applied by Jupiter, not only as a string. One run cannot tell which Surefire execution it is; that the second
      * execution receives the setting was shown once by requiring the value closed in both executions, which failed in
      * {@code store-autoclose-off} alone.
+     * <p>
+     * The check is this nested class's own {@code @AfterAll}, not one of the outer class: it runs only when the test
+     * factory of this class was selected, and after Jupiter closed the store of the factory's context, so a run that
+     * selects another test alone is not failed by a value it never stored.
      */
     @Nested
     @DisplayName("Store auto-close setting of the run")
     class AutoCloseSetting {
+
+        /** Plain {@link AutoCloseable} values stored by the test factory, checked after this class. */
+        private static final List<PlainCloseable> PLAIN_CLOSEABLES = new CopyOnWriteArrayList<>();
+
+        @AfterAll
+        static void plainCloseablesFollowTheSetting() {
+            assertAll("plain AutoCloseable values stored by the test factory",
+                    () -> assertEquals(1, PLAIN_CLOSEABLES.size(), "The test factory stored one plain AutoCloseable"),
+                    () -> assertAll(PLAIN_CLOSEABLES.stream()
+                            .map(closeable -> () -> assertEquals(closeable.autoClosing(), closeable.closed().get(),
+                                    "Jupiter closes a plain AutoCloseable exactly when auto-closing is on: "
+                                            + closeable))));
+        }
 
         @TestFactory
         @DisplayName("Should run with the auto-close setting the Surefire execution configures")
@@ -477,16 +491,6 @@ class LocalRepositoryExtensionTest {
             return Stream.of(dynamicTest(name, () -> assertTrue(setting.isEmpty() || "false".equals(setting.get()),
                     "The run either keeps the default or receives exactly the value false: " + setting)));
         }
-    }
-
-    @AfterAll
-    static void plainCloseablesFollowTheSetting() {
-        assertAll("plain AutoCloseable values stored by the test factory",
-                () -> assertEquals(1, PLAIN_CLOSEABLES.size(), "The test factory stored one plain AutoCloseable"),
-                () -> assertAll(PLAIN_CLOSEABLES.stream()
-                        .map(closeable -> () -> assertEquals(closeable.autoClosing(), closeable.closed().get(),
-                                "Jupiter closes a plain AutoCloseable exactly when auto-closing is on: "
-                                        + closeable))));
     }
 
     /**
