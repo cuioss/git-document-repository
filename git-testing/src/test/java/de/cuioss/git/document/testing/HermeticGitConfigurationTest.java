@@ -91,7 +91,7 @@ class HermeticGitConfigurationTest {
                             () -> assertTrue(hermetic.getJGitConfig().getSections().isEmpty(),
                                     "The JGit configuration is empty"),
                             () -> assertNull(isolatedRepository.repository().getConfig()
-                                    .getString(SECTION, null, NAME),
+                                            .getString(SECTION, null, NAME),
                                     "A repository opened inside the isolation does not see the user setting"),
                             () -> assertEquals(host.getHostname(), hermetic.getHostname(),
                                     "Every other call is delegated to the previous reader"));

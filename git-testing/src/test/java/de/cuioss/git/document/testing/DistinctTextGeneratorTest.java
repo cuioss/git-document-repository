@@ -81,7 +81,7 @@ class DistinctTextGeneratorTest {
         assertAll("distinct values",
                 () -> assertEquals(values.size(), Set.copyOf(values).size(), "Every value differs from the others"),
                 () -> assertFalse(values.stream().anyMatch(value -> values.stream()
-                        .anyMatch(other -> other != value && other.startsWith(value))),
+                                .anyMatch(other -> other != value && other.startsWith(value))),
                         "No value is the start of another, so value 1 is found in no text holding only value 12"));
     }
 
