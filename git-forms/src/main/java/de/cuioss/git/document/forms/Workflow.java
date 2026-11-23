@@ -365,7 +365,7 @@ public final class Workflow {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, "transition: not in the workflow");
         }
         if (!transition.get().from().equals(currentState)) {
-            return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, "transition: not allowed in the current state");
+            return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, DocumentTransitions.NOT_IN_CURRENT_STATE);
         }
         return FormsResult.ok(transition.get());
     }
