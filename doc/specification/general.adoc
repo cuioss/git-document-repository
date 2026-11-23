@@ -98,8 +98,10 @@ end-to-end redirect test of xref:git-core.adoc#GDR-CORE-2[GDR-CORE-2]) on 2026-1
 the root POM, the versions of the others by `cui-java-parent`. On 2026-11-21 the owner approved the YAML library
 `org.snakeyaml:snakeyaml-engine` and the JSON Schema validator `dev.harrel:json-schema` for `git-forms`; both add no
 further artifact to the compile or runtime closure (versions and sources checked:
-xref:git-forms.adoc[`git-forms`]). Every other dependency below is open and needs the owner's approval before it is
-added:
+xref:git-forms.adoc[`git-forms`]). The alternatives considered, as the owner names them, were SnakeYAML 1.x and 2.x for
+the YAML library and networknt json-schema (`com.networknt:json-schema-validator`) for the validator; the owner gave no
+reasons for passing over either, and the reasons cannot be reconstructed from this repository, so none are recorded.
+Every other dependency below is open and needs the owner's approval before it is added:
 
 [cols="1,3"]
 |===

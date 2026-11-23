@@ -39,6 +39,16 @@ Its two libraries are decided; the owner approved both on 2026-11-21:
   `dev/harrel/jsonschema/messages.properties` and its bundled meta-schemas
   (link:https://repo1.maven.org/maven2/dev/harrel/json-schema/1.9.1/json-schema-1.9.1.jar[json-schema 1.9.1 jar]).
 
+The alternatives considered in the decision of 2026-11-21, as the owner names them:
+
+* For the YAML library, `org.snakeyaml:snakeyaml-engine` 3.2 was chosen; the alternative considered was SnakeYAML 1.x
+  and 2.x.
+* For the JSON Schema validator, `dev.harrel:json-schema` 1.9.1 was chosen; the alternative considered was networknt
+  json-schema (`com.networknt:json-schema-validator`).
+
+The owner gave no reasons for passing over either alternative, and the reasons cannot be reconstructed from this
+repository; none are recorded here.
+
 The tests of `git-forms` run on the class path, not on the module path: `git-testing` requires `org.junit.jupiter.api`
 transitively, so on the module path Surefire would place `org.junit.platform.commons` in a named module while its
 launcher stays in the unnamed module, and the launcher fails with an `IllegalAccessError` on
