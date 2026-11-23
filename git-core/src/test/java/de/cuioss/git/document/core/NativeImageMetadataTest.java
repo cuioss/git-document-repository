@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.ResourceBundle;
+
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -75,9 +77,9 @@ class NativeImageMetadataTest {
                 () -> assertAll(entries.stream().map(entry -> (Executable) () -> assertInstanceOf(Map.class, entry,
                         "Every entry of " + REFLECT_CONFIG + " is a JSON object: " + entry))),
                 () -> assertEquals(List.of(Map.of(
-                        "name", JGIT_TEXT,
-                        "allPublicFields", true,
-                        "methods", List.of(Map.of("name", "<init>", "parameterTypes", List.of())))), entries,
+                                "name", JGIT_TEXT,
+                                "allPublicFields", true,
+                                "methods", List.of(Map.of("name", "<init>", "parameterTypes", List.of())))), entries,
                         REFLECT_CONFIG + " lists JGitText with its public fields and its no-argument constructor,"
                                 + " and nothing else"));
     }
