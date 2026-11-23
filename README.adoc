@@ -63,8 +63,10 @@ file layout of a document and the YAML codec that writes its data in schema orde
 links follow. The other aspect modules (`git-timestamp`, `git-directory`) follow as the document store needs them.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
-the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives.
-`git-core` ships the GraalVM native-image metadata for the JGit classes it reaches; `git-store` relies on it, and
+the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives or a
+direct compile or runtime dependency of `git-core` outside JSpecify, JGit and `cui-java-tools`, optional or not.
+`git-core` ships the GraalVM native-image metadata for what its code paths reach of JGit: one class and one
+translation bundle, JGit's `JGitText`; `git-store` relies on it, and
 `git-forms` ships the resource metadata of its JSON Schema validator (see
 link:doc/specification/general.adoc[General Requirements], GDR-GEN-1 and GDR-NFR-4).
 
