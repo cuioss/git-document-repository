@@ -16,10 +16,17 @@
 package de.cuioss.git.document.forms;
 
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 import dev.harrel.jsonschema.Error;
@@ -40,8 +47,16 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * A violation names the JSON Pointer of the failing value (RFC 6901) and a message composed by this class from the
  * failing keyword and the constraint of the schema: a number, a type name or a format name, nothing else. The
- * validator's own messages are never used, because they may quote the value of the instance (GDR-NFR-3). The validator
- * holds no state; one instance may serve every thread.
+ * validator's own messages are never used, because they may quote the value of the instance (GDR-NFR-3).
+ * <p>
+ * The library's validator is prepared once per schema, by {@link FormSchema#parse(String, byte[])}, and kept by the
+ * {@link FormSchema}; {@code validate} and {@code required} only read it. That one prepared validator serves every
+ * thread, checked against the source of {@code dev.harrel:json-schema} 1.9.1: {@code Validator.validate} creates a new
+ * {@code EvaluationContext} per call, which holds all state of one evaluation; the {@code SchemaRegistry} keeps its
+ * schemas in a {@code volatile} state over {@code ConcurrentHashMap}s and is written only by
+ * {@code JsonParser.parseRootSchema}, under a {@code ReentrantLock}, which runs at preparation and otherwise only for a
+ * reference the registry does not hold, which {@link FormSchema#parse(String, byte[])} rules out; and the evaluators of
+ * the keywords hold final fields only. This class holds no state of its own; one instance may serve every thread.
  *
  * @since 0.1
  */
@@ -50,8 +65,17 @@ public final class SchemaValidator {
     /** The message provider of the library, reduced to the message key: the library's texts are never shown. */
     private static final MessageProvider KEY_ONLY = (key, arguments) -> key;
 
+    /**
+     * The URI under which the references to the applied schemas of {@link EvaluatedLocations} are registered, one
+     * definition per schema object of the file.
+     */
+    private static final URI APPLIED = URI.create("https://gdr.invalid/applied");
+
     private static final String AT_LEAST = "must have at least ";
     private static final String AT_MOST = "must have at most ";
+
+    /** The number of preparations since the class was loaded; read by the tests only. */
+    private static final AtomicInteger PREPARATIONS = new AtomicInteger();
 
     /**
      * Validates data against a schema, the keyword {@code required} not evaluated.
@@ -66,7 +90,7 @@ public final class SchemaValidator {
     public ValidationResult validate(FormSchema schema, Map<String, ?> data) {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(data, "data");
-        Prepared prepared = prepare(schema);
+        Prepared prepared = schema.prepared();
         Validator.Result result = prepared.validator().validate(prepared.uri(), DataNode.root(data));
         if (result.isValid()) {
             return new ValidationResult.Valid();
@@ -112,27 +136,50 @@ public final class SchemaValidator {
         return missing.isEmpty() ? new ValidationResult.Valid() : new ValidationResult.MandatoryFieldsMissing(missing);
     }
 
-    /** Tells whether the validator accepts a schema; the check of {@link FormSchema#parse(String, byte[])}. */
-    static boolean accepts(FormSchema schema) {
+    /**
+     * Prepares the validator of a schema, the one preparation of {@link FormSchema#parse(String, byte[])}: a validator
+     * of its own, with the schema without {@code required} registered, and one schema of references to every schema
+     * object of the file, by which {@link EvaluatedLocations} applies a sub-schema without registering anything later.
+     *
+     * @param withoutRequired the schema without {@code required}
+     * @param resources       the resources of the schema file, which give the JSON Pointer of each schema object
+     * @param schemaObjects   the schema objects of the file ({@link SchemaResources#schemaObjects()})
+     * @return the prepared validator, or empty when the validator refuses the schema
+     */
+    static Optional<Prepared> prepare(Map<String, @Nullable Object> withoutRequired, SchemaResources resources,
+            List<Map<?, ?>> schemaObjects) {
+        PREPARATIONS.incrementAndGet();
         try {
-            prepare(schema);
-            return true;
+            Validator validator = new ValidatorFactory()
+                    .withJsonNodeFactory(DataNode.FACTORY)
+                    .withMessageProvider(KEY_ONLY)
+                    .createValidator();
+            URI uri = validator.registerSchema(SchemaResources.BASE, DataNode.root(withoutRequired));
+            Map<String, @Nullable Object> definitions = new LinkedHashMap<>();
+            Map<Object, URI> applied = new IdentityHashMap<>();
+            for (Map<?, ?> schemaObject : schemaObjects) {
+                @Nullable String pointer = resources.pointerOf(schemaObject);
+                if (pointer != null) {
+                    String name = String.valueOf(definitions.size());
+                    // the fragment is URL-encoded, because the validator decodes the fragment of a reference so
+                    String reference = uri + "#" + URLEncoder.encode(pointer, StandardCharsets.UTF_8);
+                    definitions.put(name, Map.of("$ref", reference));
+                    applied.put(schemaObject, URI.create(APPLIED + "#/$defs/" + name));
+                }
+            }
+            validator.registerSchema(APPLIED, DataNode.root(Map.of("$defs", definitions)));
+            return Optional.of(new Prepared(validator, uri, Collections.unmodifiableMap(applied)));
         }
         // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
             // the library signals a schema it refuses by an exception whose message may quote the schema
-            return false;
+            return Optional.empty();
         }
     }
 
-    /** A fresh validator with the schema without {@code required} registered. */
-    static Prepared prepare(FormSchema schema) {
-        Validator validator = new ValidatorFactory()
-                .withJsonNodeFactory(DataNode.FACTORY)
-                .withMessageProvider(KEY_ONLY)
-                .createValidator();
-        URI uri = validator.registerSchema(SchemaResources.BASE, DataNode.root(schema.withoutRequired()));
-        return new Prepared(validator, uri);
+    /** The number of preparations since the class was loaded, for the tests. */
+    static int preparations() {
+        return PREPARATIONS.get();
     }
 
     /** The violation of an error of the library: its instance location and a message of this class. */
@@ -143,7 +190,13 @@ public final class SchemaValidator {
         return new Violation(error.getInstanceLocation(), message(keyword, constraint));
     }
 
-    /** The value of the keyword in the schema at the location, or {@code null} when it cannot be found. */
+    /**
+     * The value of the keyword in the schema at the location, or {@code null} when it cannot be found. The fragment is
+     * read as a JSON Pointer from the root of the registered schema, also for a keyword inside an embedded schema
+     * resource (a schema object with its own {@code $id}): {@code dev.harrel:json-schema} 1.9.1 forms every schema
+     * location from the URI of the root and the full JSON Pointer from the root, because
+     * {@code SchemaParsingContext.getBaseUri} returns the URI of the root resource, so no lookup per resource is needed.
+     */
     private static @Nullable Object constraint(Map<String, @Nullable Object> schema, String location,
             String keyword) {
         String fragment;
@@ -230,7 +283,24 @@ public final class SchemaValidator {
         return constraint instanceof String name ? name : "the schema";
     }
 
-    /** A validator with the schema registered under its URI. */
-    record Prepared(Validator validator, URI uri) {
+    /**
+     * A validator with the schema registered under its URI, and the URI of the reference to every schema object of the
+     * file, by identity. Only read after its preparation, so it may serve every thread.
+     *
+     * @param validator the validator of the library
+     * @param uri       the URI of the schema without {@code required}
+     * @param applied   the URI of the reference to each schema object of the file, compared by identity
+     */
+    record Prepared(Validator validator, URI uri, Map<Object, URI> applied) {
+
+        /**
+         * The URI by which the validator applies a schema object of the file.
+         *
+         * @param schemaObject a schema object of the file
+         * @return the URI, or empty for an object that is no schema object of the file
+         */
+        Optional<URI> appliedUri(Map<?, ?> schemaObject) {
+            return Optional.ofNullable(applied.get(schemaObject));
+        }
     }
 }

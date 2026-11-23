@@ -156,6 +156,39 @@ class SchemaValidatorTest {
                     () -> assertEquals(FormsOutcome.INVALID, result.outcome(), "the outcome is INVALID"),
                     () -> assertEquals(Optional.of("4 violations"), result.detail(), "the detail names the number"));
         }
+
+        static Stream<Arguments> embeddedResources() {
+            return Stream.of(
+                    Arguments.of("a keyword inside an inline $id resource", """
+                            { "maximum": 7,
+                              "properties": { "a": { "$id": "https://example.invalid/e",
+                                "properties": { "n": { "maximum": 5 } } } } }
+                            """, Map.of("a", Map.of("n", 6L)), "/a/n"),
+                    Arguments.of("a keyword reached by a $ref to an $id under $defs", """
+                            { "maximum": 7,
+                              "$defs": { "e": { "$id": "https://example.invalid/e",
+                                "properties": { "n": { "maximum": 5 } } } },
+                              "properties": { "a": { "$ref": "https://example.invalid/e" } } }
+                            """, Map.of("a", Map.of("n", 6L)), "/a/n"),
+                    Arguments.of("a keyword reached by a pointer into an embedded resource", """
+                            { "maximum": 7,
+                              "$defs": { "e": { "$id": "https://example.invalid/e",
+                                "$defs": { "m": { "maximum": 5 } } } },
+                              "properties": { "a": { "$ref": "https://example.invalid/e#/$defs/m" } } }
+                            """, Map.of("a", 6L), "/a"));
+        }
+
+        /**
+         * dev.harrel:json-schema 1.9.1 reports every schema location as the root URI and the full JSON Pointer from the
+         * root, also inside an embedded resource; these cases pin that the message quotes the keyword's own number.
+         */
+        @ParameterizedTest(name = "GDR-FORMS-2: {0} quotes its own constraint")
+        @MethodSource("embeddedResources")
+        void embeddedResourceConstraint(String description, String text, Map<String, @Nullable Object> data,
+                String pointer) {
+            assertEquals(new ValidationResult.Invalid(List.of(new Violation(pointer, "must be at most 5"))),
+                    validator.validate(schema(text), data), "the constraint of the embedded resource");
+        }
     }
 
     @Nested

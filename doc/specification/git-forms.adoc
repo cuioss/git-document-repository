@@ -224,6 +224,23 @@ dialect, which the jar holds as the resource `draft2020-12.json`
 1.9.1, `SpecificationVersion`]). A schema the library does not accept is the outcome `MALFORMED` of `git-store`, passed
 on, its detail naming the schema file and the problem, never content of the schema.
 
+The validator of the library is prepared once per schema: `FormSchema.parse` creates it, registers the schema without
+`required` and one schema of references to every schema object of the file, and the `FormSchema` keeps it in a final
+field; `validate` and `required` only read it, and the check of `unevaluatedProperties` and `unevaluatedItems` applies
+a sub-schema by the reference registered for it, so no check registers anything. That one validator serves every
+thread, checked against the source of `dev.harrel:json-schema` 1.9.1: `Validator.validate` creates a new
+`EvaluationContext` per call, which holds the whole state of one evaluation
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Validator.java[json-schema
+1.9.1, `Validator`]); the `SchemaRegistry` keeps its schemas in a `volatile` state over `ConcurrentHashMap`s
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SchemaRegistry.java[json-schema
+1.9.1, `SchemaRegistry`]) and is written only by `JsonParser.parseRootSchema`, under a `ReentrantLock`
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/JsonParser.java[json-schema
+1.9.1, `JsonParser`]), which runs at registration and during validation only for a reference the registry does not hold,
+which the refusal of a reference outside the file rules out; and the evaluators of the keywords hold final fields only
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Applicators.java[json-schema
+1.9.1, `Applicators`];
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[`Evaluators`]).
+
 The data reaches the validator through the library's public interfaces `JsonNodeFactory` and `JsonNode`, implemented by
 the package-private `DataNode` over the JSON data model, so none of the optional JSON providers of the library is used.
 `DataNode` checks the whole data against the data model before validation, every nested value included, and refuses a
@@ -276,6 +293,13 @@ reports `/name`, and so does `{"$id": "https://example.invalid/a", "$ref": "b", 
 "required": ["name"]}, "$defs": {"b": {"$id": "b", "$dynamicRef": "c#node"}, "c": {"$id": "c", "$dynamicAnchor":
 "node"}}}`, whose `$dynamicRef` the validator may bind to `x`; a key named `required` in any other
 object, the value of `const` for example, is data and stays. It returns a `ValidationResult`: `Valid`, or `Invalid` with every `Violation` (JSON Pointer and message).
+The message quotes the constraint of the failing keyword, which `SchemaValidator` reads from the schema without
+`required` at the schema location the library reports, its fragment taken as a JSON Pointer from the root. That holds
+also for a keyword inside an embedded schema resource, a schema object with its own `$id`: `dev.harrel:json-schema`
+1.9.1 forms every schema location from the URI of the root and the full JSON Pointer from the root, because
+`SchemaParsingContext.getBaseUri` returns the URI of the root resource
+(link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/SchemaParsingContext.java[json-schema
+1.9.1, `SchemaParsingContext`]), so no lookup per resource is needed and such a keyword quotes its own number.
 `SchemaValidator.required` checks `required` alone and applies the sub-schemas as Draft 2020-12 applies them
 (link:https://json-schema.org/draft/2020-12[JSON Schema, Draft 2020-12], Core, section 10, "A Vocabulary for Applying
 Subschemas"): in the schema itself; for every property the data holds, in the sub-schema of `properties` that names it, in
@@ -296,7 +320,10 @@ matches) and `unevaluatedItems` of an applied schema; the annotations of `not` a
 satisfies an applied schema is decided by the validator with the schema without `required`, as `validate` evaluates it,
 so `{"unevaluatedProperties": {"required": ["name"]}}` with the data `{"entry": {}}` reports `/entry/name`, while the
 data `{}` is complete. The evaluation is computed only for an `unevaluatedProperties` or `unevaluatedItems` whose
-sub-schema holds `required`. A pattern is a Java regular expression found anywhere in the name, not anchored, as
+sub-schema holds `required`. Whether a value satisfies an applied schema is decided once per pair of schema and value
+within one check, yet each decision validates the value with the whole applied schema, which walks again the schemas
+it applies in place; within one location the cost therefore grows with the square of the schemas applied in place.
+The chain of 128 such schemas and the nesting limit below bound it; the cost is accepted, not rewritten. A pattern is a Java regular expression found anywhere in the name, not anchored, as
 `dev.harrel:json-schema` 1.9.1 matches it (`Pattern.compile` and `Matcher.find`,
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Applicators.java[json-schema
 1.9.1, `Applicators`]). A reference is resolved per schema resource, as Draft 2020-12 resolves it (Core, section 8.2,

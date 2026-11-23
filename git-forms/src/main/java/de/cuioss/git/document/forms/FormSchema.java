@@ -23,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 
@@ -64,7 +65,12 @@ import org.jspecify.annotations.Nullable;
  * validator {@code dev.harrel:json-schema} refuses, for example one that does not conform to the meta-schema of the
  * dialect. These rules hold for every schema of the file a validator may apply, a schema that only a reference selects
  * (under an unknown keyword such as {@code x-contact}) included, and {@code required} is removed from each of them for
- * {@link SchemaValidator#validate(FormSchema, Map)}. A schema is immutable and may serve every thread.
+ * {@link SchemaValidator#validate(FormSchema, Map)}.
+ * <p>
+ * A schema is immutable and may serve every thread. It holds the validator of {@code dev.harrel:json-schema} 1.9.1 that
+ * {@link #parse(String, byte[])} prepared, once per schema, in a final field; every later use only reads it, which the
+ * library's {@code Validator.validate} allows concurrently once all schemas are registered (see
+ * {@link SchemaValidator}).
  *
  * @since 0.1
  */
@@ -127,15 +133,15 @@ public final class FormSchema {
     private final Shape shape;
     private final List<String> splitProperties;
     private final SchemaResources resources;
+    private final SchemaValidator.Prepared prepared;
 
-    private FormSchema(String path, Map<String, @Nullable Object> schema, SchemaResources resources,
-            List<Map<?, ?>> schemas, List<String> splitProperties) {
+    private FormSchema(String path, Map<String, @Nullable Object> schema, Map<String, @Nullable Object> withoutRequired,
+            SchemaResources resources, SchemaValidator.Prepared prepared, List<String> splitProperties) {
         this.path = path;
         this.schema = schema;
+        this.withoutRequired = withoutRequired;
         this.resources = resources;
-        Set<Object> schemaObjects = identitySet();
-        schemaObjects.addAll(schemas);
-        this.withoutRequired = withoutRequired(schema, schemaObjects);
+        this.prepared = prepared;
         this.shape = Shape.of(resources, schema);
         this.splitProperties = List.copyOf(splitProperties);
     }
@@ -178,11 +184,15 @@ public final class FormSchema {
         if (problem != null) {
             return malformed(path, problem);
         }
-        var formSchema = new FormSchema(path, schema, resources, schemas, splitProperties(schema));
-        if (!SchemaValidator.accepts(formSchema)) {
+        Set<Object> schemaObjects = identitySet();
+        schemaObjects.addAll(schemas);
+        Map<String, @Nullable Object> withoutRequired = withoutRequired(schema, schemaObjects);
+        Optional<SchemaValidator.Prepared> prepared = SchemaValidator.prepare(withoutRequired, resources, schemas);
+        if (prepared.isEmpty()) {
             return malformed(path, "not a JSON Schema the validator accepts");
         }
-        return FormsResult.ok(formSchema);
+        return FormsResult.ok(
+                new FormSchema(path, schema, withoutRequired, resources, prepared.get(), splitProperties(schema)));
     }
 
     /**
@@ -329,6 +339,14 @@ public final class FormSchema {
     /** The schema without the keyword {@code required}, which validation evaluates. */
     Map<String, @Nullable Object> withoutRequired() {
         return withoutRequired;
+    }
+
+    /**
+     * The validator of the library, prepared once by {@link #parse(String, byte[])}, which {@code validate} and
+     * {@code required} of {@link SchemaValidator} share.
+     */
+    SchemaValidator.Prepared prepared() {
+        return prepared;
     }
 
     /**
