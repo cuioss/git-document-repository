@@ -157,6 +157,7 @@ class DraftExpiryTest {
         tree.put("save", Map.of("max-attempts", Generators.integers(1, 10).next()));
         tree.put("drafts", Map.of("expiry", expiry.toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
 
@@ -229,7 +230,7 @@ class DraftExpiryTest {
 
     private static StoreWriter open(StoreRepository storeRepository, Path gitDir, StoreConfiguration configuration,
             Instant now) {
-        return value(StoreWriter.open(storeRepository, gitDir, user(), configuration,
+        return value(StoreWriter.open(storeRepository, gitDir, user(), configuration, TestKeys.ed25519().source(),
                 new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)));
     }
 
@@ -492,7 +493,7 @@ class DraftExpiryTest {
 
             String updated;
             try (var writer = value(StoreWriter.open(storeRepository, gitDir, user(), configuration,
-                         new JGitRepositoryOperations(RemotePolicy.localOnly()), clock));
+                         TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()), clock));
                  ExecutorService executor = Executors.newSingleThreadExecutor()) {
                 Future<StoreResult<String>> update = executor.submit(() -> writer.draft(author, key,
                         List.of(new TreeEdit.Put(word(), content())), word()));

@@ -65,8 +65,9 @@ import org.junit.jupiter.api.io.TempDir;
  * one signing key source and one person directory, at most one anchor provider, a missing or duplicate configured id
  * refused as {@link StoreOutcome#MALFORMED} naming the service interface and the configuration key and logged as
  * {@code GIT_STORE-100}, a success logged as {@code GIT_STORE-1}, {@link StoreProviders#load(StoreConfiguration)}
- * finding the test providers registered under {@code META-INF/services}, and GDR-NFR-3: neither a configured id nor
- * the message of a failing provider reaches a detail or a log record.
+ * finding the test providers registered under {@code META-INF/services} and, beside them, the shipped signing key
+ * source {@code file} through the class-path provider-configuration file of {@code git-store}, and GDR-NFR-3: neither
+ * a configured id nor the message of a failing provider reaches a detail or a log record.
  * <p>
  * The provider ids are generated; the ids of the registered test providers are fixed by their registration.
  */
@@ -291,6 +292,20 @@ class StoreProvidersTest {
                             Objects.requireNonNull(providers.anchor()).getClass(), "the registered anchor provider"));
             LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.INFO,
                     GitStoreLogMessages.INFO.PROVIDERS_SELECTED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-12: load finds the shipped signing key source file beside the test providers")
+        void loadsShippedFileSource() {
+            var providers = providers(StoreProviders.load(configuration(FileSigningKeySource.SOURCE_ID,
+                    TestPersonDirectory.ID, null)));
+
+            assertAll(
+                    () -> assertEquals(FileSigningKeySource.class, providers.signing().getClass(),
+                            "the shipped signing key source"),
+                    () -> assertEquals(FileSigningKeySource.SOURCE_ID, providers.signing().id(), "its id"));
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO, "signing key source "
+                    + FileSigningKeySource.SOURCE_ID + ", person directory " + TestPersonDirectory.ID);
         }
 
         @Test

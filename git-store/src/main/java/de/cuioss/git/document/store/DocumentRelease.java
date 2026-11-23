@@ -16,12 +16,12 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
-import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.regex.Pattern;
 
 
 import de.cuioss.git.document.core.CommitMetadata;
@@ -61,12 +61,17 @@ import org.jspecify.annotations.Nullable;
  * remote deleted, and reads {@code main}, the working or collection branch and the release tags of the document once.
  * The version {@code n} is one more than the highest {@code v<k>} below the document's tag prefix
  * ({@link StoreReferences#releaseTags}); the message of the release commit is always {@code Release <collection>/<id>
- * v<n>}, composed by the store.
+ * v<n>}, composed by the store, followed by the {@link IdentityTrailers} of the releasing user's pseudonym and
+ * {@link IdentityClaims} (GDR-STORE-13).
  * <p>
- * A commit on the first-parent chain of {@code main}, after the commit of {@code v<n-1>}, that carries that message and
- * has the shape of a release of the document is a release {@code v<n>} whose tag is missing: the attempt creates and
- * pushes only the tag on that commit and never merges again. The shape tells a release from an ordinary save that uses
- * the message: a per-document release has the tip of the working branch at its time as its second parent (or, onto an
+ * A commit on the first-parent chain of {@code main}, after the commit of {@code v<n-1>}, whose first paragraph (the
+ * text before the first blank line) is that store-composed subject and that has the shape of a release of the document
+ * is a release {@code v<n>} whose tag is missing: the attempt creates and pushes only the tag on that commit and never
+ * merges again. No trailer is read for that decision, and a save refuses a message whose first paragraph is a release
+ * subject of its document ({@link #isReleaseSubject}), and a save onto {@code main} one with the form of a release
+ * subject of any document ({@link #isAnyReleaseSubject}), so no caller-written message can make a save commit a
+ * release, however it imitates the subject and the trailers. The shape tells a release from a commit written before that
+ * refusal or by another writer: a per-document release has the tip of the working branch at its time as its second parent (or, onto an
  * absent {@code main}, as its only parent with the same tree), reachable from the working branch now; a numbered release
  * has at most one parent and changes no path outside the entry. Otherwise the attempt merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
  * {@code main}, and the release commit has the tip of {@code main} and the tip of the working branch as its parents and
@@ -75,8 +80,13 @@ import org.jspecify.annotations.Nullable;
  * keeps its mode, so an executable file or a symbolic link of the source stays one ({@link TreeEdit.Mode}). A
  * conflicting merge
  * ends the release with the passed-on {@link GitOutcome#CONFLICT} naming the number of conflicting paths. The commit is
- * written by {@link InCoreWriter}, unsigned and without trailers, with the author and committer of
- * {@link CommitIdentities}; {@link #metadata} is the one place that builds its metadata.
+ * written by {@link InCoreWriter} with the author and committer of {@link CommitIdentities}, the trailers, and the
+ * signing of {@link CommitSignatures} (GDR-STORE-12); {@link #metadata} is the one place that builds its metadata. The
+ * signing is prepared at most once per release, by the first attempt that writes a release commit, and re-used by the
+ * later ones, so the public key is fetched once and a release that only pushes a missing tag never asks the source; a
+ * source that refuses or cannot be reached ends the release with {@link StoreOutcome#REFUSED} or
+ * {@link StoreOutcome#UNAVAILABLE} after the fetch of that attempt and before anything is written, and a signature that
+ * fails while an attempt writes its commit ends it with the outcome of the source, nothing pushed.
  * <p>
  * The local tag is written by an update that expects it absent and writes no reflog. Then {@code main} is pushed with
  * the lease of the fetched tip (the zero id for an absent {@code main}), and after that the tag against the zero-id
@@ -103,11 +113,16 @@ final class DocumentRelease {
     /** The detail of a key of content without release. */
     private static final String NO_RELEASE = "key: content without release";
 
+    /**
+     * The form of the subject of a release of any document: a collection name ({@code [a-z0-9-]+}), an id
+     * ({@code [A-Za-z0-9-]+}, which a ULID fits) and a version.
+     */
+    private static final Pattern ANY_RELEASE_SUBJECT = Pattern.compile("Release [a-z0-9-]+/[A-Za-z0-9-]+ v\\d+");
+
     private final ExplicitSave.Clone clone;
     private final RepositoryOperations operations;
     private final TechnicalUser user;
-    private final CommitIdentities identities;
-    private final Clock clock;
+    private final ExplicitSave.Committing committing;
     private final int attempts;
     private final StoreEvents events;
     private final InCoreWriter writer = new InCoreWriter();
@@ -119,8 +134,7 @@ final class DocumentRelease {
      * @param clone      the bare clone
      * @param operations the repository operations of {@code git-core}, for fetch and push
      * @param user       the technical user, holder of the credentials of every fetch and push
-     * @param identities the commit identities
-     * @param clock      the clock of the commit times
+     * @param committing the identities, the signing seam and the clock of the release commits
      * @param attempts   the attempts of a release ({@code save.max-attempts}), at least 1
      * @param events     the notification seam of the writer, told of the moved references after the locks were
      *                   released
@@ -128,12 +142,11 @@ final class DocumentRelease {
      * @throws IllegalArgumentException if {@code attempts} is less than 1
      */
     DocumentRelease(ExplicitSave.Clone clone, RepositoryOperations operations, TechnicalUser user,
-            CommitIdentities identities, Clock clock, int attempts, StoreEvents events) {
+            ExplicitSave.Committing committing, int attempts, StoreEvents events) {
         this.clone = Objects.requireNonNull(clone, "clone");
         this.operations = Objects.requireNonNull(operations, "operations");
         this.user = Objects.requireNonNull(user, "user");
-        this.identities = Objects.requireNonNull(identities, "identities");
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.committing = Objects.requireNonNull(committing, "committing");
         if (attempts < 1) {
             throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
         }
@@ -145,33 +158,43 @@ final class DocumentRelease {
      * Releases a document or numbered entry.
      *
      * @param author the author of the release commit, the user who releases
+     * @param claims the claims of that user's authentication, written as identity trailers
      * @param key    the document or entry
      * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} when {@code main} moved
-     *         and the tag is missing; {@link StoreOutcome#MALFORMED} for content without release; the passed-on
-     *         {@link GitOutcome#NOT_FOUND} for a missing working or collection branch, {@link GitOutcome#CONFLICT} for a
-     *         conflicting merge, {@link GitOutcome#REJECTED} for a rejected push of {@code main} or after every attempt
-     *         lost its lease, or the passed-on outcome that ended the release, for example
-     *         {@link GitOutcome#UNREACHABLE}
+     *         and the tag is missing; {@link StoreOutcome#MALFORMED} for content without release or an invalid
+     *         pseudonym; {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} of the signing key source;
+     *         the passed-on {@link GitOutcome#NOT_FOUND} for a missing working or collection branch,
+     *         {@link GitOutcome#CONFLICT} for a conflicting merge, {@link GitOutcome#REJECTED} for a rejected push of
+     *         {@code main} or after every attempt lost its lease, or the passed-on outcome that ended the release, for
+     *         example {@link GitOutcome#UNREACHABLE}
      * @throws NullPointerException if an argument is {@code null}
      */
-    StoreResult<Release> release(Author author, DocumentKey key) {
+    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
         Objects.requireNonNull(author, "author");
+        Objects.requireNonNull(claims, "claims");
         Objects.requireNonNull(key, "key");
         String source = StoreReferences.target(key);
         if (key.collection().kind() == DocumentCollection.Kind.MAIN) {
             return report(source, StoreResult.of(StoreOutcome.MALFORMED, NO_RELEASE));
         }
-        var request = new Request(author, key, source, new ArrayList<>());
+        if (!StoreReferences.isPseudonym(author.pseudonym())) {
+            return report(source, StoreResult.of(StoreOutcome.MALFORMED, StoreReferences.INVALID_PSEUDONYM));
+        }
+        var request = new Request(author, claims, key, source, new ArrayList<>());
         RepositoryGuard guard = clone.guard();
         StoreResult<Release> result = report(source, guard.shared(() -> attempts(request)));
         events.emit(request.updates());
         return result;
     }
 
-    /** Runs the attempts of a release, each under the transport lock. */
+    /**
+     * Runs the attempts of a release, each under the transport lock; the signing is prepared by the first attempt that
+     * writes a release commit and re-used by the later ones.
+     */
     private StoreResult<Release> attempts(Request request) {
+        CommitSignatures.Lazy signing = committing.signatures().lazy(request.source());
         for (int attempt = 1; attempt <= attempts; attempt++) {
-            Optional<StoreResult<Release>> done = clone.guard().transport(() -> attempt(request));
+            Optional<StoreResult<Release>> done = clone.guard().transport(() -> attempt(request, signing));
             if (done.isPresent()) {
                 return done.get();
             }
@@ -189,7 +212,7 @@ final class DocumentRelease {
      * @return the result of the release, or empty when the push of {@code main} lost its lease and the next attempt
      *         starts from the fetch
      */
-    private Optional<StoreResult<Release>> attempt(Request request) {
+    private Optional<StoreResult<Release>> attempt(Request request, CommitSignatures.Lazy lazySigning) {
         Repository repository = clone.repository();
         try {
             var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
@@ -215,32 +238,52 @@ final class DocumentRelease {
                         StoreReferences.MAIN);
                 return Optional.of(tagAndPush(request, merged, tag, version));
             }
-            GitResult<String> written = write(repository, request, main, source, message);
-            if (!written.isOk()) {
-                return Optional.of(StoreResult.passOn(written));
+            var prepared = lazySigning.get();
+            if (!prepared.isOk()) {
+                return Optional.of(new StoreResult<>(prepared.outcome(), null, prepared.detail()));
             }
-            ObjectId commit = ObjectId.fromString(Objects.requireNonNull(written.value()));
-            if (!createTag(repository, tag, commit)) {
-                return Optional.of(passedOn(GitOutcome.REJECTED, tag + ": exists"));
-            }
-            ObjectId lease = main == null ? ObjectId.zeroId() : main;
-            var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN)
-                    .localRef(commit.name()).remoteRef(StoreReferences.MAIN).expectedRemoteHead(lease.name())
-                    .credentials(user.credentials()).build());
-            if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
-                return Optional.empty();
-            }
-            if (!pushed.isOk()) {
-                return Optional.of(StoreResult.passOn(pushed));
-            }
-            request.updates().add(StoreEvents.Update.pushed(StoreReferences.MAIN, lease.name(), commit.name()));
-            moveMain(repository, lease, commit);
-            return Optional.of(pushTag(request, tag, commit, version));
+            return mergeAndPush(request, new Attempt(main, source, version, tag, message),
+                    Objects.requireNonNull(prepared.value()));
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the release of %s: %s", request.source(), type);
             return Optional.of(passedOn(GitOutcome.FAILED, request.source() + ": " + type));
         }
+    }
+
+    /**
+     * Writes the signed release commit, tags it and pushes {@code main} with the lease of the fetched tip, then the tag.
+     *
+     * @return the result of the release, or empty when the push of {@code main} lost its lease
+     */
+    private Optional<StoreResult<Release>> mergeAndPush(Request request, Attempt state,
+            CommitSignatures.Prepared signing) throws IOException {
+        Repository repository = clone.repository();
+        GitResult<String> written = write(repository, request, state.main(), state.source(),
+                metadata(request.author(), request.claims(), state.message(), signing));
+        if (!written.isOk()) {
+            Optional<StoreResult<Release>> unsigned = committing.signatures().outcomeOf(written, signing,
+                    request.source());
+            return Optional.of(unsigned.orElseGet(() -> StoreResult.passOn(written)));
+        }
+        ObjectId commit = ObjectId.fromString(Objects.requireNonNull(written.value()));
+        if (!createTag(repository, state.tag(), commit)) {
+            return Optional.of(passedOn(GitOutcome.REJECTED, state.tag() + ": exists"));
+        }
+        @Nullable ObjectId main = state.main();
+        ObjectId lease = main == null ? ObjectId.zeroId() : main;
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN)
+                .localRef(commit.name()).remoteRef(StoreReferences.MAIN).expectedRemoteHead(lease.name())
+                .credentials(user.credentials()).build());
+        if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
+            return Optional.empty();
+        }
+        if (!pushed.isOk()) {
+            return Optional.of(StoreResult.passOn(pushed));
+        }
+        request.updates().add(StoreEvents.Update.pushed(StoreReferences.MAIN, lease.name(), commit.name()));
+        moveMain(repository, lease, commit);
+        return Optional.of(pushTag(request, state.tag(), commit, state.version()));
     }
 
     /** Creates the missing local tag of a merged release and pushes it. */
@@ -274,8 +317,7 @@ final class DocumentRelease {
      * a numbered collection the entry's paths of the collection branch onto {@code main}.
      */
     private GitResult<String> write(Repository repository, Request request, @Nullable ObjectId main, ObjectId source,
-            String message) throws IOException {
-        CommitMetadata metadata = metadata(request.author(), message);
+            CommitMetadata metadata) throws IOException {
         if (request.key().collection().kind() == DocumentCollection.Kind.NUMBERED) {
             List<String> parents = main == null ? List.of() : List.of(main.name());
             return writer.write(repository, parents, metadata, entryEdits(repository, request.key(), main, source));
@@ -293,12 +335,17 @@ final class DocumentRelease {
     }
 
     /**
-     * The metadata of a release commit: author and committer of {@link CommitIdentities}, the store-composed message,
-     * no signing and no trailers. GDR-STORE-13 extends this one method with the identity trailers.
+     * The metadata of a release commit, built in this one place: author and committer of {@link CommitIdentities},
+     * the store-composed subject followed by the identity trailers, and the signing prepared for the release.
      */
-    private CommitMetadata metadata(Author author, String message) {
-        var now = clock.instant();
-        return new CommitMetadata(identities.author(author, now), identities.committer(now), message, null);
+    private CommitMetadata metadata(Author author, IdentityClaims claims, String subject,
+            CommitSignatures.Prepared signing) {
+        var now = committing.clock().instant();
+        CommitIdentities identities = committing.identities();
+        String message = Objects.requireNonNull(IdentityTrailers.append(subject, author.pseudonym(), claims).value(),
+                "the pseudonym was checked before the attempts");
+        return new CommitMetadata(identities.author(author, now), identities.committer(now), message,
+                signing.signing());
     }
 
     /** The edits that take the entry's paths of the collection branch onto {@code main}. */
@@ -357,17 +404,18 @@ final class DocumentRelease {
 
     /**
      * The commit of a merged release {@code v<n>} whose tag is missing: the first commit on the first-parent chain of
-     * {@code main}, after the commit of {@code v<n-1>}, that carries the store-composed message of {@code v<n>} and has
-     * the shape of a release of the document ({@link #releaseShaped}), so a commit of an ordinary save that merely
-     * uses the message is never taken for it.
+     * {@code main}, after the commit of {@code v<n-1>}, whose first paragraph is the store-composed subject of
+     * {@code v<n>} and that has the shape of a release of the document ({@link #releaseShaped}), so a commit of an
+     * ordinary save that merely uses the subject, with or without imitated trailers, is never taken for it. The
+     * trailers after the first paragraph are never read.
      */
     private static @Nullable ObjectId mergedRelease(Repository repository, ObjectId main, @Nullable ObjectId previous,
-            String message, DocumentKey key, ObjectId source) throws IOException {
+            String subject, DocumentKey key, ObjectId source) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
             RevCommit commit = walk.parseCommit(main);
             while (commit != null && !commit.equals(previous)) {
                 walk.parseBody(commit);
-                if (message.equals(commit.getFullMessage().strip())
+                if (subject.equals(firstParagraph(commit.getFullMessage()))
                         && releaseShaped(repository, commit, key, source)) {
                     return commit.copy();
                 }
@@ -375,6 +423,49 @@ final class DocumentRelease {
             }
             return null;
         }
+    }
+
+    /**
+     * Whether the first paragraph of a message is the subject of a release of the document, {@code Release
+     * <collection>/<id> v<digits>}. The save refuses such a message ({@link ExplicitSave}), so no save commit can be
+     * taken for a release whose tag is missing.
+     *
+     * @param key     the document or entry
+     * @param message the commit message
+     * @return whether the message carries a release subject of the key
+     */
+    static boolean isReleaseSubject(DocumentKey key, String message) {
+        String first = firstParagraph(message);
+        String prefix = subjectPrefix(key);
+        if (first.length() <= prefix.length() || !first.startsWith(prefix)) {
+            return false;
+        }
+        for (int index = prefix.length(); index < first.length(); index++) {
+            char c = first.charAt(index);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the first paragraph of a message has the form of the subject of a release of any document,
+     * {@code Release <collection>/<id> v<digits>} with a collection name and an id of their alphabets. Every release
+     * commit lands on {@code main}, so a save onto {@code main} refuses such a message whatever its own key
+     * ({@link ExplicitSave}): no save commit on {@code main} can be taken for a release whose tag is missing.
+     *
+     * @param message the commit message
+     * @return whether the message carries the subject of a release of some document
+     */
+    static boolean isAnyReleaseSubject(String message) {
+        return ANY_RELEASE_SUBJECT.matcher(firstParagraph(message)).matches();
+    }
+
+    /** The text of a commit message before its first blank line, stripped. */
+    private static String firstParagraph(String message) {
+        int blank = message.indexOf("\n\n");
+        return (blank < 0 ? message : message.substring(0, blank)).strip();
     }
 
     /**
@@ -447,7 +538,12 @@ final class DocumentRelease {
 
     /** The message of a release commit, composed by the store. */
     private static String message(DocumentKey key, int version) {
-        return "Release " + key.collection().name() + "/" + key.id() + " v" + version;
+        return subjectPrefix(key) + version;
+    }
+
+    /** The subject of a release commit of the document before its version: {@code Release <collection>/<id> v}. */
+    private static String subjectPrefix(DocumentKey key) {
+        return "Release " + key.collection().name() + "/" + key.id() + " v";
     }
 
     /** Writes the local tag by an update that expects it absent, without a reflog; whether it was created. */
@@ -503,16 +599,10 @@ final class DocumentRelease {
             Release release = Objects.requireNonNull(result.value());
             LOGGER.info(GitStoreLogMessages.INFO.RELEASED, clone.alias(), release.tag(), release.commitId());
         } else if (result.outcome() != StoreOutcome.INCOMPLETE) {
-            LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED, clone.alias(), source, name(result.outcome()));
+            LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED, clone.alias(), source,
+                    StoreResult.name(result.outcome()));
         }
         return result;
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     private static <V> StoreResult<V> passedOn(GitOutcome outcome, String detail) {
@@ -522,13 +612,27 @@ final class DocumentRelease {
     /**
      * The input of a release.
      *
-     * @param author the author of the release commit
-     * @param key    the document or entry
+     * @param author  the author of the release commit
+     * @param claims  the claims of the author's authentication, written as identity trailers
+     * @param key     the document or entry
      * @param source  the working or collection branch
      * @param updates the references the release moved, in the clone by its fetches and on the remote by its pushes,
      *                collected on the releasing thread and emitted after the locks were released
      */
-    private record Request(Author author, DocumentKey key, String source, List<StoreEvents.Update> updates) {
+    private record Request(Author author, IdentityClaims claims, DocumentKey key, String source,
+    List<StoreEvents.Update> updates) {
+    }
+
+    /**
+     * What one attempt read after its fetch.
+     *
+     * @param main    the fetched tip of {@code main}; {@code null} when {@code main} is absent
+     * @param source  the tip of the working or collection branch
+     * @param version the version of this release
+     * @param tag     the full name of its tag
+     * @param message the store-composed subject of the release commit
+     */
+    private record Attempt(@Nullable ObjectId main, ObjectId source, int version, String tag, String message) {
     }
 
     /**

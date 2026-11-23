@@ -55,16 +55,21 @@ Git outcome passed on as `StoreResult.PassedOn`), the codec interface `Codec`, t
 `StoreConfiguration.from` from an already-parsed nested map, over the package-private reader `ConfigurationTree`; its
 sections include `commit`, the record `Commit` with `commit.email`), the
 service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` with `PersonEntry` and `Membership`, the
-provider selection `StoreProviders` through `ServiceLoader`, and the `LogRecord` holder `GitStoreLogMessages`; and the
-write path: `StoreWriter` (drafts, listing, explicit save with lease and the optional per-attempt `SaveStep`,
-`release` of a document with its tag returning `Release`, draft expiry with garbage collection, `fetch` and
+provider selection `StoreProviders` through `ServiceLoader`, the signing key source `FileSigningKeySource` (id `file`,
+an unencrypted OpenSSH Ed25519 key), and the `LogRecord` holder `GitStoreLogMessages`; and the
+write path: `StoreWriter` (`open` with the active `SigningKeySource`; drafts, listing, explicit save with lease and the
+optional per-attempt `SaveStep` taking the `IdentityClaims` of the user,
+`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, draft expiry with garbage collection, `fetch` and
 `fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
 every fetch, save and release, with `snapshot` of a tag or commit) over the consumer's `IndexContributor` per
 collection, over the package-private `DraftReferences`, `ExplicitSave`, `DocumentRelease`, `DocumentPaths`,
-`DraftExpiry`, `StoreEvents`, `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`; the commits it writes are
-unsigned and carry no trailers until GDR-STORE-12/13. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
+`DraftExpiry`, `StoreEvents`, `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
+commit is signed in the SSH signature format (GDR-STORE-12) through the package-private `SshSignatures` (an own
+SSHSIG encoder, no dependency), `SourceSigner` and `CommitSignatures`, and carries the identity trailers of
+`IdentityTrailers` (GDR-STORE-13); draft commits are neither. The signature verification (GDR-STORE-14) is
+`AllowedSigners` (Git's `allowed_signers` format), `SignatureVerification` and the CI main class `VerifySignatures`. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
 `git-store` only, for `IndexFootprintTest` (GDR-NFR-1). Its tests run on the class path against
 the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list
 `FormsOutcome`, the result `FormsResult` (whose outcome is a `FormsOutcome` or a non-success store outcome passed on as

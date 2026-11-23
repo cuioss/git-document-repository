@@ -102,6 +102,20 @@ public record StoreResult<V>(Outcome outcome, @Nullable V value, @Nullable Strin
     }
 
     /**
+     * Returns the name of an outcome as the log records of the store name it: the constant of {@link StoreOutcome}, or
+     * that of the passed-on {@link GitOutcome}.
+     *
+     * @param outcome the outcome
+     * @return the name of the constant
+     */
+    static String name(Outcome outcome) {
+        return switch (outcome) {
+            case StoreOutcome store -> store.name();
+            case PassedOn(GitOutcome git) -> git.name();
+        };
+    }
+
+    /**
      * Creates a success carrying a value.
      *
      * @param value the value

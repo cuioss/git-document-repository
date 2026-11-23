@@ -19,6 +19,10 @@
  * The module requires {@code de.cuioss.git.document.core} transitively, because its public API exposes types of that
  * module and of JGit, and {@code de.cuioss.java.tools} transitively, because the public holder
  * {@code GitStoreLogMessages} exposes its {@code LogRecord}.
+ * <p>
+ * It provides the signing key source {@code file} ({@code FileSigningKeySource}, an unencrypted OpenSSH Ed25519 key
+ * from a file), which {@code StoreProviders} finds through {@link java.util.ServiceLoader} beside the sources an
+ * application supplies.
  */
 module de.cuioss.git.document.store {
     exports de.cuioss.git.document.store;
@@ -31,4 +35,6 @@ module de.cuioss.git.document.store {
     uses de.cuioss.git.document.store.SigningKeySource;
     uses de.cuioss.git.document.store.AnchorProvider;
     uses de.cuioss.git.document.store.PersonDirectory;
+
+    provides de.cuioss.git.document.store.SigningKeySource with de.cuioss.git.document.store.FileSigningKeySource;
 }

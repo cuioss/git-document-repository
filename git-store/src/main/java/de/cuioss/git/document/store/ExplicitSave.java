@@ -84,8 +84,21 @@ import org.jspecify.annotations.Nullable;
  * directory, or replace a directory of the base holding a file the draft did not change, is checked for that overlap;
  * every differing or overlapping path is a conflict: nothing is pushed, draft and target branch stay as they are.
  * Otherwise one commit with the base as its only parent and the changes as its edits is written through
- * {@link InCoreWriter}, unsigned, without trailers, with the author and committer of {@link CommitIdentities}, and
- * pushed to the target with the lease of the base.
+ * {@link InCoreWriter}, with the author and committer of {@link CommitIdentities}, the caller's message followed by the
+ * {@link IdentityTrailers} of the author's pseudonym and the {@link IdentityClaims} (GDR-STORE-13), and signed through
+ * {@link CommitSignatures} (GDR-STORE-12), and pushed to the target with the lease of the base. A blank message is
+ * replaced by the subject {@code Save <collection>/<id>} ({@link #defaultSubject}), so the trailers never become the
+ * subject; a message whose first paragraph is the subject of a release of the document
+ * ({@link DocumentRelease#isReleaseSubject}), and on a save onto {@code main}, where every release commit lands, one
+ * with the form of a release subject of any document ({@link DocumentRelease#isAnyReleaseSubject}), is
+ * {@link StoreOutcome#MALFORMED} with the detail {@value #RELEASE_SUBJECT}, so the release recovery never takes a save
+ * commit for a release. The signing is prepared
+ * at most once per save, by the first attempt that writes a commit, and re-used by the later attempts, so the public
+ * key is fetched once and a save of an unchanged draft never asks the source; a source that refuses or cannot be
+ * reached ends the save with {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} before anything is
+ * written or pushed, and a signature that fails while an attempt writes its commit ends the save with the outcome of
+ * the source, nothing pushed. In both cases the fetch of that attempt has already run and may have moved references
+ * of the clone, which are emitted like those of every other fetch.
  * <p>
  * An optional {@link SaveStep} runs on every attempt, after the conflict check and before the commit is written, with
  * a read-only view of the base and of the tree the draft's edits produce on it. The edits it returns are added to the
@@ -96,7 +109,8 @@ import org.jspecify.annotations.Nullable;
  * its refusal
  * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} it throws with the passed-on
  * {@link GitOutcome#FAILED} naming the class of the exception only, without a further attempt. In both cases nothing is
- * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step.
+ * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step. The step's
+ * edits are written into the one signed, trailer-carrying save commit; there is no second commit path.
  * <p>
  * The save is a cooperative compare-and-swap against the remote: a lease refusal or a rejection starts the next
  * attempt from the fetch, up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; an unreachable
@@ -131,6 +145,9 @@ final class ExplicitSave {
     /** The detail of a draft without changes in a repository without its target branch. */
     private static final String NOTHING_TO_SAVE = "draft: no changes and no target branch";
 
+    /** The detail of a save whose message carries the subject of a release of its document. */
+    static final String RELEASE_SUBJECT = "message: release subject";
+
     /** The detail of a save whose per-attempt step refused, after the target. */
     private static final String STEP_REFUSED = ": step: refused";
 
@@ -140,8 +157,7 @@ final class ExplicitSave {
     private final Clone clone;
     private final RepositoryOperations operations;
     private final TechnicalUser user;
-    private final CommitIdentities identities;
-    private final Clock clock;
+    private final Committing committing;
     private final int attempts;
     private final StoreEvents events;
     private final InCoreWriter writer = new InCoreWriter();
@@ -176,26 +192,48 @@ final class ExplicitSave {
     }
 
     /**
+     * What a save or release commit of a clone is made with: its identities, its signing seam and its clock.
+     *
+     * @param identities the commit identities
+     * @param signatures the signing seam of the clone
+     * @param clock      the clock of the commit times
+     */
+    record Committing(CommitIdentities identities, CommitSignatures signatures, Clock clock) {
+
+        /**
+         * Checks the components.
+         *
+         * @param identities the identities
+         * @param signatures the signing seam
+         * @param clock      the clock
+         * @throws NullPointerException if a component is {@code null}
+         */
+        Committing {
+            Objects.requireNonNull(identities, "identities");
+            Objects.requireNonNull(signatures, "signatures");
+            Objects.requireNonNull(clock, "clock");
+        }
+    }
+
+    /**
      * Creates the explicit save of a clone.
      *
      * @param clone      the bare clone
      * @param operations the repository operations of {@code git-core}, for fetch and push
      * @param user       the technical user, holder of the credentials of every fetch and push
-     * @param identities the commit identities
-     * @param clock      the clock of the commit times
+     * @param committing the identities, the signing seam and the clock of the save commits
      * @param attempts   the attempts of a save ({@code save.max-attempts}), at least 1
      * @param events     the notification seam of the writer, told of the moved references after the locks were
      *                   released
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if {@code attempts} is less than 1
      */
-    ExplicitSave(Clone clone, RepositoryOperations operations, TechnicalUser user, CommitIdentities identities,
-            Clock clock, int attempts, StoreEvents events) {
+    ExplicitSave(Clone clone, RepositoryOperations operations, TechnicalUser user, Committing committing,
+            int attempts, StoreEvents events) {
         this.clone = Objects.requireNonNull(clone, "clone");
         this.operations = Objects.requireNonNull(operations, "operations");
         this.user = Objects.requireNonNull(user, "user");
-        this.identities = Objects.requireNonNull(identities, "identities");
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.committing = Objects.requireNonNull(committing, "committing");
         if (attempts < 1) {
             throw new IllegalArgumentException("attempts must be at least 1, was " + attempts);
         }
@@ -207,22 +245,28 @@ final class ExplicitSave {
      * Saves the draft of the author for the document onto its target branch.
      *
      * @param author          the author, whose pseudonym names the draft reference
+     * @param claims          the claims of the author's authentication, written as identity trailers
      * @param key             the document or entry
      * @param expectedBlobIds the blob id the caller loaded per path; the zero id expects the path to be absent
-     * @param message         the commit message
+     * @param message         the commit message, before the trailers; a blank one is replaced by
+     *                        {@link #defaultSubject}
      * @param step            the per-attempt step; {@code null} for none
      * @return {@link SaveResult.Saved} with the commit the target branch points at; {@link SaveResult.Conflicting}
      *         with every path whose blob on the fetched tip differs from its expected id; {@link SaveResult.NotSaved}
-     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym, {@link StoreOutcome#REFUSED} for a refusal
-     *         of the step, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
+     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message (of
+     *         the document, and onto {@code main} of any document),
+     *         {@link StoreOutcome#REFUSED} for a refusal
+     *         of the step or of the signing key source, {@link StoreOutcome#UNAVAILABLE} for a signing key source that
+     *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
      *         object id, {@link GitOutcome#FAILED} for a step that threw, {@link GitOutcome#REJECTED} after every
      *         attempt lost its lease or was rejected, or the passed-on outcome that ended the save, for example
      *         {@link GitOutcome#UNREACHABLE} or {@link GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument but {@code step}, a path or an expected blob id is {@code null}
      */
-    SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
-            @Nullable SaveStep step) {
+    SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
+            String message, @Nullable SaveStep step) {
         Objects.requireNonNull(author, "author");
+        Objects.requireNonNull(claims, "claims");
         Objects.requireNonNull(key, "key");
         Map<String, String> expectations = Map.copyOf(Objects.requireNonNull(expectedBlobIds, "expectedBlobIds"));
         Objects.requireNonNull(message, "message");
@@ -238,8 +282,16 @@ final class ExplicitSave {
         if (!draftRef.isOk()) {
             return report(target, SaveResult.NotSaved.of(draftRef));
         }
-        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected, message, step,
-                new ArrayList<>());
+        String subject = message.isBlank() ? defaultSubject(key) : message;
+        if (isReservedSubject(target, key, subject)) {
+            return report(target, new SaveResult.NotSaved(StoreOutcome.MALFORMED, RELEASE_SUBJECT));
+        }
+        var composed = IdentityTrailers.append(subject, author.pseudonym(), claims);
+        if (!composed.isOk()) {
+            return report(target, SaveResult.NotSaved.of(composed));
+        }
+        var request = new Request(author, target, Objects.requireNonNull(draftRef.value()), expected,
+                Objects.requireNonNull(composed.value()), step, new ArrayList<>());
         RepositoryGuard guard = clone.guard();
         SaveResult result = report(target,
                 guard.shared(() -> guard.draft(request.draft(), () -> saveDraft(request))));
@@ -248,9 +300,10 @@ final class ExplicitSave {
     }
 
     /**
-     * Reads the draft once and runs the attempts on that draft commit, all under the shared side of the maintenance
-     * lock, so no expiry deletes or collects the draft between two attempts, and under the lock of the draft, so the
-     * draft and its applied-draft reference are read after every earlier save of the draft has settled.
+     * Reads the draft once and runs the attempts on that draft commit, all under the shared
+     * side of the maintenance lock, so no expiry deletes or collects the draft between two attempts, and under the lock
+     * of the draft, so the draft and its applied-draft reference are read after every earlier save of the draft has
+     * settled.
      */
     private SaveResult saveDraft(Request request) {
         Repository repository = clone.repository();
@@ -266,7 +319,8 @@ final class ExplicitSave {
         if (draft == null) {
             return notSaved(GitOutcome.NOT_FOUND, DRAFT_NOT_FOUND);
         }
-        var drafted = new Drafted(draft, appliedTip == null ? null : appliedTip.getObjectId());
+        var drafted = new Drafted(draft, appliedTip == null ? null : appliedTip.getObjectId(),
+                committing.signatures().lazy(request.target()));
         for (int attempt = 1; attempt <= attempts; attempt++) {
             Optional<SaveResult> done = clone.guard().transport(() -> attempt(request, drafted));
             if (done.isPresent()) {
@@ -316,7 +370,7 @@ final class ExplicitSave {
                 List<TreeEdit> edits = edits(repository, changed, draftCommit.getTree());
                 @Nullable SaveStep step = request.step();
                 if (step == null) {
-                    return apply(request, drafted.draft(), base, edits);
+                    return apply(request, drafted, base, edits);
                 }
                 var stepped = step(request, step, new AttemptView(repository, baseCommit, edits));
                 SaveResult.@Nullable NotSaved ended = stepped.ended();
@@ -328,7 +382,7 @@ final class ExplicitSave {
                 if (!overlapping.isEmpty()) {
                     return Optional.of(new SaveResult.Conflicting(overlapping));
                 }
-                return apply(request, drafted.draft(), base, merged);
+                return apply(request, drafted, base, merged);
             }
         } catch (IOException e) {
             return Optional.of(failed(request, e));
@@ -370,6 +424,24 @@ final class ExplicitSave {
         return List.copyOf(merged.values());
     }
 
+    /**
+     * Whether a save message is reserved for a release: onto {@code main}, where every release commit lands, a first
+     * paragraph with the form of a release subject of any document; onto another branch, a release subject of the
+     * save's own document.
+     */
+    private static boolean isReservedSubject(String target, DocumentKey key, String message) {
+        return StoreReferences.MAIN.equals(target) ? DocumentRelease.isAnyReleaseSubject(message)
+                : DocumentRelease.isReleaseSubject(key, message);
+    }
+
+    /**
+     * The subject of a save whose caller gave a blank message, {@code Save <collection>/<id>}, so the identity trailers
+     * stay the last paragraph and never become the subject.
+     */
+    static String defaultSubject(DocumentKey key) {
+        return "Save " + key.collection().name() + "/" + key.id();
+    }
+
     /** The failure of an I/O error: the target and the class of the error, never its message. */
     private static SaveResult failed(Request request, IOException e) {
         LOGGER.debug("I/O failure of the save onto %s: %s", request.target(), e.getClass().getSimpleName());
@@ -377,21 +449,32 @@ final class ExplicitSave {
     }
 
     /**
-     * Writes the save commit, pushes it with the lease and, once accepted, moves the local branch and settles the
-     * draft. A local branch that cannot be moved after the remote accepted the commit does not undo the save: it is
-     * logged by the class of the error only, and the next fetch mirrors the remote branch into the clone.
+     * Writes the signed, trailer-carrying save commit, pushes it with the lease and, once accepted, moves the local
+     * branch and settles the draft. A write that failed because the signing key source did not sign ends the save with
+     * the outcome of the source. A local branch that cannot be moved after the remote accepted the commit does not undo
+     * the save: it is logged by the class of the error only, and the next fetch mirrors the remote branch into the
+     * clone.
      */
-    private Optional<SaveResult> apply(Request request, ObjectId draft, Base base, List<TreeEdit> edits)
+    private Optional<SaveResult> apply(Request request, Drafted drafted, Base base, List<TreeEdit> edits)
             throws IOException {
-        var now = clock.instant();
+        var prepared = drafted.signing().get();
+        if (!prepared.isOk()) {
+            return Optional.of(SaveResult.NotSaved.of(prepared));
+        }
+        CommitSignatures.Prepared signing = Objects.requireNonNull(prepared.value());
+        var now = committing.clock().instant();
+        CommitIdentities identities = committing.identities();
         var metadata = new CommitMetadata(identities.author(request.author(), now), identities.committer(now),
-                request.message(), null);
+                request.message(), signing.signing());
         @Nullable ObjectId parent = base.commit();
         List<String> parents = parent == null ? List.of() : List.of(parent.name());
         GitResult<String> written = writer.write(clone.repository(), parents, metadata, edits);
         if (!written.isOk()) {
-            return Optional.of(passedOn(written));
+            Optional<StoreResult<Void>> unsigned = committing.signatures().outcomeOf(written, signing,
+                    request.target());
+            return Optional.of(unsigned.<SaveResult>map(SaveResult.NotSaved::of).orElseGet(() -> passedOn(written)));
         }
+        ObjectId draft = drafted.draft();
         String commit = Objects.requireNonNull(written.value());
         var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit)
                 .remoteRef(request.target()).expectedRemoteHead(base.lease().name()).credentials(user.credentials())
@@ -670,16 +753,9 @@ final class ExplicitSave {
             case SaveResult.Conflicting(List<String> paths) -> LOGGER.info(GitStoreLogMessages.INFO.SAVE_CONFLICT,
                     clone.alias(), target, paths.size());
             case SaveResult.NotSaved notSaved -> LOGGER.warn(GitStoreLogMessages.WARN.SAVE_NOT_COMPLETED,
-                    clone.alias(), target, name(notSaved.outcome()));
+                    clone.alias(), target, StoreResult.name(notSaved.outcome()));
         }
         return result;
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     private static SaveResult.NotSaved notSaved(GitOutcome outcome, String detail) {
@@ -694,12 +770,13 @@ final class ExplicitSave {
     }
 
     /**
-     * The draft a save works on, read once at its start.
+     * The draft a save works on and its signing, both read once at its start.
      *
      * @param draft   the draft commit every attempt applies
      * @param applied the draft commit a former save applied while a newer draft was kept; {@code null} when none
+     * @param signing the signing, prepared by the first attempt that writes a commit and re-used by the later ones
      */
-    private record Drafted(ObjectId draft, @Nullable ObjectId applied) {
+    private record Drafted(ObjectId draft, @Nullable ObjectId applied, CommitSignatures.Lazy signing) {
     }
 
     /**
@@ -709,7 +786,7 @@ final class ExplicitSave {
      * @param target   the target branch
      * @param draft    the draft reference
      * @param expected the expected blob id per path
-     * @param message  the commit message
+     * @param message  the commit message with its identity trailers
      * @param step     the per-attempt step; {@code null} for none
      * @param updates  the references the save moved, in the clone by its fetches and on the remote by its push,
      *                 collected on the saving thread and emitted after the locks were released

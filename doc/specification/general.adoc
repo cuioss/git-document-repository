@@ -16,16 +16,20 @@ and its configuration, and its write path: xref:git-store.adoc#GDR-STORE-2[GDR-S
 xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3], xref:git-store.adoc#GDR-STORE-4[GDR-STORE-4],
 xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5], xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6],
 xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7] and xref:git-store.adoc#GDR-STORE-8[GDR-STORE-8], and its read side:
-xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9] and xref:git-store.adoc#GDR-STORE-10[GDR-STORE-10]; it defines its
-three service interfaces, whose providers are planned (xref:git-store.adoc[`git-store`]). Of the requirements below,
+xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9] and xref:git-store.adoc#GDR-STORE-10[GDR-STORE-10], and the commit
+signature, the identity trailers and the signature verification: xref:git-store.adoc#GDR-STORE-12[GDR-STORE-12],
+xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13] and xref:git-store.adoc#GDR-STORE-14[GDR-STORE-14]; it defines its
+three service interfaces and ships the provider `file` of `SigningKeySource`, while the other providers are planned
+(xref:git-store.adoc[`git-store`]). Of the requirements below,
 <<GDR-GEN-1>> is implemented; <<GDR-NFR-1>> is covered by `IndexFootprintTest` of `git-store`; <<GDR-NFR-2>> and the
-part of <<GDR-NFR-3>> that the write path, the release, the index and the listeners touch are covered by tests of
-`git-store` (`ConcurrentWritersTest`, `WritePathSecretsTest`, and the log and detail assertions of `SaveStepTest`,
-`ReleaseTest`, `StoreIndexTest` and `CommitListenerTest`), and the part that schema validation and the nesting limit of
-`git-forms` touch by its tests `ValidationSecretsTest` and `NestingDepthTest`; and for <<GDR-NFR-4>> `git-core` and
-`git-forms` ship their native-image metadata, which this repository does not verify in a native image yet. `git-forms`
-holds the kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome
-list and result (<<GDR-GEN-3>>), and so implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1],
+part of <<GDR-NFR-3>> that the write path, the signature, the release, the index and the listeners touch are covered
+by tests of `git-store` (`ConcurrentWritersTest`, `WritePathSecretsTest`, `FileSigningKeySourceTest`,
+`CommitSignatureTest`, `IdentityTrailersTest`, and the log and detail assertions of `SaveStepTest`, `ReleaseTest`,
+`StoreIndexTest` and `CommitListenerTest`), and the part that schema validation and the nesting limit of `git-forms`
+touch by its tests `ValidationSecretsTest` and `NestingDepthTest`; and for <<GDR-NFR-4>> `git-core` and `git-forms`
+ship their native-image metadata, which this repository does not verify in a native image yet. `git-forms` holds the
+kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome list and
+result (<<GDR-GEN-3>>), and so implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1],
 xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2] and xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements
 are planned. Every other requirement of the
 libraries is planned, and `git-timestamp` and `git-directory` are not yet created.
@@ -115,8 +119,9 @@ redirect test, `cui-test-generator` and JUnit 5 (each declared)
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `git-testing`, `cui-test-juli-logger`, `cui-test-generator`, JUnit 5 and `jol-core` for the footprint test of
-<<GDR-NFR-1>> (each declared); possibly JGit's
-`org.eclipse.jgit.ssh.apache` for the SSH signature format (open)
+<<GDR-NFR-1>> (each declared); no dependency for signatures (decided 2026-11-23): the SSH signature format (SSHSIG)
+is an own encoder of `git-store` and Ed25519 comes from the JDK, JGit's `org.eclipse.jgit.ssh.apache` is not adopted
+(xref:git-store.adoc#GDR-STORE-12[GDR-STORE-12])
 |`git-forms` |`git-store`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope `git-testing`,
 `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); `org.snakeyaml:snakeyaml-engine` and
 `dev.harrel:json-schema` (each declared, decided); a template engine (open)

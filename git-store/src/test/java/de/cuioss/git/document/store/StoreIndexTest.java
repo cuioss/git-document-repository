@@ -101,6 +101,10 @@ class StoreIndexTest {
     /** The attempts of every save and release. */
     private static final int ATTEMPTS = 3;
 
+    /** The fixed claims of every save and release. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
+            Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
+
     @TempDir
     Path temp;
 
@@ -130,6 +134,7 @@ class StoreIndexTest {
         tree.put("save", Map.of("max-attempts", ATTEMPTS));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", interval.toString()));
+        tree.put("signing", Map.of("key", word()));
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
     }
 
@@ -330,8 +335,8 @@ class StoreIndexTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval), operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval),
+                TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
         Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
         contributors.put(layout.documents(), recorder);
         contributors.put(layout.numbered(), recorder);
@@ -343,7 +348,7 @@ class StoreIndexTest {
     private static String save(StoreWriter writer, Author author, DocumentKey key, String path, String text) {
         value(writer.draft(author, key, List.of(new TreeEdit.Put(path, text.getBytes(StandardCharsets.UTF_8))),
                 word()));
-        var saved = writer.save(author, key, Map.of(), word());
+        var saved = writer.save(author, CLAIMS, key, Map.of(), word());
         return assertInstanceOf(SaveResult.Saved.class, saved, () -> "saved: " + saved).commitId();
     }
 
@@ -429,7 +434,7 @@ class StoreIndexTest {
             var layout = layout(remote.repository());
 
             try (var fixture = open(remote, layout)) {
-                var release = value(fixture.writer().release(Author.of(pseudonym()), layout.working()));
+                var release = value(fixture.writer().release(Author.of(pseudonym()), CLAIMS, layout.working()));
 
                 assertAll(
                         () -> assertEquals(Optional.of(release.commitId()),
@@ -592,9 +597,9 @@ class StoreIndexTest {
             var later = content();
 
             try (var fixture = open(remote, layout)) {
-                var first = value(fixture.writer().release(author, layout.working()));
+                var first = value(fixture.writer().release(author, CLAIMS, layout.working()));
                 save(fixture.writer(), author, layout.working(), path(layout.working(), ".json"), later);
-                var second = value(fixture.writer().release(author, layout.working()));
+                var second = value(fixture.writer().release(author, CLAIMS, layout.working()));
                 var sourcesBefore = fixture.index().sources();
                 var firstValue = entry(filesOf(layout.working(), layout.workingTree()));
                 var shortTag = first.tag().substring(StoreReferences.TAGS.length());

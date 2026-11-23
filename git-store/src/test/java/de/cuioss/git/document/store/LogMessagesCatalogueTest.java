@@ -90,4 +90,30 @@ class LogMessagesCatalogueTest {
                 () -> assertTrue(components.values().stream().allMatch(GitStoreLogMessages.PREFIX::equals),
                         () -> "every row names the component " + GitStoreLogMessages.PREFIX + ": " + components));
     }
+
+    @Test
+    @DisplayName("GDR-GEN-4: the signing refusal GIT_STORE-110 of GDR-STORE-12 is declared and catalogued")
+    void signingFailureIsCatalogued() throws Exception {
+        var signingFailed = GitStoreLogMessages.WARN.SIGNING_FAILED;
+
+        var documented = documented(new TreeMap<>());
+
+        assertAll(
+                () -> assertEquals("GIT_STORE-110", signingFailed.resolveIdentifierString(), "the identifier"),
+                () -> assertEquals("Did not sign the commit of repository %s, reference %s: %s",
+                        documented.get(signingFailed.resolveIdentifierString()), "the catalogued template"));
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-4: the finished verification GIT_STORE-6 of GDR-STORE-14 is declared and catalogued")
+    void signaturesVerifiedIsCatalogued() throws Exception {
+        var verified = GitStoreLogMessages.INFO.SIGNATURES_VERIFIED;
+
+        var documented = documented(new TreeMap<>());
+
+        assertAll(
+                () -> assertEquals("GIT_STORE-6", verified.resolveIdentifierString(), "the identifier"),
+                () -> assertEquals("Verified the signatures of reference %s: %s commits, %s unverified",
+                        documented.get(verified.resolveIdentifierString()), "the catalogued template"));
+    }
 }

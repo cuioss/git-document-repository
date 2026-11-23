@@ -85,7 +85,8 @@ import org.junit.jupiter.params.provider.EnumSource;
  * and re-applied after a lost lease (GDR-STORE-3), conflicts that change nothing (GDR-STORE-4), the expected blob ids
  * (GDR-STORE-5), and author, committer and credentials (GDR-STORE-8). {@link ScriptedRepositoryOperations} records the
  * transport inputs, scripts unreachable remotes, invalid credentials and refused leases, and moves the remote between
- * fetch and push as a concurrent writer would. The pruning fetch of a save keeps the drafts of a clone whose stored
+ * fetch and push as a concurrent writer would. Every save is signed with a {@link TestKeys} key and carries the
+ * identity trailers of fixed {@link IdentityClaims}; the signature itself is checked by {@link CommitSignatureTest}. The pruning fetch of a save keeps the drafts of a clone whose stored
  * fetch refspec reaches beyond the mirrored namespaces.
  * <p>
  * Names, ids, pseudonyms, paths, contents, addresses and times are generated; the reference prefixes, the outcomes and
@@ -98,6 +99,14 @@ class ExplicitSaveTest {
 
     /** The attempts of most tests: enough for one lost lease. */
     private static final int ATTEMPTS = 3;
+
+    private static final String ISSUER = "https://issuer.example/realms/test";
+    private static final String AUTH_TIME = "2026-03-01T08:15:30Z";
+    private static final String ACR = "urn:example:acr:mfa";
+    private static final List<String> AMR = List.of("pwd", "otp");
+
+    /** The fixed claims of every save. */
+    private static final IdentityClaims CLAIMS = new IdentityClaims(ISSUER, Instant.parse(AUTH_TIME), ACR, AMR);
 
     @TempDir
     Path temp;
@@ -137,10 +146,17 @@ class ExplicitSaveTest {
         tree.put("save", Map.of("max-attempts", attempts));
         tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
         tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+        tree.put("signing", Map.of("key", word()));
         if (email != null) {
             tree.put("commit", Map.of("email", email));
         }
         return value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
+    }
+
+    /** The trailer block {@link #CLAIMS} and the pseudonym produce, after the blank line. */
+    private static String trailers(String pseudonym) {
+        return "Actor: " + pseudonym + "\nActor-Issuer: " + ISSUER + "\nAuth-Time: " + AUTH_TIME
+                + "\nAuth-Context: acr=" + ACR + "; amr=" + String.join(",", AMR) + "\n";
     }
 
     private static TechnicalUser user(@Nullable String email) {
@@ -267,7 +283,11 @@ class ExplicitSaveTest {
         }
 
         SaveResult save(Author author, DocumentKey key, Map<String, String> expected) {
-            return writer.save(author, key, expected, word());
+            return save(author, key, expected, word());
+        }
+
+        SaveResult save(Author author, DocumentKey key, Map<String, String> expected, String message) {
+            return writer.save(author, CLAIMS, key, expected, message);
         }
 
         @Override
@@ -277,13 +297,37 @@ class ExplicitSaveTest {
     }
 
     private Fixture open(LocalRemote remote, StoreConfiguration configuration, TechnicalUser user) {
+        return open(remote, configuration, user, TestKeys.ed25519().source());
+    }
+
+    private Fixture open(LocalRemote remote, StoreConfiguration configuration, TechnicalUser user,
+            SigningKeySource source) {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var gitDir = temp.resolve(word() + ".git");
         var now = time();
         var operations = new ScriptedRepositoryOperations();
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, operations,
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, source, operations,
                 Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, user, now, operations);
+    }
+
+    /** A signing key source that cannot be reached for any call. */
+    private record UnavailableSource() implements SigningKeySource {
+
+        @Override
+        public String id() {
+            return "unavailable";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, "down");
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, "down");
+        }
     }
 
     private Fixture open(LocalRemote remote) {
@@ -296,7 +340,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a save is one commit on the remote tip, the draft deleted and never pushed")
-        void savesOneCommitOnRemoteTip(@Remote LocalRemote remote) {
+        void savesOneCommitOnRemoteTip(@Remote LocalRemote remote) throws Exception {
             commit(remote.repository(), StoreReferences.MAIN, files(word()));
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
@@ -304,14 +348,20 @@ class ExplicitSaveTest {
             var tipId = commit(remote.repository(), target, base);
             var author = Author.of(pseudonym());
             var changes = files(word() + "x");
+            var message = word() + " " + word();
 
             try (var fixture = open(remote)) {
                 var draft = fixture.draft(author, key, puts(changes));
 
-                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of(), message));
 
                 var commit = ObjectId.fromString(saved.commitId());
+                var fullMessage = parse(remote.repository(), commit).getFullMessage();
                 assertAll(
+                        () -> assertEquals(message, fullMessage.substring(0, fullMessage.indexOf("\n\n")),
+                                "the first paragraph is the caller's message"),
+                        () -> assertEquals(message + "\n\n" + trailers(author.pseudonym()), fullMessage,
+                                "the caller's message followed by the identity trailers"),
                         () -> assertEquals(commit, tip(remote.repository(), target), "the remote target moved"),
                         () -> assertEquals(List.of(tipId), List.of(parse(remote.repository(), commit).getParents()),
                                 "the only parent is the remote tip"),
@@ -710,6 +760,45 @@ class ExplicitSaveTest {
                         () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
                         () -> assertNull(fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
                                 "the draft is deleted"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-12: a draft without changes is saved as the base with an unavailable signing source")
+        void draftWithoutChangesNeedsNoSigning(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var tipId = commit(remote.repository(), target, base);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote, configuration(null, ATTEMPTS), user(null), new UnavailableSource())) {
+                fixture.draft(author, key, puts(base));
+
+                var result = fixture.save(author, key, Map.of());
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.Saved(tipId.name()), result, "saved as the base"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "no push"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-13: a blank message gets the subject Save <collection>/<id> before the trailers")
+        void blankMessageGetsDefaultSubject(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            commit(remote.repository(), target, files(word()));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "x")));
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of(), " \n\t\n"));
+
+                assertEquals("Save " + key.collection().name() + "/" + key.id() + "\n\n" + trailers(author.pseudonym()),
+                        parse(remote.repository(), ObjectId.fromString(saved.commitId())).getFullMessage(),
+                        "the default subject, then the identity trailers");
             }
         }
 

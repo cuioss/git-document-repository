@@ -24,7 +24,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 
-import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
@@ -134,15 +133,15 @@ final class StoreClone {
         return clone.guard().shared(() -> drafts.list(pseudonym));
     }
 
-    /** Saves a draft; see {@link StoreWriter#save(Author, DocumentKey, Map, String, SaveStep)}. */
-    SaveResult save(Author author, DocumentKey key, Map<String, String> expectedBlobIds, String message,
-            @Nullable SaveStep step) {
-        return saves.save(author, key, expectedBlobIds, message, step);
+    /** Saves a draft; see {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, SaveStep)}. */
+    SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
+            String message, @Nullable SaveStep step) {
+        return saves.save(author, claims, key, expectedBlobIds, message, step);
     }
 
     /** Releases a document or entry; see {@link StoreWriter#release}. */
-    StoreResult<Release> release(Author author, DocumentKey key) {
-        return releases.release(author, key);
+    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
+        return releases.release(author, claims, key);
     }
 
     /** Expires the drafts; see {@link StoreWriter#expireDrafts}. */
@@ -190,7 +189,8 @@ final class StoreClone {
         try {
             var fetched = fetch();
             if (!fetched.isOk()) {
-                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), name(fetched.outcome()));
+                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(),
+                        StoreResult.name(fetched.outcome()));
             }
         }
         // an unchecked failure of one fetch must not end the schedule (GDR-STORE-9)
@@ -198,13 +198,6 @@ final class StoreClone {
         catch (RuntimeException e) {
             LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getSimpleName());
         }
-    }
-
-    private static String name(StoreResult.Outcome outcome) {
-        return switch (outcome) {
-            case StoreOutcome store -> store.name();
-            case StoreResult.PassedOn(GitOutcome git) -> git.name();
-        };
     }
 
     /** Subscribes a listener to a branch by its full name; see {@link StoreWriter#subscribe}. */

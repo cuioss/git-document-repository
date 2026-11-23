@@ -43,6 +43,11 @@ drafts, never a draft reference, which names a pseudonym.
 |Logged when a release completed, `main` and the release tag both accepted by the remote
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
 release tag and the full id of the release commit.
+|GIT_STORE-6 |GIT_STORE |Verified the signatures of reference %s: %s commits, %s unverified
+|Logged when a signature verification of a reference against the allowed signers finished
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the full name of the reference, the number of
+commits reachable from it and the number of those without a signature valid at their committer time, never a
+principal, a key or a commit message.
 |===
 
 == WARN Level (100-199)
@@ -96,6 +101,13 @@ left out of the index, and the refresh goes on with the next document.
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10]): the repository alias, the full name of the
 branch and the simple class name of the exception, never its message; no throwable is attached. The save, release or
 fetch that triggered the call is unaffected, and the commit counts as delivered.
+|GIT_STORE-110 |GIT_STORE |Did not sign the commit of repository %s, reference %s: %s
+|Logged when a save or release was refused because its commit could not be signed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]): the signing key source refused or could not
+be reached for the public key or the signature, or handed out a key of another type than Ed25519. It names the
+repository alias, the target reference or the working or collection branch, and the name of the outcome (`REFUSED` or
+`UNAVAILABLE`); never the key reference, a key path, key material, the detail of the source or a claim. No throwable is
+attached. Nothing of the save or release is on the remote.
 |===
 
 == ERROR Level (200-299)
