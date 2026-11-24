@@ -330,13 +330,13 @@ final class TimeStampRequests {
         private final Instant genTime;
 
         /** The rank of {@code accuracy} among the optional fields. */
-        private static final int ACCURACY = 0;
+        private static final int ACCURACY_RANK = 0;
         /** The rank of {@code ordering}. */
-        private static final int ORDERING = 1;
+        private static final int ORDERING_RANK = 1;
         /** The rank of {@code nonce}. */
-        private static final int NONCE = 2;
+        private static final int NONCE_RANK = 2;
         /** The rank of {@code tsa}. */
-        private static final int TSA = 3;
+        private static final int TSA_RANK = 3;
 
         /** The tags of the optional fields after {@code genTime}, in the order of RFC 3161, 2.4.2. */
         private static final List<Integer> OPTIONAL_TAGS = List.of(Der.TAG_SEQUENCE, Der.BOOLEAN, Der.TAG_INTEGER,
@@ -404,10 +404,10 @@ final class TimeStampRequests {
                 }
                 next = rank + 1;
                 switch (rank) {
-                    case ACCURACY -> accuracy(field);
-                    case ORDERING -> field.bool();
-                    case NONCE -> nonce = field.integer();
-                    case TSA -> field.inner();
+                    case ACCURACY_RANK -> accuracy(field);
+                    case ORDERING_RANK -> field.bool();
+                    case NONCE_RANK -> nonce = field.integer();
+                    case TSA_RANK -> field.inner();
                     default -> extensions(field);
                 }
             }
