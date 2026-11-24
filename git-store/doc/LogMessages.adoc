@@ -162,6 +162,11 @@ the class of the source (`main`, `working branch` or `collection branch`), never
 document id, and the class name (`Class.getName()`) of the exception, never its message. The source keeps the entries
 it was indexed with (a new source stays out of the index), the other sources are published fresh, and the next
 operation of the writer retries the refresh.
+|GIT_STORE-114 |GIT_STORE |Did not close the writer of repository %s, close it after the callback returned: %s
+|Logged when `StoreWriter.close()` was issued inside a callback whose thread holds a lock of the clone, a save step or
+an anchor provider call (xref:../../doc/specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16]): the repository alias
+and the detail `close: refused inside a callback that holds a lock of the clone`. The close returns at once without
+waiting; the writer stays open and usable, and a close after the callback returned closes it.
 |===
 
 == ERROR Level (200-299)

@@ -75,7 +75,8 @@ and the in-memory index `StoreIndex` (built from `main` and every working and co
 every fetch, save and release, each source read in isolation, with `snapshot` of a tag or commit) over the consumer's
 `IndexContributor` per collection, over the package-private `StoreClone` (the opened clone, to which `StoreWriter`
 delegates, with its events, the listener subscription and the closed flag that `close()` sets under the anchoring lock,
-so no due check runs after the close), `CloneWrites` (drafts, listing, save, release, expiry), `CloneSchedules` (fetch,
+so no due check runs after the close; a close issued inside a callback that holds a lock of the clone, a save step or
+an anchor provider call, is refused without waiting, leaves the writer open and logs `GIT_STORE-114`), `CloneWrites` (drafts, listing, save, release, expiry), `CloneSchedules` (fetch,
 periodic fetch, anchoring, the coalescing due-check trigger) and `CloneOpening` (checks the arguments of `open`, builds
 the providers and those parts), `DraftReferences`,
 `ExplicitSave`, `DocumentRelease`, `DocumentPaths`, `DraftExpiry`, `StoreEvents` (the notification seam and the one

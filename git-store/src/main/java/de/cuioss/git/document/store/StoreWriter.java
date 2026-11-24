@@ -494,6 +494,15 @@ public final class StoreWriter implements AutoCloseable {
      * Releases the opened clone: sets its closed flag under the anchoring lock, so a due check handed to the caller's
      * executor and run after the close does nothing, and one running waits until it ended. A second call releases
      * nothing.
+     * <p>
+     * A close issued inside a callback whose thread holds a lock of the clone, a {@link SaveStep} (under the shared
+     * maintenance lock and the transport lock of its save) or an {@link AnchorProvider} call (under the anchoring lock
+     * of its due check), is refused, since it would wait for a due check that waits for the callback's lock in turn,
+     * or release the repository under the running due check. The refusal does not wait and returns normally: the
+     * closed flag is not set, the clone is not released, the writer stays usable, and one warning is logged
+     * ({@code GIT_STORE-114}) with the alias. The caller closes the writer again after the callback returned. An index
+     * refresh and a {@link CommitListener} run after the operation released every lock, so a close from them closes
+     * the writer as a close from outside every callback does.
      */
     @Override
     public void close() {

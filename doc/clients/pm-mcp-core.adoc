@@ -283,7 +283,8 @@ the remote already holds at the release commit, `MALFORMED` for a gitlink among 
 for a numbered entry `main` changed since the previous release,
 xref:../specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]) and `REFUSED` for a draft expiry re-entered from a
 callback (xref:../specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]), does not reach it; the client maps none of
-them.
+them. Neither does the refused close of a writer issued inside a callback that holds a lock of the clone
+(xref:../specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16]).
 
 [CAUTION]
 ====

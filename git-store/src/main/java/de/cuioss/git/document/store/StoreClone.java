@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
+import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Repository;
 
 /**
@@ -32,9 +33,11 @@ import org.eclipse.jgit.lib.Repository;
  * {@link #close()} sets the closed flag and releases the repository under the anchoring lock of the clone, which every
  * due check of the anchoring holds while it runs and under which it reads the flag ({@link AnchorEngine#dueCheck}): a
  * due check that started before the close ends before the repository is released, and one queued or called after it
- * does nothing.
+ * does nothing. A close issued inside a callback that holds a lock of the clone is refused and leaves the clone open.
  */
 final class StoreClone {
+
+    private static final CuiLogger LOGGER = new CuiLogger(StoreClone.class);
 
     private final ExplicitSave.Clone clone;
     private final StoreEvents events;
@@ -117,9 +120,20 @@ final class StoreClone {
     /**
      * Sets the closed flag and releases the opened clone, both under the anchoring lock of the clone, so no due check
      * runs on a released repository and none runs after the close; a second call releases nothing.
+     * <p>
+     * A close from a thread that holds a lock of the guard ({@link RepositoryGuard#insideCallback()}), a callback
+     * inside an operation of the clone, is refused before the anchoring lock is requested, so it never waits: the
+     * closed flag is not set, the repository is not released, and {@link GitStoreLogMessages.WARN#CLOSE_REFUSED} is
+     * logged with the detail {@value RepositoryGuard#CLOSE_IN_CALLBACK}. A close after the callback returned closes the
+     * clone.
      */
     void close() {
-        clone.guard().anchoring(() -> {
+        RepositoryGuard guard = clone.guard();
+        if (guard.insideCallback()) {
+            LOGGER.warn(GitStoreLogMessages.WARN.CLOSE_REFUSED, alias(), RepositoryGuard.CLOSE_IN_CALLBACK);
+            return;
+        }
+        guard.anchoring(() -> {
             if (!closed.getAndSet(true)) {
                 clone.repository().close();
             }

@@ -407,7 +407,7 @@ again; the draft expiry, which needs the exclusive side of the maintenance lock,
 holds the shared side, and is refused instead of waiting for itself: `expireDrafts` returns `REFUSED` with the detail
 `maintenance: re-entered from a callback that holds the shared lock` (<<GDR-STORE-7>>). The refusal reads the calling
 thread's own hold count of the shared side before the exclusive side is requested, a fact of that thread alone, so no
-other thread can change it in between.
+other thread can change it in between. A step that closes the writer is refused the same way (<<GDR-STORE-16>>).
 
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes
@@ -1053,6 +1053,21 @@ A checkpoint is a commit:
 The checkpoint commit is reachable only through its tag; the tag is pushed with the expectation that it does not exist
 on the remote, separately from the commits of any save, before the proof is requested. The due check runs after every
 push and fetch and every `anchor.retry-interval`.
+
+`StoreWriter.close()` sets the closed flag of the writer and releases its clone under the anchoring lock, which every
+due check holds while it runs, so a running due check ends before the clone is released and one run after the close
+does nothing. A close issued inside a callback whose thread holds a lock of the clone is refused instead: a `SaveStep`,
+which runs under the shared side of the maintenance lock, the lock of its draft and the transport lock
+(<<GDR-STORE-3>>), and a call of the anchor provider, which a due check makes under the anchoring lock. Such a close
+would wait for the anchoring lock held by a due check that waits for the transport lock in turn, or, as the anchoring
+lock is reentrant, release the clone under the due check that called the provider. The refusal reads the calling
+thread's own hold counts of the three locks before the anchoring lock is requested, and takes no lock, so it never
+waits. `close()` returns no result: the refused close returns normally, the closed flag is not set, the clone is not
+released, the writer stays usable, and `GIT_STORE-114` is logged with the alias and the detail
+`close: refused inside a callback that holds a lock of the clone`; the caller closes the writer again after the
+callback returned. The index refresh and the commit listeners run on the thread of the operation after it released
+every lock (<<GDR-STORE-10>>), so a close from them, like a close from outside every callback, closes the writer as
+before.
 
 The anchor verification (<<GDR-STORE-17>>) checks the chain of the checkpoints: checkpoint `n` must have the commit of
 checkpoint `n-1` as its only parent and the first one none (`CHECKPOINT_CHAIN_BROKEN`, which reports a moved checkpoint

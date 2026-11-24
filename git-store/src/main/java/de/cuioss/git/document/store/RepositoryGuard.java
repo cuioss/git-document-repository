@@ -42,6 +42,12 @@ import java.util.function.Supplier;
  * for the exclusive side, a callback re-entering the writer, is refused ({@link #exclusive}) instead of waiting for
  * itself. The locks are in-process only.
  * <p>
+ * A close of the writer takes the anchoring lock to set its closed flag. A thread that holds any lock of the guard, a
+ * callback running inside an operation of the clone, does not ask for it ({@link #insideCallback()}): under the shared
+ * side or the transport lock it would wait for a due check that holds the anchoring lock and waits for the transport
+ * lock in turn, and under the anchoring lock, which is reentrant, it would release the repository under the running
+ * due check.
+ * <p>
  * The transport lock also serialises the writes and pushes of the anchoring (GDR-STORE-16, GDR-STORE-17): the fetch of
  * a due check, the checkpoint commit with its local tag and the tag push, and each anchor note with the push of its
  * notes reference run in one transport section, so no pruning fetch of a concurrent save deletes a local checkpoint tag
@@ -66,6 +72,12 @@ final class RepositoryGuard {
      * that re-entered the writer.
      */
     static final String REENTERED = "maintenance: re-entered from a callback that holds the shared lock";
+
+    /**
+     * The detail of a close from a thread that holds a lock of the guard: a callback that closed the writer inside the
+     * operation that called it.
+     */
+    static final String CLOSE_IN_CALLBACK = "close: refused inside a callback that holds a lock of the clone";
 
     /** The name of the action argument, in the message of its null check. */
     private static final String ACTION = "action";
@@ -146,6 +158,21 @@ final class RepositoryGuard {
             return StoreResult.of(StoreOutcome.REFUSED, REENTERED);
         }
         return locked(maintenance.writeLock(), action);
+    }
+
+    /**
+     * Whether the calling thread holds a lock of the guard: the shared side of the maintenance lock (a save, a release,
+     * a draft write and the callbacks they run), the transport lock (a fetch, an attempt of a save or a release, the
+     * writes of a due check, and the callbacks run inside them) or the anchoring lock (a due check and the anchor
+     * provider it calls). It reads the calling thread's own hold counts only and takes or releases no lock, so it never
+     * waits.
+     *
+     * @return {@code true} if the calling thread holds the shared side of the maintenance lock, the transport lock or
+     *         the anchoring lock
+     */
+    boolean insideCallback() {
+        return maintenance.getReadHoldCount() > 0 || transport.isHeldByCurrentThread()
+                || anchoring.isHeldByCurrentThread();
     }
 
     /**

@@ -291,5 +291,16 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(113)
                 .build();
+
+        /**
+         * A close of the writer was refused because it was issued inside a callback that holds a lock of the clone; the
+         * writer stays open and is closed by a close after the callback returned: the repository alias and the detail
+         * of the refusal.
+         */
+        public static final LogRecord CLOSE_REFUSED = LogRecordModel.builder()
+                .template("Did not close the writer of repository %s, close it after the callback returned: %s")
+                .prefix(PREFIX)
+                .identifier(114)
+                .build();
     }
 }
