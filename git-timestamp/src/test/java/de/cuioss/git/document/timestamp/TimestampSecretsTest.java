@@ -1,0 +1,378 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.timestamp;
+
+import static java.nio.charset.StandardCharsets.US_ASCII;
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.LogRecord;
+
+
+import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreResult;
+import de.cuioss.test.generator.Generators;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.eclipse.jgit.lib.ObjectId;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * GDR-NFR-3 for {@code git-timestamp}: the bearer token of {@code timestamp.credentials} and the user information of a
+ * URL never appear in a result detail, an exception message, a log message or the {@code toString} of
+ * {@link TimestampConfiguration}, {@link TimestampTransport} and {@link Rfc3161AnchorProvider}, across obtain (success,
+ * {@code REFUSED}, {@code UNAVAILABLE}), verify and the refusals of the configuration; the content of a file of
+ * {@code timestamp.trust} never appears in a refusal of the configuration. Every log record is captured down to trace.
+ * The secrets are generated, long enough to appear nowhere by chance.
+ */
+@EnableTestLogger(rootLevel = TestLogLevel.TRACE)
+@DisplayName("GDR-NFR-3: no secret of git-timestamp leaks")
+class TimestampSecretsTest {
+
+    private static final String REPOSITORY = "documents";
+    private static final ClosingFixtures FIXTURES = new ClosingFixtures();
+
+    private static TestTimestampAuthority authority;
+    private static HttpClient client;
+
+    @TempDir
+    static Path directory;
+
+    private static Path trust;
+
+    @BeforeAll
+    static void startAuthority() throws IOException {
+        var ca = TestCertificates.ca("test ca");
+        var tls = TestCertificates.tls(ca);
+        authority = FIXTURES.add(new TestTimestampAuthority(tls, ca, TestCertificates.signer(ca, "test tsa", true)),
+                TestTimestampAuthority::close);
+        var builder = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca));
+        client = FIXTURES.add(builder.build(), HttpClient::close);
+        trust = Files.writeString(directory.resolve("ca.pem"), TestCertificates.pem(ca.certificate()), US_ASCII);
+        // the JDK client reads jdk.httpclient.HttpClient.log once, when its logging is first initialised; one exchange
+        // without the property initialises it here, so a test that sets the property never turns logging on for the
+        // rest of the run
+        new TimestampTransport(authority.url(), null, client).post(TimeStampRequests.request(subject(),
+                new SecureRandom()).encoded());
+    }
+
+    @AfterAll
+    static void stopAuthority() {
+        FIXTURES.closeAll();
+    }
+
+    private static String secret() {
+        return Generators.letterStrings(24, 32).next();
+    }
+
+    private static Map<String, Object> configuration(String url, @Nullable String credentials, List<String> files) {
+        Map<String, Object> section = new HashMap<>();
+        section.put("url", url);
+        section.put("trust", files);
+        if (credentials != null) {
+            section.put("credentials", credentials);
+        }
+        return Map.of("timestamp", section);
+    }
+
+    private static Rfc3161AnchorProvider provider(URI url, String credentials) {
+        StoreResult<Rfc3161AnchorProvider> built = Rfc3161AnchorProvider.from(
+                configuration(url.toString(), credentials, List.of(trust.toString())), client);
+        assertTrue(built.isOk(), () -> "the provider is built: " + built.outcome());
+        return built.value();
+    }
+
+    private static ObjectId subject() {
+        return ObjectId.fromRaw(TimeStampRequests.sha256(Generators.letterStrings(8, 16).next().getBytes(US_ASCII)));
+    }
+
+    /** Every text a captured log record carries: message, parameters and the chain of its throwable. */
+    private static List<String> logTexts() {
+        List<String> texts = new ArrayList<>();
+        for (LogRecord logRecord : TestLoggerFactory.getTestHandler().getRecords()) {
+            texts.add(String.valueOf(logRecord.getMessage()));
+            Object[] parameters = logRecord.getParameters();
+            if (parameters != null) {
+                for (Object parameter : parameters) {
+                    texts.add(String.valueOf(parameter));
+                }
+            }
+            for (Throwable thrown = logRecord.getThrown(); thrown != null; thrown = thrown.getCause()) {
+                texts.add(String.valueOf(thrown));
+            }
+        }
+        return texts;
+    }
+
+    private static void assertNoneCarries(List<String> texts, List<String> secrets) {
+        for (String secret : secrets) {
+            assertTrue(texts.stream().noneMatch(text -> text.contains(secret)),
+                    () -> "a detail, a log text or a rendering carries a secret: " + texts.size() + " texts checked");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: the bearer token appears nowhere across obtain, verify and the renderings")
+    void shouldNeverRenderBearerToken() throws Exception {
+        String token = secret();
+        var provider = provider(authority.url(), token);
+        List<String> texts = new ArrayList<>();
+        texts.add(provider.toString());
+        var section = TimestampConfiguration.from(configuration(authority.url().toString(), token,
+                List.of(trust.toString())));
+        texts.add(String.valueOf(section.value()));
+        texts.add(String.valueOf(section.detail()));
+        texts.add(new TimestampTransport(authority.url(), token, client).toString());
+
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        var granted = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        assertTrue(granted.isOk(), () -> "obtained: " + granted.detail());
+        texts.add(String.valueOf(granted.detail()));
+        authority.answer(TestTimestampAuthority.Answer.REJECTION);
+        var refused = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        assertEquals(StoreOutcome.REFUSED, refused.outcome(), "refused");
+        texts.add(String.valueOf(refused.detail()));
+        int port;
+        try (var socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            port = socket.getLocalPort();
+        }
+        var unavailable = provider(URI.create("https://127.0.0.1:" + port + "/tsa"), token)
+                .obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        assertEquals(StoreOutcome.UNAVAILABLE, unavailable.outcome(), "unavailable");
+        texts.add(String.valueOf(unavailable.detail()));
+        var verified = provider.verify(subject(), granted.value(), new byte[0]);
+        assertEquals(StoreOutcome.IMPRINT_MISMATCH, verified.outcome(), "a token about another subject");
+        texts.add(String.valueOf(verified.detail()));
+        var unreadable = provider.verify(subject(), token.getBytes(US_ASCII), new byte[0]);
+        texts.add(String.valueOf(unreadable.detail()));
+        var anySubject = subject();
+        byte[] noPrevious = new byte[0];
+        var thrown = assertThrows(NullPointerException.class, () -> provider.verify(anySubject, null, noPrevious));
+        texts.add(String.valueOf(thrown.getMessage()));
+
+        texts.addAll(logTexts());
+        assertNoneCarries(texts, List.of(token, authority.url().toString()));
+    }
+
+    /** Runs an obtain with a token under a value of the HTTP client log property, restoring the property after. */
+    private static StoreResult<byte[]> obtainWithClientLog(Rfc3161AnchorProvider provider, @Nullable String value) {
+        String previous = System.getProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+        try {
+            if (value == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, value);
+            }
+            return provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: no credentialed request leaves while the HTTP client would log its headers")
+    void shouldRefuseCredentialedRequestUnderHeaderLogging() {
+        String token = secret();
+        var provider = provider(authority.url(), token);
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        long before = authority.calls();
+
+        var headers = obtainWithClientLog(provider, "headers");
+        var all = obtainWithClientLog(provider, "errors,ALL");
+        long afterRefusals = authority.calls();
+        var errors = obtainWithClientLog(provider, "errors");
+        var unset = obtainWithClientLog(provider, null);
+
+        assertAll(
+                () -> assertEquals(StoreOutcome.REFUSED, headers.outcome(), "headers"),
+                () -> assertEquals(TimestampTransport.HEADER_LOGGING, headers.detail(), "detail under headers"),
+                () -> assertEquals(TimestampTransport.HEADER_LOGGING, all.detail(), "detail under all"),
+                () -> assertEquals(before, afterRefusals, "the authority is not contacted"),
+                () -> assertTrue(errors.isOk(), () -> "sent under errors: " + errors.detail()),
+                () -> assertTrue(unset.isOk(), () -> "sent without the property: " + unset.detail()));
+        List<String> texts = new ArrayList<>(logTexts());
+        texts.add(String.valueOf(headers.detail()));
+        texts.add(String.valueOf(all.detail()));
+        texts.add(String.valueOf(errors.detail()));
+        texts.add(String.valueOf(unset.detail()));
+        assertNoneCarries(texts, List.of(token));
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-101:")
+                && text.contains(TimestampTransport.HEADER_LOGGING)), () -> "refusal logged: " + logTexts());
+    }
+
+    /** Creates a {@code java.home} whose {@code conf/net.properties} holds a default of the client log property. */
+    private static Path javaHome(String defaultValue) throws IOException {
+        Path home = directory.resolve(secret());
+        Files.createDirectories(home.resolve("conf"));
+        Files.writeString(home.resolve("conf").resolve("net.properties"),
+                "# defaults\n" + TimestampTransport.CLIENT_LOG_PROPERTY + "=" + defaultValue + "\n", US_ASCII);
+        return home;
+    }
+
+    /** Posts a request under a value of the system property, restoring the property after. */
+    private static StoreResult<byte[]> postWithClientLog(TimestampTransport transport, @Nullable String value) {
+        String previous = System.getProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+        try {
+            if (value == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, value);
+            }
+            return transport.post(TimeStampRequests.request(subject(), new SecureRandom()).encoded());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, previous);
+            }
+        }
+    }
+
+    private static TimestampTransport transport(@Nullable String token, @Nullable Path javaHome) {
+        return new TimestampTransport(authority.url(), token, client, TimestampTransport.REQUEST_TIMEOUT, javaHome);
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a header logging default of net.properties refuses a credentialed request")
+    void shouldRefuseCredentialedRequestUnderNetPropertiesDefault() throws Exception {
+        String token = secret();
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        long before = authority.calls();
+
+        List<StoreResult<byte[]>> refused = new ArrayList<>();
+        for (String value : List.of("headers", "all", "HEADERS", "errors, headers")) {
+            refused.add(postWithClientLog(transport(token, javaHome(value)), null));
+        }
+        long afterRefusals = authority.calls();
+        var overridden = postWithClientLog(transport(token, javaHome("headers")), "errors");
+        var uncredentialed = postWithClientLog(transport(null, javaHome("headers")), null);
+
+        assertAll(
+                () -> assertEquals(List.of(TimestampTransport.HEADER_LOGGING, TimestampTransport.HEADER_LOGGING,
+                                TimestampTransport.HEADER_LOGGING, TimestampTransport.HEADER_LOGGING),
+                        refused.stream().map(StoreResult::detail).toList(), "headers, all, HEADERS, a list"),
+                () -> assertEquals(before, afterRefusals, "the authority is not contacted"),
+                () -> assertTrue(overridden.isOk(), () -> "a system property errors wins: " + overridden.detail()),
+                () -> assertTrue(uncredentialed.isOk(), () -> "sent without a token: " + uncredentialed.detail()));
+        List<String> texts = new ArrayList<>(logTexts());
+        refused.forEach(result -> texts.add(String.valueOf(result.detail())));
+        texts.add(String.valueOf(overridden.detail()));
+        assertNoneCarries(texts, List.of(token));
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: an absent or unreadable net.properties holds no default")
+    void shouldAllowWithoutReadableNetProperties() throws Exception {
+        String token = secret();
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        Path withoutFile = Files.createDirectories(directory.resolve(secret()));
+        Path unreadable = directory.resolve(secret());
+        // a directory in place of the file cannot be read as properties
+        Files.createDirectories(unreadable.resolve("conf").resolve("net.properties"));
+
+        var absent = postWithClientLog(transport(token, withoutFile), null);
+        var directoryInstead = postWithClientLog(transport(token, unreadable), null);
+        var noHome = postWithClientLog(transport(token, null), null);
+
+        assertAll(
+                () -> assertTrue(absent.isOk(), () -> "no net.properties: " + absent.detail()),
+                () -> assertTrue(directoryInstead.isOk(),
+                        () -> "unreadable net.properties: " + directoryInstead.detail()),
+                () -> assertTrue(noHome.isOk(), () -> "no java.home: " + noHome.detail()),
+                () -> assertNull(TimestampTransport.effectiveClientLog(null, withoutFile), "no value"),
+                () -> assertNull(TimestampTransport.effectiveClientLog(null, unreadable), "no value either"));
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a request without a token is sent whatever the HTTP client logs")
+    void shouldSendUncredentialedRequestUnderHeaderLogging() {
+        StoreResult<Rfc3161AnchorProvider> built = Rfc3161AnchorProvider.from(
+                configuration(authority.url().toString(), null, List.of(trust.toString())), client);
+        assertTrue(built.isOk(), () -> "the provider is built: " + built.outcome());
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+
+        var result = obtainWithClientLog(built.value(), "headers");
+
+        assertTrue(result.isOk(), () -> "sent: " + result.detail());
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a URL with user information is refused without naming it")
+    void shouldNeverRenderUserInformation() {
+        String user = secret();
+        String password = secret();
+        String token = secret();
+        String url = "https://" + user + ":" + password + "@127.0.0.1/tsa";
+
+        var refused = Rfc3161AnchorProvider.from(configuration(url, token, List.of(trust.toString())), client);
+
+        assertEquals(StoreOutcome.MALFORMED, refused.outcome(), "refused");
+        assertEquals(TimestampConfiguration.KEY_URL + " is malformed", refused.detail(), "detail names the key");
+        List<String> texts = new ArrayList<>(logTexts());
+        texts.add(String.valueOf(refused.detail()));
+        assertNoneCarries(texts, List.of(user, password, token));
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a malformed token and a malformed trust file are refused without naming their content")
+    void shouldNeverRenderRefusedValues() throws Exception {
+        String content = secret();
+        Path broken = Files.writeString(directory.resolve(secret() + ".pem"),
+                "-----BEGIN CERTIFICATE-----\n" + content + "\n-----END CERTIFICATE-----\n", US_ASCII);
+        String malformedToken = secret() + " " + secret();
+
+        var refusedTrust = Rfc3161AnchorProvider.from(configuration(authority.url().toString(), null,
+                List.of(broken.toString())), client);
+        var refusedToken = Rfc3161AnchorProvider.from(configuration(authority.url().toString(), malformedToken,
+                List.of(trust.toString())), client);
+
+        assertEquals(StoreOutcome.MALFORMED, refusedTrust.outcome(), "trust refused");
+        assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", refusedTrust.detail(), "detail of the trust");
+        assertEquals(StoreOutcome.MALFORMED, refusedToken.outcome(), "credentials refused");
+        assertEquals(TimestampConfiguration.KEY_CREDENTIALS + " is malformed", refusedToken.detail(),
+                "detail of the credentials");
+        List<String> texts = new ArrayList<>(logTexts());
+        texts.add(String.valueOf(refusedTrust.detail()));
+        texts.add(String.valueOf(refusedToken.detail()));
+        assertNoneCarries(texts, List.of(content, broken.toString(), malformedToken));
+    }
+}

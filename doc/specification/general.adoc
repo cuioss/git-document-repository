@@ -31,8 +31,11 @@ ship their native-image metadata, which this repository does not verify in a nat
 kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome list and
 result (<<GDR-GEN-3>>), and so implements xref:git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1],
 xref:git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2] and xref:git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements
-are planned. Every other requirement of the
-libraries is planned, and `git-timestamp` and `git-directory` are not yet created.
+are planned. `git-timestamp` holds the anchor provider `rfc3161` of `git-store` and implements
+xref:git-timestamp.adoc#GDR-TSA-1[GDR-TSA-1] and xref:git-timestamp.adoc#GDR-TSA-2[GDR-TSA-2]; the part of
+<<GDR-NFR-3>> its configuration, transport and verification touch is covered by its tests `TimestampSecretsTest` and
+the log and detail assertions of `Rfc3161ObtainTest`, and for <<GDR-NFR-4>> it ships no metadata (see there). Every
+other requirement of the libraries is planned, and `git-directory` is not yet created.
 
 [#GDR-GEN-1]
 == GDR-GEN-1: Module Layering and Dependency Isolation
@@ -58,8 +61,8 @@ dependency. Four checks realise the requirement:
 * The execution `module-layering` of the root POM (phase `validate`, declared dependencies only) bans every
   dependency on an artifact `de.cuioss:git-*` except `git-testing` in scope `test`, against which every module may
   test. Each module lists its allowed edges in its own POM, one `<include>` per edge, appended to the rule with
-  `combine.children="append"` in an execution of the same id: `git-store` lists `git-core`, `git-forms` lists
-  `git-store`; `git-core` and `git-testing` list none. A new module adds exactly the edges the graph names.
+  `combine.children="append"` in an execution of the same id: `git-store` lists `git-core`, `git-forms` and
+  `git-timestamp` each list `git-store`; `git-core` and `git-testing` list none. A new module adds exactly the edges the graph names.
 * The execution `consumer-isolation` of `git-core` (phase `validate`, transitive) bans every artifact in scope
   `compile` or `runtime` outside the closure a consumer of `git-core` alone receives: `org.jspecify:jspecify`, JGit
   with the compile dependencies its 7.8.0 POM declares (`com.googlecode.javaewah:JavaEWAH`, `org.slf4j:slf4j-api`,
@@ -80,7 +83,7 @@ dependency. Four checks realise the requirement:
   `consumer-isolation`; the check of the declared dependencies has no such filter. A new compile dependency of
   `git-core` is added to both rules, `consumer-isolation` and `direct-dependency-isolation`, only after the owner's
   approval.
-* `DomainTermAbsenceTest` of `git-core`, `git-testing`, `git-store` and `git-forms` loads the classes of the module's main output
+* `DomainTermAbsenceTest` of `git-core`, `git-testing`, `git-store`, `git-forms` and `git-timestamp` loads the classes of the module's main output
   and fails when the simple name or the package name of a public type contains `assessment`, `threat`, `incident` or
   `risk`, compared case-insensitively, or when the scan finds no public type. The test of `git-core` also reads the
   exported packages from the compiled `module-info.class` of its main output and fails when an exported package holds
@@ -111,9 +114,12 @@ to consumer-isolation.", naming `org.openjdk.jol:jol-core:jar:0.17 <--- banned v
 
 The checks accept three trade-offs:
 
-* The four domain terms are copied into the `DomainTermAbsenceTest` of each module. Reason: each test checks the main
-  output of its own module, and the only test code the modules share is `git-testing`, a published library whose
-  public types are fixtures, not checks of this repository; a change of the terms has to be made in all four tests.
+* Each module has its own `DomainTermAbsenceTest`, and the four domain terms are kept in two ways: the tests of
+  `git-core`, `git-testing` and `git-store` carry a copy of the terms, while the tests of `git-forms` and
+  `git-timestamp` read them from this section at run time. Reason: each test checks the main output of its own module,
+  and the only test code the modules share is `git-testing`, a published library whose public types are fixtures, not
+  checks of this repository. A change of the terms is made in this section, which the tests of `git-forms` and
+  `git-timestamp` follow, and in the copies of the tests of `git-core`, `git-testing` and `git-store`.
 * The `<include>` edges of `module-layering` mirror the graph of
   xref:../concepts/module-structure.adoc[Module Structure] by hand. Reason: no build step reads the graph from the
   document, which would need a plugin or a parser this repository does not have; a change of the graph has to be made
@@ -130,7 +136,8 @@ JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with 
 `cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator`,
 `cui-test-juli-logger` and JOL in its test scope; and `cui-java-tools`, Lombok, `org.snakeyaml:snakeyaml-engine` 3.2
 and `dev.harrel:json-schema` 1.9.1 in `git-forms`, with `git-testing`, JUnit 5, `cui-test-generator` and
-`cui-test-juli-logger` in its test scope. snakeyaml-engine 3.2 brings no further artifact: its POM declares test-scope
+`cui-test-juli-logger` in its test scope; and `cui-java-tools` in `git-timestamp`, with `git-testing`, JUnit 5,
+`cui-test-generator` and `cui-test-juli-logger` in its test scope. snakeyaml-engine 3.2 brings no further artifact: its POM declares test-scope
 dependencies only
 (link:https://repo1.maven.org/maven2/org/snakeyaml/snakeyaml-engine/3.2/snakeyaml-engine-3.2.pom[snakeyaml-engine 3.2
 POM]). json-schema 1.9.1 brings none either: its POM declares no compile dependency, and every runtime dependency it
@@ -153,7 +160,10 @@ On 2026-11-23 the owner decided that `git-forms` uses no third-party template en
 language, so the template adds no dependency (xref:git-forms.adoc[`git-forms`]); the alternatives considered were a
 logic-less Mustache library such as `com.samskivert:jmustache` and a full engine such as Pebble or FreeMarker, which
 were not checked against Maven Central because neither was chosen, and the owner gave no reasons, so none are
-recorded. Every other dependency below is open and needs the owner's approval before it is added:
+recorded. On 2026-11-24 the owner decided that `git-timestamp` adds no dependency for RFC 3161: like SSHSIG in
+`git-store`, the RFC 3161 support is an own DER/CMS reader and writer on the JDK, and Bouncy Castle is not used
+(alternative and reason: xref:git-timestamp.adoc[`git-timestamp`]). Every other dependency below is open and needs the
+owner's approval before it is added:
 
 [cols="1,3"]
 |===
@@ -173,7 +183,11 @@ is an own encoder of `git-store` and Ed25519 comes from the JDK, JGit's `org.ecl
 |`git-forms` |`git-store`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope `git-testing`,
 `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); `org.snakeyaml:snakeyaml-engine` and
 `dev.harrel:json-schema` (each declared, decided); no template engine (decided 2026-11-23)
-|`git-timestamp` |an RFC 3161 client library (open)
+|`git-timestamp` |`git-store` (`requires transitive`), `cui-java-tools` for `CuiLogger`; in test scope `git-testing`,
+`cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); no dependency for RFC 3161 (decided
+2026-11-24): the time-stamp request and the verification of the token are an own DER/CMS reader and writer of
+`git-timestamp` on the JDK (`java.security`, `java.net.http`), Bouncy Castle is not adopted
+(xref:git-timestamp.adoc[`git-timestamp`])
 |`git-directory` |none beyond those of `git-forms`
 |===
 
@@ -411,7 +425,7 @@ address in the e-mail fields of author and committer when the operator sets `com
 |===
 
 Tests are to assert the rules with a JUL log capture (`cui-test-juli-logger`, declared in the test scope of `git-core`,
-`git-store` and `git-forms`, see <<GDR-GEN-1>>) and with checks of result details.
+`git-store`, `git-forms` and `git-timestamp`, see <<GDR-GEN-1>>) and with checks of result details.
 
 [#GDR-NFR-4]
 == GDR-NFR-4: Native Image
@@ -459,7 +473,8 @@ reachable, and registers each provider class for reflective instantiation
 (link:https://github.com/oracle/graal/blob/master/substratevm/src/com.oracle.svm.hosted/src/com/oracle/svm/hosted/ServiceLoaderFeature.java[GraalVM,
 `ServiceLoaderFeature`], checked on 2026-11-20). Whether a provider module registered only by a `provides` directive
 of its `module-info.java`, without a `META-INF/services` file, is found the same way is not checked here and stays
-open; it concerns the providers, all of which are planned.
+open; it concerns the providers outside `git-store`, of which `rfc3161` of `git-timestamp` exists and the others are
+planned.
 
 `git-forms` ships `resource-config.json` under `META-INF/native-image/de.cuioss/git-forms/` and no
 `reflect-config.json`, for the same reason `git-store` ships no empty file. Neither of its libraries ships metadata of
@@ -480,6 +495,21 @@ loads `git-forms`, json-schema and snakeyaml-engine child-first and records ever
 that every recorded resource of `git-forms` and json-schema is listed, the message bundle and `draft2020-12.json` among
 them, that snakeyaml-engine is asked for no resource, and that no class of snakeyaml-engine the reads load references a
 reflection API.
+
+`git-timestamp` ships no native-image metadata, on the same grounds as `git-store`: GraalVM reads the metadata of
+every class-path entry (link:https://www.graalvm.org/latest/reference-manual/native-image/metadata/[GraalVM,
+Reachability Metadata]), so a consumer receives that of `git-core` through the dependency, and an empty placeholder
+file is neither recommended nor a valid `resource-config.json`. The main code of `git-timestamp` has no reflection,
+resource or resource-bundle access of its own: its DER/CMS reader and writer is plain code, the trusted certificates
+are files named by the configuration and read through `java.nio.file`, and the signature check, the certification path
+and the transport are calls of `java.security` and `java.net.http` by algorithm name and by API. Whether the JDK's own
+providers of those algorithms and its HTTP client need metadata beyond what the native-image builder registers for
+the JDK is not checked here; like the rest of this requirement it is left to the native build of a consumer. The
+module registers `rfc3161` by the `provides` directive of its `module-info.java` only, with no
+`META-INF/services` file, so the open question of `git-store` above, whether such a provider is found in a native
+image, applies to it; it concerns only the unconfigured instance, since an application builds the configured provider
+with `Rfc3161AnchorProvider.from` and passes it to `StoreProviders.select` directly
+(xref:git-timestamp.adoc#GDR-TSA-1[GDR-TSA-1]).
 
 This repository does not verify the requirement yet: until a native test lane exists here (open), only a consuming
 application's native build verifies it, the first being the native build of

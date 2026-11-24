@@ -1,0 +1,779 @@
+/*
+ * Copyright © 2026-present CUI-OpenSource-Software (info@cuioss.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package de.cuioss.git.document.timestamp;
+
+import static java.nio.charset.StandardCharsets.US_ASCII;
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.module.ModuleDescriptor;
+import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.LogRecord;
+
+
+import de.cuioss.git.document.store.AnchorProvider;
+import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreResult;
+import de.cuioss.test.generator.Generators;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
+import org.eclipse.jgit.lib.ObjectId;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * GDR-TSA-1: the provider {@code rfc3161} obtains an RFC 3161 timestamp token from the in-process test authority,
+ * over TLS on the loopback address, without network access.
+ */
+@EnableTestLogger(rootLevel = TestLogLevel.TRACE)
+@DisplayName("GDR-TSA-1: obtaining a timestamp token")
+class Rfc3161ObtainTest {
+
+    private static final String REPOSITORY = "documents";
+    private static final ClosingFixtures FIXTURES = new ClosingFixtures();
+
+    private static TestCertificates.Issued ca;
+    private static TestTimestampAuthority authority;
+    private static HttpClient client;
+
+    @TempDir
+    static Path directory;
+
+    private static Path trust;
+
+    @BeforeAll
+    static void startAuthority() throws IOException {
+        ca = TestCertificates.ca("test ca");
+        var tls = TestCertificates.tls(ca);
+        var signer = TestCertificates.signer(ca, "test tsa", true);
+        authority = FIXTURES.add(new TestTimestampAuthority(tls, ca, signer), TestTimestampAuthority::close);
+        var builder = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca));
+        client = FIXTURES.add(builder.build(), HttpClient::close);
+        trust = Files.writeString(directory.resolve("ca.pem"), TestCertificates.pem(ca.certificate()), US_ASCII);
+    }
+
+    @AfterAll
+    static void stopAuthority() {
+        FIXTURES.closeAll();
+    }
+
+    @BeforeEach
+    void resetAuthority() {
+        authority.reset();
+    }
+
+    private static Map<String, Object> configuration(URI url, @Nullable String credentials) {
+        Map<String, Object> section = new HashMap<>();
+        section.put("url", url.toString());
+        section.put("trust", List.of(trust.toString()));
+        if (credentials != null) {
+            section.put("credentials", credentials);
+        }
+        return Map.of("timestamp", section);
+    }
+
+    private static Rfc3161AnchorProvider provider(URI url, @Nullable String credentials) {
+        StoreResult<Rfc3161AnchorProvider> built = Rfc3161AnchorProvider.from(configuration(url, credentials), client);
+        assertTrue(built.isOk(), () -> "the provider is built: " + built.detail());
+        return built.value();
+    }
+
+    private static Rfc3161AnchorProvider provider() {
+        return provider(authority.url(), null);
+    }
+
+    private static ObjectId subject() {
+        return ObjectId.fromRaw(TimeStampRequests.sha256(Generators.letterStrings(8, 16).next().getBytes(US_ASCII)));
+    }
+
+    private static List<String> logTexts() {
+        List<String> texts = new ArrayList<>();
+        for (LogRecord logRecord : TestLoggerFactory.getTestHandler().getRecords()) {
+            texts.add(String.valueOf(logRecord.getMessage()));
+            if (logRecord.getParameters() != null) {
+                for (Object parameter : logRecord.getParameters()) {
+                    texts.add(String.valueOf(parameter));
+                }
+            }
+        }
+        return texts;
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the provider id is rfc3161")
+    void shouldCarryProviderId() {
+        assertEquals("rfc3161", new Rfc3161AnchorProvider().id(), "id");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: success returns a DER token whose imprint is SHA-256 over the lowercase hex id")
+    void shouldObtainToken() throws Exception {
+        var subject = subject();
+
+        var result = provider().obtain(REPOSITORY, subject, Instant.now(), new byte[0]);
+
+        assertTrue(result.isOk(), () -> "obtained: " + result.detail());
+        var info = TimeStampRequests.tstInfo(result.value());
+        byte[] expected = TimeStampRequests.sha256(subject.name().getBytes(US_ASCII));
+        var received = authority.received().getFirst();
+        assertAll(
+                () -> assertEquals(TimeStampRequests.SHA_256, info.hashAlgorithm(), "hash algorithm of the token"),
+                () -> assertArrayEquals(expected, info.hashedMessage(), "imprint of the token"),
+                () -> assertEquals(TimeStampRequests.SHA_256, received.hashAlgorithm(), "hash algorithm requested"),
+                () -> assertArrayEquals(expected, received.imprint(), "imprint requested"),
+                () -> assertTrue(received.certReq(), "certReq requested"),
+                () -> assertNotNull(received.nonce(), "nonce requested"),
+                () -> assertEquals(received.nonce(), info.nonce(), "nonce of the token"));
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-1: Obtained a timestamp token"
+                        + " for repository " + REPOSITORY + ", object " + subject.name())),
+                () -> "obtained proof logged: " + logTexts());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the nonce differs across two requests")
+    void shouldUseFreshNonce() {
+        var provider = provider();
+        var subject = subject();
+
+        assertTrue(provider.obtain(REPOSITORY, subject, Instant.now(), new byte[0]).isOk(), "first");
+        assertTrue(provider.obtain(REPOSITORY, subject, Instant.now(), new byte[0]).isOk(), "second");
+
+        var received = authority.received();
+        assertEquals(2, received.size(), "two requests");
+        assertNotEquals(received.getFirst().nonce(), received.get(1).nonce(), "nonces");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the previous proof and the commit time are not used")
+    void shouldIgnorePreviousProof() throws Exception {
+        var provider = provider();
+        var subject = subject();
+        byte[] previous = Generators.letterStrings(40, 80).next().getBytes(US_ASCII);
+
+        var withPrevious = provider.obtain(REPOSITORY, subject, Instant.EPOCH, previous);
+        var without = provider.obtain(REPOSITORY, subject, Instant.now(), new byte[0]);
+
+        assertTrue(withPrevious.isOk(), () -> "with a previous proof: " + withPrevious.detail());
+        assertTrue(without.isOk(), () -> "without a previous proof: " + without.detail());
+        var received = authority.received();
+        assertArrayEquals(received.getFirst().imprint(), received.get(1).imprint(), "same request but the nonce");
+        assertArrayEquals(TimeStampRequests.tstInfo(withPrevious.value()).hashedMessage(),
+                TimeStampRequests.tstInfo(without.value()).hashedMessage(), "same imprint");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an error response is REFUSED")
+    void shouldRefuseErrorResponse() {
+        authority.answer(TestTimestampAuthority.Answer.REJECTION);
+
+        var result = provider().obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+        assertEquals(StoreOutcome.REFUSED, result.outcome(), "outcome");
+        assertEquals(TimeStampRequests.STATUS_PREFIX + "2", result.detail(), "detail");
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-101:")),
+                () -> "refusal logged: " + logTexts());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: another HTTP status, another media type and an unreadable reply are REFUSED")
+    void shouldRefuseBrokenReplies() {
+        var provider = provider();
+        List<String> details = new ArrayList<>();
+        for (var answer : List.of(TestTimestampAuthority.Answer.HTTP_ERROR,
+                TestTimestampAuthority.Answer.WRONG_CONTENT_TYPE, TestTimestampAuthority.Answer.UNREADABLE)) {
+            authority.answer(answer);
+
+            var result = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+            assertEquals(StoreOutcome.REFUSED, result.outcome(), () -> "outcome of " + answer);
+            details.add(result.detail());
+        }
+        assertEquals(List.of(TimestampTransport.HTTP_STATUS_PREFIX + "500", TimestampTransport.WRONG_CONTENT_TYPE,
+                TimeStampRequests.REPLY_UNREADABLE), details, "details");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a token with a wrong nonce or a wrong imprint is REFUSED (RFC 3161, 2.4.2)")
+    void shouldRefuseMismatchedToken() {
+        var provider = provider();
+
+        authority.answer(TestTimestampAuthority.Answer.WRONG_NONCE);
+        var wrongNonce = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        authority.answer(TestTimestampAuthority.Answer.WRONG_IMPRINT);
+        var wrongImprint = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+        assertAll(
+                () -> assertEquals(StoreOutcome.REFUSED, wrongNonce.outcome(), "wrong nonce"),
+                () -> assertEquals(Rfc3161AnchorProvider.NONCE_MISMATCH, wrongNonce.detail(), "detail of the nonce"),
+                () -> assertEquals(StoreOutcome.REFUSED, wrongImprint.outcome(), "wrong imprint"),
+                () -> assertEquals(Rfc3161AnchorProvider.IMPRINT_DIFFERS, wrongImprint.detail(),
+                        "detail of the imprint"));
+    }
+
+    private static byte[] encodedRequest() {
+        return TimeStampRequests.request(subject(), new SecureRandom()).encoded();
+    }
+
+    @Test
+    @DisplayName("The test authority answers HTTP 400 to an empty or one-field request instead of failing")
+    void shouldAnswerBadRequestToShortShape() {
+        var transport = new TimestampTransport(authority.url(), null, client);
+
+        var empty = transport.post(Der.sequence());
+        var oneField = transport.post(Der.sequence(Der.integer(1)));
+        var shortImprint = transport.post(Der.sequence(Der.integer(1), Der.sequence()));
+
+        assertAll(
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", empty.detail(), "empty SEQUENCE"),
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", oneField.detail(), "one field"),
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", shortImprint.detail(),
+                        "empty imprint"),
+                () -> assertTrue(authority.received().isEmpty(), "no request recorded"));
+    }
+
+    @Test
+    @DisplayName("The test authority answers HTTP 400 to a request of another version than 1 (RFC 3161, 2.4.1)")
+    void shouldAnswerBadRequestToOtherVersion() {
+        var transport = new TimestampTransport(authority.url(), null, client);
+        byte[] imprint = TimeStampRequests.messageImprint(TimeStampRequests.sha256(new byte[]{1}));
+
+        var version2 = transport.post(Der.sequence(Der.integer(2), imprint));
+        var noInteger = transport.post(Der.sequence(Der.oid(TestTimestampAuthority.POLICY), imprint));
+        boolean nothingRecorded = authority.received().isEmpty();
+        var version1 = transport.post(Der.sequence(Der.integer(1), imprint));
+
+        assertAll(
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", version2.detail(), "version 2"),
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", noInteger.detail(),
+                        "a first field that is no INTEGER"),
+                () -> assertTrue(nothingRecorded, "no request recorded"),
+                () -> assertTrue(version1.isOk(), () -> "version 1 is answered: " + version1.detail()),
+                () -> assertEquals(1, authority.received().size(), "the request of version 1 is recorded"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a reply of exactly the limit is read, one octet more is REFUSED as too large")
+    void shouldBoundReplySize() {
+        var transport = new TimestampTransport(authority.url(), null, client);
+
+        authority.rawReply(new byte[TimestampTransport.MAX_REPLY_BYTES], false);
+        var atLimit = transport.post(encodedRequest());
+        authority.rawReply(new byte[TimestampTransport.MAX_REPLY_BYTES + 1], false);
+        var beyond = transport.post(encodedRequest());
+
+        assertAll(
+                () -> assertTrue(atLimit.isOk(), () -> "at the limit: " + atLimit.detail()),
+                () -> assertEquals(TimestampTransport.MAX_REPLY_BYTES, atLimit.value().length, "octets read"),
+                () -> assertEquals(StoreOutcome.REFUSED, beyond.outcome(), "beyond the limit"),
+                () -> assertEquals(TimestampTransport.REPLY_TOO_LARGE, beyond.detail(), "detail beyond the limit"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a body that stalls after the headers is UNAVAILABLE within the deadline")
+    void shouldEndStalledBodyAtDeadline() throws Exception {
+        Duration deadline = Duration.ofMillis(800);
+        var transport = new TimestampTransport(authority.url(), null, client, deadline);
+        authority.rawReply(new byte[64], true);
+
+        long start = System.nanoTime();
+        var result = transport.post(encodedRequest());
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+        // the same result comes from a deadline spent on the handshake or the headers; only a flushed first body octet
+        // proves that the body itself stalled and was cut off
+        assertTrue(authority.awaitStalledBody(Duration.ofSeconds(1)), "the authority stalled inside the body");
+        assertAll(
+                () -> assertEquals(StoreOutcome.UNAVAILABLE, result.outcome(), "outcome"),
+                () -> assertEquals(TimestampTransport.UNREACHABLE, result.detail(), "detail"),
+                () -> assertTrue(took.compareTo(deadline.plusSeconds(5)) < 0, () -> "ended after " + took));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a complete reply inside the size and the deadline is read with a short deadline")
+    void shouldReadCompleteReplyWithinDeadline() {
+        var transport = new TimestampTransport(authority.url(), null, client, Duration.ofSeconds(5));
+        authority.rawReply(new byte[]{1, 2, 3}, false);
+
+        var result = transport.post(encodedRequest());
+
+        assertTrue(result.isOk(), () -> "read: " + result.detail());
+        assertArrayEquals(new byte[]{1, 2, 3}, result.value(), "octets");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an interrupt during the stalled body read is UNAVAILABLE as interrupted, the flag kept")
+    void shouldReportInterruptedBodyRead() throws Exception {
+        var transport = new TimestampTransport(authority.url(), null, client, Duration.ofSeconds(20));
+        authority.rawReply(new byte[64], true);
+        AtomicReference<StoreResult<byte[]>> result = new AtomicReference<>();
+        var flagAfterwards = new AtomicBoolean();
+        var reader = new Thread(() -> {
+            try {
+                result.set(transport.post(encodedRequest()));
+                flagAfterwards.set(Thread.currentThread().isInterrupted());
+            } finally {
+                // the flag belongs to this thread alone; it is cleared so nothing else of the thread sees it
+                Thread.interrupted();
+            }
+        }, "interrupted body read");
+
+        reader.start();
+        boolean stalled = authority.awaitStalledBody(Duration.ofSeconds(10));
+        // the headers arrive before the first body octet, but the reader may still be on its way out of send(); only a
+        // reader parked inside readBody proves that the interrupt hits the body read and not the header wait
+        boolean inBodyRead = awaitParkedIn(reader, "readBody", Duration.ofSeconds(10));
+        reader.interrupt();
+        reader.join(Duration.ofSeconds(10).toMillis());
+
+        assertTrue(stalled, "the authority stalled inside the body");
+        assertTrue(inBodyRead, "the reader waited inside the body read");
+        assertFalse(reader.isAlive(), "the read ended");
+        assertAll(
+                () -> assertEquals(StoreOutcome.UNAVAILABLE, result.get().outcome(), "outcome"),
+                () -> assertEquals(TimestampTransport.INTERRUPTED, result.get().detail(), "detail"),
+                () -> assertTrue(flagAfterwards.get(), "the interrupt flag is set afterwards"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the deadline of a stalled body holds while the common pool is saturated")
+    void shouldEndStalledBodyAtDeadlineWithBusyCommonPool() throws Exception {
+        int parallelism = ForkJoinPool.getCommonPoolParallelism();
+        // with a parallelism of 1 CompletableFuture runs every task on a thread of its own, there is no pool to fill
+        assumeTrue(parallelism > 1, "the common pool has more than one thread");
+        var release = new CountDownLatch(1);
+        var busy = new CountDownLatch(parallelism);
+        try {
+            for (int i = 0; i < parallelism; i++) {
+                ForkJoinPool.commonPool().execute(() -> {
+                    busy.countDown();
+                    awaitQuietly(release);
+                });
+            }
+            assertTrue(busy.await(10, TimeUnit.SECONDS), "every thread of the common pool is busy");
+            Duration deadline = Duration.ofMillis(800);
+            var transport = new TimestampTransport(authority.url(), null, client, deadline);
+            authority.rawReply(new byte[64], true);
+
+            long start = System.nanoTime();
+            var result = transport.post(encodedRequest());
+            Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+            assertTrue(authority.awaitStalledBody(Duration.ofSeconds(1)), "the authority stalled inside the body");
+            assertAll(
+                    () -> assertEquals(StoreOutcome.UNAVAILABLE, result.outcome(), "outcome"),
+                    () -> assertEquals(TimestampTransport.UNREACHABLE, result.detail(), "detail"),
+                    () -> assertTrue(took.compareTo(deadline.plusSeconds(5)) < 0, () -> "ended after " + took));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    /** Waits until a thread is parked with a frame of a given method of {@link TimestampTransport} on its stack. */
+    private static boolean awaitParkedIn(Thread thread, String method, Duration timeout) throws InterruptedException {
+        long end = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() - end < 0 && thread.isAlive()) {
+            Thread.State state = thread.getState();
+            if (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING) {
+                for (StackTraceElement frame : thread.getStackTrace()) {
+                    if (TimestampTransport.class.getName().equals(frame.getClassName())
+                            && method.equals(frame.getMethodName())) {
+                        return true;
+                    }
+                }
+            }
+            thread.join(10);
+        }
+        return false;
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** A body whose read returns its octets only once a given instant of {@link System#nanoTime()} has passed. */
+    private static InputStream bodyEndingAfter(byte[] octets, long instant) {
+        return new InputStream() {
+            private int position;
+
+            @Override
+            public int read() {
+                while (System.nanoTime() - instant <= 0) {
+                    Thread.onSpinWait();
+                }
+                return position < octets.length ? octets[position++] & 0xFF : -1;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a read that ends after the deadline is UNAVAILABLE even when the close never ran")
+    void shouldRefuseReadEndingAfterDeadline() throws Exception {
+        var release = new CountDownLatch(1);
+        // the scheduler closes last: its close awaits termination, so the blocked thread is released before it
+        try (var scheduler = new ScheduledThreadPoolExecutor(1);
+             AutoCloseable unblock = () -> {
+                 release.countDown();
+                 scheduler.shutdownNow();
+             }) {
+            // the single thread of the scheduler is blocked, so a scheduled close never runs
+            scheduler.execute(() -> awaitQuietly(release));
+            long lateDeadline = System.nanoTime() + Duration.ofMillis(50).toNanos();
+            long laterEnd = lateDeadline + Duration.ofMillis(50).toNanos();
+            var late = TimestampTransport.readBody(bodyEndingAfter(new byte[]{1, 2, 3}, laterEnd), lateDeadline,
+                    scheduler);
+            long inTime = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            var prompt = TimestampTransport.readBody(bodyEndingAfter(new byte[]{1, 2, 3}, System.nanoTime()), inTime,
+                    scheduler);
+
+            assertAll(
+                    () -> assertEquals(StoreOutcome.UNAVAILABLE, late.outcome(), "a read ending after the deadline"),
+                    () -> assertEquals(TimestampTransport.UNREACHABLE, late.detail(), "detail of the late read"),
+                    () -> assertTrue(prompt.isOk(), () -> "a read inside the deadline: " + prompt.detail()),
+                    () -> assertArrayEquals(new byte[]{1, 2, 3}, prompt.value(), "octets of the prompt read"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a granted token that does not verify against timestamp.trust is REFUSED, not returned")
+    void shouldRefuseTokenThatDoesNotVerify() {
+        var provider = provider();
+        List<String> details = new ArrayList<>();
+        for (var answer : List.of(TestTimestampAuthority.Answer.UNTRUSTED_SIGNER,
+                TestTimestampAuthority.Answer.SIGNER_WITHOUT_TIME_STAMPING)) {
+            authority.answer(answer);
+
+            var result = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+            assertEquals(StoreOutcome.REFUSED, result.outcome(), () -> "outcome of " + answer);
+            details.add(result.detail());
+        }
+        assertEquals(List.of(Rfc3161AnchorProvider.TOKEN_INVALID, Rfc3161AnchorProvider.TOKEN_INVALID), details,
+                "details");
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-101:")),
+                () -> "refusal logged: " + logTexts());
+    }
+
+    private static byte[] tstInfo(byte[]... optional) {
+        List<byte[]> fields = new ArrayList<>(List.of(Der.integer(1), Der.oid(TestTimestampAuthority.POLICY),
+                TimeStampRequests.messageImprint(TimeStampRequests.sha256(new byte[]{1})), Der.integer(7),
+                Der.generalizedTime(Instant.now())));
+        fields.addAll(List.of(optional));
+        return Der.sequence(fields.toArray(byte[][]::new));
+    }
+
+    private static byte[] reply(byte[] statusInfo, byte[] tstInfo) {
+        return Der.sequence(statusInfo, authority.token(tstInfo, true));
+    }
+
+    private static byte[] grantedReply(byte[] tstInfo) {
+        return reply(Der.sequence(Der.integer(TimeStampRequests.GRANTED)), tstInfo);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: only a defined refusing PKIStatus is named; a huge, negative or unknown one is unreadable")
+    void shouldNameOnlyDefinedStatus() {
+        byte[] huge = Der.sequence(Der.sequence(Der.integer(BigInteger.TWO.pow(100))));
+        byte[] negative = Der.sequence(Der.sequence(Der.integer(-1)));
+        byte[] unknown = Der.sequence(Der.sequence(Der.integer(6)));
+        byte[] waiting = Der.sequence(Der.sequence(Der.integer(3)));
+        byte[] notification = Der.sequence(Der.sequence(Der.integer(5)));
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(huge).detail(), "huge"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(negative).detail(),
+                        "negative"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(unknown).detail(),
+                        "unknown"),
+                () -> assertEquals(TimeStampRequests.STATUS_PREFIX + "3", TimeStampRequests.token(waiting).detail(),
+                        "waiting"),
+                () -> assertEquals(TimeStampRequests.STATUS_PREFIX + "5",
+                        TimeStampRequests.token(notification).detail(), "revocationNotification"),
+                () -> assertEquals(StoreOutcome.REFUSED, TimeStampRequests.token(huge).outcome(), "outcome"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: PKIStatusInfo carries only statusString and failInfo, in that order, each at most once")
+    void shouldCheckStatusInfoFields() {
+        byte[] info = tstInfo(Der.integer(9));
+        byte[] status = Der.integer(TimeStampRequests.GRANTED);
+        byte[] text = Der.sequence(Der.utf8String("granted"));
+        // badAlg, bit 0 of PKIFailureInfo, with seven unused bits
+        byte[] failInfo = Der.tlv(Der.BIT_STRING, new byte[]{7, (byte) 0x80});
+
+        assertAll(
+                () -> assertTrue(TimeStampRequests.token(grantedReply(info)).isOk(), "status only"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(status, text, failInfo), info)).isOk(),
+                        "status, statusString and failInfo"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(status, failInfo), info)).isOk(),
+                        "status and failInfo"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, Der.integer(1)), info)).detail(), "another field"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, text, text), info)).detail(), "duplicate statusString"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, failInfo, text), info)).detail(), "wrong order"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                                reply(Der.sequence(status, Der.sequence(Der.integer(1))), info)).detail(),
+                        "statusString of another type"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a statusString must be well-formed UTF-8 (RFC 4210, 5.1.1)")
+    void shouldCheckStatusStringIsUtf8() {
+        byte[] info = tstInfo(Der.integer(9));
+        byte[] status = Der.integer(TimeStampRequests.GRANTED);
+        // an incomplete two-byte sequence: the lead octet C2 without its continuation octet
+        byte[] incomplete = Der.sequence(Der.tlv(Der.UTF8_STRING, new byte[]{(byte) 0xC2}));
+        // a two-byte, a three-byte and a four-byte character
+        byte[] multiByte = Der.sequence(Der.utf8String("ä € 😀"));
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, incomplete), info)).detail(), "incomplete sequence"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(status, multiByte), info)).isOk(),
+                        "multi-byte characters"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a failInfo with a bit outside the defined set is unreadable (RFC 3161, 2.4.2)")
+    void shouldRefuseUndefinedFailInfoBits() {
+        byte[] info = tstInfo(Der.integer(9));
+        byte[] granted = Der.integer(TimeStampRequests.GRANTED);
+        byte[] rejection = Der.integer(TimeStampRequests.REJECTION);
+        // bit 1 is not defined: one octet 0100 0000, six unused bits
+        byte[] bitOne = Der.tlv(Der.BIT_STRING, new byte[]{6, 0x40});
+        // systemFailure, bit 25: four octets, the last 0100 0000, six unused bits
+        byte[] systemFailure = Der.tlv(Der.BIT_STRING, new byte[]{6, 0, 0, 0, 0x40});
+        // badAlg, bit 0: one octet 1000 0000, seven unused bits
+        byte[] badAlg = Der.tlv(Der.BIT_STRING, new byte[]{7, (byte) 0x80});
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(granted, bitOne), info)).detail(), "bit 1 in a granted reply"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(rejection, bitOne), info)).detail(), "bit 1 in a rejection"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(granted, systemFailure), info)).isOk(),
+                        "bit 25"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(granted, badAlg), info)).isOk(),
+                        "bit 0"),
+                () -> assertEquals(TimeStampRequests.STATUS_PREFIX + "2", TimeStampRequests.token(
+                        reply(Der.sequence(rejection, badAlg), info)).detail(), "bit 0 in a rejection"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an AlgorithmIdentifier accepts absent or empty NULL parameters, never a NULL with content")
+    void shouldRequireEmptyNull() throws Exception {
+        var absent = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256)));
+        var empty = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256), Der.nullValue()));
+        var withContent = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256),
+                Der.tlv(Der.NULL, new byte[]{0})));
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.SHA_256, TimeStampRequests.TstInfo.algorithm(absent), "absent"),
+                () -> assertEquals(TimeStampRequests.SHA_256, TimeStampRequests.TstInfo.algorithm(empty), "NULL"),
+                () -> assertThrows(Der.DerException.class, () -> TimeStampRequests.TstInfo.algorithm(withContent),
+                        "NULL with content"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the optional TSTInfo fields follow RFC 3161, 2.4.2 in order, each at most once")
+    void shouldCheckTstInfoFields() throws Exception {
+        byte[] accuracy = Der.sequence(Der.integer(1), Der.tlv(Der.contextPrimitive(0), new byte[]{0x05}));
+        byte[] tsa = Der.explicit(0, Der.tlv(Der.contextConstructed(4), Der.sequence()));
+        byte[] extensions = Der.tlv(Der.contextConstructed(1), Der.sequence(Der.oid("1.2.3.4"),
+                Der.octetString(new byte[]{1})));
+
+        var nonceOnly = TimeStampRequests.TstInfo.parse(tstInfo(Der.integer(42)));
+        var withoutNonce = TimeStampRequests.TstInfo.parse(tstInfo());
+        var all = TimeStampRequests.TstInfo.parse(tstInfo(accuracy, Der.bool(true), Der.integer(43), tsa,
+                extensions));
+
+        assertAll(
+                () -> assertEquals(BigInteger.valueOf(42), nonceOnly.nonce(), "nonce-only suffix"),
+                () -> assertNull(withoutNonce.nonce(), "absent nonce"),
+                () -> assertEquals(BigInteger.valueOf(43), all.nonce(), "every optional field"),
+                () -> assertTrue(TimeStampRequests.token(grantedReply(tstInfo())).isOk(), "token without a nonce"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.bool(true), Der.bool(true), Der.integer(42)))).detail(), "duplicate ordering"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.integer(42), Der.bool(true)))).detail(), "nonce before ordering"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.integer(42), Der.integer(42)))).detail(), "two nonces"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.octetString(new byte[]{1})))).detail(), "unknown field"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                                tstInfo(Der.sequence(Der.tlv(Der.contextPrimitive(0), new byte[]{0x00}))))).detail(),
+                        "millis out of range"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.tlv(Der.BOOLEAN, new byte[]{1})))).detail(), "ordering not canonical"));
+    }
+
+    private static String tokenDetailWithExtension(byte[] extension) {
+        byte[] extensions = Der.tlv(Der.contextConstructed(1), extension);
+        return String.valueOf(TimeStampRequests.token(grantedReply(tstInfo(Der.integer(42), extensions))).detail());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an Extension is extnID, an optional critical BOOLEAN and extnValue (RFC 5280, 4.1)")
+    void shouldCheckExtensionShape() {
+        byte[] oid = Der.oid("1.2.3.4");
+        byte[] value = Der.octetString(new byte[]{1});
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, tokenDetailWithExtension(Der.sequence()),
+                        "empty SEQUENCE"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, tokenDetailWithExtension(Der.sequence(oid)),
+                        "extnID only"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE,
+                        tokenDetailWithExtension(Der.sequence(value, oid)), "extnValue before extnID"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE,
+                        tokenDetailWithExtension(Der.sequence(oid, value, value)), "a third element"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE,
+                        tokenDetailWithExtension(Der.sequence(oid, Der.bool(true), value, value)), "four elements"),
+                () -> assertTrue(TimeStampRequests.token(grantedReply(tstInfo(Der.integer(42), Der.tlv(
+                                Der.contextConstructed(1), Der.sequence(oid, Der.bool(true), value))))).isOk(),
+                        "critical TRUE"),
+                () -> assertTrue(TimeStampRequests.token(grantedReply(tstInfo(Der.integer(42), Der.tlv(
+                        Der.contextConstructed(1), Der.sequence(oid, value))))).isOk(), "without the BOOLEAN"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an unreachable authority (closed port) is UNAVAILABLE")
+    void shouldReportUnreachableAuthority() throws Exception {
+        int port;
+        try (var socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            port = socket.getLocalPort();
+        }
+        var provider = provider(URI.create("https://127.0.0.1:" + port + "/tsa"), null);
+
+        var result = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+        assertEquals(StoreOutcome.UNAVAILABLE, result.outcome(), "outcome");
+        assertEquals(TimestampTransport.UNREACHABLE, result.detail(), "detail");
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-100:")),
+                () -> "unavailable authority logged: " + logTexts());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: with timestamp.credentials the authority receives Authorization: Bearer <token>")
+    void shouldSendBearerToken() {
+        String token = Generators.letterStrings(24, 32).next();
+
+        var result = provider(authority.url(), token).obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+        assertTrue(result.isOk(), () -> "obtained: " + result.detail());
+        assertEquals(Optional.of("Bearer " + token), authority.received().getFirst().authorization(), "header");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: without timestamp.credentials no Authorization header is sent")
+    void shouldSendNoAuthorizationWithoutCredentials() {
+        var result = provider().obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+        assertTrue(result.isOk(), () -> "obtained: " + result.detail());
+        assertEquals(Optional.empty(), authority.received().getFirst().authorization(), "no header");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the unconfigured ServiceLoader instance opens no connection and refuses")
+    void shouldNotReachNetworkUnconfigured() {
+        long before = authority.calls();
+        AnchorProvider unconfigured = new Rfc3161AnchorProvider();
+
+        var obtained = unconfigured.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+        var verified = unconfigured.verify(subject(), new byte[]{1}, new byte[0]);
+
+        assertAll(
+                () -> assertEquals(StoreOutcome.REFUSED, obtained.outcome(), "obtain"),
+                () -> assertEquals(Rfc3161AnchorProvider.UNCONFIGURED, obtained.detail(), "detail of obtain"),
+                () -> assertEquals(StoreOutcome.SIGNATURE_INVALID, verified.outcome(), "verify"),
+                () -> assertEquals(Rfc3161AnchorProvider.UNCONFIGURED, verified.detail(), "detail of verify"),
+                () -> assertEquals(before, authority.calls(), "no connection"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: module-info provides the AnchorProvider rfc3161 to ServiceLoader")
+    void shouldDeclareProvides() throws Exception {
+        var classes = Path.of(Rfc3161AnchorProvider.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        ModuleDescriptor descriptor;
+        try (InputStream in = Files.newInputStream(classes.resolve("module-info.class"))) {
+            descriptor = ModuleDescriptor.read(in);
+        }
+
+        assertTrue(descriptor.provides().stream().anyMatch(provides -> provides.service().equals(
+                AnchorProvider.class.getName()) && provides.providers().equals(List.of(
+                Rfc3161AnchorProvider.class.getName()))), () -> "provides: " + descriptor.provides());
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: the bearer token appears in no detail, log message or toString")
+    void shouldNeverRenderToken() {
+        String token = Generators.letterStrings(24, 32).next();
+        var provider = provider(authority.url(), token);
+        List<String> texts = new ArrayList<>();
+        texts.add(provider.toString());
+        for (var answer : TestTimestampAuthority.Answer.values()) {
+            authority.answer(answer);
+            var result = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+            texts.add(String.valueOf(result.detail()));
+        }
+
+        texts.addAll(logTexts());
+        assertFalse(texts.stream().anyMatch(text -> text.contains(token)), () -> "texts without the token: " + texts);
+        assertFalse(texts.stream().anyMatch(text -> text.contains(authority.url().toString())),
+                () -> "texts without the URL: " + texts);
+    }
+}
