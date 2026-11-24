@@ -16,7 +16,6 @@
 package de.cuioss.git.document.forms;
 
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -205,10 +204,7 @@ public final class DocumentTemplate {
         return switch (value) {
             case String string -> string;
             case Boolean bool -> bool.toString();
-            case Long number -> number.toString();
-            case Integer number -> number.toString();
-            case BigInteger number -> number.toString();
-            case BigDecimal number -> number.toString();
+            case Number number -> number.toString();
             case null, default -> "";
         };
     }
