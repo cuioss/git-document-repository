@@ -435,12 +435,20 @@ public final class StoreWriter implements AutoCloseable {
      * right after. A failure of the provider or of a push leaves the subject pending and is logged once
      * ({@code GIT_STORE-111}); an empty proof counts as a refusal of the provider. The references the fetch of the due
      * check moved reach the indexes and the listeners also when the due check ends early.
+     * <p>
+     * A call inside a callback whose thread holds a lock of the clone, a {@link SaveStep} (under the shared maintenance
+     * lock and the transport lock of its save), an {@link IndexContributor} under the locks of its operation or an
+     * {@link AnchorProvider} call (under the anchoring lock of its due check), is refused before the anchoring lock is
+     * requested, as {@link #close()} is, since it would wait for a due check that waits for the callback's lock in
+     * turn. The refusal does not wait, logs nothing and reaches no index and no listener.
      *
      * @return {@link StoreOutcome#OK} with the anchored and the pending subjects; or the non-success that ended the
      *         due check before any subject was asked for, for example the passed-on outcome of its fetch,
      *         {@link StoreOutcome#INCOMPLETE} with the detail {@code anchor: <class name of the exception>} for an
-     *         unchecked failure while it fetched, repaired or planned, or {@link StoreOutcome#REFUSED} with the detail
-     *         {@code anchor: the writer is closed} after {@link #close()}
+     *         unchecked failure while it fetched, repaired or planned, {@link StoreOutcome#REFUSED} with the detail
+     *         {@code anchor: the writer is closed} after {@link #close()}, or {@link StoreOutcome#REFUSED} with the
+     *         detail {@code anchor: refused inside a callback that holds a lock of the clone} for a call from a thread
+     *         that holds a lock of the clone
      */
     public StoreResult<Anchoring> anchor() {
         return clone.schedules().anchor();

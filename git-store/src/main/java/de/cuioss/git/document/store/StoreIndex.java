@@ -83,7 +83,8 @@ import org.jspecify.annotations.Nullable;
  * keeps the previous index, and one that could not read a source keeps that source's previous entries; either marks
  * the index stale, and the next operation of the writer retries the refresh, also a fetch or save that moved no
  * reference, until one reads every source; the stale mark is read and set under the lock of the index, so an operation
- * that follows a failing refresh never misses its retry. A snapshot calls the contributors under the same lock, so no contributor
+ * that follows a failing refresh never misses its retry. A retry requested from a contributor of a running refresh or
+ * snapshot is deferred to the next operation. A snapshot calls the contributors under the same lock, so no contributor
  * is called by two threads at once.
  * <p>
  * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
@@ -116,13 +117,16 @@ public final class StoreIndex<E> implements AutoCloseable {
         /**
          * Retries a failed refresh. The stale flag is read under the lock of the index, which a running refresh
          * holds, so a refresh that is about to mark the index stale is waited for rather than read as current; the
-         * lock is reentrant, so the refresh taken under it cannot deadlock.
+         * lock is reentrant, so the refresh taken under it cannot deadlock. A retry requested from a contributor of a
+         * running refresh or snapshot, which holds the lock already, is deferred to the next operation: it neither
+         * refreshes nor clears the flag, so a contributor that fetches cannot recurse.
          */
         @Override
         public void unchanged() {
             lock.lock();
             try {
-                if (stale) {
+                // the hold count, not an own flag: only the outermost holder retries, a nested call returns
+                if (stale && lock.getHoldCount() == 1) {
                     refreshQuietly();
                 }
             } finally {

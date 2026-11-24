@@ -1098,7 +1098,11 @@ released, the writer stays usable, and `GIT_STORE-114` is logged with the alias 
 `close: refused inside a callback that holds a lock of the clone`; the caller closes the writer again after the
 callback returned. The index refresh and the commit listeners run on the thread of the operation after it released
 every lock (<<GDR-STORE-10>>), so a close from them, like a close from outside every callback, closes the writer as
-before.
+before. `StoreWriter.anchor()` follows the same rule: issued inside such a callback, it would wait for the anchoring
+lock held by a due check of another thread that waits for the callback's lock in turn, so it is refused before the
+anchoring lock is requested, with or without an active provider, and returns `REFUSED` with the detail
+`anchor: refused inside a callback that holds a lock of the clone`; the refusal takes no lock, logs nothing and emits
+nothing to the index and the listeners.
 
 The anchor verification (<<GDR-STORE-17>>) checks the chain of the checkpoints: checkpoint `n` must have the commit of
 checkpoint `n-1` as its only parent and the first one none (`CHECKPOINT_CHAIN_BROKEN`, which reports a moved checkpoint
@@ -1211,7 +1215,10 @@ changed (JGit 7.8.0).
   closed flag of the clone under the anchoring lock, which `StoreWriter.close()` takes to set it and to release the
   repository: a due check handed to the caller's executor and run after the close does nothing (`anchor()` then
   returns `REFUSED` with `anchor: the writer is closed`, also for a writer without an active provider, whose open
-  writer gets an empty `OK`), and one running when the writer closes ends first.
+  writer gets an empty `OK`), and one running when the writer closes ends first. Before it requests the anchoring
+  lock, the due check refuses a calling thread that holds a lock of the clone (`RepositoryGuard.insideCallback()`):
+  `anchor()` from a `SaveStep`, an `IndexContributor` under the locks of its operation or the anchor provider returns
+  `REFUSED` with `anchor: refused inside a callback that holds a lock of the clone` and emits nothing.
 * *Structure.* `StoreWriter` delegates to the package-private `StoreClone` (the opened clone, its events, the listener
   subscription, the closed flag and `close()`), which holds `CloneWrites` (drafts, listing, save, release, expiry) and
   `CloneSchedules` (fetch, periodic fetch, anchoring and the coalescing due-check trigger); `CloneOpening` checks the
