@@ -619,6 +619,72 @@ class SaveStepTest {
     }
 
     @Test
+    @DisplayName("GDR-STORE-16: a step closing the writer is refused, the writer stays open and closes afterwards")
+    void stepClosingWriterIsRefused(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        commit(remote.repository(), target, Map.of(word(), content()));
+        var author = Author.of(pseudonym());
+        var executor = Executors.newSingleThreadExecutor();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+            var future = executor.submit(() -> fixture.save(author, key, attempt -> {
+                fixture.writer().close();
+                return new SaveStep.Edits(List.of());
+            }));
+
+            var result = future.get(30, TimeUnit.SECONDS);
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+            var again = fixture.save(author, key, attempt -> new SaveStep.Edits(List.of()));
+            var openAnchor = fixture.writer().anchor();
+            fixture.writer().close();
+            var closedAnchor = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertInstanceOf(SaveResult.Saved.class, result, "the save with the step completes"),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.CLOSE_REFUSED.resolveIdentifierString()),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            RepositoryGuard.CLOSE_IN_CALLBACK),
+                    () -> assertInstanceOf(SaveResult.Saved.class, again, "the writer stays usable"),
+                    () -> assertTrue(openAnchor.isOk(), "the writer is not closed by the refused close"),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "anchor: the writer is closed"),
+                            closedAnchor, "a close after the step closes the writer"));
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS), "the save ended");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a listener runs after every lock is released, so its close closes the writer")
+    void listenerClosingWriterCloses(@Remote LocalRemote remote) {
+        var key = key();
+        var target = StoreReferences.target(key);
+        commit(remote.repository(), target, Map.of(word(), content()));
+        var author = Author.of(pseudonym());
+        List<String> delivered = new ArrayList<>();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+            try (var subscription = fixture.writer().subscribe(target, (branch, commitId) -> {
+                delivered.add(commitId);
+                fixture.writer().close();
+            })) {
+                var result = fixture.save(author, key, attempt -> new SaveStep.Edits(List.of()));
+                var afterwards = fixture.writer().anchor();
+
+                assertAll(
+                        () -> assertInstanceOf(SaveResult.Saved.class, result, "the save completes"),
+                        () -> assertEquals(1, delivered.size(), "the listener is called with the saved commit"),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "anchor: the writer is closed"),
+                                afterwards, "the close from the listener closed the writer"));
+            }
+        }
+    }
+
+    @Test
     @DisplayName("GDR-STORE-3: a step throwing an anonymous exception class is named by its full class name")
     void anonymousExceptionIsNamed(@Remote LocalRemote remote) {
         var key = key();

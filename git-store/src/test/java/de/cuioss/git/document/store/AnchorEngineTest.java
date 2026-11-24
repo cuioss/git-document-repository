@@ -304,6 +304,31 @@ class AnchorEngineTest {
         assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
     }
 
+    @Test
+    @DisplayName("GDR-STORE-16: a provider closing the writer is refused, the due check completes, a later close closes")
+    void providerClosingWriterIsRefused(@Remote LocalRemote remote) throws IOException {
+        var key = forked(remote.repository());
+        try (var fixture = open(remote)) {
+            save(fixture.writer(), key);
+            fixture.clock().advance(INTERVAL.plusMinutes(1));
+            fixture.anchors().beforeNextObtain(() -> fixture.writer().close());
+
+            var anchoring = fixture.anchor();
+            var open = fixture.writer().anchor();
+            fixture.writer().close();
+            var closed = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertFalse(fixture.anchors().calls().isEmpty(), "the provider was asked for a proof"),
+                    () -> assertFalse(anchoring.anchored().isEmpty(), "the due check completes and pushes its note"),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.CLOSE_REFUSED.resolveIdentifierString()),
+                    () -> assertTrue(open.isOk(), () -> "the writer stays open: " + open.detail()),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "anchor: the writer is closed"), closed,
+                            "a close after the due check closes the writer"));
+        }
+    }
+
     @Nested
     @DisplayName("Activation (GDR-STORE-15)")
     class Activation {

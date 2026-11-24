@@ -39,7 +39,8 @@ import org.junit.jupiter.api.io.TempDir;
  * The draft locks of {@link RepositoryGuard} (GDR-STORE-3): a draft lock exists only while a save holds or waits for
  * it, so the map shrinks back to empty after the saves of many distinct drafts, and a save that registered the lock of
  * a draft while another save of that draft releases it still meets the same lock as every later save, so two saves of
- * one draft never run unserialised. The draft reference names are generated.
+ * one draft never run unserialised. The question whether a thread is inside a callback (GDR-STORE-16) answers from
+ * that thread's own holds and never waits. The draft reference names are generated.
  */
 @EnableGeneratorController
 @DisplayName("RepositoryGuard draft locks (GDR-STORE-3)")
@@ -75,6 +76,62 @@ class RepositoryGuardTest {
         assertAll(
                 () -> assertEquals(1, seenDuringSave.get(), "a running save holds exactly its own lock"),
                 () -> assertEquals(0, guard.draftLocks(), "no lock is left after the saves of " + drafts + " drafts"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a thread is inside a callback while it holds the shared side, the transport or the anchoring lock")
+    void insideCallbackPerLock() {
+        var guard = guard();
+
+        boolean outside = guard.insideCallback();
+        boolean shared = guard.shared(guard::insideCallback);
+        boolean transport = guard.transport(guard::insideCallback);
+        boolean anchoring = guard.anchoring(guard::insideCallback);
+        boolean draftOnly = guard.draft(draftRef(), guard::insideCallback);
+        boolean repeated = guard.shared(() -> guard.insideCallback() && guard.insideCallback());
+        boolean after = guard.insideCallback();
+        var exclusive = guard.exclusive(() -> StoreResult.ok(Boolean.TRUE));
+
+        assertAll(
+                () -> assertFalse(outside, "a thread holding no lock is outside every callback"),
+                () -> assertTrue(shared, "the shared side of the maintenance lock"),
+                () -> assertTrue(transport, "the transport lock"),
+                () -> assertTrue(anchoring, "the anchoring lock"),
+                () -> assertFalse(draftOnly, "a draft lock alone is taken only inside the shared side"),
+                () -> assertTrue(repeated, "asking twice changes nothing"),
+                () -> assertFalse(after, "no lock is left held by the question"),
+                () -> assertTrue(exclusive.isOk(), "the exclusive side is free again, so no shared hold was left"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: the question never waits for a lock another thread holds")
+    void insideCallbackNeverWaits() throws Exception {
+        var guard = guard();
+        var held = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var holder = new FutureTask<>(() -> guard.anchoring(() -> guard.transport(() -> guard.shared(() -> {
+            held.countDown();
+            try {
+                return release.await(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Boolean.FALSE;
+            }
+        }))));
+        var thread = new Thread(holder, "guard-holder");
+        thread.start();
+        try {
+            assertTrue(held.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the other thread holds every lock");
+            var asked = new FutureTask<>(guard::insideCallback);
+            var asking = new Thread(asked, "guard-asker");
+            asking.start();
+
+            assertFalse(asked.get(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                    "a thread holding no lock is outside, whatever another thread holds, and gets its answer at once");
+        } finally {
+            release.countDown();
+            assertTrue(holder.get(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the holder ended");
+        }
     }
 
     @Test

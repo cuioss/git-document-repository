@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -329,6 +330,66 @@ class AnchorInterleavingTest {
             if (thread.isAlive()) {
                 thread.interrupt();
                 thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a step closing the writer while a due check waits for the transport lock does not deadlock")
+    void stepClosingDuringDueCheckDoesNotDeadlock(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var key = document(repository, commit(repository, StoreReferences.MAIN));
+        var deadline = Deadline.in(TIMEOUT_SECONDS);
+        var stepEntered = new CountDownLatch(1);
+        var dueCheckParked = new CountDownLatch(1);
+        var closeReturned = new AtomicBoolean();
+        AtomicReference<@Nullable SaveResult> saved = new AtomicReference<>();
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> anchored = new AtomicReference<>();
+        var fixture = open(remote);
+        // a deadlocked due check holds the anchoring lock, so the fixture is closed only when both threads ended
+        var bothEnded = new AtomicBoolean();
+
+        try {
+            var writer = fixture.writer();
+            var author = draft(writer, key);
+            var save = new Thread(() -> saved.set(writer.save(author, CLAIMS, key, Map.of(), word(), attempt -> {
+                // the step holds the shared side and the transport lock of its save
+                stepEntered.countDown();
+                try {
+                    if (dueCheckParked.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        writer.close();
+                        closeReturned.set(true);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new SaveStep.Edits(List.of());
+            })), "closing-step");
+            // the due check takes the anchoring lock and then waits for the transport lock the step holds
+            var dueCheck = new Thread(() -> anchored.set(writer.anchor()), "due-check");
+            save.setDaemon(true);
+            dueCheck.setDaemon(true);
+
+            save.start();
+            assertTrue(stepEntered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the step runs");
+            dueCheck.start();
+            ThreadStates.awaitParkedOrEnded(dueCheck, TIMEOUT_SECONDS);
+            dueCheckParked.countDown();
+            TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
+            TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
+            boolean ended = !save.isAlive() && !dueCheck.isAlive();
+            bothEnded.set(ended);
+            var stillOpen = ended ? writer.anchor() : null;
+
+            assertAll(
+                    () -> assertTrue(ended, "both threads end within the deadline, so nothing deadlocked"),
+                    () -> assertTrue(closeReturned.get(), "the close from the step returned"),
+                    () -> assertInstanceOf(SaveResult.Saved.class, saved.get(), "the save completes"),
+                    () -> assertTrue(Objects.requireNonNull(anchored.get()).isOk(), "the due check completes"),
+                    () -> assertTrue(Objects.requireNonNull(stillOpen).isOk(), "the writer stays open"));
+        } finally {
+            if (bothEnded.get()) {
+                fixture.close();
             }
         }
     }
