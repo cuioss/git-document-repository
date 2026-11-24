@@ -11,18 +11,35 @@ leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO 1-99,
 WARN 100-199, ERROR 200-299). The messages are declared in
 `de.cuioss.git.document.timestamp.GitTimestampLogMessages`.
 
-No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message never
-names the bearer token of `timestamp.credentials`, the user information of a URL, the body of a response or the content
-of a certificate file.
+No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message names a
+repository alias, an object id, a time or the fixed detail of an outcome, never the URL of the authority, the bearer
+token of `timestamp.credentials`, the body of a reply or the content of a certificate file.
 Debug and trace messages carry no identifier and are not listed.
 
 == INFO Level (1-99)
 
-`git-timestamp` logs no message at level INFO.
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_TIMESTAMP-1 |GIT_TIMESTAMP |Obtained a timestamp token for repository %s, object %s, time %s
+|Logged when the provider `rfc3161` obtained a timestamp token
+(xref:../../doc/specification/git-timestamp.adoc#GDR-TSA-1[GDR-TSA-1]): the repository alias, the object id and the
+time the token states.
+|===
 
 == WARN Level (100-199)
 
-`git-timestamp` logs no message at level WARN.
+[cols="1,1,2,2", options="header"]
+|===
+|ID |Component |Message |Description
+|GIT_TIMESTAMP-100 |GIT_TIMESTAMP |Timestamp authority unavailable for repository %s, object %s: %s
+|Logged when the timestamp authority could not be reached (connection refused, timeout or another I/O failure): the
+repository alias, the object id and the fixed detail of the outcome `UNAVAILABLE`. The subject stays pending.
+|GIT_TIMESTAMP-101 |GIT_TIMESTAMP |Timestamp authority refused for repository %s, object %s: %s
+|Logged when the timestamp authority refused or answered with an error (a status other than granted, another HTTP
+status than 200, another media type, an unreadable reply, a nonce or imprint other than requested): the repository
+alias, the object id and the fixed detail of the outcome `REFUSED`. The subject stays pending.
+|===
 
 == ERROR Level (200-299)
 

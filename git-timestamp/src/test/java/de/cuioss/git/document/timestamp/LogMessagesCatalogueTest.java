@@ -17,6 +17,7 @@ package de.cuioss.git.document.timestamp;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -84,6 +85,7 @@ class LogMessagesCatalogueTest {
         var documented = documented(components);
 
         assertAll(
+                () -> assertFalse(declared.isEmpty(), "messages are declared"),
                 () -> assertEquals(declared, documented, "identifiers and templates of the catalogue"),
                 () -> assertTrue(components.values().stream().allMatch(GitTimestampLogMessages.PREFIX::equals),
                         () -> "every row names the component " + GitTimestampLogMessages.PREFIX + ": " + components));
