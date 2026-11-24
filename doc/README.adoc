@@ -139,10 +139,15 @@ with its configuration, its outcome list and its service interfaces; xref:specif
 xref:specification/general.adoc#GDR-NFR-2[GDR-NFR-2] and the part of
 xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] that the write path, the signature, the release, the index, the
 listeners and the anchoring touch are covered by tests of `git-store`. The module `git-forms`
-holds the kinds of documents as configuration, schema validation and the data layout with its codecs, with its outcome
-list and its result (xref:specification/general.adoc#GDR-GEN-3[GDR-GEN-3]), and so implements
-xref:specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1], xref:specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2]
-and xref:specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3]; its other requirements are planned.
+holds the kinds of documents as configuration, schema validation, the data layout with its codecs, the generated
+output with its check, the workflow with its transitions over the mechanisms of the store and the step-up per
+transition, with its outcome list and its result (xref:specification/general.adoc#GDR-GEN-3[GDR-GEN-3]), and so
+implements xref:specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1],
+xref:specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2], xref:specification/git-forms.adoc#GDR-FORMS-3[GDR-FORMS-3],
+xref:specification/git-forms.adoc#GDR-FORMS-4[GDR-FORMS-4], xref:specification/git-forms.adoc#GDR-FORMS-5[GDR-FORMS-5]
+and xref:specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7]; its other requirements,
+xref:specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6], xref:specification/git-forms.adoc#GDR-FORMS-8[GDR-FORMS-8]
+and xref:specification/git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9], are planned.
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's
 `SystemReader` is closed only when the embedding application installs `RefusingFS.systemReader`, the recommended
 setup. For xref:specification/general.adoc#GDR-NFR-4[GDR-NFR-4], `git-core` ships its native-image metadata, covering its

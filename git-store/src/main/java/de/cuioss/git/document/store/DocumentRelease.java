@@ -95,6 +95,19 @@ import org.jspecify.annotations.Nullable;
  * {@link StoreOutcome#UNAVAILABLE} after the fetch of that attempt and before anything is written, and a signature that
  * fails while an attempt writes its commit ends it with the outcome of the source, nothing pushed.
  * <p>
+ * A release may be pinned to a commit, the full id of the commit a save wrote. Then every attempt, after its fetch and
+ * before it prepares the signing or writes anything, compares the fetched tip of the working or collection branch with
+ * the pinned commit and refuses the release with the passed-on {@link GitOutcome#CONFLICT} when they differ, so a lease
+ * refusal of {@code main} that is retried after a further save moved the branch is refused as well, not released. The
+ * merge input of a pinned release is the pinned commit itself, not the branch: the second parent and the merged tree
+ * of a per-document release, and the entry paths of a numbered one, are those of the pinned commit, so the released
+ * content is the saved commit even when the branch moves after the fetch of the attempt, because a moved branch cannot
+ * change what an object id names. The pin is that comparison of the fetched tip with the saved commit id plus the use
+ * of that id as the merge input; it is no lease on the branch reference, and the only compare-and-swap of the release
+ * is the push of {@code main} against the lease of its fetched tip. The pin guards the writing of a new release commit
+ * only: a merged release whose tag is missing is completed by its tag, as above, even when the branch moved on since,
+ * because that publishes nothing new.
+ * <p>
  * The local tag is written by an update that expects it absent and writes no reflog. Then {@code main} is pushed with
  * the lease of the fetched tip (the zero id for an absent {@code main}), and after that the tag against the zero-id
  * lease. {@code git-core} pushes one reference per call, so the two pushes are not atomic. When the remote refuses
@@ -139,6 +152,9 @@ final class DocumentRelease {
      */
     private static final Pattern ANY_RELEASE_SUBJECT = Pattern.compile("Release [a-z0-9-]+/[A-Za-z0-9-]+ v\\d+");
 
+    /** The form of a full commit id as the store writes one: 40 lower-case hexadecimal digits. */
+    private static final Pattern FULL_COMMIT_ID = Pattern.compile("[0-9a-f]{40}");
+
     private final ExplicitSave.Clone clone;
     private final RepositoryOperations operations;
     private final TechnicalUser user;
@@ -177,21 +193,26 @@ final class DocumentRelease {
     /**
      * Releases a document or numbered entry.
      *
-     * @param author the author of the release commit, the user who releases
-     * @param claims the claims of that user's authentication, written as identity trailers
-     * @param key    the document or entry
+     * @param author           the author of the release commit, the user who releases
+     * @param claims           the claims of that user's authentication, written as identity trailers
+     * @param key              the document or entry
+     * @param expectedCommitId the full commit id the working or collection branch must point to on every attempt that
+     *                         writes a release commit, which is then the merge input; {@code null} to release the tip
+     *                         of the branch as each attempt finds it
      * @return {@link StoreOutcome#OK} with the {@link Release}, also when the remote refused the tag because it already
      *         holds it at the released commit; {@link StoreOutcome#INCOMPLETE} when {@code main} moved and the tag is
      *         missing or held at another commit; {@link StoreOutcome#MALFORMED} for content without release, an
-     *         invalid pseudonym or a gitlink among the paths ({@value #GITLINK}); {@link StoreOutcome#REFUSED} or
-     *         {@link StoreOutcome#UNAVAILABLE} of the signing key source; the passed-on {@link GitOutcome#NOT_FOUND}
-     *         for a missing working or collection branch, {@link GitOutcome#CONFLICT} for a conflicting merge or for a
-     *         numbered entry whose paths {@code main} changed since the previous release, {@link GitOutcome#REJECTED}
-     *         for a rejected push of {@code main} or after every attempt lost its lease, or the passed-on outcome that
-     *         ended the release, for example {@link GitOutcome#UNREACHABLE}
-     * @throws NullPointerException if an argument is {@code null}
+     *         invalid pseudonym, an expected commit id that is no full commit id or a gitlink among the paths
+     *         ({@value #GITLINK}); {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} of the signing key
+     *         source; the passed-on {@link GitOutcome#NOT_FOUND} for a missing working or collection branch,
+     *         {@link GitOutcome#CONFLICT} for a conflicting merge, a branch that no longer points to the expected
+     *         commit, or a numbered entry whose paths {@code main} changed since the previous release,
+     *         {@link GitOutcome#REJECTED} for a rejected push of {@code main} or after every attempt lost its lease, or
+     *         the passed-on outcome that ended the release, for example {@link GitOutcome#UNREACHABLE}
+     * @throws NullPointerException if {@code author}, {@code claims} or {@code key} is {@code null}
      */
-    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
+    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key,
+            @Nullable String expectedCommitId) {
         Objects.requireNonNull(author, "author");
         Objects.requireNonNull(claims, "claims");
         Objects.requireNonNull(key, "key");
@@ -202,7 +223,11 @@ final class DocumentRelease {
         if (!StoreReferences.isPseudonym(author.pseudonym())) {
             return report(source, StoreResult.of(StoreOutcome.MALFORMED, StoreReferences.INVALID_PSEUDONYM));
         }
-        var request = new Request(author, claims, key, source, new ArrayList<>());
+        if (expectedCommitId != null && !FULL_COMMIT_ID.matcher(expectedCommitId).matches()) {
+            return report(source, StoreResult.of(StoreOutcome.MALFORMED, "expectedCommitId: not a full commit id"));
+        }
+        @Nullable ObjectId pinned = expectedCommitId == null ? null : ObjectId.fromString(expectedCommitId);
+        var request = new Request(author, claims, key, source, pinned, new ArrayList<>());
         RepositoryGuard guard = clone.guard();
         StoreResult<Release> result = report(source, guard.shared(() -> attempts(request)));
         events.emit(request.updates());
@@ -261,17 +286,39 @@ final class DocumentRelease {
                 return Optional.of(tagAndPush(request, merged, tag, version,
                         movedOn(repository, merged, request.key(), source)));
             }
-            var prepared = lazySigning.get();
-            if (!prepared.isOk()) {
-                return Optional.of(new StoreResult<>(prepared.outcome(), null, prepared.detail()));
-            }
-            return mergeAndPush(request, new Attempt(main, source, versions.previous(), version, tag, message),
-                    Objects.requireNonNull(prepared.value()));
+            return checkedAndWritten(request,
+                    new Attempt(main, source, versions.previous(), version, tag, message), lazySigning);
         } catch (IOException e) {
             String type = e.getClass().getName();
             LOGGER.debug("I/O failure of the release of %s: %s", request.source(), type);
             return Optional.of(passedOn(GitOutcome.FAILED, request.source() + ": " + type));
         }
+    }
+
+    /**
+     * Writes a new release commit after the pin check: a pinned release whose branch no longer points to the pinned
+     * commit is refused before the signing is prepared and before anything is written; otherwise the signing is
+     * prepared and the pinned commit itself, which equals the fetched tip, is the merge input.
+     *
+     * @return the result of the release, or empty when the push of {@code main} lost its lease
+     */
+    private Optional<StoreResult<Release>> checkedAndWritten(Request request, Attempt state,
+            CommitSignatures.Lazy lazySigning) throws IOException {
+        @Nullable ObjectId pinned = request.pinned();
+        if (pinned != null && !pinned.equals(state.source())) {
+            LOGGER.debug("The pinned release of %s is refused: the branch moved", request.source());
+            return Optional.of(passedOn(GitOutcome.CONFLICT,
+                    request.source() + ": no longer points to the saved commit"));
+        }
+        var prepared = lazySigning.get();
+        if (!prepared.isOk()) {
+            return Optional.of(new StoreResult<>(prepared.outcome(), null, prepared.detail()));
+        }
+        // A pinned release merges the pinned commit itself: an object id names one commit, whatever the branch does
+        // after this attempt's fetch.
+        Attempt input = pinned == null ? state
+                : new Attempt(state.main(), pinned, state.previous(), state.version(), state.tag(), state.message());
+        return mergeAndPush(request, input, Objects.requireNonNull(prepared.value()));
     }
 
     /**
@@ -805,11 +852,13 @@ final class DocumentRelease {
      * @param claims  the claims of the author's authentication, written as identity trailers
      * @param key     the document or entry
      * @param source  the working or collection branch
+     * @param pinned  the commit the branch must point to on every attempt that writes a release commit, the merge
+     *                input of the release; {@code null} for a release of the tip as each attempt finds it
      * @param updates the references the release moved, in the clone by its fetches and on the remote by its pushes,
      *                collected on the releasing thread and emitted after the locks were released
      */
     private record Request(Author author, IdentityClaims claims, DocumentKey key, String source,
-    List<StoreEvents.Update> updates) {
+    @Nullable ObjectId pinned, List<StoreEvents.Update> updates) {
     }
 
     /**

@@ -36,7 +36,9 @@ import org.junit.jupiter.api.Test;
 /**
  * The {@code git-forms} table of GDR-GEN-3 in {@code doc/specification/general.adoc} lists exactly the constants of
  * {@link FormsOutcome}, in their order: a constant added to the enum without a row, a row without a constant, a
- * renamed or a reordered one fails this test.
+ * renamed or a reordered one fails this test. The introduction of {@code doc/specification/git-forms.adoc} names every
+ * constant of {@link FormsOutcome} as returned by the code, none excepted, and none of its sentences that call
+ * something planned names {@code MISMATCH}, {@code TRANSITION_REFUSED} or {@code STEP_UP_REQUIRED}.
  */
 @DisplayName("FormsOutcome against the git-forms table of GDR-GEN-3")
 class FormsOutcomeSpecificationTest {
@@ -52,6 +54,16 @@ class FormsOutcomeSpecificationTest {
 
     /** The delimiter of an AsciiDoc table. */
     private static final String TABLE_DELIMITER = "|===";
+
+    /** The specification of {@code git-forms}, relative to the reactor root. */
+    private static final Path GIT_FORMS = Path.of("doc", "specification", "git-forms.adoc");
+
+    /** The start of the anchor line of a requirement of {@code git-forms}, which ends the introduction. */
+    private static final String REQUIREMENT_ANCHOR = "[#GDR-FORMS-";
+
+    /** The outcomes GDR-FORMS-4, GDR-FORMS-5 and GDR-FORMS-7 raise, once listed as planned in the introduction. */
+    private static final List<String> RAISED_BY_THE_NEW_REQUIREMENTS =
+            List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED");
 
     /** A row whose first cell is a constant in back quotes. */
     private static final Pattern CONSTANT_ROW = Pattern.compile("^\\|`([A-Z][A-Z0-9_]*)`");
@@ -101,6 +113,77 @@ class FormsOutcomeSpecificationTest {
 
         assertEquals(Arrays.stream(FormsOutcome.values()).map(Enum::name).toList(), constants,
                 "the git-forms table of GDR-GEN-3 and FormsOutcome name the same constants in the same order");
+    }
+
+    /**
+     * The introduction of the {@code git-forms} specification: its text before the first requirement anchor, the
+     * whitespace of its line breaks collapsed.
+     *
+     * @param lines the lines of the document
+     * @return the introduction
+     */
+    static String introduction(List<String> lines) {
+        var text = new StringBuilder();
+        for (String line : lines) {
+            if (line.startsWith(REQUIREMENT_ANCHOR)) {
+                break;
+            }
+            text.append(line).append(' ');
+        }
+        return text.toString().replaceAll("\\s+", " ").strip();
+    }
+
+    /**
+     * The outcomes an introduction does not name in back quotes.
+     *
+     * @param introduction the introduction
+     * @param outcomes     the names of the outcomes it must name
+     * @return the names it omits, in the given order
+     */
+    static List<String> outcomesNotNamed(String introduction, List<String> outcomes) {
+        return outcomes.stream().filter(outcome -> !introduction.contains("`" + outcome + "`")).toList();
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, and MISMATCH, "
+            + "TRANSITION_REFUSED and STEP_UP_REQUIRED in no sentence that calls something planned")
+    void introductionReturnsEveryOutcome() throws Exception {
+        var introduction = introduction(Files.readAllLines(reactorRoot().resolve(GIT_FORMS)));
+        var everyOutcome = Arrays.stream(FormsOutcome.values()).map(Enum::name).toList();
+
+        var plannedSentences = Arrays.stream(introduction.split("(?<=\\.) ")).filter(sentence -> sentence
+                .contains("planned")).toList();
+
+        assertAll(
+                () -> assertFalse(plannedSentences.isEmpty(), "the introduction names the planned requirements"),
+                () -> assertEquals(List.of(), outcomesNotNamed(introduction, everyOutcome),
+                        "the introduction names every outcome the code returns"),
+                () -> assertTrue(plannedSentences.stream().noneMatch(sentence -> RAISED_BY_THE_NEW_REQUIREMENTS
+                        .stream().anyMatch(sentence::contains)), () -> "no outcome is called planned: "
+                        + plannedSentences));
+    }
+
+    @Test
+    @DisplayName("the introduction ends at the first requirement anchor, so a planned outcome in it is seen")
+    void introductionExtraction() {
+        var lines = List.of("= title", "", "`MISMATCH` belongs to the planned requirements.", "[#GDR-FORMS-1]",
+                "`STEP_UP_REQUIRED` after the anchor");
+
+        var introduction = introduction(lines);
+
+        assertAll(
+                () -> assertEquals("= title `MISMATCH` belongs to the planned requirements.", introduction,
+                        "the text before the anchor"),
+                () -> assertFalse(introduction.contains("STEP_UP_REQUIRED"), "nothing after the anchor"));
+    }
+
+    @Test
+    @DisplayName("an introduction that omits an outcome fails the every-outcome check")
+    void omittedOutcomeDetected() {
+        var introduction = "The code returns `OK` and `INVALID`; `MISMATCH` alone is not quoted: MISMATCH.";
+
+        assertEquals(List.of("STEP_UP_REQUIRED"), outcomesNotNamed(introduction, List.of("OK", "INVALID",
+                "STEP_UP_REQUIRED")), "the omitted outcome is named");
     }
 
     @Test

@@ -61,8 +61,9 @@ anchoring: checkpoints, proofs as notes, the anchor provider `signed` (own times
 |`git-forms`
 |Schema-driven documents: schema, template, workflow, deadlines, step-up for releases
 (xref:schema-driven-documents.adoc[Schema-Driven Documents])
-|implemented: outcome list and result, kinds as configuration, schema validation, data layout, YAML codec; planned:
-generated output, workflow, deadlines, step-up, links, running numbers
+|implemented: outcome list and result, kinds as configuration, schema validation, data layout, YAML codec,
+generated output with its check, workflow with its transitions, step-up per transition; planned: deadlines, links,
+running numbers
 
 |`git-timestamp` (optional)
 |RFC 3161 timestamps as anchor provider (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion

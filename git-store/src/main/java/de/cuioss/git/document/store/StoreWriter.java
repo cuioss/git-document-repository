@@ -308,6 +308,11 @@ public final class StoreWriter implements AutoCloseable {
      * already, the release is complete. A release tag on the remote is never moved or deleted; a local tag whose push of
      * {@code main} failed for any reason but a lost lease is deleted again. A numbered release copies the entry's paths
      * onto {@code main} only when {@code main} did not change them since the previous release.
+     * <p>
+     * This form releases the tip of the working or collection branch as each attempt finds it after its fetch, so a
+     * save that moves the branch between a caller's save and this release is released with it. A caller that releases
+     * what it saved uses {@link #release(Author, IdentityClaims, DocumentKey, String)}, pinned to the commit of that
+     * save.
      *
      * @param author the user who releases, author of the release commit and its trailer {@code Actor}
      * @param claims the claims of that user's authentication, written as identity trailers
@@ -329,7 +334,35 @@ public final class StoreWriter implements AutoCloseable {
      * @throws NullPointerException if an argument is {@code null}
      */
     public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        return clone.writes().release(author, claims, key);
+        return clone.writes().release(author, claims, key, null);
+    }
+
+    /**
+     * Releases a document or numbered entry pinned to the commit a save wrote (GDR-STORE-6), as
+     * {@link #release(Author, IdentityClaims, DocumentKey)} does, with one difference: every attempt, after its fetch
+     * and before it writes anything, compares the tip of the working or collection branch with
+     * {@code expectedCommitId} and refuses the release when they differ, and the merge input is that commit itself, so
+     * the release publishes exactly the saved commit. A save of the same document by another writer or clone after the
+     * caller's save therefore refuses the release instead of being released under the caller's claims; the check is a
+     * comparison of the fetched tip, not a lease on the branch. A merged release whose tag is missing is completed by its
+     * tag as before, also when the branch moved on since, since that publishes nothing new. This is the form for a caller
+     * that saves and then releases what it saved.
+     *
+     * @param author           the user who releases, author of the release commit and its trailer {@code Actor}
+     * @param claims           the claims of that user's authentication, written as identity trailers
+     * @param key              the document or numbered entry
+     * @param expectedCommitId the full id of the commit to release, 40 lower-case hexadecimal digits, as
+     *                         {@link SaveResult.Saved} returns it
+     * @return the results of {@link #release(Author, IdentityClaims, DocumentKey)}, and
+     *         {@link StoreOutcome#MALFORMED} with the detail {@code expectedCommitId: not a full commit id} for an id of
+     *         another form, or the passed-on {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} with the detail
+     *         {@code <branch>: no longer points to the saved commit} when the branch moved, nothing written or pushed
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key,
+            String expectedCommitId) {
+        return clone.writes().release(author, claims, key,
+                Objects.requireNonNull(expectedCommitId, "expectedCommitId"));
     }
 
     /**

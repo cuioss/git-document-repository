@@ -26,6 +26,17 @@ Debug and trace messages carry no identifier and are not listed.
 (xref:../../doc/specification/git-forms.adoc#GDR-FORMS-1[GDR-FORMS-1]): the number of kinds and the source,
 `directory <path>` for a configuration directory or `commit <id>` for a commit of a configuration repository, never a
 configured value.
+|GIT_FORMS-2 |GIT_FORMS |Performed a transition on the mechanism %s, commit %s
+|Logged when a transition of a workflow was performed
+(xref:../../doc/specification/git-forms.adoc#GDR-FORMS-5[GDR-FORMS-5]): the mechanism it maps onto
+(`intermediate-save`, `save` or `release`) and the full id of the commit it wrote, the draft commit, the save commit or
+the release commit; never the name of the transition, a state, a pseudonym or a claim.
+|GIT_FORMS-3 |GIT_FORMS |Did not perform a transition on the mechanism %s: %s
+|Logged when a transition of a workflow was not performed
+(xref:../../doc/specification/git-forms.adoc#GDR-FORMS-5[GDR-FORMS-5],
+xref:../../doc/specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7]): the mechanism it maps onto, or `none` when the
+transition was not found, and the name of the outcome, for example `STEP_UP_REQUIRED`; never the name of the
+transition, a state, a pseudonym, a claim or a finding.
 |===
 
 == WARN Level (100-199)

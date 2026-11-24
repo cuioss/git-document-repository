@@ -36,6 +36,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -305,6 +306,10 @@ class ReleaseTest {
 
         StoreResult<Release> release(Author author, DocumentKey key) {
             return writer.release(author, CLAIMS, key);
+        }
+
+        StoreResult<Release> release(Author author, DocumentKey key, ObjectId pinned) {
+            return writer.release(author, CLAIMS, key, pinned.name());
         }
 
         @Override
@@ -1135,6 +1140,186 @@ class ReleaseTest {
                             }
                         },
                         () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 3)), "no v3"));
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Release pinned to the saved commit (GDR-STORE-6)")
+    class Pinned {
+
+        /** The detail of a pinned release whose branch moved. */
+        private static String moved(DocumentKey key) {
+            return StoreReferences.target(key) + ": no longer points to the saved commit";
+        }
+
+        /** Moves the working branch of the document one commit on from its tip. */
+        private static ObjectId moveBranch(Repository repository, DocumentKey key, ObjectId tip) throws IOException {
+            var later = merged(tree(repository, tip), files(key.collection().name() + "/" + key.id() + "/" + word()));
+            return commit(repository, StoreReferences.target(key), later, tip);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a release pinned to the tip succeeds; the pinned commit is its source parent")
+        void pinnedTipIsReleased(@Remote LocalRemote remote) {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key, forked.working()));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertEquals(StoreReferences.releaseTag(key, 1), release.tag(), "v1"),
+                        () -> assertEquals(List.of(forked.main(), forked.working()),
+                                parents(remote.repository(), commit), "the pinned commit is the second parent"),
+                        () -> assertEquals(forked.merged(), tree(remote.repository(), commit), "the merged tree"),
+                        () -> assertEquals(commit, tip(remote.repository(), release.tag()), "the tag pushed"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a pinned release after a further save moved the branch is CONFLICT; nothing written")
+        void movedBranchIsRefused(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+            moveBranch(remote.repository(), key, forked.working());
+
+            try (var fixture = open(remote)) {
+                var result = fixture.release(author, key, forked.working());
+
+                assertAll(
+                        () -> assertEquals(new StoreResult<>(new StoreResult.PassedOn(GitOutcome.CONFLICT), null,
+                                moved(key)), result, "refused, naming the branch"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                        () -> assertEquals(forked.main(), tip(remote.repository(), StoreReferences.MAIN),
+                                "main is unchanged"),
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"),
+                        () -> assertNull(tip(fixture.writer().storeClone().repository(),
+                                StoreReferences.releaseTag(key, 1)), "no local tag"),
+                        () -> assertNothingLeaks(result.detail(), List.of(author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: the release without a pin still releases the moved tip of the branch")
+        void unpinnedReleasesTheMovedTip(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+            var movedTip = moveBranch(remote.repository(), key, forked.working());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key));
+
+                assertEquals(List.of(forked.main(), movedTip),
+                        parents(remote.repository(), ObjectId.fromString(release.commitId())), "the moved tip");
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a retry after a lost lease that finds the branch moved is refused, not released")
+        void retryAfterLostLeaseFindsTheBranchMoved(@Remote LocalRemote remote) {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                ObjectId[] movedMain = new ObjectId[1];
+                fixture.operations().beforeNextPush(() -> {
+                    movedMain[0] = commit(remote.repository(), StoreReferences.MAIN,
+                            merged(forked.merged(), files(word() + "y")), forked.main());
+                    try {
+                        moveBranch(remote.repository(), key, forked.working());
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+
+                var result = fixture.release(author, key, forked.working());
+
+                assertAll(
+                        () -> assertEquals(new StoreResult<>(new StoreResult.PassedOn(GitOutcome.CONFLICT), null,
+                                moved(key)), result, "the second attempt is refused"),
+                        () -> assertEquals(2, fixture.operations().fetches().size(), "a second attempt"),
+                        () -> assertEquals(1, fixture.operations().pushes().size(),
+                                "only the push that lost its lease"),
+                        () -> assertEquals(movedMain[0], tip(remote.repository(), StoreReferences.MAIN),
+                                "main as the other writer left it"),
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: the tag-only recovery of a pinned release is not refused after the branch moved")
+        void tagOnlyRecoveryAfterTheBranchMoved(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var tag = StoreReferences.releaseTag(key, 1);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.operations().failPushTo(tag, GitOutcome.UNREACHABLE);
+                var incomplete = fixture.release(author, key, forked.working());
+                var mainTip = requiredTip(remote.repository(), StoreReferences.MAIN);
+                moveBranch(remote.repository(), key, forked.working());
+
+                var repeated = fixture.release(author, key, forked.working());
+
+                assertAll(
+                        () -> assertEquals(StoreOutcome.INCOMPLETE, incomplete.outcome(), "first incomplete"),
+                        () -> assertEquals(StoreResult.ok(new Release(tag, mainTip.name(), 1, true)), repeated,
+                                "the tag on the merged release; the branch moved on since"),
+                        () -> assertEquals(mainTip, tip(remote.repository(), StoreReferences.MAIN), "no new merge"),
+                        () -> assertEquals(mainTip, tip(remote.repository(), tag), "the tag on the remote"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: an expected commit id that is not a full commit id is MALFORMED; nothing fetched")
+        void invalidCommitIdIsMalformed(@Remote LocalRemote remote) {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+            var abbreviated = forked.working().name().substring(0, 12);
+            var upperCase = forked.working().name().toUpperCase(Locale.ROOT);
+            var expected = StoreResult.of(StoreOutcome.MALFORMED, "expectedCommitId: not a full commit id");
+
+            try (var fixture = open(remote)) {
+                var writer = fixture.writer();
+                assertAll(
+                        () -> assertEquals(expected, writer.release(author, CLAIMS, key, abbreviated), "abbreviated"),
+                        () -> assertEquals(expected, writer.release(author, CLAIMS, key, upperCase), "upper case"),
+                        () -> assertEquals(expected, writer.release(author, CLAIMS, key, word()), "no hex"),
+                        () -> assertEquals(List.of(), fixture.operations().fetches(), "nothing fetched"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing pushed"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a pinned numbered release takes the entry's paths of the pinned commit")
+        void numberedPinnedRelease(@Remote LocalRemote remote) {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var prefix = collection.name() + "/";
+            var base = files(word());
+            var mainTip = commit(remote.repository(), StoreReferences.MAIN, base);
+            var entryFiles = files(prefix + key.id() + ".json");
+            var pinned = commit(remote.repository(), StoreReferences.target(key),
+                    merged(merged(base, entryFiles), files(prefix + DocumentPaths.COUNTER)), mainTip);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var release = value(fixture.release(author, key, pinned));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertEquals(List.of(mainTip), parents(remote.repository(), commit),
+                                "main is the only parent"),
+                        () -> assertEquals(merged(base, entryFiles), tree(remote.repository(), commit),
+                                "the entry's paths of the pinned commit, no counter file"));
             }
         }
     }

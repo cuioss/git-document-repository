@@ -98,9 +98,14 @@ final class CloneWrites {
         return result;
     }
 
-    /** Releases a document or entry; see {@link StoreWriter#release}. */
-    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        var result = parts.releases().release(author, claims, key);
+    /**
+     * Releases a document or entry, pinned to a commit or not; see
+     * {@link StoreWriter#release(Author, IdentityClaims, DocumentKey, String)} and
+     * {@link StoreWriter#release(Author, IdentityClaims, DocumentKey)}.
+     */
+    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key,
+            @Nullable String expectedCommitId) {
+        var result = parts.releases().release(author, claims, key, expectedCommitId);
         if (result.isOk() || result.outcome() == StoreOutcome.INCOMPLETE) {
             dueCheck.run();
         }

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -68,6 +69,10 @@ class DocumentLayoutTest {
         return new Kind(name(), name(), collection, name(), null, name(), new Numbering("R-", 3));
     }
 
+    private static Kind numberedWithTemplate(String collection) {
+        return new Kind(name(), name(), collection, name(), name(), name(), new Numbering("R-", 3));
+    }
+
     private static DocumentLayout layout(Kind kind) {
         return new DocumentLayout(kind, SchemaValidatorTest.schema(SchemaValidatorTest.SCHEMA));
     }
@@ -109,6 +114,67 @@ class DocumentLayoutTest {
                     () -> assertEquals(FormsResult.ok(collection + "/" + number + ".yaml"), layout.entry(number),
                             "the entry file"),
                     () -> assertEquals(collection + "/.counter", layout.counter(), "the counter file"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: the generated output is <collection>/<ulid>/report.adoc or <collection>/<number>.adoc")
+        void outputPaths() {
+            var collection = name();
+            var ulid = name();
+            var number = "R-" + Generators.integers(100, 999).next();
+            var perDocument = layout(perDocument(collection));
+            var numbered = layout(numberedWithTemplate(collection));
+
+            assertAll(
+                    () -> assertEquals(FormsResult.ok(collection + "/" + ulid + "/report.adoc"), perDocument.output(ulid),
+                            "the output of a document"),
+                    () -> assertEquals(FormsResult.ok(collection + "/" + number + ".adoc"), numbered.entryOutput(number),
+                            "the output of an entry"),
+                    () -> assertTrue(perDocument.hasOutput(), "a per-document kind has a template"),
+                    () -> assertFalse(layout(numbered(collection)).hasOutput(), "a numbered kind may have none"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: the output is the one path of the layout that is never merged")
+        void isOutput() {
+            var collection = name();
+            var ulid = name();
+            var perDocument = layout(perDocument(collection));
+            var numbered = layout(numberedWithTemplate(collection));
+            var withoutTemplate = layout(numbered(collection));
+
+            assertAll(
+                    () -> assertTrue(perDocument.isOutput(collection + "/" + ulid + "/report.adoc"), "a document"),
+                    () -> assertTrue(numbered.isOutput(collection + "/R-001.adoc"), "an entry"),
+                    () -> assertFalse(perDocument.isOutput(collection + "/" + ulid + "/document.yaml"), "the data"),
+                    () -> assertFalse(perDocument.isOutput(collection + "/" + ulid + "/narrative/report.adoc"),
+                            "a fragment"),
+                    () -> assertFalse(perDocument.isOutput(collection + "/.hidden/report.adoc"), "no ULID"),
+                    () -> assertFalse(perDocument.isOutput(name() + "/" + ulid + "/report.adoc"),
+                            "another collection"),
+                    () -> assertFalse(numbered.isOutput(collection + "/a/R-001.adoc"), "below an entry"),
+                    () -> assertFalse(numbered.isOutput(collection + "/.adoc"), "no number"),
+                    () -> assertFalse(withoutTemplate.isOutput(collection + "/R-001.adoc"), "no template, no output"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: an output of a segment that is no name segment is INVALID, a kind without output refused")
+        void refusedOutput() {
+            var perDocument = layout(perDocument(name()));
+            var numbered = layout(numberedWithTemplate(name()));
+            var withoutTemplate = layout(numbered(name()));
+            var number = name();
+
+            assertAll(
+                    () -> assertAll(REFUSED.stream().<Executable>map(segment -> () -> assertAll("segment '" + segment + "'",
+                            () -> assertInvalid("ulid", perDocument.output(segment)),
+                            () -> assertInvalid("number", numbered.entryOutput(segment))))),
+                    () -> assertThrows(IllegalStateException.class, () -> withoutTemplate.entryOutput(number),
+                            "a numbered kind without a template has no output"),
+                    () -> assertThrows(IllegalStateException.class, () -> numbered.output(number),
+                            "a numbered kind has no document output"),
+                    () -> assertThrows(IllegalStateException.class, () -> perDocument.entryOutput(number),
+                            "a per-document kind has no entry output"));
         }
 
         @Test
