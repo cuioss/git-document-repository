@@ -53,7 +53,7 @@ The reactor dependencies are the edges of the graph. The build checks them with 
 POM]), and its built-in rule `bannedDependencies`
 (link:https://maven.apache.org/enforcer/enforcer-rules/bannedDependencies.html[Maven Enforcer, Banned Dependencies]).
 No plugin and no dependency is added for it; an architecture test was rejected because it would have needed a new
-dependency. Three checks realise the requirement:
+dependency. Four checks realise the requirement:
 
 * The execution `module-layering` of the root POM (phase `validate`, declared dependencies only) bans every
   dependency on an artifact `de.cuioss:git-*` except `git-testing` in scope `test`, against which every module may
@@ -71,18 +71,62 @@ dependency. Three checks realise the requirement:
   check, in place of a separate test consumer project (owner's decision, 2026-11-19): it asserts the same compile and
   runtime closure a consumer of `git-core` alone resolves, publishes nothing extra, and needs no new plugin or
   dependency, where a consumer project would be a new module of the reactor that needs a test harness or a parser of
-  its dependency tree. A new compile dependency of `git-core` is added to the rule only after the owner's approval.
+  its dependency tree.
+* The execution `direct-dependency-isolation` of `git-core` (phase `validate`, declared dependencies only,
+  `searchTransitive=false`) bans every direct dependency in scope `compile` or `runtime` outside
+  `org.jspecify:jspecify`, JGit and `de.cuioss:cui-java-tools`, whatever its `optional` flag. Reason: the transitive
+  path of `consumer-isolation` resolves the dependencies through `ResolverUtil.resolveTransitiveDependenciesVerbose` of
+  Enforcer 3.6.3, which filters every optional dependency, so a direct optional compile dependency of `git-core` passes
+  `consumer-isolation`; the check of the declared dependencies has no such filter. A new compile dependency of
+  `git-core` is added to both rules, `consumer-isolation` and `direct-dependency-isolation`, only after the owner's
+  approval.
 * `DomainTermAbsenceTest` of `git-core`, `git-testing`, `git-store` and `git-forms` loads the classes of the module's main output
   and fails when the simple name or the package name of a public type contains `assessment`, `threat`, `incident` or
   `risk`, compared case-insensitively, or when the scan finds no public type. The test of `git-core` also reads the
   exported packages from the compiled `module-info.class` of its main output and fails when an exported package holds
   no public type of the scan, so both packages of `git-core` are checked.
 
+Each enforcer check was shown to fail by a deliberately wrong edit, run once on 2026-11-23 and not committed:
+
+[cols="2,1,3"]
+|===
+|Edit |Command |Failure
+
+|`de.cuioss.test:cui-test-generator` in scope `compile` in `git-core/pom.xml` |`./mvnw validate -pl git-core`
+|`enforce (consumer-isolation) on project git-core`: "GDR-GEN-1: git-core gained a compile or runtime artifact outside
+the closure a consumer of git-core alone may receive. A new compile dependency of git-core needs the owner's approval
+before it is added to this rule and to direct-dependency-isolation.", naming
+`de.cuioss.test:cui-test-generator:jar:3.0.2 <--- banned via the exclude/include list`
+|`de.cuioss:git-testing` in scope `compile` in `git-store/pom.xml` |`./mvnw validate -pl git-store`
+|`enforce (module-layering) on project git-store`: "GDR-GEN-1: a module declares a reactor dependency outside the
+module graph of doc/concepts/module-structure.adoc. Add an allowed edge to the module-layering rule of the module's own
+POM only when the graph names it.", naming `de.cuioss:git-testing:jar:0.1.0-SNAPSHOT <--- banned via the
+exclude/include list`
+|`org.openjdk.jol:jol-core` in scope `compile` with `<optional>true</optional>` in `git-core/pom.xml`
+|`./mvnw validate -pl git-core` |`consumer-isolation` passes; `enforce (direct-dependency-isolation) on project
+git-core`: "GDR-GEN-1: git-core declares a compile or runtime dependency outside JSpecify, JGit and cui-java-tools,
+optional or not. A new compile dependency of git-core needs the owner's approval before it is added to this rule and
+to consumer-isolation.", naming `org.openjdk.jol:jol-core:jar:0.17 <--- banned via the exclude/include list`
+|===
+
+The checks accept three trade-offs:
+
+* The four domain terms are copied into the `DomainTermAbsenceTest` of each module. Reason: each test checks the main
+  output of its own module, and the only test code the modules share is `git-testing`, a published library whose
+  public types are fixtures, not checks of this repository; a change of the terms has to be made in all four tests.
+* The `<include>` edges of `module-layering` mirror the graph of
+  xref:../concepts/module-structure.adoc[Module Structure] by hand. Reason: no build step reads the graph from the
+  document, which would need a plugin or a parser this repository does not have; a change of the graph has to be made
+  in the document and in the POM of the module.
+* A module widens its own edges in its own POM. Reason: appending the includes in the module's own POM keeps each edge
+  beside the module it belongs to; the rule cannot stop a module from adding an include, so a new include is checked
+  against the graph when the change of the POM is reviewed.
+
 The third-party dependencies declared are
 `org.jspecify:jspecify`, in every module (scope `compile` as managed by `cui-java-parent`,
 `requires static org.jspecify` in every `module-info.java`; see <<GDR-GEN-2>>); JGit, `cui-test-generator` and
 JUnit 5 in `git-testing`; JGit, `cui-java-tools` and Lombok in `git-core`, with `git-testing`, JUnit 5,
-`cui-test-generator`, `cui-test-juli-logger` and `cui-test-mockwebserver-junit5` in its test scope; and
+`cui-test-generator`, `cui-test-juli-logger`, `cui-test-mockwebserver-junit5` and EasyMock in its test scope; and
 `cui-java-tools` and Lombok in `git-store`, with `git-testing`, JUnit 5, `cui-test-generator`,
 `cui-test-juli-logger` and JOL in its test scope; and `cui-java-tools`, Lombok, `org.snakeyaml:snakeyaml-engine` 3.2
 and `dev.harrel:json-schema` 1.9.1 in `git-forms`, with `git-testing`, JUnit 5, `cui-test-generator` and
@@ -114,7 +158,7 @@ Every other dependency below is open and needs the owner's approval before it is
 |every module |`org.jspecify:jspecify` (declared), annotations only
 |`git-core` |JGit (`requires transitive`), `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
 `cui-test-juli-logger` for the log capture of <<GDR-NFR-3>>, `cui-test-mockwebserver-junit5` for the end-to-end
-redirect test, `cui-test-generator` and JUnit 5 (each declared)
+redirect test, `cui-test-generator`, JUnit 5 and EasyMock for the test doubles (each declared)
 |`git-testing` |JGit (declared directly, because `git-testing` depends on no module of the reactor),
 `cui-test-generator`, JUnit 5 (each declared, in scope `compile`)
 |`git-store` |JGit through `git-core`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope
@@ -171,7 +215,9 @@ constant, and the table lists exactly the constants of `GitOutcome`:
 |`CONFLICT` |conflict |compare-and-swap after the last attempt, also of a notes write; in-core merge, with the
 conflicting paths as data, or with more than one merge base; save, concurrent change detection
 |`REJECTED` |rejected |push refused by the remote (non-fast-forward, protected branch or another refusal); reference
-update refused locally; save after the last attempt
+update refused locally; compare-and-swap, compare-and-delete and notes write on a reference that does not exist and
+whose name conflicts with an existing one (detail `refName: name conflict`, never retried as a lost race) or on a
+reference that points at no commit, such as an annotated tag; save after the last attempt
 |`LEASE_REFUSED` |lease refused |push with lease (`git-core`); the store retries and reports rejected after the last
 attempt
 |`UNREACHABLE` |unreachable |fetch, push, bare clone or cache fetch when the remote cannot be reached; the save keeps
@@ -179,8 +225,13 @@ the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
 |`REFUSED_BY_POLICY` |refused by policy |remote policy, refused capability (hook or process start); the detail names
 the refused remote or capability; an invalid branch name (working-tree operations: a new working tree or a
-reservation release) or notes reference (notes), the detail naming the field only; `git-store`: a registered remote
-the policy does not permit, the detail naming the alias
+reservation release; besides the reference names JGit refuses, the names git reads as something other than a branch:
+`HEAD`, `@`, a leading `-`, a component ending `.lock` and a name starting `refs/`) or notes reference (notes), an
+invalid reference name for compare-and-swap and compare-and-delete (JGit's `Repository.isValidRefName`, before any
+file is touched), the detail naming the field only; a bare clone whose URL cannot be stored without its user
+information (detail `not a URL`); cache repository: `readFile` of a blob larger than 16 MiB, before its content is
+read (detail `path: larger than the limit of 16 MiB`); `git-store`: a registered remote the policy does not permit,
+the detail naming the alias
 |`NOT_FOUND` |not found |an unknown revision, reference, remote or path, an abbreviated commit id given as identity:
 log, reading (snapshot, path history, changed paths), push, cache repository, in-core writing on a missing reference,
 in-core merge and notes on an id that is no commit, notes on a missing notes reference or note; a branch without a
@@ -191,7 +242,12 @@ reservation to release (working-tree operations); the detail names which
 where one is required
 |`IDENTITY_MISMATCH` |identity mismatch |a pinned full commit id that reaches another commit; an existing branch not
 at the pinned commit (working-tree operations: `worktreeAdd`)
-|`FAILED` |failed |every operation, for an unexpected I/O failure outside the outcomes above
+|`FAILED` |failed |every operation, for an unexpected I/O failure outside the outcomes above, or for an invalid
+configuration value the operation reads (working-tree operations: `commit`, `worktreeStatus` and `worktreeRemove` for
+`core.autocrlf` and the other `WorkingTreeOptions` keys; in-core writing, compare-and-swap and notes write for
+`gpg.format` of a signed commit); in-core writing, compare-and-swap, in-core merge and notes write also for a stored
+tree JGit cannot take in (a path it refuses, such as `.GIT` or `git~1`, or a tree too large to be read in one piece);
+the detail names the failure class only
 |`NOTHING_TO_COMMIT` |nothing to commit |working-tree operations: commit from a working tree with nothing changed
 |`ALREADY_EXISTS` |already exists |working-tree operations: the path or the branch of a new working tree exists
 |`BRANCH_CHECKED_OUT` |branch checked out |working-tree operations: the branch is checked out in another working tree
@@ -199,8 +255,9 @@ at the pinned commit (working-tree operations: `worktreeAdd`)
 another repository at the registered path
 |`WORKTREE_DIRTY` |working tree dirty |working-tree operations: uncommitted or untracked changes
 |`WORKTREE_LOCKED` |working tree locked |working-tree operations: the working tree is locked
-|`PATH_REFUSED` |path refused |working-tree operations: a derived path outside the permitted root, or the main working
-tree
+|`PATH_REFUSED` |path refused |working-tree operations: a derived path outside the permitted root, the main working
+tree (its removal, or as the target of an addition), a path inside the git directory, a path inside a linked working
+tree or a root that is a linked one, and `worktreeAdd` on a bare root
 |===
 
 `StoreOutcome` (`git-store`) is the outcome list of `git-store`, used by `git-timestamp` for its provider and by every
@@ -264,8 +321,11 @@ The outcome list of `git-directory`:
 |not bindable |first login, a bind to an entry that is bound or matches none of the entered memberships
 |===
 
-An unexpected I/O failure is the outcome `FAILED` of `GitOutcome`, not an exception. Exceptions remain for programming
-errors (violated preconditions, such as a `null` argument); they are never used for the outcomes above.
+An unexpected I/O failure, an invalid configuration value an operation reads, and a stored tree JGit cannot take in
+are the outcome `FAILED` of `GitOutcome`, not an exception. Exceptions remain for programming errors (violated
+preconditions, such as a `null` argument) and for the caller's own code (a `TreeOperation`, a `Signer`), whose
+unchecked exceptions propagate unchanged, except that a `Signer` which throws an `IOException`, a `GitAPIException` or
+a `JGitInternalException` ends the write as the outcome `FAILED`; they are never used for the outcomes above.
 
 [#GDR-GEN-4]
 == GDR-GEN-4: Logging
@@ -348,11 +408,17 @@ the public fields of a translation class reflectively from the resource bundle o
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/nls/TranslationBundle.java[JGit
 7.8.0, `TranslationBundle`]). The one translation class the code paths of `git-core` reach is
 `org.eclipse.jgit.internal.JGitText`: `reflect-config.json` lists it with all public fields and its public no-argument
-constructor, `resource-config.json` lists its resource bundle. The classes of `git-core` itself use no reflection and
-are not listed; the main code of the package `de.cuioss.git.document.core.worktrees` has no reflection, resource or
-resource-bundle access either, so the metadata of `git-core` covers both its packages. `NativeImageMetadataTest` of
-`git-core` asserts that both files are on the class path, that every listed class loads and that every listed bundle
-resolves, so a JGit upgrade that moves or renames an entry fails this build instead of the native image of a consumer.
+constructor, `resource-config.json` lists its resource bundle, so the metadata lists one class and one translation
+bundle. The other translation class of JGit's storage, `org.eclipse.jgit.internal.storage.dfs.DfsText`, is used by the
+DFS storage only, and the main code of `git-core` reaches no class of `org.eclipse.jgit.internal.storage.dfs` (the
+in-memory repositories of its tests come from `git-testing`), so it is not listed. The classes of `git-core` itself use
+no reflection and are not listed; the main code of the package `de.cuioss.git.document.core.worktrees` has no
+reflection, resource or resource-bundle access either, so the metadata of `git-core` covers both its packages.
+`NativeImageMetadataTest` of `git-core` reads both files with a minimal structural JSON reader of its own and asserts
+their top-level shape (an array of objects in `reflect-config.json`, an object in `resource-config.json`) and exactly
+the expected entries, and that every listed class loads and every listed bundle resolves, so a malformed file, a
+removed entry and a JGit upgrade that moves or renames an entry fail this build instead of the native image of a
+consumer.
 
 `git-store` ships no native-image metadata, on the grounds of the owner's decision after research (2026-11-20): GraalVM
 reads the metadata under `META-INF/native-image` from every entry of the class path

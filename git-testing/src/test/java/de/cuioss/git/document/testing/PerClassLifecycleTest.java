@@ -49,7 +49,10 @@ import org.junit.jupiter.api.extension.TestInstancePostProcessor;
  * lifecycle Jupiter hands them the context of the test class instead (observed with junit-jupiter-api 6.1.3), so a
  * constructor fixture is shared by every test of the class and cleaned up when the class ends, while a
  * method-parameter fixture stays per test. The directories are asserted gone once the class has ended, and the
- * in-memory repository of the constructor is asserted closed exactly once, then and not before.
+ * in-memory repository of the constructor is asserted closed exactly once, then and not before. This is the
+ * behaviour the class Javadoc of {@link LocalRepositoryExtension}, {@link InMemoryRepositoryExtension} and
+ * {@link LocalRemoteExtension} states for {@code Lifecycle.PER_CLASS}: one instance, created once in the context of
+ * the class, whose constructor fixture lives for the whole class.
  */
 @DisplayName("Fixtures under the per-class lifecycle")
 class PerClassLifecycleTest {

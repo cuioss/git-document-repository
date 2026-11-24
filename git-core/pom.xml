@@ -11,7 +11,7 @@
     <artifactId>git-core</artifactId>
     <packaging>jar</packaging>
     <name>git-core</name>
-    <description>Hardened Git repositories, remote policy, identity, results, transport, reading, cache repository and in-core writing on JGit, linked working trees, commit from a working tree and working-tree status.</description>
+    <description>Hardened Git repositories on JGit: remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge and notes; linked working trees, commit from a working tree, working-tree status and the release of a branch reservation.</description>
     <properties>
         <maven.jar.plugin.automatic.module.name>de.cuioss.git.document.core</maven.jar.plugin.automatic.module.name>
     </properties>
@@ -71,6 +71,13 @@
             <artifactId>cui-test-mockwebserver-junit5</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test doubles of the tests of this module (AGENTS.md conventions, approval of 2026-11-17 in GDR-GEN-1); the
+             version comes from cui-java-parent. -->
+        <dependency>
+            <groupId>org.easymock</groupId>
+            <artifactId>easymock</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>
@@ -106,7 +113,37 @@
                                         <include>commons-codec:commons-codec</include>
                                         <include>de.cuioss:cui-java-tools</include>
                                     </includes>
-                                    <message>GDR-GEN-1: git-core gained a compile or runtime artifact outside the closure a consumer of git-core alone may receive. A new compile dependency of git-core needs the owner's approval before it is added to this rule.</message>
+                                    <message>GDR-GEN-1: git-core gained a compile or runtime artifact outside the closure a consumer of git-core alone may receive. A new compile dependency of git-core needs the owner's approval before it is added to this rule and to direct-dependency-isolation.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <!-- GDR-GEN-1: the transitive path of consumer-isolation (searchTransitive=true) resolves through
+                         Enforcer 3.6.3 ResolverUtil.resolveTransitiveDependenciesVerbose, which filters every optional
+                         dependency, so a direct optional compile dependency would pass it. This execution checks the
+                         declared dependencies alone (searchTransitive=false, no optional filter) and bans every one
+                         in scope compile or runtime outside JSpecify, JGit and cui-java-tools, whatever its optional
+                         flag. -->
+                    <execution>
+                        <id>direct-dependency-isolation</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>*:*:*:*:compile</exclude>
+                                        <exclude>*:*:*:*:runtime</exclude>
+                                    </excludes>
+                                    <includes>
+                                        <include>org.jspecify:jspecify</include>
+                                        <include>org.eclipse.jgit:org.eclipse.jgit</include>
+                                        <include>de.cuioss:cui-java-tools</include>
+                                    </includes>
+                                    <message>GDR-GEN-1: git-core declares a compile or runtime dependency outside JSpecify, JGit and cui-java-tools, optional or not. A new compile dependency of git-core needs the owner's approval before it is added to this rule and to consumer-isolation.</message>
                                 </bannedDependencies>
                             </rules>
                         </configuration>

@@ -52,6 +52,8 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
@@ -198,6 +200,20 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** The rendering of a value that cannot be shown as a URL without risking its user information (GDR-NFR-3). */
     static final String NOT_A_URL = "(not a URL)";
 
+    /** The detail of a URL that is refused because it cannot be parsed or stored without its user information. */
+    private static final String NOT_A_URL_DETAIL = "not a URL";
+
+    /**
+     * The largest blob {@link #readFile(ReadFileInput)} reads, in bytes: 16 MiB. The size is asked from the object
+     * database before the blob is opened, so a larger blob is never loaded into memory (GDR-CORE-8).
+     *
+     * @since 0.1
+     */
+    public static final long READ_FILE_LIMIT_BYTES = 16L * 1024 * 1024;
+
+    /** The detail of a blob larger than {@link #READ_FILE_LIMIT_BYTES}. */
+    private static final String LARGER_THAN_LIMIT = "path: larger than the limit of 16 MiB";
+
     /**
      * The start of a path that is an unparsed authority: a scheme of any case followed by {@code //}, or {@code //}
      * alone (see {@link #display(URIish)}).
@@ -257,12 +273,15 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         }
         URIish uri;
         try {
-            // the stored origin carries no user information: the credentials are the caller's provider only
-            uri = new URIish(input.url()).setUser(null).setPass(null);
+            Optional<URIish> origin = storedOrigin(new URIish(input.url()));
+            if (origin.isEmpty()) {
+                return GitResult.of(GitOutcome.REFUSED_BY_POLICY, NOT_A_URL_DETAIL);
+            }
+            uri = origin.get();
         } catch (URISyntaxException | IllegalArgumentException e) {
             // JGit 7.8.0 URIish parses a port with Integer.parseInt, so a port beyond int range is a
             // NumberFormatException, not a URISyntaxException
-            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
+            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, NOT_A_URL_DETAIL);
         }
         if (!remotePolicy.permits(uri)) {
             return refusedRemote(uri);
@@ -330,6 +349,45 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * The origin a clone is created with, stores in its configuration and fetches from, built from an allowlist of the
+     * caller's URL as {@link #display(URIish)} builds its rendering: scheme, host, port and path. User information is
+     * dropped, the credentials of a clone are the caller's provider only, and so are query data and a fragment, which
+     * JGit 7.8.0 {@link URIish} keeps in its path and would write into the clone's configuration with it. The raw path
+     * is kept, so the escaping of the path the transport uses is unchanged.
+     * <p>
+     * A local path without a scheme and without a host is stored as JGit 7.8.0 {@link URIish} parsed it: its
+     * local-file pattern keeps the whole value literally as the path, so a {@code #}, a {@code ?} or a {@code %} is part
+     * of a file name there, and cutting at the first {@code #} or {@code ?} or percent-decoding the path through
+     * {@link URIish#setRawPath(String)} would store and clone another directory.
+     *
+     * @param parsed the caller's URL
+     * @return the origin; empty for a URL that JGit parsed as a local path although it starts like an authority (see
+     *         {@link #display(URIish)}), whose user information is part of the path and cannot be told apart from it,
+     *         and empty for an explicit port {@code 0}, which JGit 7.8.0 {@link URIish#setPort(int)} would turn into
+     *         the default port, a port the caller did not give
+     * @throws URISyntaxException if the raw path without its query data cannot be parsed
+     */
+    static Optional<URIish> storedOrigin(URIish parsed) throws URISyntaxException {
+        if (isUnparsedAuthority(parsed)) {
+            return Optional.empty();
+        }
+        if (parsed.getScheme() == null && parsed.getHost() == null) {
+            return Optional.of(parsed);
+        }
+        // JGit 7.8.0 URIish parses an explicit port of digits only, so 0 is the one explicit port setPort maps to -1
+        if (parsed.getPort() == 0) {
+            return Optional.empty();
+        }
+        var origin = new URIish().setScheme(parsed.getScheme()).setHost(parsed.getHost()).setPort(parsed.getPort());
+        String rawPath = parsed.getRawPath();
+        if (rawPath == null) {
+            return Optional.of(origin);
+        }
+        int end = indexOfQueryOrFragment(rawPath);
+        return Optional.of(origin.setRawPath(end < 0 ? rawPath : rawPath.substring(0, end)));
     }
 
     /**
@@ -424,11 +482,8 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      */
     private static void requireMirroredRefs(FetchResult fetched) throws IOException {
         for (TrackingRefUpdate update : fetched.getTrackingRefUpdates()) {
-            switch (update.getResult()) {
-                case NEW, FORCED, FAST_FORWARD, NO_CHANGE -> {
-                    // written, or already as the remote has it
-                }
-                default -> throw new IOException("mirrored reference not written: " + update.getResult());
+            if (notWritten(update).isPresent()) {
+                throw new IOException("mirrored reference not written: " + update.getResult());
             }
         }
     }
@@ -439,12 +494,17 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * {@code NEW}, {@code FORCED}, {@code FAST_FORWARD} and {@code NO_CHANGE} are written; {@code REJECTED},
      * {@code REJECTED_CURRENT_BRANCH}, {@code REJECTED_MISSING_OBJECT} and {@code REJECTED_OTHER_REASON} end
      * {@link GitOutcome#REJECTED}; {@code LOCK_FAILURE}, {@code IO_FAILURE} and every other result end
-     * {@link GitOutcome#FAILED}. The detail names the local reference and the result.
+     * {@link GitOutcome#FAILED}. The detail names the local reference and the result. An update without a result is
+     * {@link GitOutcome#FAILED} as well: JGit 7.8.0 {@code TrackingRefUpdate} holds no result until its command was
+     * applied, and nothing says it was written.
      *
      * @return the result of a reference update that was not written, empty when it was written
      */
-    private static <V> Optional<GitResult<V>> notWritten(TrackingRefUpdate update) {
+    static <V> Optional<GitResult<V>> notWritten(TrackingRefUpdate update) {
         var result = update.getResult();
+        if (result == null) {
+            return Optional.of(GitResult.of(GitOutcome.FAILED, shownRef(update.getLocalName()) + ": no result"));
+        }
         String detail = shownRef(update.getLocalName()) + ": " + result;
         return switch (result) {
             case NEW, FORCED, FAST_FORWARD, NO_CHANGE -> Optional.empty();
@@ -479,8 +539,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             walk.markStart(walk.parseCommit(Objects.requireNonNull(start.value())));
             int limit = Math.max(1, maxCount);
             var commits = new ArrayList<CommitInfo>();
-            for (RevCommit commit : walk) {
-                if (commits.size() >= limit) {
+            // walk.next(), not the iterator: JGit 7.8.0 RevWalk.iterator() reads one commit ahead of the one it
+            // returns and rethrows a read failure as the unchecked RevWalkException, so it would read past the limit
+            // and let a missing commit there escape
+            while (commits.size() < limit) {
+                RevCommit commit = walk.next();
+                if (commit == null) {
                     break;
                 }
                 commits.add(toInfo(commit));
@@ -623,7 +687,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             uri = new URIish(input.url()).setUser(null).setPass(null);
         } catch (URISyntaxException | IllegalArgumentException e) {
             // a port beyond int range is a NumberFormatException of JGit 7.8.0 URIish, see cloneIfMissing
-            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, "not a URL");
+            return GitResult.of(GitOutcome.REFUSED_BY_POLICY, NOT_A_URL_DETAIL);
         }
         if (!input.policy().permits(uri)) {
             return refusedRemote(uri);
@@ -704,9 +768,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 if (tree == null || (tree.getRawMode(0) & FileMode.TYPE_MASK) != FileMode.TYPE_FILE) {
                     return GitResult.of(GitOutcome.NOT_FOUND, "path: no file at " + commitId.name());
                 }
-                try (var content = repository.open(tree.getObjectId(0), Constants.OBJ_BLOB).openStream()) {
-                    return GitResult.ok(content.readAllBytes());
-                }
+                return readBlob(repository, tree.getObjectId(0));
             }
         } catch (RepositoryNotFoundException e) {
             return GitResult.of(GitOutcome.NOT_A_REPOSITORY, shown(input.cache()));
@@ -714,6 +776,28 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
             return GitResult.of(GitOutcome.NOT_FOUND, "path: not a valid path");
         } catch (IOException | JGitInternalException e) {
             return failure(e);
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #READ_FILE_LIMIT_BYTES}. The size is asked first, through
+     * {@link ObjectReader#getObjectSize(org.eclipse.jgit.lib.AnyObjectId, int)}, which JGit 7.8.0 reads from the header
+     * of a loose object or from the pack entry without inflating the content; the loader is opened only for a blob
+     * within the limit, because JGit 7.8.0 {@code Repository.open} reads a blob below its streaming threshold
+     * completely into memory before it returns the loader.
+     *
+     * @return the content, or {@link GitOutcome#REFUSED_BY_POLICY} for a blob above the limit
+     * @throws IOException if the blob is missing or cannot be read
+     */
+    private static GitResult<byte[]> readBlob(Repository repository, ObjectId blobId) throws IOException {
+        try (ObjectReader reader = repository.newObjectReader()) {
+            if (reader.getObjectSize(blobId, Constants.OBJ_BLOB) > READ_FILE_LIMIT_BYTES) {
+                return GitResult.of(GitOutcome.REFUSED_BY_POLICY, LARGER_THAN_LIMIT);
+            }
+            ObjectLoader blob = reader.open(blobId, Constants.OBJ_BLOB);
+            try (var content = blob.openStream()) {
+                return GitResult.ok(content.readAllBytes());
+            }
         }
     }
 
@@ -1127,16 +1211,25 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * @return the rendering, never carrying user information
      */
     static String display(URIish uri) {
-        String path = uri.getPath();
-        if (uri.getHost() == null && path != null && UNPARSED_AUTHORITY.matcher(path).lookingAt()) {
+        if (isUnparsedAuthority(uri)) {
             return NOT_A_URL;
         }
+        String path = uri.getPath();
         if (path != null) {
             int end = indexOfQueryOrFragment(path);
             path = end < 0 ? path : path.substring(0, end);
         }
         return new URIish().setScheme(uri.getScheme()).setHost(uri.getHost()).setPort(uri.getPort()).setPath(path)
                 .toString();
+    }
+
+    /**
+     * Tells whether JGit parsed a URL as a local path although it starts like an authority: no host, and a path that
+     * starts with a scheme and {@code //} or with {@code //} alone (see {@link #display(URIish)}).
+     */
+    private static boolean isUnparsedAuthority(URIish uri) {
+        String path = uri.getPath();
+        return uri.getHost() == null && path != null && UNPARSED_AUTHORITY.matcher(path).lookingAt();
     }
 
     private static int indexOfQueryOrFragment(String path) {

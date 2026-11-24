@@ -179,9 +179,30 @@ namespaces, whatever fetch refspecs the clone's configuration holds (JGit 7.8.0 
 configured fetch refspecs only for an empty list, and `FetchProcess.deleteStaleTrackingRefs` deletes only references
 matching the destination of a fetched refspec).
 
-The stored origin carries no user information: the URL is configured without user name and password
-(`URIish.setUser(null).setPass(null)`), so no credential reaches the persistent configuration of the clone; the
-credentials of a call come from its `CredentialsProvider` only (<<GDR-CORE-7>>).
+The stored origin carries no secret the caller passed in the URL: it is built from an allowlist of the URL's components,
+scheme, host, port and path, as a URL is rendered for a detail (<<GDR-CORE-7>>), so neither user information nor query
+data nor a fragment reaches the persistent configuration of the clone, and the clone fetches from that origin. JGit's
+`URIish` keeps query data and a fragment in its path, so removing user name and password alone would store a token
+passed in the query. The raw path is kept, so its escaping is unchanged. The credentials of a call come from its
+`CredentialsProvider` only (<<GDR-CORE-7>>).
+
+A local path without a scheme and without a host is stored as `URIish` parsed it. Its local-file pattern keeps the
+whole value literally as the path, so `#`, `?` and `%` are part of a file name there: cutting the path at the first
+`#` or `?`, or percent-decoding it as `URIish.setRawPath` does, would store and clone `/srv/source` for
+`/srv/source#archive.git` and `/srv/my repo` for `/srv/my%20repo`. Such a path carries no user information, query data
+or fragment that could hold a secret.
+
+An explicit port 0 is `REFUSED_BY_POLICY` with the detail `not a URL` before anything is created: `URIish.setPort`
+maps every value that is not positive to the default port, so the stored origin would name a port the caller did not
+give, and the remote policy of <<GDR-CORE-2>>, which requires an explicit port within 1 to 65535, would admit it.
+
+A URL that JGit parses as a local path although it starts like an authority, a scheme and `//` or `//` alone, is
+`REFUSED_BY_POLICY` with the detail `not a URL` before anything is created: JGit's `URIish` matches its scheme pattern
+`[a-z][a-z0-9+-]+://` in lower case only, so `HTTPS://user:secret@host/repo.git` falls through to its local-file
+pattern and the whole string, user information included, becomes the path
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/URIish.java[JGit
+7.8.0 `URIish`]), where it cannot be told apart from the rest of the path. A remote policy that admits local
+repositories would otherwise admit it and store it.
 
 Accepted exception: an existing bare repository at the git directory is opened without comparing its `origin` with the
 URL of the call. The clone is a disposable cache owned by its caller
@@ -234,9 +255,26 @@ link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse
 7.8.0 `DirCache`]), and blobs, tree and commit are inserted through one `ObjectInserter`, flushed once after the
 commit. A `TreeEdit` is either `TreeEdit.Put`, which sets a path to content with a `TreeEdit.Mode` (a regular file,
 mode `100644`, unless the caller names an executable file, `100755`, or a symbolic link, `120000`), or
-`TreeEdit.Delete`, which removes it. Every path is checked with the check JGit's `DirCacheEntry` applies before
-anything is written, and two edits of the same path are refused. `CommitMetadata` carries author, committer, message
-and an optional `CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.
+`TreeEdit.Delete`, which removes it. `CommitMetadata` carries author, committer, message and an optional
+`CommitSigning`; the caller sets them all, and the parents are full commit ids of the repository.
+
+Every path of the edits is checked before anything is written, with one strictness on every host: a JGit
+`ObjectChecker` with `setSafeForWindows(true)` and `setSafeForMacOS(true)`, whatever the platform the library runs on
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/ObjectChecker.java[JGit
+7.8.0 `ObjectChecker`]). Besides what JGit refuses everywhere (an empty component, `.`, `..`, `.git` in any case and
+`git~1`), it refuses a component ending in a dot or a space, a character Windows forbids, a Windows device name such as
+`CON` or `aux.txt`, and a name HFS+ folds to `.git`. Owner decision: JGit's own check, `SystemReader.checkPath`, applies
+the checks of the running platform only
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/util/SystemReader.java[JGit
+7.8.0 `SystemReader`]), so a tree written on a Linux server could hold a path a client on Windows or macOS cannot check
+out; one strictness for every host keeps every tree the library writes portable, at the cost of refusing on Linux a
+name Linux would store. The edits are also checked against each other, compared after Unicode normalization to form
+NFC and without case: two edits of the same path are refused (`edits: duplicate path`), and so are two edits of which
+one names a directory of the other's path, such as `a` and `a/b` (`edits: overlapping path`), because JGit 7.8.0
+`DirCacheEditor` keeps only one of them (`deleteOverlappingSubtree`) and the caller's other edit would be lost without
+a word. The normalization makes the composed and the decomposed spelling of one name, such as `é.txt` as one code point
+and as `e` with a combining accent, one path: both are distinct names to Git, but HFS+ stores names decomposed, so a
+tree holding both cannot be checked out on it. The edit itself keeps the path as the caller spelled it.
 
 With a `CommitSigning` (a JGit `org.eclipse.jgit.lib.Signer`, the signing key and a `CredentialsProvider`), the commit
 is signed before it is inserted through
@@ -247,9 +285,28 @@ is signed before it is inserted through
 
 The writer creates objects only: it reads and writes no reference, so nothing outside the object database changes.
 Moving a reference to the commit is <<GDR-CORE-5>>, which writes no reflog. The outcomes: `OK` with the full id of the
-commit; `NOT_FOUND` when a parent is no full commit id or no commit of the repository, or an edit names an invalid or
-a repeated path, the detail naming the field (`parents` or `edits`) and nothing being written; `FAILED` for an I/O or
-a signing failure, the detail naming the exception class.
+commit; `NOT_FOUND` when a parent is no full commit id or no commit of the repository, or an edit names an invalid, a
+repeated or an overlapping path, the detail naming the field (`parents` or `edits`) and nothing being written; `FAILED`
+for an I/O or a signing failure, the detail naming the exception class. `FAILED` also covers three failures JGit
+raises unchecked, each named by its class only:
+
+* a tree of the first parent that holds a path JGit refuses, such as `.GIT` or `git~1` written by another tool:
+  `DirCache.read` builds a `DirCacheEntry` per path, whose check throws the `InvalidPathException` of
+  `org.eclipse.jgit.dircache`
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/dircache/DirCacheEntry.java[JGit
+  7.8.0 `DirCacheEntry`]);
+* a tree too large to be read in one piece: `CanonicalTreeParser.reset` reads a tree through
+  `ObjectLoader.getCachedBytes()`, which throws a `LargeObjectException` (the notes tree of <<GDR-CORE-10>> as well,
+  through `NoteMap.readTree` and `NoteParser`);
+* an invalid `gpg.format` of the repository's configuration when the commit is signed: `new GpgConfig(Config)` reads
+  it through `Config.getEnum`, which throws an `IllegalArgumentException` for an unknown value
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/GpgConfig.java[JGit
+  7.8.0 `GpgConfig`]); the signer is not called.
+
+The caller's code runs on the caller's contract and is mapped to no outcome: an unchecked exception of the `Signer`
+propagates unchanged, except the `JGitInternalException` that JGit 7.8.0 `Signer.signObject` itself wraps an encoding
+failure in, which is `FAILED`; a checked exception of the `Signer` (`IOException`, a `GitAPIException`) is a signing
+failure, `FAILED`. Nothing is inserted in either case.
 
 [#GDR-CORE-5]
 == GDR-CORE-5: Compare-and-Swap Reference Update
@@ -282,15 +339,41 @@ CommitMetadata, TreeOperation, int attempts)` reads the reference exactly (`Repo
 its commit to the `TreeOperation` (`null` for a reference that does not exist yet), writes the next commit with the
 reference's commit as the only parent (<<GDR-CORE-4>>) and moves the reference. `compareAndDelete(Repository,
 String refName, String expectedOldId, int attempts)` deletes it. `attempts` is the total number of tries, at least one;
-fewer is an `IllegalArgumentException`. Neither writes a reflog (`RefUpdate.disableRefLog()`). The outcomes as built:
+fewer is an `IllegalArgumentException`. The loops count from zero to below `attempts`, so `Integer.MAX_VALUE` is a
+bound like any other and the counter never overflows. Neither writes a reflog (`RefUpdate.disableRefLog()`).
 
-* `compareAndSwap`: `OK` with the full id of the new commit for `NEW` or `FAST_FORWARD`; `CONFLICT` when every attempt
-  ended in `LOCK_FAILURE`, the reference left as the concurrent writers left it; the result of the `InCoreWriter` when
-  it wrote no commit, the reference untouched; `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other
-  result. The commit of a lost attempt stays unreferenced in the object database.
-* `compareAndDelete`: `OK` with the deleted id for `FORCED`; `NOT_FOUND` when `expectedOldId` is no full commit id,
-  nothing being read or written; `CONFLICT` when the reference moved away or is gone, or every attempt met a held lock;
-  `FAILED` for `IO_FAILURE` or an I/O failure; `REJECTED` for every other result.
+Every entry point, `compareAndSwapTree` below included, checks the reference name before it reads anything. A name
+that `Repository.isValidRefName` rejects (a `..` component such as `refs/heads/../../../outside/x`, a name of one
+component such as `HEAD`, a name ending `.lock`, a character git forbids;
+link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/Repository.java[JGit
+7.8.0 `Repository`]) is `REFUSED_BY_POLICY` with the detail `refName: not a valid reference name` before any file is
+read or written, because the file backend maps a reference name to a path below the git directory. A name read as
+absent that overlaps an existing reference (`RefDatabase.isNameConflicting`: `refs/heads/a/b` while `refs/heads/a`
+exists, or the reverse) is `REJECTED` with the detail `refName: name conflict`: a compare-and-swap decides it after it
+read the reference and before the operation runs, a compare-and-delete in the re-read that follows its `LOCK_FAILURE`.
+Without that decision JGit 7.8.0 `RefUpdate.updateImpl` answers the name with `LOCK_FAILURE` (lines 714-718), and the
+loop would re-run the operation for every attempt and end in `CONFLICT`, a lost race that no retry can win.
+
+An attempt parses the commit the reference points at as it is (`RevWalk.parseAny`). A reference that points at an
+annotated tag, or at any other object that is no commit, ends the call `REJECTED` with the detail
+`<refName>: points at no commit`: `RevWalk.parseCommit` would peel the tag and move the reference from the tag to a
+commit on the tagged commit.
+
+The outcomes as built:
+
+* `compareAndSwap`: `OK` with the full id of the new commit for `NEW` or `FAST_FORWARD`; `REFUSED_BY_POLICY` for an
+  invalid reference name; `CONFLICT` when every attempt ended in `LOCK_FAILURE`, the reference left as the concurrent
+  writers left it; the result of the `InCoreWriter` when it wrote no commit, the reference untouched; `FAILED` for
+  `IO_FAILURE` or an I/O failure; `REJECTED` for a name conflict, a reference at no commit and every other result. The
+  commit of a lost attempt stays unreferenced in the object database.
+* `compareAndDelete`: `OK` with the deleted id for `FORCED`; `REFUSED_BY_POLICY` for an invalid reference name and
+  `NOT_FOUND` when `expectedOldId` is no full commit id, nothing being read or written in either case; `CONFLICT` when
+  the reference moved away or is gone, or every attempt met a held lock; `FAILED` for `IO_FAILURE` or an I/O failure;
+  `REJECTED` for a name conflict and every other result.
+
+The `TreeOperation` is the caller's code and runs on the caller's contract: an exception it throws, and the
+`NullPointerException` of a `null` list or element it returns, propagates out of `compareAndSwap` unchanged, with the
+reference untouched.
 
 A package-private tree-level variant, `compareAndSwapTree`, runs the same retry loop with a finished tree instead of
 edits, for a caller that builds the whole tree itself (the notes of <<GDR-CORE-10>>): each attempt hands the tree of
@@ -312,7 +395,12 @@ the reference is still symbolic with the same target
 7.8.0 `DfsRefUpdate`],
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/RefUpdate.java[JGit
 7.8.0 `RefUpdate`]). When a detaching update or a delete of a symbolic reference ends in `LOCK_FAILURE` with no old id,
-the updater therefore decides through one atomic `BatchRefUpdate`: the unlink of the symbolic reference
+the updater therefore decides through one atomic `BatchRefUpdate`. On the file backend that state is reached as well,
+when another writer holds the reference's lock: `RefDirectoryUpdate.tryLock` returns before it calls
+`setOldObjectId`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/RefDirectoryUpdate.java[JGit
+7.8.0 `RefDirectoryUpdate`]), so the old id is unset there too; the file backend refuses the batch, and the attempt is
+reported as the same `LOCK_FAILURE`, a lost race. The batch is: the unlink of the symbolic reference
 (`ReceiveCommand.unlink`, expecting its target), a no-op `ReceiveCommand.link` on every further link of a symbolic chain
 that holds only while the link still points at the same target, and a command on the base reference from the expected
 id to the same id, which changes nothing and holds only while the base reference still points at the expected id.
@@ -333,7 +421,9 @@ target between the read and the update. For a dangling symbolic reference the up
 any `RefUpdate`, with the command on the base reference holding only while the base reference is still absent: a target
 written in between makes the batch fail, which is a lost race, and the next attempt reads the alias again and builds
 on the written commit. A backend that refuses the batch (the file backend) falls through to its `RefUpdate`, which
-re-reads the reference under its lock.
+re-reads the reference under its lock. That fall-through is recorded, not closed: the file backend compares the zero
+expected id with the id it reads under its own lock, so no comparison is dropped, and a guard of the updater around it
+would only repeat that comparison outside the lock.
 
 A detail names the reference and the `RefUpdate.Result`, never content or an identity
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). On a file-based repository a held `.lock` file of the reference ends an
@@ -379,8 +469,12 @@ entry (object id or file mode) differs from the base on both sides and differs b
 * `MergeResult.NotMerged`: every other non-success, with its outcome and its detail (the component `reason`, returned
   by `detail()`): `NOT_FOUND` when a commit id is no full commit id or no commit of the repository (an annotated tag or
   a tree included), the detail naming the field `ours` or `theirs`; `CONFLICT` with the detail
-  `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, the detail naming
-  the exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
+  `merge base: more than one` and no paths, because none were computed; `FAILED` for an I/O failure, and for a tree of
+  the merge base or a tip that holds a path JGit refuses, such as `.GIT` or `git~1` (`StrategySimpleTwoWayInCore`
+  builds a `DirCacheEntry` per entry it takes, whose check throws an `InvalidPathException`), and for a tree too large
+  to be read in one piece (`CanonicalTreeParser.reset` reads a tree through `ObjectLoader.getCachedBytes()`, which
+  throws a `LargeObjectException` above the streaming threshold, as for <<GDR-CORE-4>> and <<GDR-CORE-10>>), the
+  detail naming the exception class. When the merger fails and the walk finds no conflicting path, the result is `CONFLICT` with the
   detail `merge: no conflicting path`, because a `Conflicting` without a path would contradict its own contract.
 
 `MergeResult` composes the shape of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] (an outcome of the closed `GitOutcome` list
@@ -399,7 +493,9 @@ the detail without value, so the conflicting paths are not carried over.
   a distinct outcome.
 
 Credentials are a `@Nullable org.eclipse.jgit.transport.CredentialsProvider` per call, in `FetchInput`, `PushInput`
-and `CloneInput`. The outcomes:
+and `CloneInput`. A secret in the URL of a clone is not stored: the origin of a clone carries no user information,
+query data or fragment, and a URL whose user information cannot be separated is refused (<<GDR-CORE-3>>). The
+outcomes:
 
 * `REJECTED`: the remote refuses the update (non-fast-forward, a protected branch or another refusal; JGit's
   `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or `REJECTED_NODELETE`);
@@ -422,8 +518,11 @@ an update was not written
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/FetchProcess.java[JGit
 7.8.0 `FetchProcess`]). The `RefUpdate.Result` values `NEW`, `FORCED`, `FAST_FORWARD` and `NO_CHANGE` are written;
 `REJECTED`, `REJECTED_CURRENT_BRANCH`, `REJECTED_MISSING_OBJECT` and `REJECTED_OTHER_REASON` end the fetch `REJECTED`;
-`LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`. The detail names the local reference and the
-result.
+`LOCK_FAILURE`, `IO_FAILURE` and every other result end it `FAILED`, and so does an update without a result, which
+JGit's `TrackingRefUpdate` holds until its command was applied
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/TrackingRefUpdate.java[JGit
+7.8.0 `TrackingRefUpdate`]; detail `<reference>: no result`). The detail names the local reference and the result. The
+fetch of a clone checks its mirrored references by the same rule (<<GDR-CORE-3>>).
 
 A fetch with `FetchInput.prune` set (`false` by default) also deletes every local reference that lies in the
 destination of one of its reference specifications and whose source the remote no longer advertises, through
@@ -499,8 +598,19 @@ configuration describes it and refuse anything but a bare repository as `NOT_A_R
 working tree is never used as a cache; JGit's `BaseRepositoryBuilder.setBare()` would override `core.bare`
 (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/BaseRepositoryBuilder.java[JGit 7.8.0 `BaseRepositoryBuilder`]).
 
-Accepted exception: `readFile` reads a blob without a size bound. The cache holds pinned commits of a source the remote
-policy admitted, and a bound would need a compiled limit that no requirement asks for.
+`readFile` reads a blob of at most 16 MiB (`JGitRepositoryOperations.READ_FILE_LIMIT_BYTES`, 16 × 1024 × 1024 bytes), a
+blob of exactly that size included. The size is asked through `ObjectReader.getObjectSize` before the blob is opened,
+which reads it from the header of a loose object or from the pack entry without inflating the content
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/WindowCursor.java[JGit
+7.8.0 `WindowCursor`]), and a larger blob is `REFUSED_BY_POLICY` with the detail
+`path: larger than the limit of 16 MiB`, so it is never loaded into memory. Opening the blob first would not do: JGit's
+`Repository.open` reads a blob below the streaming threshold completely into memory before it returns the loader
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/internal/storage/file/UnpackedObject.java[JGit
+7.8.0 `UnpackedObject`]). The reason is the caller's memory: the
+operation returns the whole blob as one byte array, and the cache holds commits of a source the remote policy admits but
+whose content the library does not control, so without a bound one large file of a pinned commit would load into the
+heap of the process in full. The value lies far above the configuration files and documents the cache serves and below
+the JGit default `core.streamFileThreshold` of 50 MiB, above which JGit no longer keeps a blob in one array itself.
 
 [#GDR-CORE-9]
 == GDR-CORE-9: Reading
@@ -568,8 +678,14 @@ note.
 * `write(Repository, String notesRef, String commitId, byte[] note, CommitMetadata, int attempts)` sets the note,
   replacing a note the commit already has, and returns the full id of the new notes commit. The note is copied on
   entry. `NOT_FOUND` names the commit as for `read`, nothing being written; `CONFLICT` means every attempt lost its race
-  to another writer of the notes reference; `FAILED` is an I/O or a signing failure; `REJECTED` every other result of
-  the reference update.
+  to another writer of the notes reference; `FAILED` is an I/O or a signing failure, an invalid `gpg.format`, or a
+  notes tree too large to be read in one piece (the `LargeObjectException` of `NoteMap.readTree`, which parses each
+  tree with `NoteParser` through `CanonicalTreeParser.reset` and `ObjectLoader.getCachedBytes()`;
+  link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/notes/NoteParser.java[JGit
+  7.8.0 `NoteParser`]); `REJECTED` is a notes reference that does not exist and whose name conflicts with an existing
+  reference, such as `refs/notes/a/b` while `refs/notes/a` exists (detail `refName: name conflict`, decided by the
+  updater before the note is set, never a lost race, see <<GDR-CORE-5>>), a notes reference at no commit, and every
+  other result of the reference update.
 
 For both, a notes reference that is not below `refs/notes/` or no valid reference name
 (`Repository.isValidRefName`) is `REFUSED_BY_POLICY` with a detail naming the field only, as for an invalid branch
@@ -619,6 +735,16 @@ an abbreviation from two digits on and an expression on an abbreviated base
 link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/lib/AbbreviatedObjectId.java[`AbbreviatedObjectId.isId`]),
 so none of them reaches it. A full commit id absent from the repository is `NOT_FOUND`, not `FAILED`; a full commit id
 that reaches another commit is `IDENTITY_MISMATCH`.
+
+`log` lists at most `maxCount` commits (a value below 1 counts as 1), newest first. The walk advances with
+`RevWalk.next()` and stops once `maxCount` commits are listed, so it reads no commit past the limit beyond the parents of
+the listed ones, which the walk parses to order the history. JGit's `RevWalk.iterator()` would read one commit ahead of
+the one it returns and rethrow a read failure as the unchecked `RevWalkException`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/RevWalk.java[JGit
+7.8.0 `RevWalk`]), so a missing commit past the limit would escape the operation. A commit missing further back than
+the parents of the listed commits does not affect the result; a missing parent of a listed commit ends `FAILED`
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/revwalk/PendingGenerator.java[JGit
+7.8.0 `PendingGenerator`]).
 
 [#working-trees]
 == Working Trees
@@ -679,10 +805,28 @@ full commit id is resolved, an abbreviated or unknown start point never, also no
 
 Before an addition claims anything it is guarded in this order: the root must be the main working tree, not a linked
 one (`PATH_REFUSED`); the branch, new or existing, must form a valid reference name `refs/heads/<branch>` by JGit 7.8.0
-`Repository.isValidRefName` (`REFUSED_BY_POLICY`, the detail naming the field, never the string); the target must lie
-inside the root, outside the common directory with its administration area `worktrees/` and outside every registered
-linked working tree, compared by real paths (`PATH_REFUSED`). Only then is the start point classified and the target
-claimed.
+`Repository.isValidRefName` and be a branch name git accepts (`REFUSED_BY_POLICY`, the detail naming the field, never
+the string); the target must lie inside the root, outside the common directory with its administration area
+`worktrees/` and outside every registered linked working tree, compared by real paths (`PATH_REFUSED`). Only then is
+the start point classified and the target claimed.
+
+* *Branch name.* JGit 7.8.0 `Repository.isValidRefName` checks the full reference: it refuses `.lock` only at the end
+  of the whole name and accepts `refs/heads/HEAD`, `refs/heads/@`, `refs/heads/-<name>` and `refs/heads/refs/<name>`.
+  The guard refuses these short names as well: `HEAD`, a leading `-` and a component ending `.lock`, which git refuses
+  as a branch name (`git check-ref-format --branch` of git 2.56.1 ends with "not a valid branch name"; a component
+  ending `.lock` is rule 1 of link:https://git-scm.com/docs/git-check-ref-format[git-check-ref-format(1)]); the name
+  `@`, which git accepts as a branch but reads as `HEAD`
+  (link:https://git-scm.com/docs/gitrevisions[gitrevisions(7)], "`@` alone is a shortcut for `HEAD`"); and a name
+  starting `refs/`, which git accepts but which reads as a full reference name, a rule of the library beyond git. So
+  no name reaches the repository that git would refuse or read as something other than the branch.
+  `GitWorktreeListCompatibilityTest` checks the guard against an installed git.
+* *Bare root.* A bare repository has no main working tree: its root is its git directory, so every target inside the
+  root lies inside the git directory and is refused `PATH_REFUSED` before anything is claimed, rather than registering
+  a working tree whose administration area would hold it.
+* *Real paths.* A path is resolved with `Path.toRealPath`, or, where it is missing, through its nearest existing
+  ancestor, without a prior existence test: a working tree removed concurrently moves the resolution to its ancestor
+  instead of failing the operation, and a prunable working tree registered or named through a symbolic link is found
+  by its real path.
 
 Concurrent additions on one repository do not interfere:
 
@@ -694,7 +838,9 @@ Concurrent additions on one repository do not interfere:
   the new working tree is checked out and unlocked, or, for a refused or failed addition, until its rollback has
   deleted the branch it created; a branch another addition reserved ends `BRANCH_CHECKED_OUT`. A new branch is
   created by a compare-and-swap from the zero id. A reservation left by a process that ended during an addition stays
-  until <<GDR-CORE-15>> releases it.
+  until <<GDR-CORE-15>> releases it. So does the reservation of a complete addition whose release fails: the working
+  tree is registered and checked out, so the addition ends `OK` with the working tree kept, and the failed release is
+  logged as `GIT_CORE-105` without an argument, never rolled back.
 * The administration directory is claimed atomically under the next free numeric suffix; its files are written
   completely before they appear under their names, `HEAD` last, and it stays locked while the start commit is checked
   out.
@@ -704,8 +850,17 @@ Concurrent additions on one repository do not interfere:
   `LOCK_FAILURE` both for a held reference lock and for a branch no longer at the expected commit, so after a lock
   failure or a rejection the branch is read again: an absent branch was deleted, a branch at another commit was
   advanced by another writer and is kept, and a branch still at the start commit is left behind and reported as an
-  incomplete rollback, logged as `GIT_CORE-104`, never silently. An unchecked exception during an addition is
-  rolled back in the same way and ends as a result, `FAILED` with the failure class.
+  incomplete rollback, logged as `GIT_CORE-104`, never silently. Every step of the rollback runs, also after an
+  earlier step failed with an unchecked exception; the first failure is reported with the later ones suppressed, and the
+  branch is deleted before the reservation is released. An unchecked exception during an addition is rolled back in the
+  same way and ends as a result, `FAILED` with the failure class.
+
+An invalid configuration value a working-tree operation reads ends `FAILED` with the failure class only. JGit 7.8.0
+reads `core.autocrlf` and the other keys of `WorkingTreeOptions` with `Config.getEnum`, which throws
+`IllegalArgumentException` for a value that names no constant
+(link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/treewalk/WorkingTreeOptions.java[JGit 7.8.0 `WorkingTreeOptions`]),
+wherever a `FileTreeIterator` or a checkout is built: in `commit`, in `worktreeStatus`, in the status check of
+`worktreeRemove` and in the checkout of `worktreeAdd`, which is rolled back first.
 
 `worktreeList` skips an administration directory whose `gitdir` or `HEAD` is not present, one being initialized or
 removed, so it does not fail the list or the removal of another working tree; a locked working tree with complete files
@@ -720,10 +875,12 @@ addition or an existing branch to create; `BRANCH_CHECKED_OUT` for a branch chec
 working tree, also for a branch another addition reserved; `NOT_FOUND` for an unknown branch or an unknown, absent or
 abbreviated start point; `AMBIGUOUS` with the candidates; `IDENTITY_MISMATCH` for a full commit id the existing branch
 is not at, or one that reaches another commit; `PATH_REFUSED` for a path outside the main working tree or the main
-working tree itself, for a root that is a linked working tree, and for a target inside the common directory, its
-administration area or another linked working tree; `REFUSED_BY_POLICY` for a branch name that is no valid branch name
-and for a refused capability; `NOT_A_REPOSITORY`; `FAILED`. A refused or failed checkout leaves neither the working
-tree nor its administration directory behind.
+working tree itself, for a root that is a linked working tree, for a bare root, and for a target inside the common
+directory, its administration area or another linked working tree; `REFUSED_BY_POLICY` for a branch name that is no
+valid branch name, also `HEAD`, `@`, a leading `-`, a component ending `.lock` and a name starting `refs/`, and for a
+refused capability; `NOT_A_REPOSITORY`; `FAILED`, also for an invalid configuration value the checkout
+reads. A refused or failed checkout leaves neither the working tree nor its administration directory behind. A failed
+release of the reservation after a complete addition ends `OK` with the working tree kept.
 |`worktreeList` |`OK` with the main working tree first, then the linked working trees by administrative name, each with
 its branch, its `HEAD` where recorded as a commit id, and whether it is locked or prunable; `NOT_A_REPOSITORY`;
 `FAILED`, also for a repository without a working tree
@@ -731,7 +888,8 @@ its branch, its `HEAD` where recorded as a commit id, and whether it is locked o
 prunable one by its administration directory only, so a directory that reuses its path is kept; `WORKTREE_NOT_FOUND`,
 also when the repository at the registered path is not the registered working tree; `WORKTREE_DIRTY`;
 `WORKTREE_LOCKED`; `PATH_REFUSED` for the main working tree; `REFUSED_BY_POLICY`; `NOT_A_REPOSITORY`; `FAILED`, also
-for a repository without a working tree. The registered paths are compared as real paths, and a working tree
+for a repository without a working tree and for an invalid configuration value the status check reads. The registered
+paths are compared as real paths, and a working tree
 registered through a symbolic link is deleted at its real root. The removal is never forced.
 |===
 
@@ -743,7 +901,8 @@ it.
 `linkedRootRefused`, `targetInsideAdministrationRefused`), the reservation of new and existing branches
 (`reservedBranchCheckedOut`, `concurrentAdditions`), the comparison by real paths (`removeThroughSymlink`,
 `replacedRepositoryAndReusedPath`) and the result contract (`bareRepositoryFails`, `uncheckedFailureRolledBack`,
-`branchDeletionResultRead`, `reservationOutlivesRollback`, `heldRefLockReported`). `GitWorktreeListCompatibilityTest`
+`branchDeletionResultRead`, `reservationOutlivesRollback`, `heldRefLockReported`, `uncheckedRollbackStepContinues`,
+`failedReservationReleaseKeepsWorktree`, `invalidAutoCrlfFails`). `GitWorktreeListCompatibilityTest`
 asserts that `git worktree list --porcelain` of an installed Git lists the added working trees with path, branch and
 `HEAD`, a locked one `locked` and one whose directory is gone `prunable`, and that `git worktree remove` removes a
 working tree the library added. It is skipped through a JUnit assumption when no `git` binary is found; only this test
@@ -758,7 +917,8 @@ starts a process, never the library.
 `commit` stages every addition, modification and deletion of the main or a linked working tree and commits it on the
 working tree's branch, never signed, whatever the repository configuration asks. Its outcomes are `OK` with the commit,
 `NOTHING_TO_COMMIT`, `REFUSED_BY_POLICY` for a present hook, which is never run (`RefusingFS`), `NOT_A_REPOSITORY` and
-`FAILED`, also for a repository without a working tree.
+`FAILED`, also for a repository without a working tree and for an invalid configuration value the staging reads, such
+as `core.autocrlf` (<<GDR-CORE-12>>), before anything is committed.
 
 * *Hooks.* JGit 7.8.0 `CommitCommand` runs the `post-commit` hook after it updated the branch and only logs its
   failure
@@ -777,13 +937,13 @@ working tree's branch, never signed, whatever the repository configuration asks.
   `HEAD` entry to `logs/HEAD` of the linked working tree's own git directory and its branch entry to the branch's log
   in the common directory: `HEAD` is a ref of each working tree, the branches are shared
   (link:https://git-scm.com/docs/git-worktree[git-worktree(1)], REFS). The commit and its branch are stored before
-  these entries are appended, so an entry that cannot be written does not fail the created commit: the result stays
-  `OK` with the commit, and the omission is logged as `GIT_CORE-103` with the commit id only. An invalid
+  these entries are appended, so no failure of an entry, an unchecked one included, fails the created commit: the
+  result stays `OK` with the commit, and the omission is logged as `GIT_CORE-103` with the commit id only. An invalid
   `core.logAllRefUpdates` value is such a case: JGit 7.8.0 `Config.getEnum` throws `IllegalArgumentException` for a
   value that names no constant of `CoreConfig.LogRefUpdates`.
 
-The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit` and
-`invalidLogAllRefUpdatesKeepsCommit` the reflog choice, and its secrets test asserts with a JUL log capture and on the
+The commit tests of `JGitWorktreeOperationsTest` cover each outcome, `reflogFailureKeepsCommit`,
+`invalidLogAllRefUpdatesKeepsCommit` and `uncheckedReflogFailureKeepsCommit` the reflog choice, and its secrets test asserts with a JUL log capture and on the
 result details that no author or committer name, e-mail address or message reaches a log message or a detail, and no
 raw working-tree path an INFO message.
 
@@ -796,7 +956,8 @@ raw working-tree path an INFO message.
 
 `worktreeStatus` returns the record `WorktreeStatus(changed, untracked, deleted)`: three unmodifiable sets of
 repository-relative paths with `/` separators, sorted by path; its outcomes are `OK`, `REFUSED_BY_POLICY`,
-`NOT_A_REPOSITORY` and `FAILED`, also for a repository without a working tree. `REFUSED_BY_POLICY` follows from the
+`NOT_A_REPOSITORY` and `FAILED`, also for a repository without a working tree and for an invalid configuration value
+the status reads, such as `core.autocrlf` (<<GDR-CORE-12>>). `REFUSED_BY_POLICY` follows from the
 `RefusingFS` guarantee: the repository is opened on `RefusingFS`, so a capability the policy refuses, such as a process
 start, reaches the caller as `REFUSED_BY_POLICY` with the capability as detail (<<GDR-CORE-1>>). The sets are mapped
 from JGit's `Status` by its definitions in JGit 7.8.0
@@ -840,8 +1001,9 @@ record's null checks, its equality over the paths, its defensive copy and its im
 
 An addition reserves its branch with the reservation file `worktree-branch-<SHA-1 of the full branch name>.lock` in
 the common directory (<<GDR-CORE-12>>); the name is the hash of `refs/heads/<branch>`, so no caller string forms a file
-name. A process that ends between the reservation and its release leaves the file behind, and every later addition of
-that branch ends `BRANCH_CHECKED_OUT` although no working tree has it checked out.
+name. The reservation is held until the new working tree is complete. A process that ends between the reservation and
+its release leaves the file behind, as does a complete addition whose release fails (`GIT_CORE-105`), and every later
+addition of that branch ends `BRANCH_CHECKED_OUT` although no working tree has it checked out.
 
 `releaseBranchReservation(root, branch)` takes any working-tree root of the repository and the short branch name as
 given to `worktreeAdd`; both are required. It opens the repository on `RefusingFS`, guards the branch name before any
@@ -854,8 +1016,9 @@ so of two concurrent releases exactly one reports it.
 
 |`OK` |The reservation was deleted; the value is the full branch name `refs/heads/<branch>`
 |`NOT_FOUND` |The branch has no reservation; the detail is `branch: no reservation`
-|`REFUSED_BY_POLICY` |The branch name is no valid branch name by JGit 7.8.0 `Repository.isValidRefName`; the detail
-names the field only, and no file is deleted
+|`REFUSED_BY_POLICY` |The branch name is no valid branch name, by JGit 7.8.0 `Repository.isValidRefName` or by the
+branch-name rule of an addition (`HEAD`, `@`, a leading `-`, a component ending `.lock`, a name starting `refs/`,
+<<GDR-CORE-12>>); the detail names the field only, and no file is deleted
 |`NOT_A_REPOSITORY` |The root holds no repository
 |`FAILED` |An I/O failure, also a repository without a working tree, with the failure class only
 |===
@@ -876,12 +1039,33 @@ named reservation only (`onlyNamedReservation`).
 == Tests
 
 The tests of `git-core` run on the class path against the fixtures of xref:git-testing.adoc[`git-testing`]; each names
-the requirement it checks. Two tests guard contracts that span the module:
+the requirement it checks. Three tests guard contracts that span the module:
 
 * `GitOutcomeSpecificationTest` reads the `GitOutcome` table of xref:general.adoc#GDR-GEN-3[GDR-GEN-3] and asserts that
   its first column lists exactly the constants of `GitOutcome`, in their order, so a constant added without a row, a
   row without a constant, a renamed or a reordered one fails the build.
-* `AbsenceContractsTest` asserts the `@Nullable` values of the results on absences that real operations produce:
-  opening a bare repository yields no working-tree root, `init` an unborn branch without head, a detached `HEAD` no
-  branch, a push that creates the remote reference no old id, a failed operation no value, and a local-only remote
-  policy no origin.
+* `AbsenceContractsTest` of the package `de.cuioss.git.document.core` asserts the `@Nullable` values of the results on
+  absences that real operations produce: opening a bare repository yields no working-tree root, `init` an unborn
+  branch without head, a detached `HEAD` no branch, a push that creates the remote reference no old id, a failed
+  operation no value, and a local-only remote policy no origin.
+* `AbsenceContractsTest` of the package `de.cuioss.git.document.core.worktrees` asserts the same for the working-tree
+  components: a failed working-tree result carries no value but a detail, the listed main working tree has no name
+  while a linked one has its name, a detached addition has no branch but a head, and the main working tree of an
+  unborn repository has no head but its branch.
+
+Test doubles are EasyMock doubles (scope `test`, xref:general.adoc#GDR-GEN-1[GDR-GEN-1]): the HTTP connection of the
+recording connection factory and the failing signer of `InCoreWriterTest`, the reference update and the partially
+mocked repository through which `ReferenceUpdaterTest` observes that compare-and-swap never sets the force flag and
+that both operations disable the reflog, and the tracking reference update without a result of
+`JGitRepositoryOperationsTest`. Three hand-written doubles stay, each for a reason EasyMock cannot meet:
+
+* `InterceptingTransportProtocol` and `RecordingTransportProtocol` are JGit `TransportProtocol` subclasses registered
+  through `Transport.register`, ahead of the built-in protocols. JGit selects them from its registry and opens a real
+  `Transport` whose state, the URL, the credentials provider and the timeout the operations set, the test reads back
+  through that transport's own getters; a mocked abstract `Transport` would replace exactly the setters and getters
+  under observation. `InterceptingTransportProtocol` never handles its own delegate URL, so a marker that also occurs
+  in the delegate's path cannot make it select itself again: that recursion was the `StackOverflowError` of
+  `publishLosesRace`, which the test now reproduces with such a marker.
+* `TestSigner` is a working fake: it computes a signature over the payload JGit hands it, which the written commit
+  carries and `TestSigner.verify` checks against the commit's own bytes. An expectation-based double records calls but
+  produces no signature a commit could carry.

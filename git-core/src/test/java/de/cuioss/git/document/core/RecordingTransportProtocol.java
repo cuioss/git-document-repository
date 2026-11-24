@@ -35,6 +35,11 @@ import org.jspecify.annotations.Nullable;
  * It is registered with JGit 7.8.0 {@link Transport#register(TransportProtocol)}, ahead of the built-in protocols, and
  * unregistered on {@link #close()}. JGit holds a registered protocol by a weak reference only, so the test keeps this
  * instance for as long as it is needed.
+ * <p>
+ * It stays a subclass instead of an EasyMock double: what it records (URL, credentials provider, timeout) is the state
+ * the operations set on the real {@link Transport} JGit opens through its protocol registry, read back through that
+ * transport's own getters; a mocked abstract {@code Transport} would replace exactly the setters and getters under
+ * observation.
  */
 final class RecordingTransportProtocol extends TransportProtocol implements AutoCloseable {
 

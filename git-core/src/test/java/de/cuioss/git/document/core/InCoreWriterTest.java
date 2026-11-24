@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -44,10 +46,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import org.easymock.EasyMock;
+import org.eclipse.jgit.errors.LargeObjectException;
+import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.GpgConfig;
@@ -86,7 +94,30 @@ class InCoreWriterTest {
     /** The directory of the object database inside a bare repository: part of git's repository layout. */
     private static final String OBJECTS = "objects";
 
+    /** Values asserted absent from a repository or a text, or that must differ: distinct by construction. */
+    private static final TypedGenerator<String> DISTINCT_CONTENTS = GitGenerators.distinctTexts();
+
     private final InCoreWriter writer = new InCoreWriter();
+
+    /**
+     * A signer double that fails every signing with an {@link IOException} and locates no key.
+     *
+     * @param message the message of the exception, so a test can check it never reaches a result
+     * @return the replayed double
+     * @throws Exception never; the checked exceptions of {@link Signer#sign}, whose expectation is recorded here
+     */
+    static Signer failingSigner(String message) throws Exception {
+        var failure = new IOException(message);
+        Signer signer = EasyMock.niceMock(Signer.class);
+        // EasyMock mocks the default method signObject as well, which JGit 7.8.0 calls to sign an object
+        signer.signObject(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(),
+                EasyMock.anyObject(), EasyMock.anyObject());
+        EasyMock.expectLastCall().andStubThrow(failure);
+        EasyMock.expect(signer.sign(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(),
+                EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject())).andStubThrow(failure);
+        EasyMock.replay(signer);
+        return signer;
+    }
 
     /**
      * Generates an identity with a whole-second time and a whole-hour offset, the precision git stores.
@@ -106,6 +137,16 @@ class InCoreWriterTest {
      */
     static String content() {
         return Generators.letterStrings(1, 40).next() + "\n";
+    }
+
+    /**
+     * Generates file content that differs from every other content of this generator and from every letters-only
+     * {@link #content()}, for a test that asserts the content absent from a repository or a text.
+     *
+     * @return a distinct value ended by a line feed
+     */
+    static String distinctContent() {
+        return DISTINCT_CONTENTS.next() + "\n";
     }
 
     /**
@@ -229,7 +270,7 @@ class InCoreWriterTest {
             var regular = TestCommits.name();
             var executable = TestCommits.name();
             var link = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var parent = writeRoot(repository, Map.of(regular, content()));
 
             var result = writer.write(repository, List.of(parent), metadata(), List.of(
@@ -309,11 +350,11 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-CORE-4: a signing failure is a failure naming the exception class, and no commit is returned")
-        void signingFailure(@InMemory Repository repository) {
+        void signingFailure(@InMemory Repository repository) throws Exception {
             var marker = TestCommits.name();
             var plain = metadata();
             var metadata = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
-                    new CommitSigning(TestSigner.failing(marker), null, null));
+                    new CommitSigning(failingSigner(marker), null, null));
 
             var result = writer.write(repository, List.of(), metadata, List.of(put(TestCommits.name(), content())));
 
@@ -327,7 +368,8 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-NFR-3: a failure of an anonymous exception class is a failure with a nonblank detail")
         void anonymousFailure(@InMemory Repository repository) {
-            var marker = TestCommits.name();
+            // a distinct value: a letters-only name could occur by chance in the binary class name of the detail
+            var marker = DISTINCT_CONTENTS.next();
             var plain = metadata();
             var metadata = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
                     new CommitSigning(anonymouslyFailing(marker), null, null));
@@ -368,7 +410,7 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-CORE-4: a parent that is no commit of the repository is not found, nothing is written")
         void absentParent(@InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(ObjectId.zeroId().name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -384,7 +426,7 @@ class InCoreWriterTest {
                 blob = inserter.insert(Constants.OBJ_BLOB, content().getBytes(UTF_8));
                 inserter.flush();
             }
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(blob.name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -406,7 +448,7 @@ class InCoreWriterTest {
                 tagId = inserter.insert(tag);
                 inserter.flush();
             }
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(tagId.name()), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -418,7 +460,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-11: an abbreviated parent id is no full commit id and is not found")
         void abbreviatedParent(@InMemory Repository repository) {
             var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(parent.substring(0, 12)), metadata(),
                     List.of(put(TestCommits.name(), content)));
@@ -439,7 +481,7 @@ class InCoreWriterTest {
         @MethodSource("invalidPaths")
         @DisplayName("GDR-CORE-4: an invalid path of a put is not found, nothing is written")
         void invalidPutPath(String path, @InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
 
@@ -449,7 +491,7 @@ class InCoreWriterTest {
         @Test
         @DisplayName("GDR-CORE-4: an invalid path of a delete is not found, nothing is written")
         void invalidDeletePath(@InMemory Repository repository) {
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(),
                     List.of(put(TestCommits.name(), content), new TreeEdit.Delete(".git/config")));
@@ -461,7 +503,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-4: two edits of one path are not found, nothing is written")
         void duplicatePath(@InMemory Repository repository) {
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.write(repository, List.of(), metadata(),
                     List.of(put(path, content), new TreeEdit.Delete(path)));
@@ -471,13 +513,14 @@ class InCoreWriterTest {
 
         @Test
         @DisplayName("GDR-NFR-3: a detail names the field and the reason, never an identity, message, content or path")
-        void detailsCarryNoInput(@InMemory Repository repository) {
-            var marker = TestCommits.name();
+        void detailsCarryNoInput(@InMemory Repository repository) throws Exception {
+            // a distinct value: a letters-only name could occur by chance in the fixed words of a detail
+            var marker = DISTINCT_CONTENTS.next();
             var plain = metadata();
             var metadata = new CommitMetadata(new PersonIdent(marker, marker + "@example.invalid"),
                     new PersonIdent(marker, marker + "@example.invalid"), marker + "\n", null);
             var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
-                    new CommitSigning(TestSigner.failing(marker), marker, null));
+                    new CommitSigning(failingSigner(marker), marker, null));
             var markedPut = put(marker, marker);
 
             var results = List.of(
@@ -512,7 +555,7 @@ class InCoreWriterTest {
         void treeTakenAsReturned(@InMemory Repository repository) throws Exception {
             var parent = writeRoot(repository, Map.of(TestCommits.name(), content()));
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var source = new SingleFileSource(path, content);
 
             var result = writer.writeTree(repository, List.of(parent), metadata(), source);
@@ -533,7 +576,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-CORE-5: a root commit hands the source no parent tree")
         void rootCommitWithoutParentTree(@InMemory Repository repository) throws Exception {
             var path = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
             var source = new SingleFileSource(path, content);
             var refsBefore = refs(repository);
 
@@ -554,7 +597,7 @@ class InCoreWriterTest {
         @DisplayName("GDR-NFR-3: an I/O failure of the source is a failure naming the exception class, nothing flushed")
         void sourceFailure(@InMemory Repository repository) {
             var marker = TestCommits.name();
-            var content = content();
+            var content = distinctContent();
 
             var result = writer.writeTree(repository, List.of(), metadata(), (reader, inserter, parentTree) -> {
                 inserter.insert(Constants.OBJ_BLOB, content.getBytes(UTF_8));
@@ -598,6 +641,283 @@ class InCoreWriterTest {
                     () -> writer.writeTree(repository, parents, metadata, nullValue()))
                     .<Executable>map(call -> () -> assertThrows(NullPointerException.class, call, "null is rejected")));
         }
+    }
+
+    @Nested
+    @DisplayName("one path strictness on every host")
+    class PathStrictness {
+
+        /**
+         * Paths the checks for Windows or macOS refuse and the platform check of Linux accepts, so each is refused on
+         * every host only because the writer applies one strictness: a Windows device name, also with an extension
+         * and below a directory, a component ending in a dot or a space, a character Windows forbids, and a name HFS+
+         * folds to {@code .git} (a zero-width non-joiner inside it).
+         *
+         * @return the paths
+         */
+        static Stream<String> refusedOnEveryHost() {
+            return Stream.of("CON", "aux.txt", "dir/nul", "trailing.", "trailing ", "colon:name", "back\\slash",
+                    "pipe|name", ".g‌it");
+        }
+
+        @ParameterizedTest(name = "[{0}]")
+        @MethodSource("refusedOnEveryHost")
+        @DisplayName("GDR-CORE-4: a path refused on Windows or macOS is refused on every host, nothing is written")
+        void refusedOnEveryHost(String path, @InMemory Repository repository) {
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(), List.of(put(path, content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: invalid path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: two paths equal without case are a duplicate, nothing is written")
+        void caseFoldDuplicate(@InMemory Repository repository) {
+            var path = TestCommits.name();
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(path, content), put(path.toUpperCase(Locale.ROOT), "upper-" + content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: duplicate path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: the composed and the decomposed spelling of one name are a duplicate")
+        void normalizedDuplicate(@InMemory Repository repository) {
+            var prefix = TestCommits.name();
+            // e with acute accent: one code point (NFC) and e followed by the combining acute accent (NFD)
+            var composed = prefix + "é.txt";
+            var decomposed = prefix + "é.txt";
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(composed, content), put(decomposed, "decomposed-" + content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: duplicate path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a directory in one spelling and a path below it in the other overlap")
+        void normalizedOverlap(@InMemory Repository repository) {
+            var prefix = TestCommits.name();
+            var directory = prefix + "é";
+            var below = prefix + "é/" + TestCommits.name();
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(directory, content), put(below, content)));
+
+            NotFound.assertNothingWritten(repository, result, "edits: overlapping path", content);
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: distinct names are written, a decomposed one as the caller spelled it")
+        void distinctNamesWritten(@InMemory Repository repository) throws Exception {
+            var decomposed = TestCommits.name() + "é.txt";
+            var nested = TestCommits.name() + "/" + TestCommits.name() + ".txt";
+            var first = "first-" + content();
+            var second = "second-" + content();
+
+            var result = writer.write(repository, List.of(), metadata(),
+                    List.of(put(decomposed, first), put(nested, second)));
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            assertEquals(Map.of(decomposed, first, nested, second), files(repository, commit),
+                    "both paths are written, the decomposed name unnormalized");
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a path that is a directory of another edit's path is refused, nothing is written")
+        void overlappingPaths(@InMemory Repository repository) {
+            var directory = TestCommits.name();
+            var below = directory + "/" + TestCommits.name();
+            var deeper = below + "/" + TestCommits.name();
+            var content = distinctContent();
+            List<List<TreeEdit>> overlapping = List.of(
+                    List.of(put(directory, content), put(below, content)),
+                    List.of(put(below, content), put(directory, content)),
+                    List.of(put(directory, content), put(deeper, content)),
+                    List.of(new TreeEdit.Delete(directory), put(below, content)),
+                    List.of(put(directory.toUpperCase(Locale.ROOT), content), put(below, content)));
+
+            assertAll(overlapping.stream().<Executable>map(edits -> () -> NotFound.assertNothingWritten(repository,
+                    writer.write(repository, List.of(), metadata(), edits), "edits: overlapping path", content)));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a path that only shares a prefix of characters with another is no overlap")
+        void sharedPrefixIsNoOverlap(@InMemory Repository repository) throws Exception {
+            var name = TestCommits.name();
+            var sibling = name + "-" + TestCommits.name() + "/" + TestCommits.name();
+            var first = "first-" + content();
+            var second = "second-" + content();
+
+            var result = writer.write(repository, List.of(), metadata(), List.of(put(name, first), put(sibling, second)));
+
+            var commit = parse(repository, Objects.requireNonNull(result.value(), "the commit is written"));
+            assertEquals(Map.of(name, first, sibling, second), files(repository, commit),
+                    "both paths are written, the shared characters are no directory");
+        }
+    }
+
+    @Nested
+    @DisplayName("failures JGit raises unchecked")
+    class UncheckedFailures {
+
+        /**
+         * Names JGit's path check refuses on every host, so a tree holding one can only have been written by another
+         * tool, through an {@link ObjectInserter}.
+         *
+         * @return the names
+         */
+        static Stream<String> namesRefusedInATree() {
+            return Stream.of(".GIT", ".Git", "git~1", "GIT~1");
+        }
+
+        @ParameterizedTest(name = "[{0}]")
+        @MethodSource("namesRefusedInATree")
+        @DisplayName("GDR-CORE-4: a parent tree holding a path JGit refuses is a failure naming the class only")
+        void parentTreeWithRefusedPath(String name, @InMemory Repository repository) throws Exception {
+            var parent = commitWithTree(repository, Map.of(name, content(), TestCommits.name(), content()));
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(parent.name()), metadata(),
+                    List.of(put(TestCommits.name(), content)));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the refused path is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals("InvalidPathException", result.detail(),
+                            "the detail names the exception class, never the path"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "the content of the put is not written"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: an invalid gpg.format of a signed commit is a failure, and the signer is not called")
+        void invalidGpgFormat(@InMemory Repository repository) {
+            repository.getConfig().setString(ConfigConstants.CONFIG_GPG_SECTION, null,
+                    ConfigConstants.CONFIG_KEY_FORMAT, "bogus-" + TestCommits.name());
+            var signer = TestSigner.signing();
+            var plain = metadata();
+            var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
+                    new CommitSigning(signer, TestSigner.KEY, null));
+            var content = distinctContent();
+
+            var result = writer.write(repository, List.of(), signed, List.of(put(TestCommits.name(), content)));
+            var unsigned = writer.write(repository, List.of(), metadata(),
+                    List.of(put(TestCommits.name(), distinctContent())));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the invalid format is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals(IllegalArgumentException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class, never the value"),
+                    () -> assertTrue(signer.payloads().isEmpty(), "the signer is not called"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "the content of the put is not written"),
+                    () -> assertEquals(GitOutcome.OK, unsigned.outcome(),
+                            "an unsigned commit does not read gpg.format and is written"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: an unchecked exception of the caller's signer propagates unchanged")
+        void signerExceptionPropagates(@InMemory Repository repository) {
+            var failure = new IllegalStateException(TestCommits.name());
+            var plain = metadata();
+            var signed = new CommitMetadata(plain.author(), plain.committer(), plain.message(),
+                    new CommitSigning(throwing(failure), null, null));
+            var content = distinctContent();
+            var edits = List.of(put(TestCommits.name(), content));
+            List<String> parents = List.of();
+
+            var thrown = assertThrows(IllegalStateException.class, () -> writer.write(repository, parents, signed,
+                    edits), "the signer's exception is not mapped to an outcome");
+
+            assertAll(
+                    () -> assertSame(failure, thrown, "the very exception of the signer propagates"),
+                    () -> assertFalse(repository.getObjectDatabase().has(blobId(content)),
+                            "nothing is flushed"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: a tree of the source too large to be read in one piece is a failure naming the class")
+        void largeTreeOfTheSource(@InMemory Repository repository) {
+            var result = writer.writeTree(repository, List.of(), metadata(), (reader, inserter, parentTree) -> {
+                throw new LargeObjectException();
+            });
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.FAILED, result.outcome(), "the large tree is a failure"),
+                    () -> assertNull(result.value(), "a failure carries no commit"),
+                    () -> assertEquals(LargeObjectException.class.getSimpleName(), result.detail(),
+                            "the detail names the exception class"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-4: any other unchecked exception of the source propagates unchanged")
+        void otherSourceExceptionPropagates(@InMemory Repository repository) {
+            var failure = new IllegalStateException(TestCommits.name());
+            var metadata = metadata();
+            List<String> parents = List.of();
+
+            var thrown = assertThrows(IllegalStateException.class,
+                    () -> writer.writeTree(repository, parents, metadata, (reader, inserter, parentTree) -> {
+                        throw failure;
+                    }), "the source's exception is not mapped to an outcome");
+
+            assertSame(failure, thrown, "the very exception of the source propagates");
+        }
+    }
+
+    /**
+     * Writes a commit whose tree holds exactly the regular files, through a {@link TreeFormatter}, so no path check of
+     * JGit runs: the way another tool could have written a tree JGit refuses to read into a {@code DirCache}.
+     *
+     * @param repository the repository receiving the commit
+     * @param files      the content of each file by its name, a single path component each
+     * @param parents    the parents of the commit
+     * @return the id of the commit
+     * @throws IOException if an object cannot be inserted
+     */
+    static ObjectId commitWithTree(Repository repository, Map<String, String> files, ObjectId... parents)
+            throws IOException {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            var tree = new TreeFormatter();
+            for (var file : new TreeMap<>(files).entrySet()) {
+                tree.append(file.getKey(), FileMode.REGULAR_FILE,
+                        inserter.insert(Constants.OBJ_BLOB, file.getValue().getBytes(UTF_8)));
+            }
+            var commit = new CommitBuilder();
+            commit.setTreeId(inserter.insert(tree));
+            commit.setParentIds(parents);
+            commit.setAuthor(person());
+            commit.setCommitter(person());
+            commit.setMessage(message());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            return id;
+        }
+    }
+
+    /** A signer that throws the given unchecked exception from every signing. */
+    private static Signer throwing(RuntimeException failure) {
+        return new Signer() {
+
+            @Override
+            public GpgSignature sign(Repository repository, GpgConfig config, byte[] data, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
+                throw failure;
+            }
+
+            @Override
+            public boolean canLocateSigningKey(Repository repository, GpgConfig config, PersonIdent committer,
+                    @Nullable String signingKey, @Nullable CredentialsProvider credentialsProvider) {
+                return true;
+            }
+        };
     }
 
     /**
@@ -644,7 +964,7 @@ class InCoreWriterTest {
         var root = repository.getDirectory().toPath();
         var filesBefore = snapshot(root);
         var refsBefore = refs(repository);
-        var content = content();
+        var content = distinctContent();
         var path = TestCommits.name();
 
         var result = writer.write(repository, List.of(parent.name()), metadata(), List.of(put(path, content)));

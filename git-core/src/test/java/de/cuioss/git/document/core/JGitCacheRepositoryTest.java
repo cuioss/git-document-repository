@@ -25,17 +25,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.DeflaterOutputStream;
 
 
 import de.cuioss.git.document.core.RepositoryOperations.FetchCommitInput;
 import de.cuioss.git.document.core.RepositoryOperations.ReadFileInput;
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
@@ -81,6 +86,9 @@ class JGitCacheRepositoryTest {
 
     @TempDir
     Path temp;
+
+    /** The values asserted absent from a detail: distinct by construction, found nowhere by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     private JGitRepositoryOperations operations;
     private Path source;
@@ -356,7 +364,7 @@ class JGitCacheRepositoryTest {
         @Test
         @DisplayName("GDR-NFR-3: an invalid commit or path names its field, never the caller's value")
         void detailsCarryNoInput() {
-            var mail = TestCommits.name() + "@example.invalid";
+            var mail = distinctTexts.next() + "@example.invalid";
             assertTrue(fetch(url(), commit, RemotePolicy.localOnly()).isOk(), "the pinned commit is fetched");
 
             var fetched = fetch(url(), mail, RemotePolicy.localOnly());
@@ -372,10 +380,10 @@ class JGitCacheRepositoryTest {
         @Test
         @DisplayName("GDR-NFR-3: the fetch is anonymous, and no part of the URL beyond its location reaches a detail")
         void anonymousFetch() {
-            // upper case, so no secret can occur by chance in the lower-case host or path of the detail
-            var user = TestCommits.name().toUpperCase(Locale.ROOT);
-            var password = TestCommits.name().toUpperCase(Locale.ROOT);
-            var token = TestCommits.name().toUpperCase(Locale.ROOT);
+            // distinct values: no secret can occur by chance in the host or path of the detail
+            var user = distinctTexts.next();
+            var password = distinctTexts.next();
+            var token = distinctTexts.next();
             var marker = TestCommits.name();
             var url = "https://" + user + ":" + password + "@" + FOREIGN_HOST + "/" + marker + ".git?token=" + token
                     + "#" + token;
@@ -461,6 +469,117 @@ class JGitCacheRepositoryTest {
                     () -> assertEquals(GitOutcome.NOT_A_REPOSITORY,
                             operations.readFile(new ReadFileInput(plain, commit, DATA + "/" + CSV)).outcome(),
                             "readFile refuses a cache that is no repository"));
+        }
+    }
+
+    @Nested
+    @DisplayName("readFile size limit")
+    class SizeLimit {
+
+        /** The limit of {@code readFile} in bytes, as the array length of a blob of that size. */
+        private static final int LIMIT = Math.toIntExact(JGitRepositoryOperations.READ_FILE_LIMIT_BYTES);
+
+        /**
+         * A blob of the given size, every byte the same generated value: blobs of different sizes are distinct by
+         * construction, whatever value is drawn.
+         */
+        private static byte[] blob(int size) {
+            var content = new byte[size];
+            Arrays.fill(content, Generators.bytes().next());
+            return content;
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-8: a blob of 16 MiB and one a byte smaller are read, one a byte larger is refused")
+        void boundedBySize() throws Exception {
+            assertTrue(operations.initCache(cache).isOk(), "the cache repository is initialised");
+            var below = blob(LIMIT - 1);
+            var at = blob(LIMIT);
+            var above = blob(LIMIT + 1);
+            // TreeFormatter needs the entries in name order
+            var names = new TreeMap<String, byte[]>();
+            var belowName = TestCommits.name();
+            var atName = TestCommits.name();
+            var aboveName = TestCommits.name();
+            names.put(belowName, below);
+            names.put(atName, at);
+            names.put(aboveName, above);
+            String id;
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setMustExist(true)
+                         .build(); ObjectInserter inserter = repository.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                for (var entry : names.entrySet()) {
+                    tree.append(entry.getKey(), FileMode.REGULAR_FILE,
+                            inserter.insert(Constants.OBJ_BLOB, entry.getValue()));
+                }
+                var ident = new PersonIdent(TestCommits.name(), TestCommits.name() + "@example.invalid");
+                var builder = new CommitBuilder();
+                builder.setTreeId(inserter.insert(tree));
+                builder.setAuthor(ident);
+                builder.setCommitter(ident);
+                builder.setMessage(line());
+                id = inserter.insert(builder).name();
+                inserter.flush();
+            }
+
+            var readBelow = read(id, belowName);
+            var readAt = read(id, atName);
+            var readAbove = read(id, aboveName);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.OK, readBelow.outcome(), "a blob below the limit is read"),
+                    () -> assertArrayEquals(below, readBelow.value(), "the blob below the limit is read whole"),
+                    () -> assertEquals(GitOutcome.OK, readAt.outcome(), "a blob at the limit is read"),
+                    () -> assertArrayEquals(at, readAt.value(), "the blob at the limit is read whole"),
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, readAbove.outcome(),
+                            "a blob above the limit is refused"),
+                    () -> assertNull(readAbove.value(), "a refused blob carries no content"),
+                    () -> assertEquals("path: larger than the limit of 16 MiB", readAbove.detail(),
+                            "the detail names the field and the limit, never the path"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-8: a blob above the limit is refused from its size alone, before its content is read")
+        void sizeAskedBeforeOpening() throws Exception {
+            assertTrue(operations.initCache(cache).isOk(), "the cache repository is initialised");
+            var stub = blob(Generators.integers(1, 40).next());
+            ObjectId blobId;
+            try (var formatter = new ObjectInserter.Formatter()) {
+                blobId = formatter.idFor(Constants.OBJ_BLOB, stub);
+            }
+            // a loose blob whose header announces one byte more than the limit while its content ends after the stub:
+            // opening it reads the announced size into memory and fails at the end of the stream, so only a refusal
+            // taken from the header before the blob is opened ends REFUSED_BY_POLICY
+            var loose = cache.resolve("objects").resolve(blobId.name().substring(0, 2))
+                    .resolve(blobId.name().substring(2));
+            Files.createDirectories(loose.getParent());
+            try (var out = new DeflaterOutputStream(Files.newOutputStream(loose))) {
+                out.write((Constants.TYPE_BLOB + " " + (LIMIT + 1) + "\0").getBytes(StandardCharsets.US_ASCII));
+                out.write(stub);
+            }
+            var name = TestCommits.name();
+            String id;
+            try (Repository repository = new FileRepositoryBuilder().setGitDir(cache.toFile()).setMustExist(true)
+                         .build(); ObjectInserter inserter = repository.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                tree.append(name, FileMode.REGULAR_FILE, blobId);
+                var ident = new PersonIdent(TestCommits.name(), TestCommits.name() + "@example.invalid");
+                var builder = new CommitBuilder();
+                builder.setTreeId(inserter.insert(tree));
+                builder.setAuthor(ident);
+                builder.setCommitter(ident);
+                builder.setMessage(line());
+                id = inserter.insert(builder).name();
+                inserter.flush();
+            }
+
+            var refused = read(id, name);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REFUSED_BY_POLICY, refused.outcome(),
+                            "the blob is refused by the size of its header"),
+                    () -> assertEquals("path: larger than the limit of 16 MiB", refused.detail(),
+                            "the refusal is the size limit, not a failed read"));
         }
     }
 

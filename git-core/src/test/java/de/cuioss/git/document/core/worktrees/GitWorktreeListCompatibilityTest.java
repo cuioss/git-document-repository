@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.worktrees.WorktreeOperations.Worktree;
 import de.cuioss.git.document.core.worktrees.WorktreeOperations.WorktreeAddInput;
 import de.cuioss.git.document.testing.LocalRepository;
@@ -41,6 +42,7 @@ import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -132,6 +134,56 @@ class GitWorktreeListCompatibilityTest {
                         "the administration directory is deleted"),
                 () -> assertEquals(List.of(main.root()), listed.stream().map(Worktree::path).toList(),
                         "the library lists only the main working tree"));
+    }
+
+    @Test
+    @DisplayName("GDR-CORE-12: the branch-name guard refuses every name git refuses as a branch or reads as another "
+            + "name")
+    void branchNameGuardAgreesWithGit(@LocalRepository Repository source) throws Exception {
+        assumeTrue(gitInstalled(), "a git binary is installed");
+        var main = JGitWorktreeOperationsTest.mainTree(source, temp);
+        var operations = new JGitWorktreeOperations();
+        var guarded = JGitWorktreeOperationsTest.guardedBranchNames();
+        var gitRefused = guarded.subList(0, 3);
+        var at = guarded.get(3);
+        var beyondGit = guarded.get(4);
+        var valid = JGitWorktreeOperationsTest.name();
+
+        var checks = new ArrayList<Executable>();
+        for (String branch : gitRefused) {
+            var readAsGiven = gitReadsBranchAsGiven(main.root(), branch);
+            var released = operations.releaseBranchReservation(main.root(), branch);
+            checks.add(() -> assertFalse(readAsGiven, "git refuses " + branch));
+            checks.add(() -> assertEquals(GitOutcome.REFUSED_BY_POLICY, released.outcome(),
+                    "the guard refuses " + branch));
+        }
+        // git accepts @ as a branch name, but reads @ as HEAD, here the checked-out branch (gitrevisions(7))
+        var atRead = run(List.of("-C", main.root().toString(), "rev-parse", "--symbolic-full-name", at));
+        var atReleased = operations.releaseBranchReservation(main.root(), at);
+        checks.add(() -> assertEquals(Optional.of(Constants.R_HEADS + main.branch()),
+                atRead.filter(r -> r.exitCode() == 0).map(r -> r.output().strip()),
+                "git reads @ as the checked-out branch, not as a branch named @"));
+        checks.add(() -> assertEquals(GitOutcome.REFUSED_BY_POLICY, atReleased.outcome(), "the guard refuses @"));
+        var beyondReadAsGiven = gitReadsBranchAsGiven(main.root(), beyondGit);
+        var beyondReleased = operations.releaseBranchReservation(main.root(), beyondGit);
+        var validReadAsGiven = gitReadsBranchAsGiven(main.root(), valid);
+        var validReleased = operations.releaseBranchReservation(main.root(), valid);
+        checks.add(() -> assertTrue(beyondReadAsGiven, "git accepts a name starting refs/ as given"));
+        checks.add(() -> assertEquals(GitOutcome.REFUSED_BY_POLICY, beyondReleased.outcome(),
+                "the guard refuses a name starting refs/ beyond git"));
+        checks.add(() -> assertTrue(validReadAsGiven, "git accepts a plain name as given"));
+        checks.add(() -> assertEquals(GitOutcome.NOT_FOUND, validReleased.outcome(),
+                "the guard lets a plain name pass to the reservation lookup"));
+        assertAll(checks);
+    }
+
+    /**
+     * Whether {@code git check-ref-format --branch} in the working tree accepts the name and prints it unchanged; a
+     * refused or expanded name, or a run that does not end in time, is not read as given.
+     */
+    private boolean gitReadsBranchAsGiven(Path root, String branch) throws IOException, InterruptedException {
+        var result = run(List.of("-C", root.toString(), "check-ref-format", "--branch", branch));
+        return result.filter(r -> r.exitCode() == 0 && branch.equals(r.output().strip())).isPresent();
     }
 
     /** Adds a linked working tree on a new branch at {@code HEAD} through the library and fails unless it is added. */

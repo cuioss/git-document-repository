@@ -30,6 +30,7 @@ import java.util.Set;
 
 import de.cuioss.git.document.core.RepositoryOperations.FetchCommitInput;
 import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
+import de.cuioss.git.document.testing.HermeticGitConfiguration;
 import de.cuioss.git.document.testing.LocalRepository;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
@@ -65,7 +66,12 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code HttpConnectionFactory2.newSession()} and {@code GitSession.configure(connection, sslVerify)};
  * {@code JGitRepositoryOperations.PolicyCheckedConnectionFactory.newSession()} delegates to the wrapped
  * {@code JDKHttpConnectionFactory}). No process-wide TLS state is changed and no keystore is committed.
+ * <p>
+ * The test runs under {@link HermeticGitConfiguration}: the user, system and JGit configuration of the host are empty,
+ * so no {@code http.*} setting of the machine that runs the build, URL-specific ones ({@code http.<url>.*}) included,
+ * reaches the transport; the repository configuration alone decides the redirect handling.
  */
+@HermeticGitConfiguration
 @EnableGeneratorController
 @EnableTestLogger(rootLevel = TestLogLevel.DEBUG)
 @EnableMockWebServer(useHttps = true)
@@ -125,11 +131,12 @@ class RedirectEndToEndTest {
 
     /**
      * Trusts the generated certificate for the transports of this repository only, and pins the redirect handling to
-     * JGit 7.8.0's defaults ({@code http.followRedirects=initial}, {@code http.maxRedirects=5}): a developer's
-     * {@code http.followRedirects=false} would otherwise make {@code TransportHttp} reject the first {@code 302}
-     * before the policy guard is reached, and so would an {@code http.maxRedirects=0}, because
+     * JGit 7.8.0's defaults ({@code http.followRedirects=initial}, {@code http.maxRedirects=5}) in the repository
+     * configuration as well: an {@code http.followRedirects=false} would make {@code TransportHttp} reject the first
+     * {@code 302} before the policy guard is reached, and so would an {@code http.maxRedirects=0}, because
      * {@code TransportHttp.redirect} rejects a redirect when the number of redirects so far is not below the limit
-     * (JGit 7.8.0 {@code TransportHttp}, {@code HttpConfig}).
+     * (JGit 7.8.0 {@code TransportHttp}, {@code HttpConfig}). The host's own settings of the group are hidden by
+     * {@link HermeticGitConfiguration}.
      */
     private static void trustGeneratedCertificate(StoredConfig config) throws IOException {
         config.setBoolean(HttpConfig.HTTP, null, HttpConfig.SSL_VERIFY_KEY, false);

@@ -28,6 +28,11 @@ import org.jspecify.annotations.Nullable;
  * calls the operation once per attempt, each time with the tree of the commit it has just read; after a lost race it is
  * called again with the tree the concurrent writer left. The operation must therefore be free of side effects on the
  * repository and must derive its edits from the tree it is given, not from a tree it read earlier.
+ * <p>
+ * The operation is the caller's code and runs on the caller's contract: an exception it throws is mapped to no
+ * outcome and propagates out of {@code compareAndSwap} unchanged, and so does the {@link NullPointerException} of a
+ * {@code null} list or a {@code null} element it returns. The reference is not touched in either case; a commit
+ * written by an earlier attempt stays in the object database unreferenced.
  *
  * @since 0.1
  */
@@ -39,7 +44,8 @@ public interface TreeOperation {
      *
      * @param currentTreeId the full id of the tree of the reference's commit; {@code null} when the reference does not
      *                      exist, so the commit becomes a root commit
-     * @return the edits to apply; empty to keep the tree unchanged
+     * @return the edits to apply; empty to keep the tree unchanged; never {@code null} and without {@code null}
+     *         elements
      */
     List<TreeEdit> apply(@Nullable String currentTreeId);
 }

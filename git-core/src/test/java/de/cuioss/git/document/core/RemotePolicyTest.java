@@ -25,7 +25,9 @@ import java.net.URI;
 import java.util.Locale;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.test.generator.Generators;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.transport.URIish;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +46,9 @@ class RemotePolicyTest {
 
     /** The https origin the policy admits: the contract under test. */
     private static final URI ORIGIN = URI.create("https://github.com");
+
+    /** The values asserted absent from a message or rendering: distinct by construction, found nowhere by chance. */
+    private final TypedGenerator<String> distinctTexts = GitGenerators.distinctTexts();
 
     @ParameterizedTest(name = "{0} -> {1}")
     @CsvSource({
@@ -97,7 +102,7 @@ class RemotePolicyTest {
     @Test
     @DisplayName("GDR-NFR-3: the refusal of an origin renders no part of it, user information included")
     void refusalRendersNoOrigin() {
-        var password = Generators.letterStrings(24, 32).next();
+        var password = distinctTexts.next();
         var origin = URI.create("http://user:" + password + "@example.invalid");
 
         var refusal = assertThrows(IllegalArgumentException.class, () -> RemotePolicy.httpsOrigin(origin),
@@ -154,10 +159,11 @@ class RemotePolicyTest {
     @Test
     @DisplayName("PLAN-02 (f), GDR-NFR-3: toString renders the origin as scheme, host and port, never user, path or query")
     void toStringRendersOriginOnly() {
-        var user = Generators.letterStrings(8, 16).next();
-        var password = Generators.letterStrings(24, 32).next();
-        var path = Generators.letterStrings(8, 16).next();
-        var query = Generators.letterStrings(8, 16).next();
+        // distinct values: none occurs by chance in the generated host or in another of them
+        var user = distinctTexts.next();
+        var password = distinctTexts.next();
+        var path = distinctTexts.next();
+        var query = distinctTexts.next();
         var host = Generators.letterStrings(4, 12).next().toLowerCase(Locale.ROOT) + ".example.invalid";
         var origin = URI.create("https://" + user + ":" + password + "@" + host + ":8443/" + path + "?" + query);
 

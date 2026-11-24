@@ -125,5 +125,16 @@ public final class GitCoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(104)
                 .build();
+
+        /**
+         * A linked working tree was added completely but its branch reservation could not be released; the working
+         * tree is kept and the result stays {@code OK}. The message carries no argument, neither the branch name nor a
+         * path.
+         */
+        public static final LogRecord RESERVATION_NOT_RELEASED = LogRecordModel.builder()
+                .template("Added a linked working tree, its branch reservation was not released")
+                .prefix(PREFIX)
+                .identifier(105)
+                .build();
     }
 }

@@ -35,10 +35,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.DeflaterOutputStream;
 
 
+import de.cuioss.git.document.testing.GitGenerators;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.git.document.testing.LocalRepository;
+import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
@@ -76,6 +79,9 @@ class InCoreMergerTest {
     /** The side of the second tip of a conflict fixture. */
     private static final String THEIRS = "theirs";
 
+    /** Contents that must differ from each other and from generated base contents: distinct by construction. */
+    private static final TypedGenerator<String> DISTINCT_CONTENTS = GitGenerators.distinctTexts();
+
     private final InCoreMerger merger = new InCoreMerger();
 
     /** A file of a fixture tree: its mode and its content. */
@@ -92,11 +98,11 @@ class InCoreMergerTest {
     }
 
     /**
-     * A regular file whose content starts with the name of its side: two sides never receive the same content, and
-     * never the letters-only content a base file is generated with, however the generator draws.
+     * A regular file whose content is the name of its side and a distinct value: two sides never receive the same
+     * content, and never the letters-only content a base file is generated with, however the generator draws.
      */
     static Entry sideFile(String side) {
-        return file(side + "-" + content());
+        return file(side + "-" + DISTINCT_CONTENTS.next());
     }
 
     static Entry executable(String content) {
@@ -477,6 +483,48 @@ class InCoreMergerTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-6: a tip whose tree holds a path JGit refuses is a failure naming the class only")
+        void refusedPathInATip(@InMemory Repository repository) throws Exception {
+            var kept = TestCommits.name();
+            var changed = TestCommits.name();
+            var keptContent = DISTINCT_CONTENTS.next();
+            var changedContent = DISTINCT_CONTENTS.next();
+            var base = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent));
+            var ours = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent, changed, changedContent,
+                    ".GIT", DISTINCT_CONTENTS.next()), base);
+            var theirs = InCoreWriterTest.commitWithTree(repository, Map.of(kept, keptContent,
+                    changed, DISTINCT_CONTENTS.next()), base);
+
+            var result = merge(repository, ours, theirs);
+
+            assertEquals(new MergeResult.NotMerged(GitOutcome.FAILED, "InvalidPathException"), result,
+                    "the refused path is a failure, the detail naming the exception class, never the path");
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-6: a tip whose tree is too large to read in one piece is a failure naming the class")
+        void largeTreeInATip(@LocalRepository Repository repository) throws Exception {
+            var base = commit(repository, Map.of(TestCommits.name(), file()));
+            var theirs = commit(repository, Map.of(TestCommits.name(), file()), base);
+            ObjectId ours;
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var commit = new CommitBuilder();
+                commit.setTreeId(largeLooseTree(repository));
+                commit.setParentIds(base);
+                commit.setAuthor(person());
+                commit.setCommitter(person());
+                commit.setMessage(InCoreWriterTest.message());
+                ours = inserter.insert(commit);
+                inserter.flush();
+            }
+
+            var result = merge(repository, ours, theirs);
+
+            assertEquals(new MergeResult.NotMerged(GitOutcome.FAILED, "LargeObjectException"), result,
+                    "the large tree is a failure, the detail naming the exception class only");
+        }
+
+        @Test
         @DisplayName("a null argument is rejected")
         void nullArguments(@InMemory Repository repository) throws Exception {
             var commit = commit(repository, Map.of(TestCommits.name(), file())).name();
@@ -487,6 +535,31 @@ class InCoreMergerTest {
                     () -> merger.merge(repository, commit, nullValue()))
                     .<Executable>map(call -> () -> assertThrows(NullPointerException.class, call, "null is rejected")));
         }
+    }
+
+    /**
+     * Writes a loose tree object whose header announces {@link Integer#MAX_VALUE} bytes, followed by a few bytes only.
+     * JGit 7.8.0 {@code UnpackedObject.open} returns a loose object of a file-backed repository at or above the
+     * streaming threshold as a {@code LargeObject} without reading its content, and its {@code getCachedBytes()} throws
+     * a {@code LargeObjectException}; no threshold is above {@code Integer.MAX_VALUE}, so the object is large whatever
+     * the process-wide {@code WindowCacheConfig} says.
+     *
+     * @return the id of the tree
+     */
+    static ObjectId largeLooseTree(Repository repository) throws IOException {
+        var stub = content().getBytes(UTF_8);
+        ObjectId id;
+        try (var formatter = new ObjectInserter.Formatter()) {
+            id = formatter.idFor(Constants.OBJ_TREE, stub);
+        }
+        Path loose = repository.getDirectory().toPath().resolve("objects").resolve(id.name().substring(0, 2))
+                .resolve(id.name().substring(2));
+        Files.createDirectories(loose.getParent());
+        try (var out = new DeflaterOutputStream(Files.newOutputStream(loose))) {
+            out.write((Constants.TYPE_TREE + " " + Integer.MAX_VALUE + "\0").getBytes(UTF_8));
+            out.write(stub);
+        }
+        return id;
     }
 
     static ObjectId annotatedTag(Repository repository, ObjectId commit) throws IOException {
