@@ -237,32 +237,6 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
     }
 
     /**
-     * Reads the id of a candidate, guarded against a provider that fails while answering it.
-     * <p>
-     * Only the class of the candidate and of the throwable are logged: the message of a failing provider may name a
-     * credential (GDR-NFR-3). A {@link LinkageError} is handled like a {@link RuntimeException}, since a provider whose
-     * classes cannot be linked fails first when one of its methods is called.
-     *
-     * @param service   the service interface, named in the log
-     * @param candidate the candidate
-     * @param idOf      the id of a candidate
-     * @param <S>       the service type
-     * @return the id, or {@code null} when {@code id()} throws or returns {@code null}
-     */
-    private static <S> @Nullable String readId(Class<S> service, S candidate, Function<S, @Nullable String> idOf) {
-        try {
-            return idOf.apply(candidate);
-        }
-        // a provider that fails while naming itself ends the selection as a result, never as an exception (GDR-GEN-3)
-        // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | LinkageError e) {
-            LOGGER.debug("Reading the id of the provider %s of %s failed with %s", candidate.getClass().getName(),
-                    service.getName(), e.getClass().getName());
-            return null;
-        }
-    }
-
-    /**
      * The refusal of a candidate whose id cannot be read.
      *
      * @param service the service interface, named in the detail
@@ -297,6 +271,34 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
                 ids.put(candidate, readId(service, candidate, idOf));
             }
             return ids.get(candidate);
+        }
+
+        /**
+         * Reads the id of a candidate, guarded against a provider that fails while answering it.
+         * <p>
+         * Only the class of the candidate and of the throwable are logged: the message of a failing provider may name a
+         * credential (GDR-NFR-3). A {@link LinkageError} is handled like a {@link RuntimeException}, since a provider
+         * whose classes cannot be linked fails first when one of its methods is called.
+         *
+         * @param service   the service interface, named in the log
+         * @param candidate the candidate
+         * @param idOf      the id of a candidate
+         * @param <S>       the service type
+         * @return the id, or {@code null} when {@code id()} throws or returns {@code null}
+         */
+        private static <S> @Nullable String readId(Class<S> service, S candidate,
+                Function<S, @Nullable String> idOf) {
+            try {
+                return idOf.apply(candidate);
+            }
+            // a provider that fails while naming itself ends the selection as a result, never as an exception
+            // (GDR-GEN-3)
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
+            catch (RuntimeException | LinkageError e) {
+                LOGGER.debug("Reading the id of the provider %s of %s failed with %s", candidate.getClass().getName(),
+                        service.getName(), e.getClass().getName());
+                return null;
+            }
         }
     }
 
