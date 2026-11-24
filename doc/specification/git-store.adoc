@@ -394,12 +394,15 @@ the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the det
 * When `main` moved but the tag is missing, the release must report incomplete, and a repeated release of the same
   document must create the missing tag on the merged commit instead of merging again.
 * An existing release tag must never be moved or deleted.
+* A release pinned to the commit a save wrote must publish exactly that commit and must be refused, with nothing
+  written or pushed, when the working or collection branch no longer points to it.
 
 The store merges every release itself. `main` is protected on the Git server so that only the technical user may
 push to it and nobody may force-push; a refused push of `main` returns rejected. The release commit carries the
 identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the approver.
 
-`StoreWriter.release(author, claims, key)` returns a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
+`StoreWriter.release(author, claims, key)` and its pinned form `release(author, claims, key, expectedCommitId)` (see
+_Pinned release_ below) return a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
 full id of the release commit and the version `n`. Content without release (a key of a `MAIN` collection) is
 `MALFORMED` with the detail `key: content without release`. A release runs under the shared side of the clone's
 maintenance lock and takes no draft lock; each attempt runs under the transport lock (<<GDR-STORE-3>>), from its fetch
@@ -453,6 +456,26 @@ release tags of the document once. A missing working or collection branch is the
   after the last the release is the passed-on `REJECTED` with the detail
   `refs/heads/main: lease refused on every attempt (<n>)`. A rejection of `main` by the remote, such as a protected
   branch, is the passed-on `REJECTED` at once. Every other Git outcome, for example `UNREACHABLE`, is passed on.
+* *Pinned release.* `StoreWriter.release(author, claims, key, expectedCommitId)` is the release pinned to a commit,
+  the full id a `SaveResult.Saved` returns; the three-argument `release` releases the tip of the branch as each attempt
+  finds it and stays for a caller that releases what is on the branch now. Each lock covers one attempt of one process
+  only, so a save of the same document by another writer or clone between a caller's save and its release would
+  otherwise be released under the caller's claims, for example a revision back to an earlier state completing after an
+  approval save. An `expectedCommitId` that is not 40 lower-case hexadecimal digits is `MALFORMED` with the detail
+  `expectedCommitId: not a full commit id`, before any fetch. Every attempt of a pinned release, after its fetch and
+  before it prepares the signing or writes anything, compares the fetched tip of the working or collection branch with
+  the pinned commit; when they differ the release is the passed-on `CONFLICT` with the detail
+  `<branch>: no longer points to the saved commit`, nothing written or pushed. The check runs on every attempt, so a
+  retry after a lost lease of `main` that finds the branch moved is refused as well. The merge input is the pinned
+  commit itself, not the branch: the second parent and the merged tree of a per-document release, and the entry paths
+  of a numbered one, are those of the pinned commit, so the released content is the saved commit even when the branch
+  moves after the fetch of the attempt, because a moved branch cannot change what an object id names. `git-core` pushes
+  one reference per call, and the push of `main` against the lease of its fetched tip is the compare-and-swap of
+  `main`; the pin is a comparison of the fetched branch tip with the saved commit id plus the use of that id as the
+  merge input, not a lease on the branch reference. The pin guards the writing of a new release commit only: when
+  `main` already holds the merged release commit of this version without its tag (`INCOMPLETE` earlier), a repeated
+  pinned release creates and pushes only the tag, also when the branch moved on since, because that publishes nothing
+  new.
 
 A completed release is logged as `GIT_STORE-5` with the tag and the commit, an incomplete one as `GIT_STORE-105`, and a
 release that put nothing on the remote as `GIT_STORE-106` with its outcome (`git-store/doc/LogMessages.adoc`). Every
