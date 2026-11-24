@@ -126,6 +126,13 @@ final class StoreClone {
      * closed flag is not set, the repository is not released, and {@link GitStoreLogMessages.WARN#CLOSE_REFUSED} is
      * logged with the detail {@value RepositoryGuard#CLOSE_IN_CALLBACK}. A close after the callback returned closes the
      * clone.
+     * <p>
+     * The events of an operation are emitted after every lock of the clone was released ({@link StoreEvents}), so that
+     * a listener can call the writer, {@code close()} included; the close does not wait for that delivery. A close on
+     * another thread between the end of an operation and the delivery of its events therefore releases the repository
+     * first, and the index and listener reads of that delivery fail on it: each such failure is isolated and logged at
+     * debug level by the observer rule. This is the chosen mechanism; the
+     * alternative, to hold the repository open until the delivery ends, would let a close wait for a listener.
      */
     void close() {
         RepositoryGuard guard = clone.guard();

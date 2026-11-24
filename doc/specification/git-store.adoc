@@ -1243,7 +1243,8 @@ changed (JGit 7.8.0).
   only verifies, for CI.
 * *Verification.* `AnchorVerification.verifyAnchors(repository, provider)` reads only and returns a `StoreResult` of an
   `AnchorVerification.Report` (the numbers of checkpoints, subjects and proofs, and the findings). A `Finding` is one
-  constant of the closed enum `AnchorVerification.Kind`: `CHECKPOINT_MISSING` for every gap in the checkpoint numbers
+  constant of the closed enum `AnchorVerification.Kind`, which is the authoritative list of the kinds; the kinds whose
+  behavior needs an explanation are these: `CHECKPOINT_MISSING` for every gap in the checkpoint numbers
   below the highest (`refs/tags/checkpoints/<n>`, or `refs/tags/checkpoints/<n>..<m>` for a gap of several); `NO_PROOF`
   for a checkpoint or release commit without a note; `PROOF_REJECTED`, with the outcome, for a proof the provider does
   not verify, the proofs being verified in chain order (the order in which the notes commits added them along their first
@@ -1251,8 +1252,7 @@ changed (JGit 7.8.0).
   `REFERENCE_UNREACHABLE` for a branch or notes reference a checkpoint lists that no longer reaches the listed id or no
   longer exists (JGit 7.8.0 `RevWalk.isMergedInto`), decided once per verification for a (reference, object id) pair
   that several checkpoints list unchanged; `TAG_RETARGETED` for a listed tag that no longer points at the listed id;
-  and `CHECKPOINT_CHAIN_BROKEN`, `CHECKPOINT_DUPLICATE` and `CHECKPOINT_UNREADABLE` for the checkpoint chain of
-  <<GDR-STORE-16>>. A release-shaped tag on a blob or a tree is no subject, as the due check skips it. Every release
+  and the kinds of the checkpoint chain, which <<GDR-STORE-16>> defines. A release-shaped tag on a blob or a tree is no subject, as the due check skips it. Every release
   tag is a subject: the verification reads no configuration, so a repository anchored with `anchor.releases` set to
   `false` reports a `NO_PROOF` per release, which a CI run that knows the setting filters (a recorded limit). A
   repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with

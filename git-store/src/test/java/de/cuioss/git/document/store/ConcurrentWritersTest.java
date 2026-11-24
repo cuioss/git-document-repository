@@ -71,11 +71,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Concurrent writers of GDR-NFR-2 against one {@code git-testing} local remote with {@code save.max-attempts} 10: ten
- * writers with their own bare clones save different files of one working branch at the same time and all succeed, two
- * writers that change the same file from the same loaded blob end in exactly one save and one conflict naming that
- * file, and ten threads sharing one writer all succeed as well. A second save of one draft, started while the first is
- * about to push, waits for it and finds the draft settled instead of replaying its changes.
+ * Concurrent writers of GDR-NFR-2 against one {@code git-testing} local remote with {@code save.max-attempts}
+ * {@value #ATTEMPTS}: ten writers with their own bare clones save different files of one working branch at the same
+ * time and all succeed, two writers that change the same file from the same loaded blob end in exactly one save and one
+ * conflict naming that file, and ten threads sharing one writer all succeed as well. A second save of one draft,
+ * started while the first is about to push, waits for it and finds the draft settled instead of replaying its changes.
  * <p>
  * Names, ids, pseudonyms, paths and contents are generated; the number of writers, the attempts and the details are
  * the specified scenario and kept as literals.
@@ -251,8 +251,10 @@ class ConcurrentWritersTest {
     /**
      * Ten writers, each with its own clone and its own repository operations, are released together and held before
      * their first push until all ten fetched the same base, so all ten push against the same lease: one wins and nine
-     * lose, and each loser fetches and re-applies. A writer can lose at most once per other writer, nine times, so with
-     * {@code save.max-attempts} 10 every writer ends {@link SaveResult.Saved}.
+     * lose, and each loser fetches and re-applies. A writer can lose more than one attempt to the same winner, so one
+     * loss per other writer is no bound: with {@code save.max-attempts} {@value #ATTEMPTS}, up to
+     * {@value #LOSSES_PER_OTHER_WRITER} lost attempts per other writer and the attempt that wins, every writer ends
+     * {@link SaveResult.Saved}.
      * <p>
      * The lost race was observed in two forms on the {@code git-testing} local remote (JGit 7.8.0 in-process
      * {@code ReceivePack}): a refused lease when the advertisement already showed the moved branch, and, when the
