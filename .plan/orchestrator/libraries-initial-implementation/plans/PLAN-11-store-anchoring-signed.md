@@ -137,9 +137,11 @@ statement chain (GDR-STORE-18).
 
 - OBSERVED: the checkpoint tree format, the statement format and the namespace `git-document-anchor` are specified
   in `doc/specification/git-store.adoc` § GDR-STORE-16 and § GDR-STORE-18.
+  - verdict: corroborated | checked_at: b30ec140b6e178afcb251e3df9a8b4e18bf68f9d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at b30ec14: the checkpoint tree (sorted refs file, LF lines), the five-line statement and the namespace git-document-anchor in git-store.adoc (GDR-STORE-16 825-846, GDR-STORE-18 867-893) match the code.
 - HYPOTHESIS: the SSHSIG armoring chosen in PLAN-10 can sign arbitrary bytes with a custom namespace (not only commit
   payloads) — confirm/refute at the implementation PLAN-10 lands (its `Signer` / SSHSIG encoder type in
   `git-store/`) (verify-at-outline).
+  - verdict: corroborated | checked_at: b30ec140b6e178afcb251e3df9a8b4e18bf68f9d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at b30ec14: SshSignatures.signedData(namespace, message) 107, encode(blob, namespace, signature) 145 and verify(decoded, namespace, message) 272 take the namespace as a parameter and sign arbitrary bytes; SignedAnchorProvider uses it with git-document-anchor.
 
 ## Expected Surface
 
