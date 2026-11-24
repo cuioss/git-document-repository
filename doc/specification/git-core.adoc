@@ -518,7 +518,11 @@ outcomes:
   backend), the client being JGit 7.8.0; the reftable backend and the source of `builtin/receive-pack.c` were not
   checked. A leased update whose message is exactly `failed to lock` or exactly `incorrect old value provided`, each
   compared whole, is `LEASE_REFUSED`; either message on a plain push without a lease, and every other message of a
-  leased push, stays `REJECTED`. Another remote that words a lost race differently again is reported as `REJECTED`;
+  leased push, stays `REJECTED`. Another remote that words a lost race differently again is reported as `REJECTED`.
+  Accepted as a documented limit (owner decision of 2026-11-24): a native Git server older than these two wordings
+  that answers a lost race with `failed to update ref` (a wording reported in review, not checked against a Git
+  release here) makes the leased push `REJECTED`, so a save of `git-store` is not retried; its draft remains and the
+  caller saves again (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]);
 * `CREDENTIALS_INVALID`: the remote refuses the authentication, HTTP 401 or 403, recognised by the wordings of JGit's
   `JGitText` and `TransportHttp` for it (`notAuthorized`, `noCredentialsProvider`, `authenticationNotSupported`,
   `serviceNotPermitted`;

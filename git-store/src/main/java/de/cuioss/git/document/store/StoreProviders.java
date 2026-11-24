@@ -17,7 +17,9 @@ package de.cuioss.git.document.store;
 
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
@@ -132,7 +134,9 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * public key of the commit-signing key ({@code anchor.signed.key equals the commit-signing key}); both public keys
      * are read from their sources here, once. No detail names a key reference or key material.
      * <p>
-     * The id of every candidate the selection consults is read once and guarded: a candidate whose {@code id()} throws
+     * The id of every candidate the selection consults is read once per call and guarded: one snapshot of the ids,
+     * keyed by the candidate instance, serves every selection of the call, so a signing candidate consulted for both
+     * {@code signing.key-source} and {@code anchor.signed.key-source} is asked once. A candidate whose {@code id()} throws
      * a {@link RuntimeException} or a {@link LinkageError}, or returns {@code null}, ends the selection as
      * {@link StoreOutcome#MALFORMED} with {@code <Interface>: a provider id cannot be read}, and only the class of the
      * candidate and of the throwable are logged, never its message (GDR-GEN-3, GDR-NFR-3).
@@ -157,13 +161,14 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(anchors, "anchors");
         Objects.requireNonNull(persons, "persons");
+        IdSnapshot ids = new IdSnapshot();
         var source = unique(SigningKeySource.class, StoreConfiguration.SIGNING_KEY_SOURCE,
-                configuration.signing().keySource(), signing, SigningKeySource::id);
+                configuration.signing().keySource(), signing, SigningKeySource::id, ids);
         if (!source.isOk()) {
             return refuse(source.detail());
         }
         var directory = unique(PersonDirectory.class, StoreConfiguration.PERSONS_PROVIDER,
-                configuration.directory().personsProvider(), persons, PersonDirectory::id);
+                configuration.directory().personsProvider(), persons, PersonDirectory::id, ids);
         if (!directory.isOk()) {
             return refuse(directory.detail());
         }
@@ -171,14 +176,14 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
         if (SignedAnchorProvider.PROVIDER_ID.equals(anchorId)) {
-            var provider = signed(configuration, signingSource, signing, anchors);
+            var provider = signed(configuration, signingSource, signing, anchors, ids);
             if (!provider.isOk()) {
                 return refuse(provider);
             }
             anchor = provider.value();
         } else if (anchorId != null) {
             var provider = unique(AnchorProvider.class, StoreConfiguration.ANCHOR_PROVIDER, anchorId, anchors,
-                    AnchorProvider::id);
+                    AnchorProvider::id, ids);
             if (!provider.isOk()) {
                 return refuse(provider.detail());
             }
@@ -202,16 +207,17 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * @param id         the configured id
      * @param candidates the candidates
      * @param idOf       the id of a candidate
+     * @param ids        the ids read so far in this selection
      * @param <S>        the service type
      * @return {@link StoreOutcome#OK} with the candidate, or {@link StoreOutcome#MALFORMED} when the id of a candidate
      * cannot be read, or when no candidate or more than one candidate carries the id
      */
     private static <S> StoreResult<S> unique(Class<S> service, String key, String id,
-            Iterable<? extends S> candidates, Function<S, @Nullable String> idOf) {
+            Iterable<? extends S> candidates, Function<S, @Nullable String> idOf, IdSnapshot ids) {
         @Nullable S found = null;
         for (S candidate : candidates) {
             Objects.requireNonNull(candidate, "candidate");
-            @Nullable String candidateId = readId(service, candidate, idOf);
+            @Nullable String candidateId = ids.of(service, candidate, idOf);
             if (candidateId == null) {
                 return unreadableId(service);
             }
@@ -268,6 +274,33 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
     }
 
     /**
+     * The ids of the candidates one selection consulted, keyed by the candidate instance (identity semantics) and read
+     * lazily through {@link #readId}, so every candidate's {@code id()} is called at most once per selection, also when
+     * the commit-signing and the anchor key source are both selected among the signing candidates. An id that could not
+     * be read is kept as {@code null} and is not read again.
+     */
+    private static final class IdSnapshot {
+
+        private final Map<Object, @Nullable String> ids = new IdentityHashMap<>();
+
+        /**
+         * The id of a candidate, read on its first request.
+         *
+         * @param service   the service interface, named in the log
+         * @param candidate the candidate
+         * @param idOf      the id of a candidate
+         * @param <S>       the service type
+         * @return the id, or {@code null} when it cannot be read
+         */
+        <S> @Nullable String of(Class<S> service, S candidate, Function<S, @Nullable String> idOf) {
+            if (!ids.containsKey(candidate)) {
+                ids.put(candidate, readId(service, candidate, idOf));
+            }
+            return ids.get(candidate);
+        }
+    }
+
+    /**
      * Instantiates every provider {@link ServiceLoader} finds for a service interface.
      *
      * @param service the service interface
@@ -307,8 +340,8 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * source that handed out no public key, or the result of a file that cannot be read
      */
     private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
-            Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
-        Optional<StoreResult<AnchorProvider>> refused = refusedCandidate(anchors);
+            Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors, IdSnapshot ids) {
+        Optional<StoreResult<AnchorProvider>> refused = refusedCandidate(anchors, ids);
         if (refused.isPresent()) {
             return refused.get();
         }
@@ -320,8 +353,9 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         @Nullable String configuredSource = section.keySource();
         String anchorSourceId = configuredSource == null ? StoreConfiguration.Signing.DEFAULT_KEY_SOURCE
                 : configuredSource;
+        // the ids of the signing candidates come from the snapshot the commit-signing selection filled
         var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE, anchorSourceId, signing,
-                SigningKeySource::id);
+                SigningKeySource::id, ids);
         if (!anchorSource.isOk()) {
             return retype(anchorSource);
         }
@@ -358,12 +392,14 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * Checks the anchor provider candidates against the built-in provider {@code signed}: a candidate whose id cannot be
      * read, and one that carries the id {@value SignedAnchorProvider#PROVIDER_ID} as well, is refused.
      *
+     * @param anchors the candidate anchor providers
+     * @param ids     the ids read so far in this selection
      * @return the refusal; empty when no candidate is refused
      */
     private static Optional<StoreResult<AnchorProvider>> refusedCandidate(
-            Iterable<? extends AnchorProvider> anchors) {
+            Iterable<? extends AnchorProvider> anchors, IdSnapshot ids) {
         for (AnchorProvider candidate : anchors) {
-            @Nullable String candidateId = readId(AnchorProvider.class, Objects.requireNonNull(candidate, "candidate"),
+            @Nullable String candidateId = ids.of(AnchorProvider.class, Objects.requireNonNull(candidate, "candidate"),
                     AnchorProvider::id);
             if (candidateId == null) {
                 return Optional.of(unreadableId(AnchorProvider.class));

@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
 
@@ -166,8 +167,10 @@ final class AnchorEngine {
     /**
      * Runs one due check. The closed flag of the clone is read under the anchoring lock, which
      * {@link StoreClone#close()} takes to set it, before anything else, also without a provider, so a due check after
-     * the close does nothing and the repository is never released while one runs. The reference updates the fetch
-     * collected are emitted in every case, also when the due check ended early or by an exception.
+     * the close does nothing, emits nothing to the observers, and the repository is never released while one runs. For
+     * every due check that passed the closed check, the reference updates the fetch collected are emitted in every
+     * case, also when the due check ended early or by an exception, and an empty list after a due check that collected
+     * none.
      *
      * @param closed the closed flag of the clone
      * @return {@link StoreOutcome#OK} with the subjects anchored and those left pending, both empty without a provider;
@@ -183,9 +186,12 @@ final class AnchorEngine {
         AnchorNotes proofs = notes;
         RepositoryGuard guard = clone.guard();
         List<StoreEvents.Update> updates = new ArrayList<>();
+        // set under the anchoring lock that reads the closed flag, so the decision to emit follows that same read
+        AtomicBoolean refused = new AtomicBoolean();
         try {
             return guard.anchoring(() -> {
                 if (closed.getAsBoolean()) {
+                    refused.set(true);
                     return StoreResult.of(StoreOutcome.REFUSED, CLOSED);
                 }
                 if (active == null || proofs == null) {
@@ -194,8 +200,11 @@ final class AnchorEngine {
                 return run(active, proofs, guard, updates);
             });
         } finally {
-            // the updates the fetch collected reach the index and the listeners however the due check ended
-            events.emit(updates);
+            // the updates the fetch collected reach the index and the listeners however a due check that ran ended;
+            // a due check refused for a closed clone reaches no observer, which would read the released repository
+            if (!refused.get()) {
+                events.emit(updates);
+            }
         }
     }
 

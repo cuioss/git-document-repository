@@ -17,8 +17,12 @@ package de.cuioss.git.document.store;
 
 import static de.cuioss.git.document.store.ConfigurationTree.retype;
 
+import java.time.DateTimeException;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.Period;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -225,7 +229,28 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
             return retype(expiry);
         }
         Period value = expiry.value();
-        return value == null ? tree.missing(DRAFTS_EXPIRY) : StoreResult.ok(new Drafts(value));
+        if (value == null) {
+            return tree.missing(DRAFTS_EXPIRY);
+        }
+        return subtractable(value) ? StoreResult.ok(new Drafts(value)) : tree.malformed(DRAFTS_EXPIRY);
+    }
+
+    /**
+     * Checks that a period can be subtracted from a representable time: subtracting it from the epoch
+     * ({@link Instant#EPOCH} at {@link ZoneOffset#UTC}) must neither leave the range of {@link OffsetDateTime} nor
+     * overflow, so the draft expiry, which subtracts it from the current time, never throws.
+     *
+     * @param period the period
+     * @return {@code true} when the period can be subtracted from the epoch
+     */
+    private static boolean subtractable(Period period) {
+        OffsetDateTime epoch = Instant.EPOCH.atOffset(ZoneOffset.UTC);
+        try {
+            // a positive period, already checked, never yields a time after the epoch
+            return !epoch.minus(period).isAfter(epoch);
+        } catch (DateTimeException | ArithmeticException e) {
+            return false;
+        }
     }
 
     /**
@@ -427,6 +452,10 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
 
     /**
      * The section {@code drafts}.
+     * <p>
+     * {@link StoreConfiguration#from(Map, RemotePolicy)} accepts a {@code drafts.expiry} only when it is positive and
+     * can be subtracted from the epoch in UTC without leaving the range of {@link OffsetDateTime}; any other period is
+     * {@link StoreOutcome#MALFORMED} naming the key.
      *
      * @param expiry the period after which an unchanged draft is deleted ({@code drafts.expiry})
      * @since 0.1

@@ -104,7 +104,8 @@ the detail never carries the configured id, a configured value (xref:general.ado
 with an id nobody configured do not stop the start. A `ServiceConfigurationError` or a `LinkageError` while loading is
 `MALFORMED` naming the interface; only the interface and the class name of the error are logged (DEBUG), never the
 message of the error or of its cause, which a failing provider may fill with a credential. The id of every candidate
-the selection consults is read once and guarded: a candidate whose `id()` throws a `RuntimeException` or a
+the selection consults is read once per call of `select` and guarded, from one snapshot keyed by the candidate
+instance, also when the commit-signing and the anchor key source are both selected among the signing candidates: a candidate whose `id()` throws a `RuntimeException` or a
 `LinkageError`, or returns `null`, ends the selection as `MALFORMED` with the detail `<interface>: a provider id cannot
 be read`, and only the class of the candidate and of the throwable are logged (DEBUG). Under
 xref:general.adoc#GDR-GEN-3[GDR-GEN-3] a provider that fails while naming itself is an expected non-success of the
@@ -141,10 +142,13 @@ A repository is the record `StoreRepository` (alias, remote, confidentiality, op
 the query and the fragment are never rendered (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), so a token carried in a query
 such as `?token=…` reaches no log record. JGit 7.8.0 `URIish` knows no query and no fragment and keeps both in its
 path, and in its host when no `/` precedes them (`https://host?token=…`, `https://host#…`). A remote with a scheme is
-therefore reduced before it is parsed: the user information, the authority up to its last `@`, is dropped, so a `?` or
-`#` in a password never decides the cut, and the rest is cut at its first `?` or `#`; the path of any other remote is
-cut at its first `?` or `#`. Encoded delimiters (`%3F`, `%23`) belong to the path and stay. A remote `URIish` cannot
-parse is rendered as `(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
+therefore reduced before it is parsed: its authority ends at the first `/`, `?` or `#` after the scheme, the user
+information, the authority up to its last `@`, is looked for inside the authority only and dropped, so an `@` of a
+query or a fragment is never read as user information and the text after it never as the host, and the rest is cut at its first `?` or `#`. Where a `?` or `#` precedes an `@` that lies before the first `/`, the remote
+is ambiguous (a password holding the delimiter, or a query holding an `@`) and is rendered as `(malformed)` rather
+than any text after the delimiter; an `@` after the first `/` (`https://host/p?mail=a@b`) is part of the path or its
+query, which is cut. The path of any other remote is cut at its first `?` or `#`. Encoded delimiters (`%3F`, `%23`)
+belong to the path and stay. A remote `URIish` cannot parse is rendered as `(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
 `RepositoryRegistry.of(repositories,
 policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
 `RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
@@ -333,7 +337,11 @@ advertisement and the remote could not lock the reference for the update or, as 
 like any other (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). Every `REJECTED` of the push is therefore a refusal of
 the remote that `git-core` does not recognise as a lost race, such as a protected branch, a refusing hook or a push
 that is no fast-forward, and a remote that words a lost race in yet another way is among them: it ends the save at once as the
-passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. An unreachable remote
+passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. This is an accepted,
+documented limit: a native Git server older than the two wordings `git-core` recognises that reports a lost race as
+`failed to update ref` (a wording reported in review, not checked against a Git release here) makes such a save
+`REJECTED`, and it is not retried; the draft remains and the caller saves
+again (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). An unreachable remote
 and invalid credentials end the save at once as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing
 changed.
 
@@ -1313,7 +1321,8 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 
 |`repositories` |the registry (<<GDR-STORE-1>>)
 |`save.max-attempts` |required; 1 to 100; attempts of a save or of a push of notes
-|`drafts.expiry` |required; ISO 8601 period
+|`drafts.expiry` |required; positive ISO 8601 period that can be subtracted from the epoch in UTC without leaving the
+range of `OffsetDateTime`; any other period is `MALFORMED` naming the key at configuration time
 |`commit.email` |boolean, default `false`: whether author and committer of every commit `git-store` writes carry an
 e-mail address (xref:general.adoc#GDR-NFR-3[GDR-NFR-3], <<GDR-STORE-8>>)
 |`fetch.interval` |required; ISO 8601 duration of the periodic fetch

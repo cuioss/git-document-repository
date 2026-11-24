@@ -82,7 +82,8 @@ import org.jspecify.annotations.Nullable;
  * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the references of the clone
  * keeps the previous index, and one that could not read a source keeps that source's previous entries; either marks
  * the index stale, and the next operation of the writer retries the refresh, also a fetch or save that moved no
- * reference, until one reads every source. A snapshot calls the contributors under the same lock, so no contributor
+ * reference, until one reads every source; the stale mark is read and set under the lock of the index, so an operation
+ * that follows a failing refresh never misses its retry. A snapshot calls the contributors under the same lock, so no contributor
  * is called by two threads at once.
  * <p>
  * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
@@ -112,23 +113,37 @@ public final class StoreIndex<E> implements AutoCloseable {
             refreshQuietly();
         }
 
+        /**
+         * Retries a failed refresh. The stale flag is read under the lock of the index, which a running refresh
+         * holds, so a refresh that is about to mark the index stale is waited for rather than read as current; the
+         * lock is reentrant, so the refresh taken under it cannot deadlock.
+         */
         @Override
         public void unchanged() {
-            if (stale) {
-                refreshQuietly();
+            lock.lock();
+            try {
+                if (stale) {
+                    refreshQuietly();
+                }
+            } finally {
+                lock.unlock();
             }
         }
 
         /**
          * Refreshes after an operation of the writer; a failure keeps the previous index and marks it stale, so the
-         * next operation retries the refresh even when it moves no reference.
+         * next operation retries the refresh even when it moves no reference. The failure is marked under the lock of
+         * the index, so {@code unchanged()} never reads the flag between the failed refresh and its mark.
          */
         private void refreshQuietly() {
+            lock.lock();
             try {
                 refresh();
             } catch (IOException e) {
                 stale = true;
                 LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getName());
+            } finally {
+                lock.unlock();
             }
         }
     };
