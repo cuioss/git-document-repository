@@ -45,25 +45,32 @@ final class ClosingFixtures {
     /**
      * Closes every registered fixture, the last created first, and forgets them.
      *
-     * @throws RuntimeException the first failure of a close, with the later ones suppressed
+     * @throws RuntimeException the first failure of a close, with the later ones suppressed along the chain
      */
     void closeAll() {
-        RuntimeException first = null;
-        while (!closers.isEmpty()) {
-            try {
-                closers.pop().run();
-            }
-            /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
-            catch (RuntimeException e) {
-                if (first == null) {
-                    first = e;
-                } else {
-                    first.addSuppressed(e);
-                }
-            }
+        closeFrom(closers);
+    }
+
+    /**
+     * Runs the next closer and then, also when it failed, the remaining ones: the try-with-resources adds a failure of
+     * the remaining closers to the failure of this one as suppressed.
+     *
+     * @param remaining the closers still to run, the next one first
+     */
+    private static void closeFrom(Deque<Runnable> remaining) {
+        Runnable next = remaining.poll();
+        if (next == null) {
+            return;
         }
-        if (first != null) {
-            throw first;
+        try (Step rest = () -> closeFrom(remaining)) {
+            next.run();
         }
+    }
+
+    /** A step of the teardown whose close throws no checked exception. */
+    private interface Step extends AutoCloseable {
+
+        @Override
+        void close();
     }
 }

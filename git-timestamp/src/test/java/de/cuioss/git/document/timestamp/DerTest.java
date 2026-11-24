@@ -92,7 +92,7 @@ class DerTest {
 
     @Test
     @DisplayName("Should round-trip the largest first subidentifier the reader accepts")
-    void shouldRoundTripFirstSubidentifierAtReaderLimit() throws Exception {
+    void shouldRoundTripFirstSubidentifierAtReaderLimit() {
         String boundary = "2." + LARGEST_SECOND_ARC_UNDER_2;
 
         assertAll(

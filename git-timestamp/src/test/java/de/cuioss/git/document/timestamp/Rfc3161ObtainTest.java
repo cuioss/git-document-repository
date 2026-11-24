@@ -462,8 +462,12 @@ class Rfc3161ObtainTest {
     @DisplayName("GDR-TSA-1: a read that ends after the deadline is UNAVAILABLE even when the close never ran")
     void shouldRefuseReadEndingAfterDeadline() throws Exception {
         var release = new CountDownLatch(1);
-        var scheduler = new ScheduledThreadPoolExecutor(1);
-        try {
+        // the scheduler closes last: its close awaits termination, so the blocked thread is released before it
+        try (var scheduler = new ScheduledThreadPoolExecutor(1);
+             AutoCloseable unblock = () -> {
+                 release.countDown();
+                 scheduler.shutdownNow();
+             }) {
             // the single thread of the scheduler is blocked, so a scheduled close never runs
             scheduler.execute(() -> awaitQuietly(release));
             long lateDeadline = System.nanoTime() + Duration.ofMillis(50).toNanos();
@@ -479,9 +483,6 @@ class Rfc3161ObtainTest {
                     () -> assertEquals(TimestampTransport.UNREACHABLE, late.detail(), "detail of the late read"),
                     () -> assertTrue(prompt.isOk(), () -> "a read inside the deadline: " + prompt.detail()),
                     () -> assertArrayEquals(new byte[]{1, 2, 3}, prompt.value(), "octets of the prompt read"));
-        } finally {
-            release.countDown();
-            scheduler.shutdownNow();
         }
     }
 

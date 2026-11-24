@@ -253,7 +253,7 @@ final class TimeStampRequests {
         for (int octet = 1; octet < content.length; octet++) {
             for (int bit = 0; bit < Byte.SIZE; bit++) {
                 int number = (octet - 1) * Byte.SIZE + bit;
-                boolean set = (content[octet] & (0x80 >>> bit)) != 0;
+                boolean set = ((content[octet] & 0xFF) & (0x80 >>> bit)) != 0;
                 if (set && (number >= Long.SIZE || (DEFINED_FAIL_INFO & (1L << number)) == 0)) {
                     throw new Der.DerException("fail info with an undefined bit");
                 }
