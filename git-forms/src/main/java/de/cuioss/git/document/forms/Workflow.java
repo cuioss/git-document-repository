@@ -26,7 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
 
@@ -360,14 +359,14 @@ public final class Workflow {
     public FormsResult<Transition> transition(String name, String currentState) {
         Objects.requireNonNull(name, NAME);
         Objects.requireNonNull(currentState, "currentState");
-        Optional<Transition> transition = Optional.ofNullable(transitionsByName.get(name));
-        if (transition.isEmpty()) {
+        Transition transition = transitionsByName.get(name);
+        if (transition == null) {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, "transition: not in the workflow");
         }
-        if (!transition.get().from().equals(currentState)) {
+        if (!transition.from().equals(currentState)) {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, DocumentTransitions.NOT_IN_CURRENT_STATE);
         }
-        return FormsResult.ok(transition.get());
+        return FormsResult.ok(transition);
     }
 
     /** A workflow the loader does not accept, carrying the detail: the key path and the rule. */

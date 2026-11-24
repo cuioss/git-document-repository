@@ -217,12 +217,12 @@ public final class DocumentTransitions {
         EditSplit split = EditSplit.of(change.edits(), documentPath);
         Optional<byte[]> content;
         try {
-            content = split.edited() ? split.content()
+            content = split.edited ? split.content
                     : draftContent(Objects.requireNonNull(draftRef.value()), key, documentPath);
         } catch (ReadFailure e) {
             return readFailed(e);
         }
-        List<TreeEdit> edits = new ArrayList<>(split.others());
+        List<TreeEdit> edits = new ArrayList<>(split.others);
         Map<String, @Nullable Object> document = new LinkedHashMap<>();
         if (content.isPresent()) {
             StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(content.get());
@@ -269,18 +269,6 @@ public final class DocumentTransitions {
                 }
             }
             return split;
-        }
-
-        List<TreeEdit> others() {
-            return others;
-        }
-
-        boolean edited() {
-            return edited;
-        }
-
-        Optional<byte[]> content() {
-            return content;
         }
     }
 
@@ -397,7 +385,7 @@ public final class DocumentTransitions {
     }
 
     /** The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git. */
-    private static String name(FormsResult.Outcome outcome) {
+    static String name(FormsResult.Outcome outcome) {
         return switch (outcome) {
             case FormsOutcome forms -> forms.name();
             case FormsResult.PassedOn(StoreOutcome store) -> store.name();

@@ -222,12 +222,7 @@ public final class VerifyOutput {
     }
 
     private static int failed(PrintStream err, FormsResult<?> result) {
-        String outcome = switch (result.outcome()) {
-            case FormsOutcome forms -> forms.name();
-            case FormsResult.PassedOn(StoreOutcome store) -> store.name();
-            case FormsResult.PassedOn(StoreResult.PassedOn(GitOutcome git)) -> git.name();
-        };
-        err.println(outcome + " " + result.detail());
+        err.println(DocumentTransitions.name(result.outcome()) + " " + result.detail());
         return FAILED;
     }
 }
