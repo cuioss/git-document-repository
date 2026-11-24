@@ -105,7 +105,13 @@ a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to 
 operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`), over the
 package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt),
 `StateMerge` (the merge of the document file onto the tip) and `CloneReader` (the read side of the writer's bare
-clone: references, files, the file a draft started from, a saved commit read as an attempt);
+clone: references, files, the file a draft started from, a saved commit read as an attempt), and behind the facade
+`DocumentTransitions` the package-private `TransitionRunner` (the run of one transition: state, lookup, step-up,
+logging), `TransitionContext` (the clone reader, layout, codec and output check of a kind, and the lookups per key),
+`TransitionSave` (the mechanisms `intermediate-save`, `save` and `release`), `DraftStaging` (the base of the merge and
+the draft with the state), `UnchangedSave` (the verification of a save that ran no step and the rewrite of a stale
+output), `TransitionCall` (the input of one transition) and `TransitionOutcomes` (the results that end a transition
+unperformed, the name of an outcome);
 its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
