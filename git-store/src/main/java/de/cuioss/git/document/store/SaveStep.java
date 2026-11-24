@@ -31,7 +31,8 @@ import org.jspecify.annotations.Nullable;
  * conflict check and before the save commit is written. The step sees the attempt through a read-only
  * {@link Attempt}: the tip the attempt commits on and the tree the draft's changes produce on it. It returns
  * {@link Edits}, which are written into the same single save commit, or a {@link Refusal}, which ends the save with
- * {@link StoreOutcome#REFUSED}: nothing is pushed, and draft and target branch stay unchanged. A step that throws a
+ * {@link StoreOutcome#REFUSED}: nothing is pushed, and the draft and the target branch on the remote stay unchanged;
+ * the fetch of the attempt, which ran before the step, may have moved the local mirror of the target. A step that throws a
  * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} ends the save with the
  * passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED}, whose detail names the target and the class of the
  * throwable ({@link Class#getName()}) only, and is not retried; a {@link VirtualMachineError} propagates. A draft
@@ -96,10 +97,14 @@ public interface SaveStep {
 
         /**
          * The mode of a file in the tree the draft's changes produce on the tip: the mode the draft or the tip holds
-         * the path in, so the step sees an executable file or a symbolic link as the save writes it.
+         * the path in, so the step sees an executable file or a symbolic link as the save writes it. The modes are
+         * those of {@link TreeEdit.Mode}: a regular file, an executable file and a symbolic link. A gitlink of the tip,
+         * the entry of a submodule, names a commit of another repository and is no file, so it has no mode here; a
+         * directory has none either.
          *
          * @param path the repository-relative path
-         * @return the mode, or empty when the produced tree holds no file at the path
+         * @return the mode, or empty when the produced tree holds no file at the path, also for a directory and a
+         *         gitlink
          * @throws NullPointerException if {@code path} is {@code null}
          */
         Optional<TreeEdit.Mode> mode(String path);

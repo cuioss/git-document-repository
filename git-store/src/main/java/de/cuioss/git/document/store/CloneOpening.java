@@ -73,60 +73,58 @@ final class CloneOpening {
     }
 
     /**
-     * Opens the bare clone of a repository with the signing key source only, nothing anchored; see
-     * {@link StoreWriter#open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}.
+     * The arguments both overloads of {@link StoreWriter#open} share, as the caller passed them. The record checks
+     * nothing itself: {@link CloneOpening} checks every argument, in the order of {@link StoreWriter#open}, after the
+     * providers.
      *
      * @param storeRepository the repository of the registry
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user
      * @param configuration   the configuration of the store
      * @param collections     the declared collections of the repository, checked before anything is cloned
-     * @param signing         the active signing key source
      * @param operations      the repository operations of {@code git-core}
-     * @param clock           the clock of every commit time
+     * @param clock           the clock of every commit time and of the due checks of the anchoring
+     */
+    record Arguments(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
+    StoreConfiguration configuration, List<DocumentCollection> collections, RepositoryOperations operations,
+    Clock clock) {
+    }
+
+    /**
+     * Opens the bare clone of a repository with the signing key source only, nothing anchored; see
+     * {@link StoreWriter#open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}.
+     *
+     * @param arguments the shared arguments of {@code open}
+     * @param signing   the active signing key source
      * @return the results of {@link StoreWriter#open}, with the clone as the value
      * @throws NullPointerException if an argument or a collection is {@code null}
      */
-    static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
-            RepositoryOperations operations, Clock clock) {
-        return open(storeRepository, gitDir, user, configuration, collections, new Providers(signing, null),
-                operations, clock);
+    static StoreResult<StoreClone> open(Arguments arguments, SigningKeySource signing) {
+        return open(arguments, new Providers(signing, null));
     }
 
     /**
      * Opens the bare clone of a repository with the providers selected at start; see
      * {@link StoreWriter#open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, StoreProviders, RepositoryOperations, Clock)}.
      *
-     * @param storeRepository the repository of the registry
-     * @param gitDir          the git directory of the bare clone
-     * @param user            the technical user
-     * @param configuration   the configuration of the store
-     * @param collections     the declared collections of the repository, checked before anything is cloned
-     * @param providers       the selected providers
-     * @param operations      the repository operations of {@code git-core}
-     * @param clock           the clock of every commit time and of the due checks of the anchoring
+     * @param arguments the shared arguments of {@code open}
+     * @param providers the selected providers
      * @return the results of {@link StoreWriter#open}, with the clone as the value
      * @throws NullPointerException if an argument or a collection is {@code null}
      */
-    static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
-            RepositoryOperations operations, Clock clock) {
+    static StoreResult<StoreClone> open(Arguments arguments, StoreProviders providers) {
         Objects.requireNonNull(providers, "providers");
-        return open(storeRepository, gitDir, user, configuration, collections,
-                new Providers(providers.signing(), providers.anchor()), operations, clock);
+        return open(arguments, new Providers(providers.signing(), providers.anchor()));
     }
 
-    private static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, List<DocumentCollection> collections, Providers providers,
-            RepositoryOperations operations, Clock clock) {
-        Objects.requireNonNull(storeRepository, "storeRepository");
-        Objects.requireNonNull(gitDir, "gitDir");
-        Objects.requireNonNull(user, "user");
-        Objects.requireNonNull(configuration, "configuration");
-        Objects.requireNonNull(collections, "collections");
-        Objects.requireNonNull(operations, "operations");
-        Objects.requireNonNull(clock, "clock");
+    private static StoreResult<StoreClone> open(Arguments arguments, Providers providers) {
+        StoreRepository storeRepository = Objects.requireNonNull(arguments.storeRepository(), "storeRepository");
+        Path gitDir = Objects.requireNonNull(arguments.gitDir(), "gitDir");
+        TechnicalUser user = Objects.requireNonNull(arguments.user(), "user");
+        StoreConfiguration configuration = Objects.requireNonNull(arguments.configuration(), "configuration");
+        List<DocumentCollection> collections = Objects.requireNonNull(arguments.collections(), "collections");
+        RepositoryOperations operations = Objects.requireNonNull(arguments.operations(), "operations");
+        Clock clock = Objects.requireNonNull(arguments.clock(), "clock");
         if (!StoreReferences.collections(collections).isOk()) {
             // the detail of StoreReferences names the collection; the writer names the argument only
             return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.COLLECTIONS_DECLARED_TWICE);

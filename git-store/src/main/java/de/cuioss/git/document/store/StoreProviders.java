@@ -19,6 +19,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.function.Function;
@@ -307,16 +308,9 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      */
     private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
             Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
-        for (AnchorProvider candidate : anchors) {
-            @Nullable String candidateId = readId(AnchorProvider.class, Objects.requireNonNull(candidate, "candidate"),
-                    AnchorProvider::id);
-            if (candidateId == null) {
-                return unreadableId(AnchorProvider.class);
-            }
-            if (SignedAnchorProvider.PROVIDER_ID.equals(candidateId)) {
-                return StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
-                        + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER);
-            }
+        Optional<StoreResult<AnchorProvider>> refused = refusedCandidate(anchors);
+        if (refused.isPresent()) {
+            return refused.get();
         }
         StoreConfiguration.Anchor.Signed section = configuration.anchor().signed();
         String keyReference = section.key();
@@ -358,6 +352,28 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         return StoreResult.ok(new SignedAnchorProvider(
                 new SignedAnchorProvider.AnchorKey(keySource, keyReference, publicKey), allowedSigners,
                 section.maxClockSkew(), Clock.systemUTC()));
+    }
+
+    /**
+     * Checks the anchor provider candidates against the built-in provider {@code signed}: a candidate whose id cannot be
+     * read, and one that carries the id {@value SignedAnchorProvider#PROVIDER_ID} as well, is refused.
+     *
+     * @return the refusal; empty when no candidate is refused
+     */
+    private static Optional<StoreResult<AnchorProvider>> refusedCandidate(
+            Iterable<? extends AnchorProvider> anchors) {
+        for (AnchorProvider candidate : anchors) {
+            @Nullable String candidateId = readId(AnchorProvider.class, Objects.requireNonNull(candidate, "candidate"),
+                    AnchorProvider::id);
+            if (candidateId == null) {
+                return Optional.of(unreadableId(AnchorProvider.class));
+            }
+            if (SignedAnchorProvider.PROVIDER_ID.equals(candidateId)) {
+                return Optional.of(StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
+                        + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER));
+            }
+        }
+        return Optional.empty();
     }
 
     /**

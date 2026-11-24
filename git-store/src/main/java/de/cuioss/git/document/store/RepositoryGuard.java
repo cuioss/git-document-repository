@@ -67,6 +67,9 @@ final class RepositoryGuard {
      */
     static final String REENTERED = "maintenance: re-entered from a callback that holds the shared lock";
 
+    /** The name of the action argument, in the message of its null check. */
+    private static final String ACTION = "action";
+
     private final ReentrantReadWriteLock maintenance = new ReentrantReadWriteLock();
     private final ReentrantLock transport = new ReentrantLock();
     private final ReentrantLock anchoring = new ReentrantLock();
@@ -138,7 +141,7 @@ final class RepositoryGuard {
      *         calling thread holds the shared side of the maintenance lock
      */
     <V> StoreResult<V> exclusive(Supplier<StoreResult<V>> action) {
-        Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(action, ACTION);
         if (maintenance.getReadHoldCount() > 0) {
             return StoreResult.of(StoreOutcome.REFUSED, REENTERED);
         }
@@ -174,7 +177,7 @@ final class RepositoryGuard {
     <T> T draft(String draftRef, Runnable pause, Supplier<T> action) {
         Objects.requireNonNull(draftRef, "draftRef");
         Objects.requireNonNull(pause, "pause");
-        Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(action, ACTION);
         DraftLock entry = drafts.compute(draftRef, (name, existing) -> {
             DraftLock registered = existing == null ? new DraftLock() : existing;
             registered.holders++;
@@ -224,7 +227,7 @@ final class RepositoryGuard {
     }
 
     private static <T> T locked(Lock lock, Supplier<T> action) {
-        Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(action, ACTION);
         lock.lock();
         try {
             return action.get();

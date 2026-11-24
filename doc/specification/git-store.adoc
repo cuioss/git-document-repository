@@ -140,8 +140,11 @@ A repository is the record `StoreRepository` (alias, remote, confidentiality, op
 `java.time.Period`); its `toString()` renders the remote as scheme, host, port and path only: the user, the password,
 the query and the fragment are never rendered (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), so a token carried in a query
 such as `?token=…` reaches no log record. JGit 7.8.0 `URIish` knows no query and no fragment and keeps both in its
-path, so the rendering cuts the path at its first `?` or `#`; a remote `URIish` cannot parse is rendered as
-`(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
+path, and in its host when no `/` precedes them (`https://host?token=…`, `https://host#…`). A remote with a scheme is
+therefore reduced before it is parsed: the user information, the authority up to its last `@`, is dropped, so a `?` or
+`#` in a password never decides the cut, and the rest is cut at its first `?` or `#`; the path of any other remote is
+cut at its first `?` or `#`. Encoded delimiters (`%3F`, `%23`) belong to the path and stay. A remote `URIish` cannot
+parse is rendered as `(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
 `RepositoryRegistry.of(repositories,
 policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
 `RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
@@ -368,7 +371,10 @@ commit is written on. The step receives a read-only `SaveStep.Attempt`: the full
 commit), the content of a path on the tip, the content and the mode (`TreeEdit.Mode`) of a path in the tree the draft's
 edits produce on the tip, and the paths of the files below a directory of that produced tree. Every put of the draft
 keeps the mode the draft holds its path in, so an executable file stays `100755` and a symbolic link `120000` on the
-target branch, and the view reports that mode. The view is the tip's tree overlaid with the draft's
+target branch, and the view reports that mode. The modes the view reports are those of `TreeEdit.Mode`, a regular
+file, an executable file and a symbolic link; a gitlink of the tip (`160000`, the entry of a submodule) names a commit
+of another repository and is no file, so the view reports no mode for it, as for a directory. The view is the tip's
+tree overlaid with the draft's
 edits and read on demand: it writes no object, and the step gets no `Repository`, no credential and nothing the caller
 did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two variants:
 
@@ -387,7 +393,8 @@ A step that throws a `RuntimeException` or an `Error` other than a `VirtualMachi
 without a further attempt; no log record attaches the throwable, and neither names its message
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A `VirtualMachineError` propagates. A failure to read the view reaches
 the step as an `UncheckedIOException` and ends the save the same way. After a refusal or a failure nothing is written
-or pushed, and the draft and the target branch are unchanged; the save is logged as `GIT_STORE-101` with its outcome.
+or pushed, and the draft and the target branch on the remote are unchanged; the fetch the attempt ran before the step
+may still have moved the local mirror of the target, emitted like every fetch; the save is logged as `GIT_STORE-101` with its outcome.
 A draft without changes writes no commit and calls no step.
 
 The step runs under the locks of the save, the shared side of the maintenance lock, the lock of its draft and the
@@ -949,7 +956,7 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   (`<key>: not a path`), and a file that does not exist or cannot be read is `UNAVAILABLE`, where `<key>` is
   `signing.allowed-signers` or `anchor.signed.allowed-signers`. No detail names a principal, key text or a path.
 * *Verification.* The public `SignatureVerification.verify(repository, reference, allowedSigners)` walks every commit
-  reachable from the reference (JGit 7.8.0 `RevWalk`) and returns a `StoreResult` with the list of
+  reachable from the reference (a walk of its own over JGit 7.8.0 `RevCommit`, see below) and returns a `StoreResult` with the list of
   `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. The verification
   has no start boundary: a commit without a `gpgsig` header, written before signing was enabled or by another tool, is
   listed as `UNSIGNED` like any other unverified commit, so `VerifySignatures` exits `1` for a reference whose
@@ -966,9 +973,14 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   shallow commits are read again after the walk, and a boundary that changed while the walk ran is `INCOMPLETE` with
   the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A commit
   with more than one `gpgsig` header is `INVALID`: stock Git verifies the first header and strips every one from the
-  signed payload, so a second header would travel along unverified. The walk retains no commit body (JGit 7.8.0
-  `RevWalk.setRetainBody(false)`); each commit is read again, bounded by the blob bound of <<blob-bound>>, checked and
-  released, so the memory of the verification does not grow with the history, and a larger commit is `MALFORMED`. A
+  signed payload, so a second header would travel along unverified. The verification walks the history itself,
+  newest commit time first as `RevWalk` does, and reads each commit once: its size is asked first
+  (`ObjectReader.getObjectSize`, the object header only in JGit 7.8.0); a commit within the blob bound of
+  <<blob-bound>> is read bounded, parsed (`RevCommit.parse`), checked, and its body, which that parse keeps in the pool
+  of the walk, is released (`RevCommit.disposeBody`), so the memory of the verification does not grow with the
+  history. A larger commit is never loaded: it is `MALFORMED`, its header is read as a stream for its parents and its
+  commit time only, and the commits behind it are verified as well, so an oversized commit is one finding and never
+  ends the verification. A
   finished verification is logged as `GIT_STORE-6` with the counts only, never the reference, whose name may carry a
   document id.
 * *Limit: validity at the committer time.* Like `git verify-commit`, the verification checks the validity of a key at

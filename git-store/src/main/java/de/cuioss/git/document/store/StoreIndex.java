@@ -313,29 +313,39 @@ public final class StoreIndex<E> implements AutoCloseable {
             for (Ref ref : repository.getRefDatabase().getRefsByPrefix(StoreReferences.HEADS)) {
                 @Nullable Scope scope = scope(ref.getName());
                 @Nullable ObjectId tip = ref.getObjectId();
-                if (scope == null || tip == null) {
-                    continue;
-                }
-                @Nullable Source<E> indexed = before.get(ref.getName());
-                if (indexed != null && indexed.commit().equals(tip)) {
-                    next.put(ref.getName(), indexed);
-                    continue;
-                }
-                try {
-                    next.put(ref.getName(), read(ref.getName(), scope, indexed, tip));
-                } catch (IOException e) {
+                if (scope != null && tip != null && !refreshSource(ref.getName(), scope, tip, before, next)) {
                     unread = true;
-                    LOGGER.warn(GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD, alias, sourceClass(ref.getName()),
-                            e.getClass().getName());
-                    if (indexed != null) {
-                        next.put(ref.getName(), indexed);
-                    }
                 }
             }
             current.set(Map.copyOf(next));
             stale = unread;
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Puts one source into the next index: kept when its tip did not move, else read again; a source that cannot be
+     * read keeps its previous entries, or stays out when it is new, and is logged by its class.
+     *
+     * @return whether the source is current in the next index; {@code false} when it could not be read
+     */
+    private boolean refreshSource(String ref, Scope scope, ObjectId tip, Map<String, Source<E>> before,
+            Map<String, Source<E>> next) {
+        @Nullable Source<E> indexed = before.get(ref);
+        if (indexed != null && indexed.commit().equals(tip)) {
+            next.put(ref, indexed);
+            return true;
+        }
+        try {
+            next.put(ref, read(ref, scope, indexed, tip));
+            return true;
+        } catch (IOException e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD, alias, sourceClass(ref), e.getClass().getName());
+            if (indexed != null) {
+                next.put(ref, indexed);
+            }
+            return false;
         }
     }
 

@@ -124,8 +124,8 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
             RepositoryOperations operations, Clock clock) {
-        return writer(CloneOpening.open(storeRepository, gitDir, user, configuration, collections, signing,
-                operations, clock));
+        return writer(CloneOpening.open(new CloneOpening.Arguments(storeRepository, gitDir, user, configuration,
+                collections, operations, clock), signing));
     }
 
     /**
@@ -150,8 +150,8 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
             RepositoryOperations operations, Clock clock) {
-        return writer(CloneOpening.open(storeRepository, gitDir, user, configuration, collections, providers,
-                operations, clock));
+        return writer(CloneOpening.open(new CloneOpening.Arguments(storeRepository, gitDir, user, configuration,
+                collections, operations, clock), providers));
     }
 
     /** The writer over an opened clone, or the non-success of opening it. */
@@ -274,7 +274,9 @@ public final class StoreWriter implements AutoCloseable {
      *         or with the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} and the detail
      *         {@code <target>: step: <class name of the throwable>} ({@link Class#getName()}) for a step that threw a
      *         {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}, without a further
-     *         attempt; in both cases nothing is pushed, and draft and target branch stay unchanged
+     *         attempt; in both cases nothing is pushed, the draft stays unchanged and so does the target branch on the
+     *         remote, while the fetch that attempt ran before the step may still have moved the local mirror of the
+     *         target in the clone, emitted to the index and the listeners as after any fetch
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,

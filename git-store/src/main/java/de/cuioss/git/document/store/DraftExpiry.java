@@ -138,8 +138,10 @@ final class DraftExpiry {
      */
     StoreResult<List<String>> expire(Instant now) {
         Objects.requireNonNull(now, "now");
-        Instant cutoff = now.atOffset(ZoneOffset.UTC).minus(expiry).toInstant();
-        StoreResult<List<String>> deleted = guard.exclusive(() -> deleteAndCollect(cutoff));
+        // the cutoff is computed inside the action, so a call the guard refuses, from a callback that holds the shared
+        // lock, never reaches the conversion of the time
+        StoreResult<List<String>> deleted = guard
+                .exclusive(() -> deleteAndCollect(now.atOffset(ZoneOffset.UTC).minus(expiry).toInstant()));
         if (deleted.isOk()) {
             List<String> names = Objects.requireNonNull(deleted.value());
             LOGGER.info(GitStoreLogMessages.INFO.DRAFTS_EXPIRED, alias, names.size());

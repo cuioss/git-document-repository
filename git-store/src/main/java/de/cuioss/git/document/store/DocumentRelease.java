@@ -520,7 +520,9 @@ final class DocumentRelease {
 
     /**
      * The mode of the put of a source entry, so the release and the save keep an executable file and a symbolic link
-     * as the source tree holds them; every other blob is a regular file.
+     * as the source tree holds them; every other blob is a regular file. A gitlink is no blob and never reaches this
+     * method: the release refuses one as {@link StoreOutcome#MALFORMED} and the view of a save step reports no mode for
+     * one ({@link SaveStep.Attempt#mode}).
      *
      * @param rawMode the raw mode of the tree entry
      * @return the mode of the put

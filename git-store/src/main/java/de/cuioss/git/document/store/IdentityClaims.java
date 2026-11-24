@@ -49,6 +49,9 @@ public record IdentityClaims(String issuer, Instant authTime, @Nullable String a
     /** The message after the component of a component that violates its form. */
     private static final String INVALID = ": invalid";
 
+    /** The name of the component {@code issuer}, in a null check and a violation. */
+    private static final String ISSUER = "issuer";
+
     /**
      * Checks the components and copies {@code amr} immutably.
      *
@@ -63,7 +66,7 @@ public record IdentityClaims(String issuer, Instant authTime, @Nullable String a
      *                                  value
      */
     public IdentityClaims {
-        Objects.requireNonNull(issuer, "issuer");
+        Objects.requireNonNull(issuer, ISSUER);
         Objects.requireNonNull(authTime, "authTime");
         amr = List.copyOf(Objects.requireNonNull(amr, "amr"));
         @Nullable String violated = violated(issuer, acr, amr);
@@ -88,7 +91,7 @@ public record IdentityClaims(String issuer, Instant authTime, @Nullable String a
      */
     public static StoreResult<IdentityClaims> of(String issuer, Instant authTime, @Nullable String acr,
             List<String> amr) {
-        Objects.requireNonNull(issuer, "issuer");
+        Objects.requireNonNull(issuer, ISSUER);
         Objects.requireNonNull(authTime, "authTime");
         List<String> methods = List.copyOf(Objects.requireNonNull(amr, "amr"));
         @Nullable String violated = violated(issuer, acr, methods);
@@ -101,7 +104,7 @@ public record IdentityClaims(String issuer, Instant authTime, @Nullable String a
     /** The first component that violates its form, or {@code null} when every one fits on a trailer line. */
     private static @Nullable String violated(String issuer, @Nullable String acr, List<String> amr) {
         if (issuer.isBlank() || issuer.chars().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) {
-            return "issuer";
+            return ISSUER;
         }
         if (acr != null && !isToken(acr)) {
             return "acr";

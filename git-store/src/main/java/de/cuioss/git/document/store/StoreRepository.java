@@ -71,15 +71,17 @@ public record StoreRepository(String alias, String remote, String confidentialit
     /**
      * Renders a remote as scheme, host, port and path only.
      * <p>
-     * JGit 7.8.0 {@link URIish} knows no query and no fragment: it keeps both in its path. The path is therefore cut at
-     * its first {@code ?} or {@code #} before it is rendered.
+     * JGit 7.8.0 {@link URIish} knows no query and no fragment: it keeps both in its path, and in its host when no
+     * {@code /} precedes them ({@code https://host?token=secret}). A remote with a scheme is therefore reduced before it
+     * is parsed ({@link #withoutSecrets}); the path of any other remote is cut at its first {@code ?} or {@code #}
+     * before it is rendered. Encoded delimiters ({@code %3F}, {@code %23}) are part of the path and stay.
      *
      * @param remote the remote
      * @return the scheme, host, port and path of the remote, or {@code (malformed)} when it cannot be parsed
      */
     private static String rendered(String remote) {
         try {
-            URIish parsed = new URIish(remote);
+            URIish parsed = new URIish(withoutSecrets(remote));
             // URIish.toString renders the raw path of a URL with a scheme and the decoded path of any other remote
             String path = parsed.getScheme() != null ? parsed.getRawPath() : parsed.getPath();
             return parsed.setUser(null).setPass(null).setPath(withoutQueryAndFragment(path)).toString();
@@ -87,6 +89,29 @@ public record StoreRepository(String alias, String remote, String confidentialit
             // JGit 7.8.0 throws NumberFormatException, not URISyntaxException, for a port beyond int
             return "(malformed)";
         }
+    }
+
+    /**
+     * Reduces a remote with a scheme ({@code <scheme>://}) to scheme, host, port and path before it is parsed: the user
+     * information, everything of the authority up to its last {@code @}, is dropped first, so a {@code ?} or {@code #}
+     * inside a password never decides where the cut falls, then the rest is cut at its first {@code ?} or {@code #}.
+     * The authority ends at the first {@code /} after the scheme. A remote without a scheme is returned unchanged.
+     *
+     * @param remote the remote
+     * @return the remote without user information, query and fragment
+     */
+    private static String withoutSecrets(String remote) {
+        int scheme = remote.indexOf("://");
+        if (scheme <= 0 || !remote.substring(0, scheme).matches("[A-Za-z][A-Za-z0-9+.-]*")) {
+            return remote;
+        }
+        int authority = scheme + 3;
+        int slash = remote.indexOf('/', authority);
+        int authorityEnd = slash < 0 ? remote.length() : slash;
+        int at = remote.lastIndexOf('@', authorityEnd - 1);
+        int hostStart = at >= authority ? at + 1 : authority;
+        String rest = remote.substring(hostStart);
+        return remote.substring(0, authority) + withoutQueryAndFragment(rest);
     }
 
     /**

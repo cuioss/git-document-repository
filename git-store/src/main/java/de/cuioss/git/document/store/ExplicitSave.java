@@ -114,7 +114,8 @@ import org.jspecify.annotations.Nullable;
  * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} or an {@link Error} other than a
  * {@link VirtualMachineError} it throws (the observer rule of {@link StoreEvents}) with the passed-on
  * {@link GitOutcome#FAILED} naming the class of the throwable by {@link Class#getName()} only, without a further
- * attempt. In both cases nothing is written or pushed, and draft and target branch stay as they are. A draft without
+ * attempt. In both cases nothing is written or pushed, and the draft and the remote target branch stay as they are;
+ * the fetch of the attempt may have moved the local mirror of the target. A draft without
  * changes calls no step. The step's edits are written into the one signed, trailer-carrying save commit; there is no
  * second commit path. The step runs under the locks of the save: one that calls back into the writer gets
  * {@link StoreOutcome#REFUSED} for a draft expiry ({@link RepositoryGuard#exclusive}) instead of a deadlock.
@@ -187,8 +188,10 @@ final class ExplicitSave {
     }
 
     /**
-     * Reads a blob of at most {@link #BLOB_LIMIT} bytes; the size is read from the object header before its content is
-     * inflated (JGit 7.8.0 {@code ObjectLoader.getSize}).
+     * Reads a blob of at most {@link #BLOB_LIMIT} bytes. The size is asked first with
+     * {@link ObjectReader#getObjectSize}, which reads the object header only (JGit 7.8.0), and a larger blob is refused
+     * before {@link ObjectReader#open} could load its content: opening a loose object below the stream threshold of
+     * JGit inflates it whole. The bounded {@link ObjectLoader#getBytes(int)} stays as the second check.
      *
      * @param reader the reader of the repository
      * @param blob   the id of the blob
@@ -197,10 +200,10 @@ final class ExplicitSave {
      * @throws IOException           if the blob cannot be read
      */
     static byte[] readBlob(ObjectReader reader, AnyObjectId blob) throws IOException {
-        ObjectLoader loader = reader.open(blob, Constants.OBJ_BLOB);
-        if (loader.getSize() > BLOB_LIMIT) {
+        if (reader.getObjectSize(blob, Constants.OBJ_BLOB) > BLOB_LIMIT) {
             throw new BlobTooLargeException();
         }
+        ObjectLoader loader = reader.open(blob, Constants.OBJ_BLOB);
         try {
             return loader.getBytes(BLOB_LIMIT);
         } catch (LargeObjectException e) {
@@ -939,7 +942,9 @@ final class ExplicitSave {
                 return Optional.empty();
             }
             try (TreeWalk found = TreeWalk.forPath(repository, path, base.getTree())) {
-                if (found == null || FileMode.TREE.equals(found.getRawMode(0))) {
+                if (found == null || FileMode.TREE.equals(found.getRawMode(0))
+                        || FileMode.GITLINK.equals(found.getRawMode(0))) {
+                    // a gitlink names a commit of another repository, no file of this tree: it has no file mode
                     return Optional.empty();
                 }
                 return Optional.of(DocumentRelease.mode(found.getRawMode(0)));
