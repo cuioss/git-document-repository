@@ -28,6 +28,7 @@ import java.util.TreeSet;
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.TreeEdit;
+import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.git.document.store.Author;
 import de.cuioss.git.document.store.DocumentCollection;
 import de.cuioss.git.document.store.DocumentKey;
@@ -39,7 +40,6 @@ import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.git.document.store.StoreWriter;
-import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Repository;
 import org.jspecify.annotations.Nullable;
