@@ -16,6 +16,7 @@
 package de.cuioss.git.document.timestamp;
 
 import java.net.http.HttpClient;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Map;
@@ -62,8 +63,8 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
     /** The detail of a token whose imprint differs from the request. */
     static final String IMPRINT_DIFFERS = "rfc3161: the token's imprint differs from the request";
 
-    /** The detail of a token that cannot be verified by this instance. */
-    static final String UNVERIFIABLE = "rfc3161: token verification is not available";
+    /** The detail of a stored token whose imprint is not that of the subject. */
+    static final String IMPRINT_MISMATCH = "rfc3161: the token's imprint is not that of the subject";
 
     private static final CuiLogger LOGGER = new CuiLogger(Rfc3161AnchorProvider.class);
 
@@ -201,13 +202,21 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
     }
 
     /**
-     * Verifies a stored token of the subject.
+     * Verifies a stored token of the subject against {@code timestamp.trust} (GDR-TSA-2).
+     * <p>
+     * The token must be signed by a timestamping certificate with a valid path to {@code timestamp.trust} at the time
+     * it states; the rules are those of {@link TimeStampTokens}. Its imprint must then be SHA-256 over the object id as
+     * lowercase ASCII hex. {@value #PROVIDER_ID} forms no chain, so the previous proof is ignored and
+     * {@link StoreOutcome#CHAIN_BROKEN} is never returned.
      *
      * @param subject  the object id of the subject
-     * @param proof    the stored token
-     * @param previous the previous proof, not used: {@value #PROVIDER_ID} forms no chain
-     * @return {@link StoreOutcome#SIGNATURE_INVALID} with {@value #UNCONFIGURED} for an unconfigured instance, or
-     *         with {@value #UNVERIFIABLE}
+     * @param proof    the stored token, the DER encoding of the {@code TimeStampToken}
+     * @param previous the previous proof, not used
+     * @return {@link StoreOutcome#OK} with the time the token states; {@link StoreOutcome#IMPRINT_MISMATCH} with
+     *         {@value #IMPRINT_MISMATCH} for a valid token about another object or of another hash algorithm;
+     *         {@link StoreOutcome#SIGNATURE_INVALID} for a token that cannot be read, a signature that does not verify,
+     *         a signer certificate that is not a timestamping certificate or has no valid path to
+     *         {@code timestamp.trust}, or with {@value #UNCONFIGURED} for an unconfigured instance
      * @throws NullPointerException if an argument is {@code null}
      */
     @Override
@@ -215,10 +224,25 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
         Objects.requireNonNull(subject, "subject");
         Objects.requireNonNull(proof, "proof");
         Objects.requireNonNull(previous, "previous");
-        if (configuration == null) {
+        TimestampConfiguration section = configuration;
+        if (section == null) {
             return StoreResult.of(StoreOutcome.SIGNATURE_INVALID, UNCONFIGURED);
         }
-        return StoreResult.of(StoreOutcome.SIGNATURE_INVALID, UNVERIFIABLE);
+        StoreResult<TimeStampRequests.TstInfo> verified = TimeStampTokens.verify(proof, section.trust());
+        TimeStampRequests.TstInfo info = verified.value();
+        if (!verified.isOk() || info == null) {
+            return rejected(subject, StoreOutcome.SIGNATURE_INVALID, Objects.requireNonNull(verified.detail()));
+        }
+        if (!TimeStampRequests.SHA_256.equals(info.hashAlgorithm())
+                || !MessageDigest.isEqual(TimeStampRequests.imprint(subject), info.hashedMessage())) {
+            return rejected(subject, StoreOutcome.IMPRINT_MISMATCH, IMPRINT_MISMATCH);
+        }
+        return StoreResult.ok(info.genTime());
+    }
+
+    private static StoreResult<Instant> rejected(ObjectId subject, StoreOutcome outcome, String detail) {
+        LOGGER.warn(GitTimestampLogMessages.WARN.PROOF_REJECTED, subject.name(), outcome, detail);
+        return StoreResult.of(outcome, detail);
     }
 
     /**
