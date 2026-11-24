@@ -35,6 +35,36 @@ from the collection's counter file for numbered kinds, never duplicated under co
    implemented").
    - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
+5. `git-forms` leftovers of PLAN-23's landing (`landings/PLAN-23.md` L3-1 to L3-6, L2-1 to L2-4; folded in on 2026-11-24 under the
+   epic's routing rule, because PLAN-14 is the next staged plan that edits `git-forms/`), each first re-read at the plan's head,
+   behaviour fixes reproduced by a test that fails at the base (lines are those of `bdbb5e4`): (a) **`DataNode.asObject` and
+   `asArray` (307, 325) build a pointer string per child by copying the parent pointer**, so a document of at most 3 Mi code points
+   with a chain of long keys at depth and one wide mapping at the bottom, validated under a map-of-maps schema
+   (`additionalProperties` recursing through `$ref: "#"`), costs gigabytes of strings and ends in an `OutOfMemoryError`: build the
+   pointer lazily or share the prefix, or bound the product of key length and depth, and record the bound in `git-forms.adoc`;
+   the size is not shown by reading, so the test measures a scaled-down case; (b) `SchemaChecks.holdsRequired` (186) recurses once
+   per link of a `properties` or `items` to `$ref` chain, which the in-place bound (`InPlaceCycles` 60) does not cover: a
+   `StackOverflowError` from `FormSchema.parse` for a schema of about 60,000 flat `$defs`: make it iterative or bound the chain and
+   return `MALFORMED`, and record the limit; (c) the stack depth is data depth times the in-place chain per level
+   (`MandatoryFields` 65 and the library's `RefEvaluator`): bound the product or record the limit in `git-forms.adoc`, tested
+   with a long in-place chain at the data depth limit; (d) the reader counts the digits of a hexadecimal integer in the source
+   radix (`YamlReader` 395) and the encoder counts the decimal digits (`YamlDocumentCodec` 161), so `decode` accepts
+   `0x` plus 831 to 1000 hexadecimal digits and `encode(decode(content))` throws: count in one radix on both sides, tested as a round
+   trip at the bound, with a sign, with a long mantissa and a tiny exponent, and with a `multipleOf` of a large exponent;
+   (e) `DataNode.requireDataModel` (126) walks a shared-subtree value as a tree (`x = List.of(x, x)` built 128 times is 2^128
+   visits, a hang): visit each shared node once, or refuse sharing as a result, and decide whether a hostile in-memory value ends in a
+   result and not in an `IllegalArgumentException` (the spec of PLAN-12 never said), recording it in `git-forms.adoc`; (f)
+   `KindConfiguration` (248) keys the collection namespace on the registry alias only, so two aliases for one physical repository
+   pass the duplicate check: read whether `RepositoryRegistry` refuses duplicate targets and compare physical repositories, tested;
+   (g) tests and wording: `NestingDepthTest` (148, 159) asserts `IllegalArgumentException` for the in-memory 100,000 cases, has no
+   test of a self-containing `Map` or `List`, never combines depth with a chain, uses nested arrays instead of real sub-schemas
+   through `withoutRequired`, `Shape` and `checkSubSchemas`, and tests flow-style nesting only; `NumberBoundsTest` (107) never
+   encodes the accepted 1000-digit hexadecimal; `KindConfigurationTest` (536) has no test of two aliases for one repository;
+   `git-forms.adoc` (242) does not record that the non-in-place `properties`/`items` to `$ref` chain is unbounded for
+   `holdsRequired` and says "one marker remains" where `NestingDepthTest` (143) added a second `cui-rewrite:disable`; the
+   preparation counter of `SchemaValidatorPreparationTest` (67) is a static `AtomicInteger`.
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -71,6 +101,8 @@ from the collection's counter file for numbered kinds, never duplicated under co
 
 - `verify` passes at the plan's head with GDR-FORMS-6/8/9 each covered by a test naming the requirement id; every
   GDR-FORMS requirement is then covered.
+- Every behaviour fix of deliverable 5 has a test that fails at `bdbb5e4` (`main` after PLAN-23, where the defects are present) and
+  passes at the plan's head; an item whose premise the re-read at outline refutes is dropped from the deliverable.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
   open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
 
@@ -92,7 +124,8 @@ from the collection's counter file for numbered kinds, never duplicated under co
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-13; PLAN-09 (index).
+- Depends on: PLAN-13; PLAN-09 (index). Deliverable 5 (PLAN-23's leftovers, folded in on 2026-11-24 at the operator's routing rule) adds
+  no file surface: every file it names lies under `git-forms/` and `doc/specification/git-forms.adoc`, both declared.
 - Overlaps with: WS-03 plans — strictly sequential.
 - Adjacent to: catalog resolution — the interface is defined here, its implementation is `git-directory` (PLAN-15).
 
