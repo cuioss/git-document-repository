@@ -70,7 +70,8 @@ import org.jspecify.annotations.Nullable;
  * and the outcome only, a failed push as {@code GIT_STORE-112} by the part that pushed and every other failure as
  * {@code GIT_STORE-111}, and is retried by the next due check; it never reaches the caller of a save, a release or a
  * fetch, which hand the due check to an executor. A provider that returns an empty proof is refused like one that
- * returns none. The reference updates of the fetch of a due check are handed to the events of the clone
+ * returns none, and so is one whose proof is larger than {@link #PROOF_LIMIT}, before it is kept or published, since
+ * its note would exceed the read bound of every note. The reference updates of the fetch of a due check are handed to the events of the clone
  * ({@link StoreEvents}) once every lock was released, as those of every other fetch, also when the due check ended
  * early or by an exception.
  */
@@ -83,6 +84,19 @@ final class AnchorEngine {
 
     /** The detail, after the notes reference, of a kept proof whose push failed again. */
     private static final String KEPT_NOT_PUSHED = ": a kept proof was not pushed";
+
+    /** The prefix of a detail of the anchoring that names the class of an exception. */
+    private static final String DETAIL = "anchor: ";
+
+    /**
+     * The largest proof the store keeps and publishes: the note holds its base64 form, four bytes for every three, and
+     * every read of a note is bounded by {@link ExplicitSave#BLOB_LIMIT}, so a larger proof would make the notes
+     * reference unreadable to every due check and every verification.
+     */
+    static final int PROOF_LIMIT = ExplicitSave.BLOB_LIMIT / 4 * 3;
+
+    /** The detail of a proof larger than {@link #PROOF_LIMIT}. */
+    static final String PROOF_TOO_LARGE = "anchor: provider returned a proof larger than a note can hold";
 
     private final ExplicitSave.Clone clone;
     private final @Nullable AnchorProvider provider;
@@ -151,13 +165,14 @@ final class AnchorEngine {
 
     /**
      * Runs one due check. The closed flag of the clone is read under the anchoring lock, which
-     * {@link StoreClone#close()} takes to set it, so a due check after the close does nothing and the repository is
-     * never released while one runs. The reference updates the fetch collected are emitted in every case, also when the
-     * due check ended early or by an exception.
+     * {@link StoreClone#close()} takes to set it, before anything else, also without a provider, so a due check after
+     * the close does nothing and the repository is never released while one runs. The reference updates the fetch
+     * collected are emitted in every case, also when the due check ended early or by an exception.
      *
      * @param closed the closed flag of the clone
-     * @return {@link StoreOutcome#OK} with the subjects anchored and those left pending; {@link StoreOutcome#REFUSED}
-     *         with {@value #CLOSED} for a closed clone; or the non-success that ended the due check before any subject
+     * @return {@link StoreOutcome#OK} with the subjects anchored and those left pending, both empty without a provider;
+     *         {@link StoreOutcome#REFUSED} with {@value #CLOSED} for a closed clone, with or without a provider; or the
+     *         non-success that ended the due check before any subject
      *         was asked for, for example the passed-on outcome of the fetch or {@link StoreOutcome#INCOMPLETE} naming
      *         the class of an unchecked failure; a failure of the provider or a push is reported through the pending
      *         subjects, not as a non-success
@@ -166,14 +181,18 @@ final class AnchorEngine {
         Objects.requireNonNull(closed, "closed");
         AnchorProvider active = provider;
         AnchorNotes proofs = notes;
-        if (active == null || proofs == null) {
-            return StoreResult.ok(new StoreWriter.Anchoring(List.of(), List.of()));
-        }
         RepositoryGuard guard = clone.guard();
         List<StoreEvents.Update> updates = new ArrayList<>();
         try {
-            return guard.anchoring(() -> closed.getAsBoolean() ? StoreResult.of(StoreOutcome.REFUSED, CLOSED)
-                    : run(active, proofs, guard, updates));
+            return guard.anchoring(() -> {
+                if (closed.getAsBoolean()) {
+                    return StoreResult.of(StoreOutcome.REFUSED, CLOSED);
+                }
+                if (active == null || proofs == null) {
+                    return StoreResult.ok(new StoreWriter.Anchoring(List.of(), List.of()));
+                }
+                return run(active, proofs, guard, updates);
+            });
         } finally {
             // the updates the fetch collected reach the index and the listeners however the due check ended
             events.emit(updates);
@@ -251,6 +270,10 @@ final class AnchorEngine {
                 // an empty proof proves nothing and would read as the start of a chain to the next proof
                 return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider returned no proof");
             }
+            if (obtained.isOk() && proof != null && proof.length > PROOF_LIMIT) {
+                // a note above the read bound of every note would block the anchoring and its verification for good
+                return StoreResult.of(StoreOutcome.REFUSED, PROOF_TOO_LARGE);
+            }
             return obtained;
         }
         // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15); the
@@ -279,7 +302,7 @@ final class AnchorEngine {
         catch (RuntimeException e) {
             String type = e.getClass().getName();
             LOGGER.debug("Unchecked failure of the due check: %s", type);
-            return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: " + type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 
@@ -324,7 +347,7 @@ final class AnchorEngine {
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the due check: %s", type);
-            return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: " + type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 
@@ -400,7 +423,7 @@ final class AnchorEngine {
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the publication of a proof: %s", type);
-            return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: " + type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 

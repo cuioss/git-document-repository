@@ -54,9 +54,10 @@ may carry a document id, a principal, a key or a commit message.
 the subject, the time of the statement (UTC, ISO 8601 with seconds), its sequence number and the SHA-256 of the proof
 in lowercase hex, nothing else; never the key reference, key material or the detail of the anchor key source. The
 record lets the operator's log pipeline keep a copy of the chain outside Git. It records the signing, not the
-publication: it is logged when the proof is made, before its note is written. A proof whose note is not published,
-because the notes tip moved or the push failed, is dropped, and a later due check signs a new one, so one subject may
-have several of these records; the proof that counts is the one whose SHA-256 matches the published note, and its
+publication: it is logged when the proof is made, before its note is written. A proof whose push failed while the
+notes tip stayed the same is kept under its local-only reference and published by a later due check without the
+provider signing it again; only a proof whose notes tip moved is dropped, and a later due check signs a new one, so
+one subject may have several of these records; the proof that counts is the one whose SHA-256 matches the published note, and its
 publication is `GIT_STORE-9`.
 |GIT_STORE-8 |GIT_STORE |Created a checkpoint of repository %s: number %s at commit %s
 |Logged when a due check wrote a checkpoint commit

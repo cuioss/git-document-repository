@@ -457,38 +457,51 @@ public final class AnchorVerification {
     /**
      * Reports every reference a checkpoint lists that no longer reaches, or for a tag points at, the listed id, and a
      * line of the file {@value Checkpoints#REFS_FILE} that is not of the form {@code <object id> SP <reference name>}
-     * as {@link Kind#CHECKPOINT_UNREADABLE}. The reachability of a listed (reference, object id) pair is decided once
-     * per verification, since the references do not change meanwhile, however many checkpoints list it unchanged.
+     * as {@link Kind#CHECKPOINT_UNREADABLE}. The reachability of a listed object id from a reference is decided once
+     * per verification for each tip the reference is observed at, keyed by the listed id, the reference name and that
+     * tip, so a reference that moves during the run is decided again at its new tip, and one that stays unchanged is
+     * decided once however many checkpoints list it.
      */
     private static void listedReferences(Repository repository, RevWalk walk, RevCommit checkpoint,
             Map<String, Boolean> reached, List<Finding> findings) throws IOException {
         String content = new String(Checkpoints.content(repository, checkpoint), UTF_8);
         boolean unreadable = false;
         for (String line : content.split("\n")) {
-            if (line.isEmpty()) {
-                continue;
-            }
-            int space = line.indexOf(' ');
-            if (space < 0 || !ObjectId.isId(line.substring(0, space)) || space == line.length() - 1) {
+            if (!line.isEmpty() && !listedReference(repository, walk, checkpoint, line, reached, findings)) {
                 unreadable = true;
-                continue;
-            }
-            ObjectId listed = ObjectId.fromString(line.substring(0, space));
-            String name = line.substring(space + 1);
-            Ref ref = repository.exactRef(name);
-            @Nullable ObjectId now = ref == null ? null : ref.getObjectId();
-            if (name.startsWith(StoreReferences.TAGS)) {
-                if (!listed.equals(now)) {
-                    findings.add(new Finding(Kind.TAG_RETARGETED, checkpoint.name(), name, null));
-                }
-            } else if (now == null || !reached.computeIfAbsent(listed.name() + ' ' + name,
-                    pair -> reachesQuietly(walk, now, listed))) {
-                findings.add(new Finding(Kind.REFERENCE_UNREACHABLE, checkpoint.name(), name, null));
             }
         }
         if (unreadable) {
             findings.add(new Finding(Kind.CHECKPOINT_UNREADABLE, checkpoint.name(), Checkpoints.REFS_FILE, null));
         }
+    }
+
+    /**
+     * Checks one line of the file {@value Checkpoints#REFS_FILE} of a checkpoint: a listed tag that points elsewhere now
+     * is {@link Kind#TAG_RETARGETED}, a listed branch or note that is gone or no longer reaches the listed id is
+     * {@link Kind#REFERENCE_UNREACHABLE}.
+     *
+     * @return whether the line is of the form {@code <object id> SP <reference name>}
+     */
+    private static boolean listedReference(Repository repository, RevWalk walk, RevCommit checkpoint, String line,
+            Map<String, Boolean> reached, List<Finding> findings) throws IOException {
+        int space = line.indexOf(' ');
+        if (space < 0 || !ObjectId.isId(line.substring(0, space)) || space == line.length() - 1) {
+            return false;
+        }
+        ObjectId listed = ObjectId.fromString(line.substring(0, space));
+        String name = line.substring(space + 1);
+        Ref ref = repository.exactRef(name);
+        @Nullable ObjectId now = ref == null ? null : ref.getObjectId();
+        if (name.startsWith(StoreReferences.TAGS)) {
+            if (!listed.equals(now)) {
+                findings.add(new Finding(Kind.TAG_RETARGETED, checkpoint.name(), name, null));
+            }
+        } else if (now == null || !reached.computeIfAbsent(listed.name() + ' ' + name + ' ' + now.name(),
+                pair -> reachesQuietly(walk, now, listed))) {
+            findings.add(new Finding(Kind.REFERENCE_UNREACHABLE, checkpoint.name(), name, null));
+        }
+        return true;
     }
 
     /** {@link #reaches} for the cache of the listed pairs; an I/O failure propagates unchecked. */

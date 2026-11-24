@@ -51,10 +51,11 @@ import org.jspecify.annotations.Nullable;
  * names the key reference, key material or the detail of the key source (GDR-NFR-3).
  * <p>
  * {@code GIT_STORE-7} records the signing, not the publication: it is written when the proof is made, before the store
- * writes its note. A proof whose note is not published, because its notes tip moved or its push failed, is dropped by
- * the store, which asks for a new proof in a later due check; so one subject may have several {@code GIT_STORE-7}
- * records, and only the proof whose SHA-256 the published note holds counts. The publication itself is
- * {@code GIT_STORE-9}.
+ * writes its note. A proof whose push failed while its notes tip stayed the same is kept by the store under its
+ * local-only reference, and a later due check publishes that same proof without asking the provider again; only a
+ * proof whose notes tip moved, so the chain of the proofs changed under it, is dropped, and the store asks for a new
+ * proof in a later due check. So one subject may have several {@code GIT_STORE-7} records, and only the proof whose
+ * SHA-256 the published note holds counts. The publication itself is {@code GIT_STORE-9}.
  * <p>
  * {@code obtain} reads the statement of the previous proof for its sequence number, its time and its SHA-256, but does
  * not verify its signature: the anchor key may have been rotated since, and the instance that signs need not hold the

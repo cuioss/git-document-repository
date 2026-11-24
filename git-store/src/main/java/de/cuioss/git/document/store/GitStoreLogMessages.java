@@ -103,8 +103,10 @@ public final class GitStoreLogMessages {
         /**
          * The anchor provider {@code signed} signed a proof (GDR-STORE-18): the repository alias, the object id of the
          * subject, the time of the statement, its sequence number and the SHA-256 of the proof, nothing else. It records
-         * the signing, before the note is written: a proof whose note is not published is dropped and a later due check
-         * signs a new one, so a subject may have several of these records; its publication is {@code GIT_STORE-9}.
+         * the signing, before the note is written: a proof whose push failed while its notes tip stayed the same is kept
+         * and published by a later due check without the provider signing it again, while a proof whose notes tip moved is dropped and a
+         * later due check signs a new one, so a subject may have several of these records; its publication is
+         * {@code GIT_STORE-9}.
          */
         public static final LogRecord PROOF_SIGNED = LogRecordModel.builder()
                 .template("Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s")

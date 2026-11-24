@@ -1103,17 +1103,19 @@ source: equal public keys stop the start as `MALFORMED` with `anchor.signed.key 
 whatever key source or spelling of the key reference names them. This comparison is authoritative; the configuration
 check of the two references (<<store-configuration>>) is an early string check that refuses only identical
 references. The log record lets the operator's log
-pipeline keep a copy outside Git. It records the signing, not the publication: a proof whose note is not published,
-because the notes tip moved or its push failed, is dropped and a later due check signs a new one, so one subject may
-have several `GIT_STORE-7` records; the proof that counts is the one whose SHA-256 the published note matches, and its
-publication is `GIT_STORE-9`. `anchor.signed.max-clock-skew`, like every configured duration, is at most 100 years
+pipeline keep a copy outside Git. It records the signing, not the publication: a proof whose push failed while the
+notes tip stayed the same is kept under its local-only reference, the notes reference is set back, and a later due
+check publishes the same proof without the provider signing it again; only a proof whose notes tip moved is dropped, and a later due
+check signs a new one. So one subject may have several `GIT_STORE-7` records; the proof that counts is the one whose
+SHA-256 the published note matches, and its publication is `GIT_STORE-9`. `anchor.signed.max-clock-skew`, like every configured duration, is at most 100 years
 (36 525 days); a longer one is `MALFORMED`, so no time plus a configured duration overflows.
 
 Limit: `obtain` reads the statement of the previous proof for its sequence number, time and SHA-256 but does not
 verify its signature, because the anchor key may have been rotated and the signing instance need not hold the anchor
 allowed signers. A previous proof forged in the notes reference is chained to; the chain check of the verification,
 which CI runs over every proof in order, reports it. A provider that returns an empty proof is refused by the store
-like one that returns none.
+like one that returns none, and so is a proof larger than three quarters of the blob read bound of 16 MiB, whose
+base64 note no read of a note could hold, before it is kept or published.
 
 A single proof can be checked with a stock OpenSSH installation:
 `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
@@ -1140,14 +1142,16 @@ changed (JGit 7.8.0).
   lock (`RepositoryGuard`) it fetches with prune, pushes what an earlier due check kept, makes a due checkpoint and
   derives the pending subjects; it then asks the provider without holding a lock of the clone; and it writes and pushes
   each proof under those locks again. A save, a release and a fetch take no anchoring lock, so the order of the locks
-  has no cycle. A failure of the provider (also an exception it throws, or an empty proof) or of a push leaves the
+  has no cycle. A failure of the provider (also an exception it throws, an empty proof, or a proof larger than
+  `AnchorEngine.PROOF_LIMIT`, three quarters of the blob read bound, refused before it is kept) or of a push leaves the
   subject pending, ends the due check, and is logged once with the alias and the outcome only: a failed push as
   `GIT_STORE-112` by the part that pushed, every other failure as `GIT_STORE-111`. An unchecked failure of the first
   phase, for example of JGit, ends the due check as `INCOMPLETE` naming the class of the exception, and the reference
   updates its fetch collected are emitted in every case, also when the due check ended early. The due check reads the
   closed flag of the clone under the anchoring lock, which `StoreWriter.close()` takes to set it and to release the
   repository: a due check handed to the caller's executor and run after the close does nothing (`anchor()` then
-  returns `REFUSED` with `anchor: the writer is closed`), and one running when the writer closes ends first.
+  returns `REFUSED` with `anchor: the writer is closed`, also for a writer without an active provider, whose open
+  writer gets an empty `OK`), and one running when the writer closes ends first.
 * *Structure.* `StoreWriter` delegates to the package-private `StoreClone` (the opened clone, its events, the listener
   subscription, the closed flag and `close()`), which holds `CloneWrites` (drafts, listing, save, release, expiry) and
   `CloneSchedules` (fetch, periodic fetch, anchoring and the coalescing due-check trigger); `CloneOpening` checks the
@@ -1167,7 +1171,9 @@ changed (JGit 7.8.0).
   it. Before its note is written a proof is kept under the local-only reference
   `refs/anchoring/<provider>/proofs/<commit id>`, a blob outside `refs/heads/`, `refs/tags/` and `refs/notes/`, so it is
   never pushed, never fetched and never pruned; a proof whose push failed stays kept, the local notes reference is set
-  back to its fetched id, and the next due check pushes the kept proof instead of requesting a new one. `previous` is
+  back to its fetched id, and the next due check pushes the kept proof instead of requesting a new one, as long as the
+  notes tip is still the one the proof extends; a kept proof whose notes tip moved is dropped and a new one is
+  requested. `previous` is
   the proof whose note the newest notes commit added, or within a due check the proof obtained just before; the commit
   time of the subject is passed to `obtain`. Checkpoint commits, their tags and the notes commits are written and pushed
   in one transport section, so no pruning fetch of a concurrent save deletes a local checkpoint tag or overwrites a local
