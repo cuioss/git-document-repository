@@ -338,9 +338,9 @@ like any other (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). Every `REJECTED` of 
 the remote that `git-core` does not recognise as a lost race, such as a protected branch, a refusing hook or a push
 that is no fast-forward, and a remote that words a lost race in yet another way is among them: it ends the save at once as the
 passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. This is an accepted,
-documented limit: a native Git server older than the two wordings `git-core` recognises that reports a lost race as
-`failed to update ref` (a wording reported in review, not checked against a Git release here) makes such a save
-`REJECTED`, and it is not retried; the draft remains and the caller saves
+documented limit: a remote that words a lost race in a way `git-core` does not recognise makes such a save
+`REJECTED`, and it is not retried, for example one that reports `failed to update ref` (a wording reported in review,
+not checked against any Git release); the draft remains and the caller saves
 again (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). An unreachable remote
 and invalid credentials end the save at once as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing
 changed.
