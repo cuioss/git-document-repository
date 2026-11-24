@@ -254,12 +254,12 @@ public final class DocumentTransitions {
         SaveStep.Attempt view = clone.savedCommit(commitId);
         var check = step(call, Map.of());
         SaveStep.Outcome outcome;
-        List<TreeEdit> stale = new ArrayList<>();
+        List<TreeEdit> stale = List.of();
         try {
             // the tip and the produced tree are both the saved commit, so the merge takes its file whatever the base
             outcome = check.check(view);
             if (outcome instanceof SaveStep.Edits(List<TreeEdit> edits)) {
-                stale.addAll(stale(view, edits));
+                stale = stale(view, edits);
             }
         } catch (ReadFailure e) {
             return readFailed(e);
