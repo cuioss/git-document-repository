@@ -37,7 +37,9 @@ time the token states.
 repository alias, the object id and the fixed detail of the outcome `UNAVAILABLE`. The subject stays pending.
 |GIT_TIMESTAMP-101 |GIT_TIMESTAMP |Timestamp authority refused for repository %s, object %s: %s
 |Logged when the timestamp authority refused or answered with an error (a status other than granted, another HTTP
-status than 200, another media type, an unreadable reply, a nonce or imprint other than requested): the repository
+status than 200, another media type, an unreadable reply, a nonce or imprint other than requested, a token that does
+not verify against `timestamp.trust`), or when a request with `timestamp.credentials` was not sent because the system
+property `jdk.httpclient.HttpClient.log` makes the HTTP client log request headers: the repository
 alias, the object id and the fixed detail of the outcome `REFUSED`. The subject stays pending.
 |GIT_TIMESTAMP-102 |GIT_TIMESTAMP |Rejected the timestamp proof of object %s: %s, %s
 |Logged when the provider `rfc3161` rejected a stored timestamp token on verification

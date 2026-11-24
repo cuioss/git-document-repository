@@ -171,15 +171,20 @@ class Rfc3161VerifyTest {
         assertRejected(StoreOutcome.SIGNATURE_INVALID, TimeStampTokens.SIGNATURE_MISMATCH, result);
     }
 
+    private static byte[] tstInfo(ObjectId subject) {
+        return Der.sequence(Der.integer(1), Der.oid(TestTimestampAuthority.POLICY),
+                TimeStampRequests.messageImprint(TimeStampRequests.imprint(subject)), Der.integer(1),
+                Der.generalizedTime(Instant.now()));
+    }
+
     @Test
     @DisplayName("GDR-TSA-2: a token signed by a certificate outside timestamp.trust is SIGNATURE_INVALID")
     void shouldRejectUntrustedSigner() throws Exception {
-        var provider = provider();
         var subject = subject();
-        authority.answer(TestTimestampAuthority.Answer.UNTRUSTED_SIGNER);
-        byte[] token = obtain(provider, subject);
+        var untrusted = TestCertificates.signer(TestCertificates.ca("untrusted ca"), "untrusted tsa", true);
+        byte[] token = TestTimestampAuthority.token(untrusted, tstInfo(subject), true);
 
-        var result = provider.verify(subject, token, new byte[0]);
+        var result = provider().verify(subject, token, new byte[0]);
 
         assertRejected(StoreOutcome.SIGNATURE_INVALID, TimeStampTokens.UNTRUSTED, result);
     }
@@ -187,23 +192,109 @@ class Rfc3161VerifyTest {
     @Test
     @DisplayName("GDR-TSA-2: a signer certificate without id-kp-timeStamping is SIGNATURE_INVALID (RFC 3161, 2.3)")
     void shouldRejectSignerWithoutTimeStamping() throws Exception {
-        var provider = provider();
         var subject = subject();
-        authority.answer(TestTimestampAuthority.Answer.SIGNER_WITHOUT_TIME_STAMPING);
-        byte[] token = obtain(provider, subject);
+        var withoutPurpose = TestCertificates.signer(ca, "tsa without time stamping", false);
+        byte[] token = TestTimestampAuthority.token(withoutPurpose, tstInfo(subject), true);
 
-        var result = provider.verify(subject, token, new byte[0]);
+        var result = provider().verify(subject, token, new byte[0]);
 
         assertRejected(StoreOutcome.SIGNATURE_INVALID, TimeStampTokens.NOT_TIMESTAMPING, result);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: a signer whose key usage is keyEncipherment only is SIGNATURE_INVALID (RFC 5280, 4.2.1.12)")
+    void shouldRejectInconsistentKeyUsage() throws Exception {
+        var subject = subject();
+        var encipherer = TestCertificates.signer(ca, "tsa enciphering", true, TestCertificates.KEY_ENCIPHERMENT_ONLY);
+        byte[] token = TestTimestampAuthority.token(encipherer, tstInfo(subject), true);
+
+        var throughPath = provider().verify(subject, token, new byte[0]);
+        var trustedDirectly = provider(encipherer.certificate()).verify(subject, token, new byte[0]);
+
+        assertAll(
+                () -> assertEquals(StoreOutcome.SIGNATURE_INVALID, throughPath.outcome(), "path branch"),
+                () -> assertEquals(TimeStampTokens.NOT_TIMESTAMPING, throughPath.detail(), "detail of the path branch"),
+                () -> assertEquals(StoreOutcome.SIGNATURE_INVALID, trustedDirectly.outcome(), "direct trust"),
+                () -> assertEquals(TimeStampTokens.NOT_TIMESTAMPING, trustedDirectly.detail(),
+                        "detail of the direct trust"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: the path is built to the exact signer past an intermediate of the same subject name")
+    void shouldBuildPathPastSameNameIntermediate() throws Exception {
+        var subject = subject();
+        var decoy = TestCertificates.intermediate(ca, "intermediate");
+        var issuing = TestCertificates.intermediate(ca, "intermediate");
+        var below = TestCertificates.signer(issuing, "tsa below intermediate", true);
+        byte[] token = TestTimestampAuthority.token(below, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificateV2(below)),
+                List.of(TestTimestampAuthority.certificatesField(decoy, issuing, below)));
+
+        var result = provider().verify(subject, token, new byte[0]);
+
+        assertTrue(result.isOk(), () -> "verified: " + result.detail());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: two certificates fields or crls before certificates are an unreadable token")
+    void shouldRefuseMisplacedSignedDataFields() throws Exception {
+        var subject = subject();
+        byte[] certificates = TestTimestampAuthority.certificatesField(signer);
+        byte[] crls = Der.tlv(Der.contextConstructed(1), new byte[0]);
+        List<byte[]> ess = List.of(TestTimestampAuthority.signingCertificateV2(signer));
+        byte[] twice = TestTimestampAuthority.token(signer, tstInfo(subject), ess, List.of(certificates, certificates));
+        byte[] outOfOrder = TestTimestampAuthority.token(signer, tstInfo(subject), ess, List.of(crls, certificates));
+        byte[] inOrder = TestTimestampAuthority.token(signer, tstInfo(subject), ess, List.of(certificates, crls));
+        var provider = provider();
+
+        var twiceResult = provider.verify(subject, twice, new byte[0]);
+        var outOfOrderResult = provider.verify(subject, outOfOrder, new byte[0]);
+        var inOrderResult = provider.verify(subject, inOrder, new byte[0]);
+
+        assertAll(
+                () -> assertEquals(TimeStampTokens.UNREADABLE, twiceResult.detail(), "two certificates fields"),
+                () -> assertEquals(TimeStampTokens.UNREADABLE, outOfOrderResult.detail(), "crls before certificates"),
+                () -> assertTrue(inOrderResult.isOk(), () -> "certificates then crls: " + inOrderResult.detail()));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: signingCertificate and signingCertificateV2 together are evaluated independently")
+    void shouldEvaluateBothSigningCertificateAttributes() throws Exception {
+        var subject = subject();
+        var other = TestCertificates.signer(ca, "another tsa", true);
+        List<byte[]> middle = List.of(TestTimestampAuthority.certificatesField(signer));
+        byte[] both = TestTimestampAuthority.token(signer, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificate(signer),
+                        TestTimestampAuthority.signingCertificateV2(signer)), middle);
+        byte[] v1Only = TestTimestampAuthority.token(signer, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificate(signer)), middle);
+        byte[] disagreeing = TestTimestampAuthority.token(signer, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificate(signer),
+                        TestTimestampAuthority.signingCertificateV2(other)), middle);
+        byte[] twoV2 = TestTimestampAuthority.token(signer, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificateV2(signer),
+                        TestTimestampAuthority.signingCertificateV2(signer)), middle);
+        var provider = provider();
+
+        var bothResult = provider.verify(subject, both, new byte[0]);
+        var v1Result = provider.verify(subject, v1Only, new byte[0]);
+        var disagreeingResult = provider.verify(subject, disagreeing, new byte[0]);
+        var twoV2Result = provider.verify(subject, twoV2, new byte[0]);
+
+        assertAll(
+                () -> assertTrue(bothResult.isOk(), () -> "both: " + bothResult.detail()),
+                () -> assertTrue(v1Result.isOk(), () -> "signingCertificate only: " + v1Result.detail()),
+                () -> assertEquals(TimeStampTokens.SIGNER_UNKNOWN, disagreeingResult.detail(),
+                        "the two attributes name different certificates"),
+                () -> assertEquals(TimeStampTokens.ATTRIBUTES_MISMATCH, twoV2Result.detail(),
+                        "signingCertificateV2 twice"));
     }
 
     @Test
     @DisplayName("GDR-TSA-2: a token without its signer certificate verifies when timestamp.trust holds the signer")
     void shouldFindSignerInTrust() throws Exception {
         var subject = subject();
-        byte[] tstInfo = Der.sequence(Der.integer(1), Der.oid(TestTimestampAuthority.POLICY),
-                TimeStampRequests.messageImprint(TimeStampRequests.imprint(subject)), Der.integer(1),
-                Der.generalizedTime(Instant.now()));
+        byte[] tstInfo = tstInfo(subject);
         byte[] token = authority.token(tstInfo, false);
 
         var trustingCa = provider().verify(subject, token, new byte[0]);

@@ -97,6 +97,21 @@ final class TestCertificates {
     }
 
     /**
+     * Issues an intermediate CA certificate under a CA.
+     *
+     * @param issuer the issuing CA
+     * @param name   the common name; two intermediates may share it
+     * @return the intermediate CA
+     */
+    static Issued intermediate(Issued issuer, String name) {
+        KeyPair keys = keyPair();
+        byte[] extensions = Der.sequence(
+                extension(BASIC_CONSTRAINTS, true, Der.sequence(Der.bool(true))),
+                extension(KEY_USAGE, true, Der.tlv(Der.BIT_STRING, new byte[]{1, 0x06})));
+        return new Issued(keys, sign(name(issuer), name(name), keys, issuer.keys(), extensions));
+    }
+
+    /**
      * Issues a timestamp signer certificate.
      *
      * @param issuer        the issuing CA
@@ -105,10 +120,26 @@ final class TestCertificates {
      * @return the signer
      */
     static Issued signer(Issued issuer, String name, boolean timeStamping) {
+        // digitalSignature (bit 0) and nonRepudiation (bit 1): one octet 1100 0000, six unused bits
+        return signer(issuer, name, timeStamping, new byte[]{6, (byte) 0xC0});
+    }
+
+    /** The key usage {@code keyEncipherment} alone (bit 2): one octet 0010 0000, five unused bits. */
+    static final byte[] KEY_ENCIPHERMENT_ONLY = {5, 0x20};
+
+    /**
+     * Issues a timestamp signer certificate with a given key usage.
+     *
+     * @param issuer       the issuing CA
+     * @param name         the common name
+     * @param timeStamping whether the certificate carries the critical extended key usage {@code id-kp-timeStamping}
+     * @param keyUsage     the content of the key usage BIT STRING: the number of unused bits, then the bits
+     * @return the signer
+     */
+    static Issued signer(Issued issuer, String name, boolean timeStamping, byte[] keyUsage) {
         KeyPair keys = keyPair();
         List<byte[]> extensions = new ArrayList<>();
-        // digitalSignature (bit 0) and nonRepudiation (bit 1): one octet 1100 0000, six unused bits
-        extensions.add(extension(KEY_USAGE, true, Der.tlv(Der.BIT_STRING, new byte[]{6, (byte) 0xC0})));
+        extensions.add(extension(KEY_USAGE, true, Der.tlv(Der.BIT_STRING, keyUsage)));
         if (timeStamping) {
             extensions.add(extension(EXTENDED_KEY_USAGE, true, Der.sequence(Der.oid(ID_KP_TIME_STAMPING))));
         }

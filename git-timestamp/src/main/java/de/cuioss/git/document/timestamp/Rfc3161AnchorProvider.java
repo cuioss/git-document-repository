@@ -63,6 +63,9 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
     /** The detail of a token whose imprint differs from the request. */
     static final String IMPRINT_DIFFERS = "rfc3161: the token's imprint differs from the request";
 
+    /** The detail of an obtained token that does not verify against {@code timestamp.trust}. */
+    static final String TOKEN_INVALID = "rfc3161: the authority's token does not verify against timestamp.trust";
+
     /** The detail of a stored token whose imprint is not that of the subject. */
     static final String IMPRINT_MISMATCH = "rfc3161: the token's imprint is not that of the subject";
 
@@ -150,7 +153,9 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
      * @return {@link StoreOutcome#OK} with the DER encoding of the {@code TimeStampToken};
      *         {@link StoreOutcome#UNAVAILABLE} when the authority cannot be reached; {@link StoreOutcome#REFUSED} for
      *         an error response, another HTTP status than 200, another media type, a reply that cannot be read, a
-     *         token whose nonce or imprint differs from the request, or an unconfigured instance
+     *         token whose nonce or imprint differs from the request, a token that does not verify against
+     *         {@code timestamp.trust} by the rules of {@link #verify} (with {@value #TOKEN_INVALID}), or an
+     *         unconfigured instance
      * @throws NullPointerException if an argument is {@code null}
      */
     @Override
@@ -160,7 +165,8 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
         Objects.requireNonNull(commitTime, "commitTime");
         Objects.requireNonNull(previous, "previous");
         TimestampTransport sender = transport;
-        if (configuration == null || sender == null) {
+        TimestampConfiguration section = configuration;
+        if (section == null || sender == null) {
             return StoreResult.of(StoreOutcome.REFUSED, UNCONFIGURED);
         }
         var request = TimeStampRequests.request(subject, random);
@@ -186,6 +192,11 @@ public final class Rfc3161AnchorProvider implements AnchorProvider {
         }
         if (!request.imprintMatches(info)) {
             return refusal(repository, subject, StoreResult.of(StoreOutcome.REFUSED, IMPRINT_DIFFERS));
+        }
+        // the anchoring engine of git-store publishes an OK proof without verifying it, and never asks again for a
+        // subject that has a proof; a token that would not verify is refused here so the subject stays pending
+        if (!TimeStampTokens.verify(tokenBytes, section.trust()).isOk()) {
+            return refusal(repository, subject, StoreResult.of(StoreOutcome.REFUSED, TOKEN_INVALID));
         }
         LOGGER.info(GitTimestampLogMessages.INFO.TOKEN_OBTAINED, repository, subject.name(), info.genTime());
         return StoreResult.ok(tokenBytes);

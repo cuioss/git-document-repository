@@ -96,7 +96,7 @@ class DerTest {
         byte[] encoded = Der.sequence(Der.integer(1), Der.explicit(0, Der.octetString(new byte[]{9})),
                 Der.generalizedTime(time), Der.bitString(new byte[]{1, 2}));
 
-        var children = Der.parse(encoded).children(Der.SEQUENCE);
+        var children = Der.parse(encoded).children(Der.TAG_SEQUENCE);
 
         assertAll(
                 () -> assertEquals(4, children.size(), "children"),
@@ -126,6 +126,14 @@ class DerTest {
         assertEquals(Instant.parse("2026-11-24T08:46:33.250Z"), Der.parse(encoded).generalizedTime(), "time");
     }
 
+    @Test
+    @DisplayName("Should read a fraction of more than nine digits, truncated to nanoseconds")
+    void shouldReadLongFraction() throws Exception {
+        byte[] encoded = Der.tlv(Der.GENERALIZED_TIME, "20261124084633.1234567891Z".getBytes(US_ASCII));
+
+        assertEquals(Instant.parse("2026-11-24T08:46:33.123456789Z"), Der.parse(encoded).generalizedTime(), "time");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "",               // nothing
@@ -140,11 +148,26 @@ class DerTest {
             "02010100",       // octets after the element
             "020100ff"        // octets after the element
     })
-    @DisplayName("Should refuse a malformed structure with DerException")
+    @DisplayName("Should refuse a malformed top-level framing in parse alone")
     void shouldRefuseMalformedStructure(String hex) {
         byte[] input = HEX.parseHex(hex.replace(" ", ""));
 
-        assertThrows(Der.DerException.class, () -> Der.parse(input).children());
+        assertThrows(Der.DerException.class, () -> Der.parse(input));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "30020281",       // child length out of bounds
+            "30020201",       // child content beyond the parent
+            "30031f0100",     // child with a multi-octet tag
+            "3004 0280 0000", // child of indefinite length
+            "3004 02810100"   // child with a long form for a short length
+    })
+    @DisplayName("Should accept the framing of a parent but refuse its malformed children")
+    void shouldRefuseMalformedChildren(String hex) throws Exception {
+        var parent = Der.parse(HEX.parseHex(hex.replace(" ", "")));
+
+        assertThrows(Der.DerException.class, parent::children);
     }
 
     @ParameterizedTest
@@ -163,7 +186,8 @@ class DerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"20261124084633", "20261124084633+0100", "20261324084633Z", "2026112408463aZ",
-            "20261124084633.Z", "20261124084633.50Z", "20261124084633,5Z"})
+            "20261124084633.Z", "20261124084633.50Z", "20261124084633,5Z", "20261124084633.5aZ",
+            "20261124084633.12345678910Z"})
     @DisplayName("Should refuse a GeneralizedTime that is not DER in UTC")
     void shouldRefuseMalformedTime(String text) {
         byte[] encoded = Der.tlv(Der.GENERALIZED_TIME, text.getBytes(US_ASCII));

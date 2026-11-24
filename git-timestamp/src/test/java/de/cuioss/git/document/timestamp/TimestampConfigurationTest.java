@@ -151,12 +151,12 @@ class TimestampConfigurationTest {
         withoutTrust.put("url", URL);
 
         assertAll(
-                () -> assertMalformed(TimestampConfiguration.from(Map.of()), TimestampConfiguration.URL),
+                () -> assertMalformed(TimestampConfiguration.from(Map.of()), TimestampConfiguration.KEY_URL),
                 () -> assertMalformed(TimestampConfiguration.from(Map.of("timestamp", "text")), "timestamp"),
                 () -> assertMalformed(TimestampConfiguration.from(configuration(withoutUrl)),
-                        TimestampConfiguration.URL),
+                        TimestampConfiguration.KEY_URL),
                 () -> assertMalformed(TimestampConfiguration.from(configuration(withoutTrust)),
-                        TimestampConfiguration.TRUST));
+                        TimestampConfiguration.KEY_TRUST));
     }
 
     @ParameterizedTest
@@ -167,7 +167,35 @@ class TimestampConfigurationTest {
         var trust = file("ca.pem", caPem);
 
         assertMalformed(TimestampConfiguration.from(configuration(section(url, List.of(trust.toString())))),
-                TimestampConfiguration.URL);
+                TimestampConfiguration.KEY_URL);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the port 65535 is accepted, the port 65536 is MALFORMED naming timestamp.url")
+    void shouldBoundPort() throws Exception {
+        var trust = file("ca.pem", caPem);
+
+        var highest = TimestampConfiguration.from(configuration(section("https://127.0.0.1:65535/tsa",
+                List.of(trust.toString()))));
+        var beyond = TimestampConfiguration.from(configuration(section("https://127.0.0.1:65536/tsa",
+                List.of(trust.toString()))));
+        var omitted = TimestampConfiguration.from(configuration(section(URL, List.of(trust.toString()))));
+
+        assertAll(
+                () -> assertTrue(highest.isOk(), () -> "65535: " + highest.detail()),
+                () -> assertTrue(omitted.isOk(), () -> "no port: " + omitted.detail()),
+                () -> assertMalformed(beyond, TimestampConfiguration.KEY_URL));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a binary DER certificate file is no PEM file and is MALFORMED naming the entry")
+    void shouldRefuseBinaryDer() throws Exception {
+        var der = Files.write(directory.resolve("ca.der"), TestCertificates.ca("binary").certificate().getEncoded());
+
+        var result = TimestampConfiguration.from(configuration(section(URL, List.of(der.toString()))));
+
+        assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", result.detail(), "detail");
+        assertEquals(StoreOutcome.MALFORMED, result.outcome(), "outcome");
     }
 
     @Test
@@ -179,7 +207,7 @@ class TimestampConfigurationTest {
         var result = TimestampConfiguration.from(configuration(section("https://user:" + password
                 + "@tsa.example.org/tsa", List.of(trust.toString()))));
 
-        assertMalformed(result, TimestampConfiguration.URL);
+        assertMalformed(result, TimestampConfiguration.KEY_URL);
         assertFalse(String.valueOf(result.detail()).contains(password), "detail without the password");
     }
 
@@ -189,7 +217,7 @@ class TimestampConfigurationTest {
         var trust = file("ca.pem", caPem);
 
         assertMalformed(TimestampConfiguration.from(configuration(section(42, List.of(trust.toString())))),
-                TimestampConfiguration.URL);
+                TimestampConfiguration.KEY_URL);
     }
 
     @Test
@@ -197,9 +225,9 @@ class TimestampConfigurationTest {
     void shouldRefuseEmptyTrust() {
         assertAll(
                 () -> assertMalformed(TimestampConfiguration.from(configuration(section(URL, List.of()))),
-                        TimestampConfiguration.TRUST),
+                        TimestampConfiguration.KEY_TRUST),
                 () -> assertMalformed(TimestampConfiguration.from(configuration(section(URL, "ca.pem"))),
-                        TimestampConfiguration.TRUST));
+                        TimestampConfiguration.KEY_TRUST));
     }
 
     @Test
@@ -208,7 +236,7 @@ class TimestampConfigurationTest {
         var missing = directory.resolve("missing.pem");
 
         assertMalformed(TimestampConfiguration.from(configuration(section(URL, List.of(missing.toString())))),
-                TimestampConfiguration.TRUST);
+                TimestampConfiguration.KEY_TRUST);
     }
 
     @Test
@@ -218,7 +246,7 @@ class TimestampConfigurationTest {
         var link = Files.createSymbolicLink(directory.resolve("link.pem"), target);
 
         assertMalformed(TimestampConfiguration.from(configuration(section(URL, List.of(link.toString())))),
-                TimestampConfiguration.TRUST);
+                TimestampConfiguration.KEY_TRUST);
     }
 
     @Test
@@ -228,7 +256,7 @@ class TimestampConfigurationTest {
         var oversized = file("large.pem", caPem + padding);
 
         assertMalformed(TimestampConfiguration.from(configuration(section(URL, List.of(oversized.toString())))),
-                TimestampConfiguration.TRUST);
+                TimestampConfiguration.KEY_TRUST);
     }
 
     @Test
@@ -241,10 +269,10 @@ class TimestampConfigurationTest {
 
         var result = TimestampConfiguration.from(configuration(section(URL, List.of(unparsable.toString()))));
 
-        assertMalformed(result, TimestampConfiguration.TRUST);
+        assertMalformed(result, TimestampConfiguration.KEY_TRUST);
         assertFalse(String.valueOf(result.detail()).contains(content.strip()), "detail without the content");
         assertMalformed(TimestampConfiguration.from(configuration(section(URL, List.of(empty.toString())))),
-                TimestampConfiguration.TRUST);
+                TimestampConfiguration.KEY_TRUST);
     }
 
     @Test
@@ -254,8 +282,8 @@ class TimestampConfigurationTest {
 
         var result = TimestampConfiguration.from(configuration(section(URL, List.of(trust.toString(), ""))));
 
-        assertMalformed(result, TimestampConfiguration.TRUST);
-        assertEquals(TimestampConfiguration.TRUST + "[1] is malformed", result.detail(), "detail");
+        assertMalformed(result, TimestampConfiguration.KEY_TRUST);
+        assertEquals(TimestampConfiguration.KEY_TRUST + "[1] is malformed", result.detail(), "detail");
     }
 
     @ParameterizedTest
@@ -268,7 +296,7 @@ class TimestampConfigurationTest {
 
         var result = TimestampConfiguration.from(configuration(section));
 
-        assertEquals(TimestampConfiguration.CREDENTIALS + " is malformed", result.detail(), "detail");
+        assertEquals(TimestampConfiguration.KEY_CREDENTIALS + " is malformed", result.detail(), "detail");
         assertEquals(StoreOutcome.MALFORMED, result.outcome(), "outcome");
     }
 
@@ -279,7 +307,7 @@ class TimestampConfigurationTest {
         var section = section(URL, List.of(trust.toString()));
         section.put("credentials", List.of("token"));
 
-        assertMalformed(TimestampConfiguration.from(configuration(section)), TimestampConfiguration.CREDENTIALS);
+        assertMalformed(TimestampConfiguration.from(configuration(section)), TimestampConfiguration.KEY_CREDENTIALS);
     }
 
     @Test

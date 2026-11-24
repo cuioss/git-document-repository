@@ -114,9 +114,12 @@ to consumer-isolation.", naming `org.openjdk.jol:jol-core:jar:0.17 <--- banned v
 
 The checks accept three trade-offs:
 
-* The four domain terms are copied into the `DomainTermAbsenceTest` of each module. Reason: each test checks the main
-  output of its own module, and the only test code the modules share is `git-testing`, a published library whose
-  public types are fixtures, not checks of this repository; a change of the terms has to be made in all five tests.
+* Each module has its own `DomainTermAbsenceTest`, and the four domain terms are kept in two ways: the tests of
+  `git-core`, `git-testing` and `git-store` carry a copy of the terms, while the tests of `git-forms` and
+  `git-timestamp` read them from this section at run time. Reason: each test checks the main output of its own module,
+  and the only test code the modules share is `git-testing`, a published library whose public types are fixtures, not
+  checks of this repository. A change of the terms is made in this section, which the tests of `git-forms` and
+  `git-timestamp` follow, and in the copies of the tests of `git-core`, `git-testing` and `git-store`.
 * The `<include>` edges of `module-layering` mirror the graph of
   xref:../concepts/module-structure.adoc[Module Structure] by hand. Reason: no build step reads the graph from the
   document, which would need a plugin or a parser this repository does not have; a change of the graph has to be made

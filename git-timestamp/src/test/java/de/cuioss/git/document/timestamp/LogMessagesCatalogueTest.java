@@ -18,6 +18,7 @@ package de.cuioss.git.document.timestamp;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 
 import de.cuioss.tools.logging.LogRecord;
@@ -45,6 +47,9 @@ class LogMessagesCatalogueTest {
     /** The catalogue, relative to the module directory Surefire runs the tests in. */
     private static final Path CATALOGUE = Path.of("doc", "LogMessages.adoc");
 
+    /** The start of a table row whose first cell is a log identifier of any component. */
+    private static final Pattern IDENTIFIER_ROW = Pattern.compile("\\|[A-Z][A-Z0-9_]*-\\d+ ");
+
     /** The identifier of every declared message, mapped to its template. */
     private static Map<String, String> declared() throws IllegalAccessException {
         Map<String, String> declared = new TreeMap<>();
@@ -52,7 +57,9 @@ class LogMessagesCatalogueTest {
             for (Field field : level.getDeclaredFields()) {
                 if (Modifier.isStatic(field.getModifiers()) && LogRecord.class.isAssignableFrom(field.getType())) {
                     var logRecord = (LogRecord) field.get(null);
-                    declared.put(logRecord.resolveIdentifierString(), logRecord.getTemplate());
+                    String identifier = logRecord.resolveIdentifierString();
+                    assertNull(declared.put(identifier, logRecord.getTemplate()),
+                            () -> "the holder declares " + identifier + " twice");
                 }
             }
         }
@@ -60,17 +67,27 @@ class LogMessagesCatalogueTest {
     }
 
     /**
-     * The identifier of every row of the catalogue, mapped to its template: a row starts with
-     * {@code |GIT_TIMESTAMP-<identifier> |GIT_TIMESTAMP |<template>}, the cells separated by {@code " |"}.
+     * The identifier of every row of the log tables of the catalogue, mapped to its template. A row is any line of a
+     * table ({@code |===} to {@code |===}) after its header row whose first cell is an identifier, a word of capitals,
+     * digits and underscores, a hyphen and a number; whatever its prefix, so a row of a foreign component is seen and
+     * refused. A row is {@code |<identifier> |<component> |<template>}, the cells separated by {@code " |"}.
      */
     private static Map<String, String> documented(Map<String, String> components) throws IOException {
         Map<String, String> documented = new TreeMap<>();
+        boolean inTable = false;
         for (String line : Files.readAllLines(CATALOGUE)) {
-            if (line.startsWith("|" + GitTimestampLogMessages.PREFIX + "-")) {
-                String[] cells = line.substring(1).split(" \\|");
-                documented.put(cells[0].trim(), cells.length > 2 ? cells[2].trim() : "");
-                components.put(cells[0].trim(), cells.length > 1 ? cells[1].trim() : "");
+            if ("|===".equals(line.strip())) {
+                inTable = !inTable;
+                continue;
             }
+            if (!inTable || !IDENTIFIER_ROW.matcher(line).lookingAt()) {
+                continue;
+            }
+            String[] cells = line.substring(1).split(" \\|");
+            String identifier = cells[0].trim();
+            assertNull(documented.put(identifier, cells.length > 2 ? cells[2].trim() : ""),
+                    () -> "the catalogue lists " + identifier + " twice");
+            components.put(identifier, cells.length > 1 ? cells[1].trim() : "");
         }
         return documented;
     }
@@ -87,6 +104,10 @@ class LogMessagesCatalogueTest {
         assertAll(
                 () -> assertFalse(declared.isEmpty(), "messages are declared"),
                 () -> assertEquals(declared, documented, "identifiers and templates of the catalogue"),
+                () -> assertTrue(documented.keySet().stream()
+                                .allMatch(identifier -> identifier.startsWith(GitTimestampLogMessages.PREFIX + "-")),
+                        () -> "every row carries the prefix " + GitTimestampLogMessages.PREFIX + ": "
+                                + documented.keySet()),
                 () -> assertTrue(components.values().stream().allMatch(GitTimestampLogMessages.PREFIX::equals),
                         () -> "every row names the component " + GitTimestampLogMessages.PREFIX + ": " + components));
     }

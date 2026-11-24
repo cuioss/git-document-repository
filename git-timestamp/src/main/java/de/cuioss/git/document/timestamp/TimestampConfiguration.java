@@ -22,6 +22,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
@@ -49,11 +50,11 @@ import org.jspecify.annotations.Nullable;
  * The typed section {@code timestamp} of the configuration, read from the same already-parsed nested map an
  * application hands to {@code StoreConfiguration.from} of {@code git-store}.
  * <ul>
- * <li>{@value #URL} is required: an absolute {@code https} URL with a host and without user information.</li>
- * <li>{@value #TRUST} is required: a non-empty list of paths to PEM files, each holding one or more X.509
+ * <li>{@value #KEY_URL} is required: an absolute {@code https} URL with a host and without user information.</li>
+ * <li>{@value #KEY_TRUST} is required: a non-empty list of paths to PEM files, each holding one or more X.509
  * certificates. A file is read without following a symbolic link, and at most {@value #MAX_TRUST_FILE_BYTES} octets
  * and one more are read from it.</li>
- * <li>{@value #CREDENTIALS} is optional: a single bearer token, sent as {@code Authorization: Bearer <token>}. It
+ * <li>{@value #KEY_CREDENTIALS} is optional: a single bearer token, sent as {@code Authorization: Bearer <token>}. It
  * must be a {@code token68} of <a href="https://www.rfc-editor.org/rfc/rfc6750#section-2.1">RFC 6750, 2.1</a>, so it
  * can never break the header.</li>
  * </ul>
@@ -67,19 +68,25 @@ final class TimestampConfiguration {
     static final String SECTION = "timestamp";
 
     /** The key of the URL of the timestamp authority. */
-    static final String URL = "timestamp.url";
+    static final String KEY_URL = "timestamp.url";
 
     /** The key of the trusted certificates. */
-    static final String TRUST = "timestamp.trust";
+    static final String KEY_TRUST = "timestamp.trust";
 
     /** The key of the bearer token. */
-    static final String CREDENTIALS = "timestamp.credentials";
+    static final String KEY_CREDENTIALS = "timestamp.credentials";
 
-    /** The largest size of a certificate file of {@value #TRUST}: 1 MiB. */
+    /** The largest size of a certificate file of {@value #KEY_TRUST}: 1 MiB. */
     static final int MAX_TRUST_FILE_BYTES = 1 << 20;
 
     /** The {@code b64token} of RFC 6750, 2.1. */
     private static final Pattern TOKEN68 = Pattern.compile("[A-Za-z0-9\\-._~+/]+=*");
+
+    /** The largest TCP port. */
+    private static final int MAX_PORT = 0xFFFF;
+
+    /** The encapsulation boundary of a PEM certificate (RFC 7468, 2 and 5.1). */
+    private static final String PEM_CERTIFICATE = "-----BEGIN CERTIFICATE-----";
 
     private static final String IS_MISSING = " is missing";
     private static final String IS_MALFORMED = " is malformed";
@@ -105,7 +112,7 @@ final class TimestampConfiguration {
     static StoreResult<TimestampConfiguration> from(Map<String, ?> configuration) {
         Objects.requireNonNull(configuration, "configuration");
         if (!configuration.containsKey(SECTION)) {
-            return missing(URL);
+            return missing(KEY_URL);
         }
         if (!(configuration.get(SECTION) instanceof Map<?, ?> section)) {
             return StoreResult.of(StoreOutcome.MALFORMED, SECTION + IS_MALFORMED);
@@ -127,35 +134,36 @@ final class TimestampConfiguration {
     }
 
     private static StoreResult<URI> url(Map<?, ?> section) {
-        String key = leaf(URL);
+        String key = leaf(KEY_URL);
         if (!section.containsKey(key)) {
-            return missing(URL);
+            return missing(KEY_URL);
         }
         if (!(section.get(key) instanceof String text) || text.isBlank()) {
-            return malformed(URL);
+            return malformed(KEY_URL);
         }
         URI uri;
         try {
             uri = new URI(text.strip());
         } catch (URISyntaxException e) {
-            return malformed(URL);
+            return malformed(KEY_URL);
         }
         boolean https = uri.getScheme() != null && "https".equals(uri.getScheme().toLowerCase(Locale.ROOT));
         boolean userInformation = uri.getRawUserInfo() != null
                 || uri.getRawAuthority() != null && uri.getRawAuthority().contains("@");
-        if (!https || uri.getHost() == null || userInformation || uri.isOpaque()) {
-            return malformed(URL);
+        // a port above 65535 parses as a URI but is refused by HttpClient at the first request
+        if (!https || uri.getHost() == null || userInformation || uri.isOpaque() || uri.getPort() > MAX_PORT) {
+            return malformed(KEY_URL);
         }
         return StoreResult.ok(uri);
     }
 
     private static StoreResult<List<X509Certificate>> trust(Map<?, ?> section) {
-        String key = leaf(TRUST);
+        String key = leaf(KEY_TRUST);
         if (!section.containsKey(key)) {
-            return missing(TRUST);
+            return missing(KEY_TRUST);
         }
         if (!(section.get(key) instanceof List<?> paths) || paths.isEmpty()) {
-            return malformed(TRUST);
+            return malformed(KEY_TRUST);
         }
         CertificateFactory factory;
         try {
@@ -169,7 +177,7 @@ final class TimestampConfiguration {
         for (int index = 0; index < paths.size(); index++) {
             var read = certificates(paths.get(index), factory);
             if (read.isEmpty()) {
-                return malformed(TRUST + "[" + index + "]");
+                return malformed(KEY_TRUST + "[" + index + "]");
             }
             certificates.addAll(read.get());
         }
@@ -177,7 +185,7 @@ final class TimestampConfiguration {
     }
 
     /**
-     * Reads the certificates of one entry of {@value #TRUST}.
+     * Reads the certificates of one entry of {@value #KEY_TRUST}.
      *
      * @param entry   the entry, a path
      * @param factory the factory of X.509 certificates
@@ -204,6 +212,10 @@ final class TimestampConfiguration {
         if (content.length == 0 || content.length > MAX_TRUST_FILE_BYTES) {
             return Optional.empty();
         }
+        // the contract is PEM: CertificateFactory also reads binary DER and PKCS #7, which are refused here
+        if (!new String(content, StandardCharsets.US_ASCII).contains(PEM_CERTIFICATE)) {
+            return Optional.empty();
+        }
         List<X509Certificate> certificates = new ArrayList<>();
         try {
             for (Certificate certificate : factory.generateCertificates(new ByteArrayInputStream(content))) {
@@ -219,12 +231,12 @@ final class TimestampConfiguration {
     }
 
     private static StoreResult<String> credentials(Map<?, ?> section) {
-        String key = leaf(CREDENTIALS);
+        String key = leaf(KEY_CREDENTIALS);
         if (!section.containsKey(key)) {
             return new StoreResult<>(StoreOutcome.OK, null, null);
         }
         if (!(section.get(key) instanceof String token) || !TOKEN68.matcher(token).matches()) {
-            return malformed(CREDENTIALS);
+            return malformed(KEY_CREDENTIALS);
         }
         return StoreResult.ok(token);
     }
@@ -255,7 +267,7 @@ final class TimestampConfiguration {
     }
 
     /**
-     * Returns the trusted certificates of {@value #TRUST}, in the order of the files and within a file.
+     * Returns the trusted certificates of {@value #KEY_TRUST}, in the order of the files and within a file.
      *
      * @return the certificates, never empty
      */
@@ -264,7 +276,7 @@ final class TimestampConfiguration {
     }
 
     /**
-     * Returns the bearer token of {@value #CREDENTIALS}, for the transport only.
+     * Returns the bearer token of {@value #KEY_CREDENTIALS}, for the transport only.
      *
      * @return the token, or {@code null} when none is configured
      */

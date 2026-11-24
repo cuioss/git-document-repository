@@ -46,24 +46,24 @@ final class Der {
 
     /** The tag of BOOLEAN. */
     static final int BOOLEAN = 0x01;
-    /** The tag of INTEGER. */
-    static final int INTEGER = 0x02;
+    /** The tag of INTEGER, named apart from the encoder {@link #integer(long)}. */
+    static final int TAG_INTEGER = 0x02;
     /** The tag of BIT STRING. */
     static final int BIT_STRING = 0x03;
     /** The tag of OCTET STRING. */
     static final int OCTET_STRING = 0x04;
     /** The tag of NULL. */
     static final int NULL = 0x05;
-    /** The tag of OBJECT IDENTIFIER. */
-    static final int OID = 0x06;
+    /** The tag of OBJECT IDENTIFIER, named apart from the encoder {@link #oid(String)}. */
+    static final int TAG_OID = 0x06;
     /** The tag of UTF8String. */
     static final int UTF8_STRING = 0x0C;
     /** The tag of UTCTime. */
     static final int UTC_TIME = 0x17;
     /** The tag of GeneralizedTime. */
     static final int GENERALIZED_TIME = 0x18;
-    /** The tag of SEQUENCE and SEQUENCE OF, constructed. */
-    static final int SEQUENCE = 0x30;
+    /** The tag of SEQUENCE and SEQUENCE OF, constructed, named apart from the encoder {@link #sequence(byte[]...)}. */
+    static final int TAG_SEQUENCE = 0x30;
     /** The tag of SET and SET OF, constructed. */
     static final int SET = 0x31;
 
@@ -75,8 +75,11 @@ final class Der {
     private static final int HIGH_TAG = 0x1F;
     /** The largest number of length octets accepted in the long form. */
     private static final int MAX_LENGTH_OCTETS = 4;
-    /** The largest number of digits of a fraction of seconds in a GeneralizedTime. */
-    private static final int MAX_FRACTION_DIGITS = 9;
+    /**
+     * The number of digits of a fraction of seconds that {@link Instant} holds; a longer fraction is valid DER (RFC 3161,
+     * 2.4.2 sets no limit) and is truncated to nanoseconds.
+     */
+    private static final int NANO_DIGITS = 9;
     /** The largest value of an arc of an object identifier this reader accepts, so the arithmetic cannot overflow. */
     private static final long MAX_ARC = Long.MAX_VALUE >> 7;
 
@@ -164,7 +167,7 @@ final class Der {
      * @return the encoding
      */
     static byte[] sequence(byte[]... elements) {
-        return tlv(SEQUENCE, concat(elements));
+        return tlv(TAG_SEQUENCE, concat(elements));
     }
 
     /**
@@ -198,7 +201,7 @@ final class Der {
      * @return the encoding, minimal in two's complement
      */
     static byte[] integer(BigInteger value) {
-        return tlv(INTEGER, value.toByteArray());
+        return tlv(TAG_INTEGER, value.toByteArray());
     }
 
     /**
@@ -317,7 +320,7 @@ final class Der {
             }
             writeArc(out, arc);
         }
-        return tlv(OID, out.toByteArray());
+        return tlv(TAG_OID, out.toByteArray());
     }
 
     private static void writeArc(ByteArrayOutputStream out, long arc) {
@@ -358,30 +361,45 @@ final class Der {
         if (position >= limit) {
             throw new DerException("length expected");
         }
-        int first = data[position++] & 0xFF;
-        long length;
-        if (first < 0x80) {
-            length = first;
-        } else {
-            int octets = first & 0x7F;
-            if (octets == 0) {
-                throw new DerException("indefinite length");
-            }
-            if (octets > MAX_LENGTH_OCTETS || position + octets > limit) {
-                throw new DerException("length out of bounds");
-            }
-            length = 0;
-            for (int index = 0; index < octets; index++) {
-                length = (length << 8) | (data[position++] & 0xFF);
-            }
-            if (length < 0x80 || length >> ((octets - 1) * 8) == 0) {
-                throw new DerException("length not minimal");
-            }
-        }
-        if (length > limit - position) {
+        long length = length(data, position, limit);
+        int first = data[position] & 0xFF;
+        int contentStart = position + 1 + (first < 0x80 ? 0 : first & 0x7F);
+        if (length > limit - contentStart) {
             throw new DerException("content out of bounds");
         }
-        return new Element(tag, data, offset, position, position + (int) length);
+        return new Element(tag, data, offset, contentStart, contentStart + (int) length);
+    }
+
+    /**
+     * Reads the length octets that start at a position: the short form, or the long form of at most
+     * {@value #MAX_LENGTH_OCTETS} octets in its minimal encoding (X.690, 8.1.3 and 10.1).
+     *
+     * @param data     the encoding
+     * @param position the position of the first length octet, below {@code limit}
+     * @param limit    the end of the enclosing element
+     * @return the length of the content
+     * @throws DerException if the length is indefinite, out of bounds or not minimal
+     */
+    private static long length(byte[] data, int position, int limit) throws DerException {
+        int first = data[position] & 0xFF;
+        if (first < 0x80) {
+            return first;
+        }
+        int octets = first & 0x7F;
+        if (octets == 0) {
+            throw new DerException("indefinite length");
+        }
+        if (octets > MAX_LENGTH_OCTETS || position + 1 + octets > limit) {
+            throw new DerException("length out of bounds");
+        }
+        long length = 0;
+        for (int index = 1; index <= octets; index++) {
+            length = (length << 8) | (data[position + index] & 0xFF);
+        }
+        if (length < 0x80 || length >> ((octets - 1) * 8) == 0) {
+            throw new DerException("length not minimal");
+        }
+        return length;
     }
 
     /**
@@ -496,7 +514,7 @@ final class Der {
          * @throws DerException if the element is no INTEGER or is not minimal
          */
         BigInteger integer() throws DerException {
-            expect(INTEGER);
+            expect(TAG_INTEGER);
             int length = end - contentStart;
             if (length == 0) {
                 throw new DerException("empty integer");
@@ -554,13 +572,31 @@ final class Der {
         }
 
         /**
+         * Checks a BIT STRING of DER that may end in unused bits, such as a named bit list: the initial octet names 0
+         * to 7 unused bits, none when the string is empty, and the unused bits are zero (X.690, 8.6.2 and 11.2).
+         *
+         * @throws DerException if the element is no such BIT STRING
+         */
+        void checkBitString() throws DerException {
+            expect(BIT_STRING);
+            if (end == contentStart) {
+                throw new DerException("bit string without its initial octet");
+            }
+            int unused = data[contentStart] & 0xFF;
+            boolean empty = end - contentStart == 1;
+            if (unused > 7 || empty && unused != 0 || !empty && (data[end - 1] & ((1 << unused) - 1)) != 0) {
+                throw new DerException("bit string not canonical");
+            }
+        }
+
+        /**
          * Reads an OBJECT IDENTIFIER into its dotted form.
          *
          * @return the dotted form
          * @throws DerException if the element is no well-formed object identifier
          */
         String oid() throws DerException {
-            expect(OID);
+            expect(TAG_OID);
             if (end == contentStart) {
                 throw new DerException("empty object identifier");
             }
@@ -596,7 +632,8 @@ final class Der {
         }
 
         /**
-         * Reads a GeneralizedTime of DER, {@code YYYYMMDDHHMMSS[.f+]Z} in UTC (X.690, 11.7).
+         * Reads a GeneralizedTime of DER, {@code YYYYMMDDHHMMSS[.f+]Z} in UTC (X.690, 11.7). The fraction may have any
+         * number of digits (RFC 3161, 2.4.2); the time keeps the first nine, a finer fraction is truncated.
          *
          * @return the time
          * @throws DerException if the element is no GeneralizedTime of that form
@@ -618,17 +655,21 @@ final class Der {
                         Integer.parseInt(whole.substring(8, 10)), Integer.parseInt(whole.substring(10, 12)),
                         Integer.parseInt(whole.substring(12, 14)));
                 int nanos = fraction.isEmpty() ? 0
-                        : Integer.parseInt((fraction.substring(1) + "000000000").substring(0, MAX_FRACTION_DIGITS));
+                        : Integer.parseInt((fraction.substring(1) + "000000000").substring(0, NANO_DIGITS));
                 return dateTime.withNano(nanos).toInstant(ZoneOffset.UTC);
             } catch (DateTimeException e) {
                 throw new DerException("generalized time out of range");
             }
         }
 
+        /**
+         * Checks a fraction of seconds for DER (RFC 3161, 2.4.2; X.690, 11.7): the point option {@code "."}, at least
+         * one digit, digits only and no trailing zero, of any length.
+         */
         private static boolean validFraction(String fraction) {
             String digits = fraction.substring(1);
-            return fraction.charAt(0) == '.' && !digits.isEmpty() && digits.length() <= MAX_FRACTION_DIGITS
-                    && digits(digits) && digits.charAt(digits.length() - 1) != '0';
+            return fraction.charAt(0) == '.' && !digits.isEmpty() && digits(digits)
+                    && digits.charAt(digits.length() - 1) != '0';
         }
 
         private static boolean digits(String text) {

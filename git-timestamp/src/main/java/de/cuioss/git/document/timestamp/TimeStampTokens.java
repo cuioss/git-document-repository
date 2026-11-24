@@ -22,13 +22,19 @@ import java.security.InvalidAlgorithmParameterException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.Signature;
+import java.security.cert.CertPathBuilder;
+import java.security.cert.CertPathBuilderException;
 import java.security.cert.CertPathValidator;
 import java.security.cert.CertPathValidatorException;
+import java.security.cert.CertStore;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.CertificateParsingException;
-import java.security.cert.PKIXParameters;
+import java.security.cert.CollectionCertStoreParameters;
+import java.security.cert.PKIXBuilderParameters;
+import java.security.cert.PKIXCertPathBuilderResult;
 import java.security.cert.TrustAnchor;
+import java.security.cert.X509CertSelector;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -53,29 +59,35 @@ import org.jspecify.annotations.Nullable;
  * <ol>
  * <li>The token is a CMS {@code ContentInfo} of {@code id-signedData} whose {@code SignedData} encapsulates content of
  * the type {@code id-ct-TSTInfo} (RFC 3161, 2.4.2; <a href="https://www.rfc-editor.org/rfc/rfc5652">RFC 5652</a>, 3 and
- * 5.1).</li>
+ * 5.1). Between the encapsulated content and the signer infos it carries at most one {@code certificates [0]} and then
+ * at most one {@code crls [1]}, in that order (RFC 5652, 5.1); the CRLs are not used.</li>
  * <li>The {@code SignedData} carries exactly one {@code SignerInfo} (RFC 3161, 2.4.2: "there MUST be only one
  * signer").</li>
  * <li>The {@code SignerInfo} has signed attributes (RFC 5652, 5.3: required when the content type is not
  * {@code id-data}) with exactly one {@code contentType} attribute of the single value {@code id-ct-TSTInfo} (RFC 5652,
  * 11.1) and exactly one {@code messageDigest} attribute of the single value equal to the digest of the encapsulated
  * {@code TSTInfo} under the {@code digestAlgorithm} of the {@code SignerInfo} (RFC 5652, 5.4 and 11.2).</li>
- * <li>The signed attributes carry exactly one ESS {@code signingCertificate} (RFC 2634, 5.4, its certificate hash
- * SHA-1) or {@code signingCertificateV2} (<a href="https://www.rfc-editor.org/rfc/rfc5035">RFC 5035</a>, 3, its hash
- * algorithm SHA-256 by default), as RFC 3161, 2.4.2 and <a href="https://www.rfc-editor.org/rfc/rfc5816">RFC 5816</a>,
- * 2.2 require; its first certificate identifier names the signer certificate by hash (RFC 2634, 5.4; RFC 5035, 3). The
- * signer certificate is looked up by that hash among the certificates the token carries and those of
- * {@code timestamp.trust}, and must also match the {@code sid} of the {@code SignerInfo} (RFC 5652, 5.3).</li>
+ * <li>The signed attributes carry an ESS {@code signingCertificate} (RFC 2634, 5.4, its certificate hash SHA-1), a
+ * {@code signingCertificateV2} (<a href="https://www.rfc-editor.org/rfc/rfc5035">RFC 5035</a>, 3, its hash algorithm
+ * SHA-256 by default) or both, each at most once, as RFC 3161, 2.4.2 and
+ * <a href="https://www.rfc-editor.org/rfc/rfc5816">RFC 5816</a>, 2.2.1 require; RFC 5035, 5.4 evaluates two present
+ * attributes independently. The first certificate identifier of every present attribute names the signer certificate
+ * by hash (RFC 2634, 5.4; RFC 5035, 3). The signer certificate is looked up among the certificates the token carries
+ * and those of {@code timestamp.trust}: it must match every such hash and the {@code sid} of the {@code SignerInfo}
+ * (RFC 5652, 5.3).</li>
  * <li>The signature verifies with {@link Signature} over the DER of the signed attributes under the explicit SET OF tag
  * (RFC 5652, 5.4), with ECDSA or RSA PKCS #1 v1.5 and SHA-256, SHA-384 or SHA-512
  * (<a href="https://www.rfc-editor.org/rfc/rfc5754">RFC 5754</a>, 2, 3.2 and 3.3); any other algorithm is
  * refused.</li>
  * <li>The signer certificate carries the extended key usage extension, critical, with the single purpose
- * {@code id-kp-timeStamping} (RFC 3161, 2.3).</li>
+ * {@code id-kp-timeStamping} (RFC 3161, 2.3), and, when it carries the key usage extension, the bit
+ * {@code digitalSignature} or {@code nonRepudiation} (RFC 5280, 4.2.1.3 and 4.2.1.12: both extensions are processed
+ * independently, and these are the key usages consistent with {@code id-kp-timeStamping}).</li>
  * <li>The signer certificate is one of {@code timestamp.trust} and valid at the time the token states, or has a
- * certification path to a certificate of {@code timestamp.trust} that {@link CertPathValidator} of the type PKIX
- * accepts at that time (<a href="https://www.rfc-editor.org/rfc/rfc5280#section-6">RFC 5280, 6</a>). The path is
- * formed from the certificates the token carries. Revocation checking is off: the module reaches no network for a
+ * certification path to a certificate of {@code timestamp.trust} at that time
+ * (<a href="https://www.rfc-editor.org/rfc/rfc5280#section-6">RFC 5280, 6</a>): {@link CertPathBuilder} of the type
+ * PKIX builds it to the exact signer from the certificates the token carries, and {@link CertPathValidator} of the type
+ * PKIX validates it. Revocation checking is off: the module reaches no network for a
  * verification, and a revocation status of the time of stamping is not part of the token.</li>
  * </ol>
  * A token that cannot be read, or that breaks any rule, is {@link StoreOutcome#SIGNATURE_INVALID} with a fixed detail
@@ -135,26 +147,41 @@ final class TimeStampTokens {
     /** The JCA name of SHA-1, the certificate hash of {@code signingCertificate} only (RFC 2634, 5.4). */
     private static final String SHA_1 = "SHA-1";
 
+    /** The JCA name of SHA-256 (the object identifier is {@link TimeStampRequests#SHA_256}). */
+    private static final String SHA_256 = "SHA-256";
+
+    /** The JCA name of SHA-384. */
+    private static final String SHA_384 = "SHA-384";
+
+    /** The JCA name of SHA-512. */
+    private static final String SHA_512 = "SHA-512";
+
     /** The digest algorithms by object identifier (RFC 5754, 2). */
     private static final Map<String, String> DIGESTS = Map.of(
-            TimeStampRequests.SHA_256, "SHA-256",
-            "2.16.840.1.101.3.4.2.2", "SHA-384",
-            "2.16.840.1.101.3.4.2.3", "SHA-512");
+            TimeStampRequests.SHA_256, SHA_256,
+            "2.16.840.1.101.3.4.2.2", SHA_384,
+            "2.16.840.1.101.3.4.2.3", SHA_512);
 
     /** The signature algorithms by object identifier: the digest they imply and the JCA name (RFC 5754, 3.2, 3.3). */
     private static final Map<String, List<String>> SIGNATURES = Map.of(
-            "1.2.840.10045.4.3.2", List.of("SHA-256", "SHA256withECDSA"),
-            "1.2.840.10045.4.3.3", List.of("SHA-384", "SHA384withECDSA"),
-            "1.2.840.10045.4.3.4", List.of("SHA-512", "SHA512withECDSA"),
-            "1.2.840.113549.1.1.11", List.of("SHA-256", "SHA256withRSA"),
-            "1.2.840.113549.1.1.12", List.of("SHA-384", "SHA384withRSA"),
-            "1.2.840.113549.1.1.13", List.of("SHA-512", "SHA512withRSA"));
+            "1.2.840.10045.4.3.2", List.of(SHA_256, "SHA256withECDSA"),
+            "1.2.840.10045.4.3.3", List.of(SHA_384, "SHA384withECDSA"),
+            "1.2.840.10045.4.3.4", List.of(SHA_512, "SHA512withECDSA"),
+            "1.2.840.113549.1.1.11", List.of(SHA_256, "SHA256withRSA"),
+            "1.2.840.113549.1.1.12", List.of(SHA_384, "SHA384withRSA"),
+            "1.2.840.113549.1.1.13", List.of(SHA_512, "SHA512withRSA"));
 
     /** The JCA names of RSA PKCS #1 v1.5 by digest, for {@code rsaEncryption} as signature algorithm (RFC 5754, 3.2). */
     private static final Map<String, String> RSA_BY_DIGEST = Map.of(
-            "SHA-256", "SHA256withRSA",
-            "SHA-384", "SHA384withRSA",
-            "SHA-512", "SHA512withRSA");
+            SHA_256, "SHA256withRSA",
+            SHA_384, "SHA384withRSA",
+            SHA_512, "SHA512withRSA");
+
+    /** The bit {@code digitalSignature} of the key usage extension (RFC 5280, 4.2.1.3). */
+    private static final int DIGITAL_SIGNATURE = 0;
+
+    /** The bit {@code nonRepudiation}, now {@code contentCommitment}, of the key usage extension (RFC 5280, 4.2.1.3). */
+    private static final int NON_REPUDIATION = 1;
 
     private TimeStampTokens() {
         // static helpers only
@@ -183,22 +210,16 @@ final class TimeStampTokens {
 
     private static TimeStampRequests.TstInfo check(byte[] token, List<X509Certificate> trust)
             throws Der.DerException, Rejected {
-        // RFC 5652, 5.1: SignedData ::= SEQUENCE { version, digestAlgorithms, encapContentInfo,
-        // certificates [0] IMPLICIT OPTIONAL, crls [1] IMPLICIT OPTIONAL, signerInfos }
+        // RFC 5652, 5.1: the signed data holds, in this order, its version, the digest algorithms, the encapsulated
+        // content, the optional certificates under the implicit tag 0, the optional CRLs under the implicit tag 1 and
+        // the signer infos
         List<Der.Element> signedData = TimeStampRequests.signedData(token);
         signedData.getFirst().integer();
         signedData.get(1).children(Der.SET);
         // RFC 5652, 5.2 and RFC 3161, 2.4.2: the encapsulated content is a TSTInfo
         byte[] content = TimeStampRequests.tstContent(signedData);
         TimeStampRequests.TstInfo info = TimeStampRequests.TstInfo.parse(content);
-        List<X509Certificate> carried = new ArrayList<>();
-        for (Der.Element field : signedData.subList(3, signedData.size() - 1)) {
-            if (field.tag() == Der.contextConstructed(0)) {
-                carried.addAll(certificates(field));
-            } else if (field.tag() != Der.contextConstructed(1)) {
-                throw new Der.DerException("unexpected field of signed data");
-            }
-        }
+        List<X509Certificate> carried = carriedCertificates(signedData.subList(3, signedData.size() - 1));
         // RFC 3161, 2.4.2: there MUST be only one signer
         List<Der.Element> signerInfos = signedData.getLast().children(Der.SET);
         if (signerInfos.size() != 1) {
@@ -206,12 +227,38 @@ final class TimeStampTokens {
         }
         var signer = SignerInfo.parse(signerInfos.getFirst());
         String digest = algorithmName(DIGESTS, signer.digestAlgorithm());
-        EssCertId identifier = checkAttributes(signer, content, digest);
-        X509Certificate certificate = signerCertificate(signer, identifier, carried, trust);
+        List<EssCertId> identifiers = checkAttributes(signer, content, digest);
+        X509Certificate certificate = signerCertificate(signer, identifiers, carried, trust);
         checkSignature(signer, certificate, digest);
         checkTimeStamping(certificate);
         checkPath(certificate, carried, trust, info.genTime());
         return info;
+    }
+
+    /**
+     * Reads the optional fields between the encapsulated content and the signer infos (RFC 5652, 5.1): the
+     * certificates under the implicit tag 0, then the CRLs under the implicit tag 1, each at most once and in that
+     * order. The CRLs are not used.
+     *
+     * @param fields the fields between the encapsulated content and the signer infos
+     * @return the certificates the token carries, possibly none
+     * @throws Der.DerException if a field is unknown, duplicate or out of order
+     */
+    private static List<X509Certificate> carriedCertificates(List<Der.Element> fields) throws Der.DerException {
+        int index = 0;
+        List<X509Certificate> carried = new ArrayList<>();
+        if (index < fields.size() && fields.get(index).tag() == Der.contextConstructed(0)) {
+            carried.addAll(certificates(fields.get(index)));
+            index++;
+        }
+        if (index < fields.size() && fields.get(index).tag() == Der.contextConstructed(1)) {
+            fields.get(index).children();
+            index++;
+        }
+        if (index != fields.size()) {
+            throw new Der.DerException("signed data with an unknown, duplicate or misplaced field");
+        }
+        return carried;
     }
 
     // ---------------------------------------------------------------- certificates of the token
@@ -222,7 +269,7 @@ final class TimeStampTokens {
         CertificateFactory factory = x509Factory();
         List<X509Certificate> certificates = new ArrayList<>();
         for (Der.Element choice : field.children()) {
-            if (choice.tag() != Der.SEQUENCE) {
+            if (choice.tag() != Der.TAG_SEQUENCE) {
                 continue;
             }
             try {
@@ -249,15 +296,15 @@ final class TimeStampTokens {
 
     // ---------------------------------------------------------------- signed attributes
 
-    private static EssCertId checkAttributes(SignerInfo signer, byte[] content, String digest)
+    private static List<EssCertId> checkAttributes(SignerInfo signer, byte[] content, String digest)
             throws Der.DerException, Rejected {
         byte[] contentType = null;
         byte[] messageDigest = null;
-        Der.Element essAttribute = null;
-        String essType = null;
-        // RFC 5652, 5.3: Attribute ::= SEQUENCE { attrType, attrValues SET OF }
+        Der.Element signingCertificate = null;
+        Der.Element signingCertificateV2 = null;
+        // RFC 5652, 5.3: an attribute is a sequence of its type and the set of its values
         for (Der.Element attribute : signer.signedAttributes().children()) {
-            List<Der.Element> parts = attribute.children(Der.SEQUENCE);
+            List<Der.Element> parts = attribute.children(Der.TAG_SEQUENCE);
             if (parts.size() != 2) {
                 throw new Der.DerException("attribute malformed");
             }
@@ -266,10 +313,8 @@ final class TimeStampTokens {
             switch (type) {
                 case CONTENT_TYPE -> contentType = single(contentType, values).encoded();
                 case MESSAGE_DIGEST -> messageDigest = single(messageDigest, values).octets();
-                case SIGNING_CERTIFICATE, SIGNING_CERTIFICATE_V2 -> {
-                    essAttribute = single(essAttribute, values);
-                    essType = type;
-                }
+                case SIGNING_CERTIFICATE -> signingCertificate = single(signingCertificate, values);
+                case SIGNING_CERTIFICATE_V2 -> signingCertificateV2 = single(signingCertificateV2, values);
                 default -> {
                     // other signed attributes are covered by the signature and not interpreted
                 }
@@ -284,11 +329,19 @@ final class TimeStampTokens {
         if (messageDigest == null || !MessageDigest.isEqual(messageDigest, digest(digest, content))) {
             throw new Rejected(ATTRIBUTES_MISMATCH);
         }
-        // RFC 3161, 2.4.2 and RFC 5816, 2.2: the signing certificate attribute must be present
-        if (essAttribute == null || essType == null) {
+        // RFC 3161, 2.4.2 and RFC 5816, 2.2.1: a signing certificate attribute must be present; RFC 5035, 5.4: when
+        // both are present, they are evaluated independently
+        List<EssCertId> identifiers = new ArrayList<>(2);
+        if (signingCertificate != null) {
+            identifiers.add(EssCertId.parse(signingCertificate, false));
+        }
+        if (signingCertificateV2 != null) {
+            identifiers.add(EssCertId.parse(signingCertificateV2, true));
+        }
+        if (identifiers.isEmpty()) {
             throw new Rejected(SIGNER_UNKNOWN);
         }
-        return EssCertId.parse(essAttribute, SIGNING_CERTIFICATE_V2.equals(essType));
+        return identifiers;
     }
 
     private static Der.Element single(@Nullable Object previous, List<Der.Element> values) throws Rejected {
@@ -302,24 +355,35 @@ final class TimeStampTokens {
 
     // ---------------------------------------------------------------- signer certificate
 
-    private static X509Certificate signerCertificate(SignerInfo signer, EssCertId identifier,
+    private static X509Certificate signerCertificate(SignerInfo signer, List<EssCertId> identifiers,
             List<X509Certificate> carried, List<X509Certificate> trust) throws Rejected {
         List<X509Certificate> candidates = new ArrayList<>(carried);
         candidates.addAll(trust);
         for (X509Certificate candidate : candidates) {
-            byte[] encoded;
-            try {
-                encoded = candidate.getEncoded();
-            } catch (CertificateException e) {
-                continue;
-            }
-            // RFC 2634, 5.4 and RFC 5035, 3: the first identifier names the signer certificate by its hash
-            if (MessageDigest.isEqual(identifier.hash(), digest(identifier.algorithm(), encoded))
-                    && signer.identifies(candidate)) {
+            if (signer.identifies(candidate) && namedByAll(identifiers, candidate)) {
                 return candidate;
             }
         }
         throw new Rejected(SIGNER_UNKNOWN);
+    }
+
+    /**
+     * Tells whether every signing certificate attribute names a certificate: the first identifier of each holds the
+     * hash of the certificate (RFC 2634, 5.4; RFC 5035, 3 and 5.4).
+     */
+    private static boolean namedByAll(List<EssCertId> identifiers, X509Certificate candidate) {
+        byte[] encoded;
+        try {
+            encoded = candidate.getEncoded();
+        } catch (CertificateException e) {
+            return false;
+        }
+        for (EssCertId identifier : identifiers) {
+            if (!MessageDigest.isEqual(identifier.hash(), digest(identifier.algorithm(), encoded))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------- signature
@@ -375,6 +439,17 @@ final class TimeStampTokens {
                 || purposes == null || !List.of(ID_KP_TIME_STAMPING).equals(purposes)) {
             throw new Rejected(NOT_TIMESTAMPING);
         }
+        // RFC 5280, 4.2.1.12: key usage and extended key usage are processed independently and the certificate is used
+        // only for a purpose consistent with both; for id-kp-timeStamping that is digitalSignature and/or
+        // nonRepudiation (4.2.1.3). A certificate without the key usage extension is not restricted by it.
+        boolean[] usage = certificate.getKeyUsage();
+        if (usage != null && !bit(usage, DIGITAL_SIGNATURE) && !bit(usage, NON_REPUDIATION)) {
+            throw new Rejected(NOT_TIMESTAMPING);
+        }
+    }
+
+    private static boolean bit(boolean[] bits, int index) {
+        return index < bits.length && bits[index];
     }
 
     private static void checkPath(X509Certificate signer, List<X509Certificate> carried, List<X509Certificate> trust,
@@ -389,59 +464,32 @@ final class TimeStampTokens {
             }
         }
         try {
-            var path = x509Factory().generateCertPath(chain(signer, carried, trust));
             Set<TrustAnchor> anchors = new HashSet<>();
             for (X509Certificate certificate : trust) {
                 anchors.add(new TrustAnchor(certificate, null));
             }
-            var parameters = new PKIXParameters(anchors);
+            // the exact signer is the target; the carried certificates are the candidates of the path, so two
+            // intermediates of one subject name are both tried
+            var target = new X509CertSelector();
+            target.setCertificate(signer);
+            List<X509Certificate> candidates = new ArrayList<>(carried);
+            candidates.add(signer);
+            var parameters = new PKIXBuilderParameters(anchors, target);
+            parameters.addCertStore(CertStore.getInstance("Collection",
+                    new CollectionCertStoreParameters(candidates)));
             // no network is reached for a verification; the token holds no revocation status of its time
             parameters.setRevocationEnabled(false);
             parameters.setDate(date);
-            CertPathValidator.getInstance("PKIX").validate(path, parameters);
-        } catch (CertPathValidatorException | CertificateException | InvalidAlgorithmParameterException e) {
+            var built = (PKIXCertPathBuilderResult) CertPathBuilder.getInstance("PKIX").build(parameters);
+            CertPathValidator.getInstance("PKIX").validate(built.getCertPath(), parameters);
+        } catch (CertPathBuilderException | CertPathValidatorException | InvalidAlgorithmParameterException e) {
             throw new Rejected(UNTRUSTED);
         } catch (NoSuchAlgorithmException e) {
-            // every Java SE implementation must support the PKIX CertPathValidator ("Java Security Standard Algorithm
-            // Names"), so this is a broken platform, not an outcome
+            // every Java SE implementation must support the PKIX CertPathBuilder and CertPathValidator and the
+            // Collection CertStore ("Java Security Standard Algorithm Names"), so this is a broken platform, not an
+            // outcome
             throw new IllegalStateException("PKIX is not available", e);
         }
-    }
-
-    /**
-     * Forms the path from the signer towards {@code timestamp.trust} out of the carried certificates: each next
-     * certificate is the issuer of the one before, until a certificate is issued by a trusted one.
-     */
-    private static List<X509Certificate> chain(X509Certificate signer, List<X509Certificate> carried,
-            List<X509Certificate> trust) {
-        List<X509Certificate> chain = new ArrayList<>();
-        chain.add(signer);
-        X509Certificate current = signer;
-        while (chain.size() <= carried.size() && !issuedByTrusted(current, trust)) {
-            X509Certificate issuer = null;
-            for (X509Certificate candidate : carried) {
-                if (!chain.contains(candidate)
-                        && candidate.getSubjectX500Principal().equals(current.getIssuerX500Principal())) {
-                    issuer = candidate;
-                    break;
-                }
-            }
-            if (issuer == null) {
-                break;
-            }
-            chain.add(issuer);
-            current = issuer;
-        }
-        return chain;
-    }
-
-    private static boolean issuedByTrusted(X509Certificate certificate, List<X509Certificate> trust) {
-        for (X509Certificate anchor : trust) {
-            if (anchor.getSubjectX500Principal().equals(certificate.getIssuerX500Principal())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -489,7 +537,7 @@ final class TimeStampTokens {
          * signatureAlgorithm, signature, unsignedAttrs [1] IMPLICIT OPTIONAL }} (RFC 5652, 5.3).
          */
         static SignerInfo parse(Der.Element element) throws Der.DerException, Rejected {
-            List<Der.Element> fields = element.children(Der.SEQUENCE);
+            List<Der.Element> fields = element.children(Der.TAG_SEQUENCE);
             if (fields.size() < 5 || fields.size() > 7) {
                 throw new Der.DerException("signer info malformed");
             }
@@ -533,7 +581,7 @@ final class TimeStampTokens {
          */
         boolean identifies(X509Certificate certificate) {
             try {
-                if (sid.tag() == Der.SEQUENCE) {
+                if (sid.tag() == Der.TAG_SEQUENCE) {
                     List<Der.Element> parts = sid.children();
                     return parts.size() == 2
                             && Arrays.equals(parts.getFirst().encoded(),
@@ -569,35 +617,35 @@ final class TimeStampTokens {
          * certHash, issuerSerial OPTIONAL }} (RFC 5035, 3).
          */
         static EssCertId parse(Der.Element value, boolean v2) throws Der.DerException, Rejected {
-            List<Der.Element> attribute = value.children(Der.SEQUENCE);
+            List<Der.Element> attribute = value.children(Der.TAG_SEQUENCE);
             if (attribute.isEmpty()) {
                 throw new Der.DerException("signing certificate malformed");
             }
-            List<Der.Element> certs = attribute.getFirst().children(Der.SEQUENCE);
+            List<Der.Element> certs = attribute.getFirst().children(Der.TAG_SEQUENCE);
             if (certs.isEmpty()) {
                 throw new Rejected(SIGNER_UNKNOWN);
             }
-            List<Der.Element> first = certs.getFirst().children(Der.SEQUENCE);
+            List<Der.Element> first = certs.getFirst().children(Der.TAG_SEQUENCE);
             if (first.isEmpty()) {
                 throw new Der.DerException("certificate identifier malformed");
             }
             if (!v2) {
                 return new EssCertId(SHA_1, first.getFirst().octets());
             }
-            if (first.getFirst().tag() == Der.SEQUENCE) {
+            if (first.getFirst().tag() == Der.TAG_SEQUENCE) {
                 if (first.size() < 2) {
                     throw new Der.DerException("certificate identifier malformed");
                 }
                 return new EssCertId(algorithmName(DIGESTS, TimeStampRequests.TstInfo.algorithm(first.getFirst())),
                         first.get(1).octets());
             }
-            return new EssCertId("SHA-256", first.getFirst().octets());
+            return new EssCertId(SHA_256, first.getFirst().octets());
         }
 
         @Override
         public boolean equals(@Nullable Object other) {
-            return other instanceof EssCertId that && algorithm.equals(that.algorithm)
-                    && Arrays.equals(hash, that.hash);
+            return other instanceof EssCertId(var otherAlgorithm, var otherHash) && algorithm.equals(otherAlgorithm)
+                    && Arrays.equals(hash, otherHash);
         }
 
         @Override

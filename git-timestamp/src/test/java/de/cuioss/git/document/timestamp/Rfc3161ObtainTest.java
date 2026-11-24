@@ -22,17 +22,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.module.ModuleDescriptor;
+import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -244,6 +249,205 @@ class Rfc3161ObtainTest {
                 () -> assertEquals(StoreOutcome.REFUSED, wrongImprint.outcome(), "wrong imprint"),
                 () -> assertEquals(Rfc3161AnchorProvider.IMPRINT_DIFFERS, wrongImprint.detail(),
                         "detail of the imprint"));
+    }
+
+    private static byte[] encodedRequest() {
+        return TimeStampRequests.request(subject(), new SecureRandom()).encoded();
+    }
+
+    @Test
+    @DisplayName("The test authority answers HTTP 400 to an empty or one-field request instead of failing")
+    void shouldAnswerBadRequestToShortShape() {
+        var transport = new TimestampTransport(authority.url(), null, client);
+
+        var empty = transport.post(Der.sequence());
+        var oneField = transport.post(Der.sequence(Der.integer(1)));
+        var shortImprint = transport.post(Der.sequence(Der.integer(1), Der.sequence()));
+
+        assertAll(
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", empty.detail(), "empty SEQUENCE"),
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", oneField.detail(), "one field"),
+                () -> assertEquals(TimestampTransport.HTTP_STATUS_PREFIX + "400", shortImprint.detail(),
+                        "empty imprint"),
+                () -> assertTrue(authority.received().isEmpty(), "no request recorded"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a reply of exactly the limit is read, one octet more is REFUSED as too large")
+    void shouldBoundReplySize() {
+        var transport = new TimestampTransport(authority.url(), null, client);
+
+        authority.rawReply(new byte[TimestampTransport.MAX_REPLY_BYTES], false);
+        var atLimit = transport.post(encodedRequest());
+        authority.rawReply(new byte[TimestampTransport.MAX_REPLY_BYTES + 1], false);
+        var beyond = transport.post(encodedRequest());
+
+        assertAll(
+                () -> assertTrue(atLimit.isOk(), () -> "at the limit: " + atLimit.detail()),
+                () -> assertEquals(TimestampTransport.MAX_REPLY_BYTES, atLimit.value().length, "octets read"),
+                () -> assertEquals(StoreOutcome.REFUSED, beyond.outcome(), "beyond the limit"),
+                () -> assertEquals(TimestampTransport.REPLY_TOO_LARGE, beyond.detail(), "detail beyond the limit"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a body that stalls after the headers is UNAVAILABLE within the deadline")
+    void shouldEndStalledBodyAtDeadline() {
+        Duration deadline = Duration.ofMillis(800);
+        var transport = new TimestampTransport(authority.url(), null, client, deadline);
+        authority.rawReply(new byte[64], true);
+
+        long start = System.nanoTime();
+        var result = transport.post(encodedRequest());
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+        assertAll(
+                () -> assertEquals(StoreOutcome.UNAVAILABLE, result.outcome(), "outcome"),
+                () -> assertEquals(TimestampTransport.UNREACHABLE, result.detail(), "detail"),
+                () -> assertTrue(took.compareTo(deadline.plusSeconds(5)) < 0, () -> "ended after " + took));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a complete reply inside the size and the deadline is read with a short deadline")
+    void shouldReadCompleteReplyWithinDeadline() {
+        var transport = new TimestampTransport(authority.url(), null, client, Duration.ofSeconds(5));
+        authority.rawReply(new byte[]{1, 2, 3}, false);
+
+        var result = transport.post(encodedRequest());
+
+        assertTrue(result.isOk(), () -> "read: " + result.detail());
+        assertArrayEquals(new byte[]{1, 2, 3}, result.value(), "octets");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a granted token that does not verify against timestamp.trust is REFUSED, not returned")
+    void shouldRefuseTokenThatDoesNotVerify() {
+        var provider = provider();
+        List<String> details = new ArrayList<>();
+        for (var answer : List.of(TestTimestampAuthority.Answer.UNTRUSTED_SIGNER,
+                TestTimestampAuthority.Answer.SIGNER_WITHOUT_TIME_STAMPING)) {
+            authority.answer(answer);
+
+            var result = provider.obtain(REPOSITORY, subject(), Instant.now(), new byte[0]);
+
+            assertEquals(StoreOutcome.REFUSED, result.outcome(), () -> "outcome of " + answer);
+            details.add(result.detail());
+        }
+        assertEquals(List.of(Rfc3161AnchorProvider.TOKEN_INVALID, Rfc3161AnchorProvider.TOKEN_INVALID), details,
+                "details");
+        assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-101:")),
+                () -> "refusal logged: " + logTexts());
+    }
+
+    private static byte[] tstInfo(byte[]... optional) {
+        List<byte[]> fields = new ArrayList<>(List.of(Der.integer(1), Der.oid(TestTimestampAuthority.POLICY),
+                TimeStampRequests.messageImprint(TimeStampRequests.sha256(new byte[]{1})), Der.integer(7),
+                Der.generalizedTime(Instant.now())));
+        fields.addAll(List.of(optional));
+        return Der.sequence(fields.toArray(byte[][]::new));
+    }
+
+    private static byte[] reply(byte[] statusInfo, byte[] tstInfo) {
+        return Der.sequence(statusInfo, authority.token(tstInfo, true));
+    }
+
+    private static byte[] grantedReply(byte[] tstInfo) {
+        return reply(Der.sequence(Der.integer(TimeStampRequests.GRANTED)), tstInfo);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: only a defined refusing PKIStatus is named; a huge, negative or unknown one is unreadable")
+    void shouldNameOnlyDefinedStatus() {
+        byte[] huge = Der.sequence(Der.sequence(Der.integer(BigInteger.TWO.pow(100))));
+        byte[] negative = Der.sequence(Der.sequence(Der.integer(-1)));
+        byte[] unknown = Der.sequence(Der.sequence(Der.integer(6)));
+        byte[] waiting = Der.sequence(Der.sequence(Der.integer(3)));
+        byte[] notification = Der.sequence(Der.sequence(Der.integer(5)));
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(huge).detail(), "huge"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(negative).detail(),
+                        "negative"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(unknown).detail(),
+                        "unknown"),
+                () -> assertEquals(TimeStampRequests.STATUS_PREFIX + "3", TimeStampRequests.token(waiting).detail(),
+                        "waiting"),
+                () -> assertEquals(TimeStampRequests.STATUS_PREFIX + "5",
+                        TimeStampRequests.token(notification).detail(), "revocationNotification"),
+                () -> assertEquals(StoreOutcome.REFUSED, TimeStampRequests.token(huge).outcome(), "outcome"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: PKIStatusInfo carries only statusString and failInfo, in that order, each at most once")
+    void shouldCheckStatusInfoFields() {
+        byte[] info = tstInfo(Der.integer(9));
+        byte[] status = Der.integer(TimeStampRequests.GRANTED);
+        byte[] text = Der.sequence(Der.utf8String("granted"));
+        // badAlg, bit 0 of PKIFailureInfo, with seven unused bits
+        byte[] failInfo = Der.tlv(Der.BIT_STRING, new byte[]{7, (byte) 0x80});
+
+        assertAll(
+                () -> assertTrue(TimeStampRequests.token(grantedReply(info)).isOk(), "status only"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(status, text, failInfo), info)).isOk(),
+                        "status, statusString and failInfo"),
+                () -> assertTrue(TimeStampRequests.token(reply(Der.sequence(status, failInfo), info)).isOk(),
+                        "status and failInfo"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, Der.integer(1)), info)).detail(), "another field"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, text, text), info)).detail(), "duplicate statusString"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                        reply(Der.sequence(status, failInfo, text), info)).detail(), "wrong order"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(
+                                reply(Der.sequence(status, Der.sequence(Der.integer(1))), info)).detail(),
+                        "statusString of another type"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: an AlgorithmIdentifier accepts absent or empty NULL parameters, never a NULL with content")
+    void shouldRequireEmptyNull() throws Exception {
+        var absent = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256)));
+        var empty = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256), Der.nullValue()));
+        var withContent = Der.parse(Der.sequence(Der.oid(TimeStampRequests.SHA_256),
+                Der.tlv(Der.NULL, new byte[]{0})));
+
+        assertAll(
+                () -> assertEquals(TimeStampRequests.SHA_256, TimeStampRequests.TstInfo.algorithm(absent), "absent"),
+                () -> assertEquals(TimeStampRequests.SHA_256, TimeStampRequests.TstInfo.algorithm(empty), "NULL"),
+                () -> assertThrows(Der.DerException.class, () -> TimeStampRequests.TstInfo.algorithm(withContent),
+                        "NULL with content"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: the optional TSTInfo fields follow RFC 3161, 2.4.2 in order, each at most once")
+    void shouldCheckTstInfoFields() throws Exception {
+        byte[] accuracy = Der.sequence(Der.integer(1), Der.tlv(Der.contextPrimitive(0), new byte[]{0x05}));
+        byte[] tsa = Der.explicit(0, Der.tlv(Der.contextConstructed(4), Der.sequence()));
+        byte[] extensions = Der.tlv(Der.contextConstructed(1), Der.sequence(Der.oid("1.2.3.4"),
+                Der.octetString(new byte[]{1})));
+
+        var nonceOnly = TimeStampRequests.TstInfo.parse(tstInfo(Der.integer(42)));
+        var withoutNonce = TimeStampRequests.TstInfo.parse(tstInfo());
+        var all = TimeStampRequests.TstInfo.parse(tstInfo(accuracy, Der.bool(true), Der.integer(43), tsa,
+                extensions));
+
+        assertAll(
+                () -> assertEquals(BigInteger.valueOf(42), nonceOnly.nonce(), "nonce-only suffix"),
+                () -> assertNull(withoutNonce.nonce(), "absent nonce"),
+                () -> assertEquals(BigInteger.valueOf(43), all.nonce(), "every optional field"),
+                () -> assertTrue(TimeStampRequests.token(grantedReply(tstInfo())).isOk(), "token without a nonce"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.bool(true), Der.bool(true), Der.integer(42)))).detail(), "duplicate ordering"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.integer(42), Der.bool(true)))).detail(), "nonce before ordering"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.integer(42), Der.integer(42)))).detail(), "two nonces"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.octetString(new byte[]{1})))).detail(), "unknown field"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                                tstInfo(Der.sequence(Der.tlv(Der.contextPrimitive(0), new byte[]{0x00}))))).detail(),
+                        "millis out of range"),
+                () -> assertEquals(TimeStampRequests.REPLY_UNREADABLE, TimeStampRequests.token(grantedReply(
+                        tstInfo(Der.tlv(Der.BOOLEAN, new byte[]{1})))).detail(), "ordering not canonical"));
     }
 
     @Test
