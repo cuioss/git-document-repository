@@ -2,10 +2,10 @@
   "id": "PLAN-11",
   "slug": "store-anchoring-signed",
   "workstream": "WS-02",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
   "plan_marshall_plan_id": "plan-11-store-anchoring-signed",
-  "pr": "",
-  "landing": "",
+  "pr": "66",
+  "landing": "landings/PLAN-11.md",
   "seq": 11
 }

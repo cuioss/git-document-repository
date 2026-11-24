@@ -1,4 +1,4 @@
-# PLAN-22: git-store hardening (the leftovers of PLAN-07, PLAN-08 and PLAN-09)
+# PLAN-22: git-store hardening (the leftovers of PLAN-07, PLAN-08, PLAN-09, PLAN-10 and PLAN-11)
 
 epic: libraries-initial-implementation
 workstream: WS-02
@@ -15,7 +15,8 @@ found and that no running plan owns: the leftovers of PLAN-07 (the foundation), 
 items gives a wrong result on the default path of a single writer; each needs a failure in the middle of an operation, a race, a
 foreign tool's reference, an unusual entry or a malformed configuration. The first two deliverables moved here from the held-back
 collection plan PLAN-20 (its former deliverables 7 and 8) at the operator's word on 2026-11-22; deliverable 3 is PLAN-09's.
-Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this spec until the operator releases it.
+The analyses of PLAN-10 and PLAN-11 folded their `git-store` leftovers into it as deliverable 4 on 2026-11-24, at the operator's word,
+when the operator released it for emit; its layer-3 majors and minors are the signature verifier's and the anchor verifier's.
 
 ## Deliverables
 
@@ -149,6 +150,66 @@ Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
    - Persona: implementer
 
+4. `git-store` leftovers of PLAN-10's and PLAN-11's landings (`landings/PLAN-10.md` L3-1 to L3-10, L2-1 and L2-2;
+   `landings/PLAN-11.md` L3-1 to L3-12, L2-1 to L2-3; added at the operator's word on 2026-11-24, when PLAN-22 was released for
+   emit), each first re-read at the plan's head, behaviour fixes reproduced by a test that fails at the base. Signing and
+   verification (PLAN-10, lines at `ad9e773`): (a) `AllowedSigners.read` (115) reads with `Files.readAllLines`, no size or line
+   bound (the 64 KiB of `FileSigningKeySource` is the model), and invalid UTF-8 or a FIFO ends as an exception; `from` (136) and
+   `fromAnchor` (167 at `b30ec14`, the same shape) call `Path.of` outside a try, so a configured path with U+0000 ends as an
+   `InvalidPathException` out of `StoreProviders.select` instead of `MALFORMED`: bound the read, return results, tested with an
+   oversized file, a FIFO and a NUL path; (b) `SignatureVerification` strips every `gpgsig` header when it builds the payload
+   (221-241) but `check` (188) verifies only the first, so a copy of a validly signed commit with an extra header has another
+   object id and verifies: refuse a commit with more than one `gpgsig` header as `INVALID`, tested with a crafted commit, and
+   state in `git-store.adoc` what stock Git does; (c) the validity time of a key is the committer time inside the signed payload
+   (204), so an expired key signs a back-dated commit that verifies, which is Git's own `verify-commit` semantic: record the
+   limit and its mitigation (an anchored subject) in `git-store.adoc` § GDR-STORE-14, or add the check against the anchor time
+   where a proof exists; (d) the `RevWalk` of `SignatureVerification` (157) retains every reachable commit with its body: stream
+   with bounded memory (`setRetainBody(false)`, dispose after each commit) or record the bound, and treat a `Throwable` that is
+   no `Error` as the catch at 181 already does; (e) `AllowedSigners` reads a `Z`-suffixed timestamp where OpenSSH 8.8 and 8.9
+   refuse it, and one non-Ed25519 line (`ssh-rsa`) makes the whole file `MALFORMED` (289, 223): report the line and keep the
+   rest, or record the choice; (f) `CommitSignatures` (127) and `SignatureVerification` (175) log the reference, which
+   contains the document id: log the alias and the outcome only; `IdentityClaims` (58-72) throws `IllegalArgumentException` for
+   a token-derived `acr` or `amr` with `;`, `,`, whitespace or a control character and for a blank issuer: return a result;
+   `SourceSigner` (88) and `CommitSignatures` (89) call `source.sign` and `source.publicKey` without isolation from a
+   `RuntimeException` of a third-party `SigningKeySource`: isolate them as `StoreProviders.select` isolates a provider;
+   `VerifySignatures` (144) labels every `IllegalArgumentException` "not a repository": narrow the catch and the label;
+   (g) the tests PLAN-10 lacks: a merge commit, a commit with a `mergetag` header, a second `gpgsig`, an oversized or non-UTF-8
+   `allowed_signers` file, and cross-checks (`git`, `ssh-keygen`) whose `assumeTrue` skip cannot be told from a pass: make a
+   skip visible (a log record or a failing mode on a CI variable) so a green build proves they ran. Anchoring (PLAN-11, lines
+   at `b30ec14`): (h) **`AnchorVerification` does not check the checkpoint chain** (185-210; the class uses a commit's parent
+   only for the notes chain): a checkpoint tag moved onto another anchored commit, or a duplicate subject, reports nothing, so
+   the "never moved" invariant of GDR-STORE-16 is undetected; check that checkpoint n's parent is checkpoint n-1's commit, that
+   each tag target is distinct, the message and the tree shape, tested with a moved tag, a duplicate and a rewritten branch
+   between two checkpoints; `listedReferences` (327) skips every line that is no `<id> SP <name>` and `Checkpoints.content`
+   (384) returns an empty array for a tree with no `refs` file, so an unreadable checkpoint is clean: report it as a finding;
+   the verifier takes no configuration, so with `anchor.releases=false` every release commit is `NO_PROOF` and a release-shaped
+   tag on a blob fails the whole run while the engine skips it (203, engine 364): let `VerifyAnchors` read the configuration or
+   record the limit; the cost is checkpoints times listed references (339-352): cache an unchanged (reference, id) pair across
+   checkpoints; (i) remote-controlled blobs are read with `getBytes(Integer.MAX_VALUE)` (`AnchorNotes` 264 and 324,
+   `Checkpoints` 387): bound them as the verifier does (298); (j) `AnchorEngine.dueCheck` (160-161) emits the collected fetch
+   updates only on a normal return, so a `RuntimeException` after the fetch loses them and `StoreIndex` and the listeners never
+   see those commits, and `anchor()` throws instead of returning a result: emit in a `finally` and map an unchecked failure of
+   `prepare` to a result; `Checkpoints` (252) and `SignedAnchorProvider` (202) add a configured `Duration` to an `Instant`, which
+   throws `DateTimeException` for `P1000000000000D`: refuse a duration beyond a stated bound as `MALFORMED` at configuration
+   time, tested; (k) the INFO record `GIT_STORE-7` ("every proof") is written when the proof is signed (`SignedAnchorProvider`
+   224), before the note is published, so a proof dropped after a moved tip leaves a log copy with the same sequence and another
+   hash: define the semantics (log after publication, or mark the dropped proof) and record it in `LogMessages.adoc`; a provider
+   answering `ok(new byte[0])` is accepted (`AnchorEngine` 216-222) and starts a second chain: refuse an empty proof; the
+   previous proof is taken from the notes tip without verifying its signature (`SignedAnchorProvider` 186-203), so a future-dated
+   statement blocks anchoring until repaired: verify the previous proof before chaining or record the limit; `StoreClone.close`
+   (336) has no closed flag, so a due check queued before `close` runs against the closed clone: check the flag under the lock
+   `close()` takes; one failed push logs two WARN records (`ANCHOR_PUSH_INCOMPLETE` then `ANCHORING_PENDING`): keep one;
+   (l) tests and wording of PLAN-11: `AnchorInterleavingTest` ends its scenarios with per-thread `join(timeout)` (283, 380): one
+   deadline, cancellation, `shutdownNow` with `awaitTermination`; the namespaces a checkpoint lists derive from `PUSH_REF_SPECS`
+   (`StoreReferences` 65) but the prune scope is `git-core`'s `MIRROR_FETCH_REF_SPECS`: add a test that fails when the two
+   differ (`git-core` read-only); the three in-code Sonar suppressions (`StoreClone` 48 and `StoreWriter` 84 for `java:S6539`,
+   `StoreProviders` 249 for `java:S4449`) are re-decided: fix the cause, or keep each with the operator's selection recorded as
+   `operator-selected: {issue-key}: {reason}`; `git-store.adoc` GDR-STORE-17 says a local-only note "is pushed, not re-requested"
+   where the code re-requests once the tip moved (`AnchorEngine` 322-325): amend the wording in place (requirement numbers stay
+   without gap).
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
+   - Persona: implementer
+
 ## Standing Constraints
 
 
@@ -198,11 +259,12 @@ Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this
 
 ## Done when
 
-- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 3 has a test that fails at
+- `verify` passes on the reactor at the plan's head, and every behaviour fix of deliverables 1 to 4 has a test that fails at
   `4a5eed5f593b4624f7b350358d289168ba1f9ae0` (`main` after PLAN-09; the PLAN-07 and PLAN-08 defects are present since
-  `a558afd` and `c1e02fc`, the PLAN-09 ones since `4a5eed5`) and passes at the plan's head. An item whose premise the re-read at
+  `a558afd` and `c1e02fc`, the PLAN-09 ones since `4a5eed5`, the PLAN-10 ones since `ad9e773` and the PLAN-11 ones since
+  `b30ec14`, which a test written against `b30ec14` reproduces) and passes at the plan's head. An item whose premise the re-read at
   outline refutes is dropped from its deliverable.
-- Every item of deliverables 1 to 3 is either fixed and tested at the plan's head, or recorded as an accepted exception or an
+- Every item of deliverables 1 to 4 is either fixed and tested at the plan's head, or recorded as an accepted exception or an
   owner decision with its reason in `doc/specification/git-store.adoc`; no document lists an outcome the code does not return.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left open) is
   `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
@@ -242,6 +304,17 @@ Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this
   101-105 (the start is computed before the subscription is added); `IndexFootprintTest.java` 142 (`GraphLayout.parseInstance`).
   - verdict: corroborated | checked_at: 4a5eed5f593b4624f7b350358d289168ba1f9ae0 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at 4a5eed5: DocumentRelease.java 215-265 (tag created before the push of main; pushTag), 270-285 and 328-355 (numbered release copies paths, mode maps a gitlink to REGULAR_FILE, source opened as OBJ_BLOB); JGitRepositoryOperations.java 859-887 (an up-to-date push against a lease different from the advertised id is LEASE_REFUSED); StoreEvents.java 172-182 (catch RuntimeException only); ExplicitSave.java 597 (new TreeEdit.Put(path, content)); StoreIndex.java 296-320 (refresh publishes only after reading every source); RepositoryGuard.java 89-102 and DraftExpiry.java 129 (readLock vs writeLock of one ReentrantReadWriteLock); ListenerDispatch.java 101-105 (start before add); IndexFootprintTest.java 142 (GraphLayout.parseInstance(index).totalSize())
 
+- OBSERVED: `AnchorVerification.verify` walks the checkpoint tags and the release tags into a `LinkedHashSet` of subjects and checks the
+  chain of proofs and each checkpoint's listed references, but never compares a checkpoint's parent with the previous checkpoint's
+  commit: the class uses `getParent` only in `firstParents` for the notes chain — read at
+  `git-store/src/main/java/de/cuioss/git/document/store/AnchorVerification.java` 185-210 and a search of the class at `b30ec14`.
+  - verdict: corroborated | checked_at: b30ec140b6e178afcb251e3df9a8b4e18bf68f9d | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at b30ec14: AnchorVerification.java 185-210 (checkpoints into a TreeMap, subjects into a LinkedHashSet, no parent comparison) and a grep of the class for parent (only firstParents 250-271 for the notes chain)
+- OBSERVED: `AllowedSigners.read` reads the file with `Files.readAllLines` without a size or line bound and `from` calls `Path.of`
+  outside a try; `SignatureVerification` strips every `gpgsig` header and verifies the first only — read at
+  `git-store/src/main/java/de/cuioss/git/document/store/AllowedSigners.java` 115 and 136 and `SignatureVerification.java` 188 and
+  221-241 at `ad9e773` (the PLAN-10 analysis of 2026-11-23).
+  - verdict: corroborated | checked_at: ad9e773a636499b03e14639ee7de75322db72879 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at ad9e773 in the PLAN-10 analysis of 2026-11-23 (L3-1 to L3-3, landings/PLAN-10.md); AllowedSigners changed since only by the anchor-namespace generalisation of PLAN-11 (fromAnchor), the read and from paths were not touched
+
 ## Expected Surface
 
 - OBSERVED: `git-store/src/main/java/de/cuioss/git/document/store/`
@@ -255,12 +328,15 @@ Later analyses of PLAN-10 and PLAN-11 fold their `git-store` leftovers into this
 
 ## Dependencies and Sequencing
 
-- Three deliverables, under the scope-bloat guard (about six). Deliverables 1 and 2 are the former deliverables 7 and 8 of the
-  held-back collection plan PLAN-20, moved here on 2026-11-22 at the operator's word so that `git-store` has one hardening plan
-  and PLAN-20 keeps `git-core`, `git-testing` and the build guards; deliverable 3 is PLAN-09's leftovers.
-- Collection plan: **hold it back from `next` until the operator releases it.** `analyze` folds further `git-store` leftovers
-  (PLAN-10, PLAN-11) into this spec in the same edit as its Expected Surface; the operator releases it by naming it in a `next`
-  round. It is queued after PLAN-11, at the end of WS-02.
+- Four deliverables, under the scope-bloat guard (about six). Deliverables 1 and 2 are the former deliverables 7 and 8 of the
+  collection plan PLAN-20, moved here on 2026-11-22 at the operator's word so that `git-store` has one hardening plan
+  and PLAN-20 kept `git-core`, `git-testing` and the build guards; deliverable 3 is PLAN-09's leftovers and deliverable 4 those of
+  PLAN-10 and PLAN-11, folded in on 2026-11-24 at the operator's word (the fold adds no file surface: every file it names lies
+  under the declared `git-store/` directory, `git-store.adoc`, `LogMessages.adoc` and `AGENTS.md`). The plan proceeds unsplit
+  although deliverables 3 and 4 are each large: the operator asked for one `git-store` hardening plan; the operator may split it.
+- Collection plan: released by the operator for emit on 2026-11-24 (it was held back from `next` until then); it follows PLAN-11,
+  which has shipped (PR #66, `b30ec14`), and is the last plan of WS-02. Later analyses of `git-store` landings fold their
+  leftovers into a new plan, not into this one once it is launched.
 - Depends on: PLAN-09 (shipped, PR #52, `4a5eed5`) and, because it edits the same files (`ExplicitSave`, `DocumentRelease`,
   `StoreWriter`, `StoreIndex`, `ListenerDispatch`), strictly sequential with PLAN-10 and PLAN-11: release it after PLAN-11, or
   earlier only if the operator accepts the rebase of those two plans onto it.

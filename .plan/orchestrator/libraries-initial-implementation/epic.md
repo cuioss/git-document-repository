@@ -124,7 +124,20 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   PLAN-09 edits, so it is released after PLAN-09 or split. Its `git-store` claim stamps (26 to 30), displaced by one bullet since the
   PLAN-07 analysis, were re-stamped on the right claims at `c1e02fc`. On 2026-11-22 (PLAN-09's landing) deliverables 7 and 8 moved to the
   new PLAN-22 with their claims, and PLAN-20 has six deliverables again (at the split guard), with the flaky `publishLosesRace` as item (f)
-  of deliverable 4 and no `git-store` entry left in its Expected Surface.
+  of deliverable 4 and no `git-store` entry left in its Expected Surface. **Shipped (2026-11-24, PR #69, `f7eda4e`, `landings/PLAN-20.md`):**
+  49 files, +3663/-411, six deliverables traced; it ran beside PLAN-11 and PLAN-13 (the planned three-file overlap was two in the diff: the
+  root `pom.xml` was not touched, only `git-core/pom.xml`) and was rebased onto PLAN-11 at `branch-cleanup` (content-clean, which cost a
+  second finalize pass). Its own analysis found one major (`InCoreWriter.checkPaths` refuses a `Delete` of a Windows-invalid name that is
+  already in a tree) and four minor defects.
+- PLAN-11 — Shipped (PR #66, `b30ec14`, `landings/PLAN-11.md`, 37 files, +8591/-57): the anchoring engine, checkpoints, proofs as notes, the
+  provider `signed` and the verifier; it ran beside PLAN-13 and PLAN-20 (the overlap realised is the state lists only). Its public
+  `AnchorProvider.obtain` gained a `commitTime` parameter (PLAN-17 implements this SPI). Its analysis found one major (the verifier does not
+  check the checkpoint chain) and eleven minor defects; routed to PLAN-22 deliverable 4 on the operator's word.
+- PLAN-17 — Emitted on 2026-11-24 beside PLAN-13 (PLAN-11 shipped, so its dependency is met); the operator accepted the 4 to 5 shared files with
+  PLAN-13 (`AGENTS.md`, `doc/README.adoc`, `general.adoc`, `pom.xml`, `module-structure.adoc` against the live plan) and the two shared with
+  PLAN-22 (`AGENTS.md`, `general.adoc`). Opens with the owner decision on the RFC 3161 library.
+- PLAN-22 — Released and emitted on 2026-11-24 on the operator's word, after PLAN-10's and PLAN-11's `git-store` findings were folded into it as
+  deliverable 4 (no new surface); it has four deliverables and proceeds unsplit.
 
 ## Decisions
 
@@ -442,6 +455,41 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   (CodeRabbit "Minor comments: 20"). The 15 messages: 14 candidate lessons (11 new lessons `2026-11-23-14-001` to `-011`, with 013 folded into `-010`;
   007 folded into PLAN-11 as a Standing Constraint, no surface added; 012 folded into the shared-documents Watch) and the landing. Reported to the
   operator; routing of the layer-3 findings pending (candidate: PLAN-22 deliverable 4).
+- 2026-11-24 — PLAN-11 and PLAN-13 confirmed `running` and PLAN-20 `launched` on the operator's word of 2026-11-23 ("all three are running";
+  PLAN-11 and PLAN-13 observed through their plan directories, PLAN-20 not). By the morning PLAN-11 (PR #66, `b30ec14`) and PLAN-20 (PR #69,
+  `f7eda4e`) had merged; PLAN-13's PR #64 was still open.
+- 2026-11-24 — PLAN-11 landed (PR #66, `b30ec14`) and was analysed on three layers (`landings/PLAN-11.md`): no blocker; layer 3: **one major** (the
+  anchor verifier never compares a checkpoint's parent with the previous checkpoint, so a checkpoint tag moved onto another anchored commit, or a
+  duplicate subject, verifies clean; the "never moved" invariant of GDR-STORE-16 is undetected) and eleven minor (an unreadable checkpoint reported
+  clean, the verifier ignoring `anchor.releases=false`, quadratic cost, unbounded reads of remote-controlled blobs, fetch updates lost when a due
+  check throws, an `Instant.plus` overflow with a huge configured duration, the INFO proof record written before publication, an empty proof
+  accepted, a previous proof taken unverified from the notes tip, a `Path.of` outside a try, no closed flag on `StoreClone.close`); layer 2: three
+  minor (three in-code Sonar suppressions where the spec prescribes a fix or an operator-selected transition, raw threads in
+  `AnchorInterleavingTest`, the mirrored set derived from `PUSH_REF_SPECS` but not tied to git-core's prune scope); layer 1: the SPI break
+  `AnchorProvider.obtain(..., commitTime, ...)` the spec did not foresee, the "not re-requested" wording that holds only while the tip is
+  unchanged, the Done-when "every GDR-STORE requirement is covered" that GDR-STORE-19 contradicts, and a stale surface premise (`git-store` was
+  not a new module). The two persisted claim verdicts: both `corroborated`. The landing is incomplete (`effort` and the three review numbers);
+  the review-gate re-read is undecidable (CodeRabbit "Minor comments: 1") and the Sonar read is undecidable (`head_revision_unavailable`).
+- 2026-11-24 — PLAN-20 landed (PR #69, `f7eda4e`, after PRs #67 and #68 were closed for the CodeRabbit quota recovery) and was analysed on three
+  layers (`landings/PLAN-20.md`): no blocker; layer 3: **one major** (`InCoreWriter.checkPaths` applies the strict Windows and macOS `ObjectChecker`
+  to every edit, so a `Delete` of `aux.txt`, `trailing.` or `a:b` already stored in a parent tree is refused where it was possible before) and
+  four minor (the duplicate and case-fold check ignores the parent tree and refuses a legitimate file-to-directory edit, `canonical()` treats every
+  `FileSystemException` as missing, `storedOrigin` refuses a `//server/share` path, `isBranchName` refuses any `refs/` prefix beyond git);
+  layer 2: four minor (no test pins the `HEAD` refusal, the rollback wiring is unobserved, the hermetic fixture is used by one test, `AGENTS.md`
+  omits `READ_FILE_LIMIT_BYTES`); layer 1: the Done-when fail-first clause contradicts deliverable 3(c), the owner question for the bound of 4(b)
+  is not shown. Persisted verdicts: claims 5, 11 and 13 `corroborated`, claim 22 `unverifiable`. The landing is incomplete (the same four keys);
+  the review-gate re-read is decidable (0 unresolved, 13 body findings, `handled: 0`) and the Sonar read undecidable (`head_revision_unavailable`).
+  Reported to the operator at once; the open defects of PLAN-03, PLAN-04, PLAN-05, PLAN-06, PLAN-18 and PLAN-19 routed to it are retired as far as
+  the leaf traced them.
+- 2026-11-24 — Message dispositions of the drain (33 messages: the landings 012 of PLAN-11 and 021 of PLAN-20, 11 and 20 candidate lessons).
+  Twelve new lessons (`2026-11-24-07-001` to `-012`), twelve recurrences appended to existing lessons (`2026-11-23-14-009`, `-010`, `2026-11-23-12-002`,
+  `2026-11-18-07-001`, `-002`, `-004`, `-006`, `-007`, `2026-11-18-13-005`, `2026-11-19-06-001`, `-005`, `2026-11-20-14-001`), one lesson repaired
+  (`2026-11-23-14-011`: its title and body had carried the message's metadata lines, an error of the previous drain), two messages folded into the
+  architecture-inventory Watch (the undeclared-empty `skills_by_profile` of `git-store`, again).
+- 2026-11-24 — Emit round after the analysis: PLAN-13 was the only plan in flight. The operator answered the overlap prompts: PLAN-17 beside PLAN-13
+  (4 to 5 shared files): emit; PLAN-22 released from its hold, and its two-file overlap with PLAN-13 and with PLAN-17: emit both; the layer-3
+  findings of `git-store` (PLAN-10's ten minors and PLAN-11's major and eleven minors) folded into PLAN-22 as deliverable 4 (the fold added no file
+  surface; two claims stamped through `corpus set-verdict`). PLAN-20's git-core findings were not folded: not routed. Nothing is recorded as launched.
 
 ## Open Defects
 
@@ -456,7 +504,7 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   reservation release on the success path that tears down a finished worktree, `realPath` I/O failures and a missing-path
   alias that is not resolved, a reflog catch narrower than its failures, two stale Javadoc sentences, and the branch-name
   rule being JGit's, not git's. The always-`PATH_REFUSED` add on a bare root is an undocumented behaviour change (layer 1).
-  — routed to PLAN-20 (deliverables 1 and 2) on the operator's word; open until PLAN-20 ships.
+  — routed to PLAN-20 (deliverables 1 and 2) on the operator's word; PLAN-20 shipped (PR #69, `f7eda4e`) and its landing analysis traces both deliverables to code and tests (the rollback wiring is the one unobserved point, PLAN-20 L2-2); residue in the PLAN-20 entry below. Retired.
 - PLAN-04 layer-3 defects in `git-core` (`landings/PLAN-04.md`, L3-1 to L3-9; one major, eight minor): the major one is the
   `dircache.InvalidPathException` from `DirCache.read` that escapes `InCoreWriter.write` and `compareAndSwap` instead of ending
   as a `FAILED` result (GDR-GEN-3); the minor ones are unchecked exceptions of a `Signer`, `GpgConfig` or `TreeOperation`, a retry
@@ -465,11 +513,14 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   uppercase-scheme credential kept in the clone's stored origin, and an unbounded `readFile`; with the layer-2 residues (untested
   `notWritten` branches, no reflog test, `ReferenceUpdater.parseCommit` peels a tag). PLAN-05 (PR #37) left all of them in place
   and added the same defect class to its new code (`landings/PLAN-05.md`, L3-1 to L3-8). — routed to PLAN-20 (deliverables 3 and 4)
-  on the operator's word; open until PLAN-20 ships.
+  on the operator's word; PLAN-20 shipped (PR #69, `f7eda4e`) and its landing analysis traces the fixes to code (one major of its own, the
+  refused `Delete` of L3-1 of `landings/PLAN-20.md`); residue in the PLAN-20 entry below. Retired.
 - PLAN-06 layer-3 defects in the build guards (`landings/PLAN-06.md`, L3-1 to L3-4, with the layer-2 residue L2-1 to L2-3):
   `consumer-isolation` does not see a direct optional dependency, the layering rule is self-policing, the domain-term list is
   triplicated by hand, `NativeImageMetadataTest` checks names and not shape, the guards' negative runs live only in the squash
-  message, and the native-image wording overclaims one class. — routed to PLAN-20 (deliverable 6); open until PLAN-20 ships.
+  message, and the native-image wording overclaims one class. — routed to PLAN-20 (deliverable 6); PLAN-20 shipped (PR #69, `f7eda4e`): the fourth check
+  `direct-dependency-isolation`, the recorded negative runs (prose, not repeatable by a check) and the shape test are in; whether the new guard fires
+  on a deliberately wrong optional dependency is not shown by reading. Retired.
 - PLAN-07 layer-3 defects in `git-store` (`landings/PLAN-07.md`, L3-1 to L3-5, all minor, with the layer-2 residue L2-1 to L2-3):
   `save.max-attempts` has no upper bound and `Integer.MAX_VALUE` makes `git-core`'s `ReferenceUpdater.swap` loop wrap (the PLAN-04
   `attempts` class; latent until PLAN-08's save uses the value), `StoreRepository.toString` keeps a token in a remote's path or
@@ -517,9 +568,30 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   valid; Git's own semantics, but no revocation), and its `RevWalk` keeps the whole history in memory; the `Z` suffix is accepted where OpenSSH 8.8 and 8.9
   refuse it and one non-Ed25519 line disables the whole file; two log records name the reference (the document id); `IdentityClaims` throws for
   a token-derived `acr` or `amr`; a third-party `SigningKeySource` that throws is not isolated; `VerifySignatures` labels any
-  `IllegalArgumentException` as "not a repository". — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (a candidate:
-  PLAN-22 as deliverable 4, which is strictly sequential after PLAN-11 on the same files).
-- Incomplete landings (PLAN-10 `plan-10-store-signing-trailers-verify-015.md`: misses `effort` and the three review numbers (all `unknown`: no finalize step
+  `IllegalArgumentException` as "not a repository". — routed to PLAN-22 (deliverable 4) on the operator's word (2026-11-24, with the findings of PLAN-11); open until PLAN-22 ships.
+- PLAN-11 defects in `git-store` (`landings/PLAN-11.md`; one major, eleven minor, with the layer-2 residue L2-1 to L2-3 and the layer-1 residue
+  L1-2 to L1-5): `AnchorVerification` never compares a checkpoint's parent with the previous checkpoint (a moved checkpoint tag, a duplicate
+  subject or a rewritten branch between two checkpoints verifies clean; the "never moved" invariant of GDR-STORE-16 is undetected); an unreadable
+  checkpoint is reported clean; the verifier ignores `anchor.releases=false`; its cost is checkpoints times listed references; remote-controlled
+  blobs are read with `getBytes(Integer.MAX_VALUE)`; `AnchorEngine.dueCheck` loses the collected fetch updates on a `RuntimeException`; an
+  `Instant.plus` overflow with a huge configured duration; the INFO proof record is written before publication; an empty proof is accepted; a
+  previous proof is chained unverified; `AllowedSigners.fromAnchor` calls `Path.of` outside a try; `StoreClone.close` has no closed flag; three
+  in-code Sonar suppressions; raw threads in `AnchorInterleavingTest`; the mirrored set is not tied to `git-core`'s prune scope. — routed to PLAN-22
+  (deliverable 4) on the operator's word (2026-11-24); open until PLAN-22 ships.
+- PLAN-20 defects in `git-core` and `git-testing` (`landings/PLAN-20.md`; one major, four minor, with the layer-2 residue L2-1 to L2-6): the strict
+  `ObjectChecker` of `InCoreWriter.checkPaths` is applied to a `Delete`, so a Windows-invalid name already stored in a tree (pushed from Linux)
+  can no longer be removed through `InCoreWriter` or `compareAndSwap` (major); the duplicate and case-fold check ignores the parent tree and refuses
+  a legitimate file-to-directory edit; `canonical()` treats every `FileSystemException` as missing (a symlink loop or an unreadable directory
+  resolves through the ancestor); `storedOrigin` refuses a `//server/share/repo.git` path; `isBranchName` refuses any `refs/` prefix beyond git;
+  no test pins the `HEAD` refusal of decision D3(d), the `rollBack` wiring is unobserved, the `Integer.MAX_VALUE` overflow fix has no test that can
+  fail (the Done-when clause and deliverable 3(c) contradict), the hermetic fixture has one user, `AGENTS.md` omits `READ_FILE_LIMIT_BYTES`.
+  — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (the files are in `git-core` and `git-testing`, which PLAN-22
+  leaves read-only; a candidate is a third collection plan or the fix of the next plan that opens `git-core`).
+- Incomplete landings (PLAN-11 `plan-11-store-anchoring-signed-012.md` and PLAN-20 `plan-20-leftover-fixes-2-021.md`: both miss `effort` and the three review
+  numbers (`unknown`: no finalize step records them); PLAN-11's `review-gate` re-read is undecidable (CodeRabbit "Minor comments: 1") and its Sonar read is
+  undecidable (`head_revision_unavailable`, analysis revision `4db53c7`); PLAN-20's `review-gate` re-read is decidable (0 unresolved threads, 13 review-body
+  findings, `handled: 0`, the handled count not re-verified: the progress file is gone) and its Sonar read is undecidable (analysis revision `5baca51`), so
+  the `sonar_open_new_issues=0` of both is not re-verified; PLAN-10 `plan-10-store-signing-trailers-verify-015.md`: misses `effort` and the three review numbers (all `unknown`: no finalize step
   records them); its `review-gate` re-read is undecidable (CodeRabbit "Minor comments: 20") and the Sonar `0` is not re-verified; PLAN-01 `git-testing-fixtures-017.md`, PLAN-02 `git-core-import-013.md`, PLAN-18
   `plan-18-leftover-fixes-016.md`, PLAN-03 `plan-03-git-worktrees-import-020.md`, PLAN-19
   `plan-19-git-worktrees-hardening-018.md`, PLAN-04 `git-core-incore-write-cas-017.md`, PLAN-05
@@ -574,7 +646,11 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `doc/specification/general.adoc`; one `2-refine` envelope was spent on the reconcile. Every plan of the epic edits the implementation-state lines of those
   two files and the "Current state" paragraph of `AGENTS.md`, so plans that run at the same time conflict there whatever their module. The gate
   predicted the pair (both declared those files), so the pairing was already known. Open question for the operator, not decided here: a
-  shared-surface rule (serialise such pairs, or defer the state-line edit to a landing step) or one line per module. Open.
+  shared-surface rule (serialise such pairs, or defer the state-line edit to a landing step) or one line per module. **Recurrence (PLAN-20,
+  2026-11-24):** PLAN-20 was rebased at `branch-cleanup` onto PLAN-11 (which edits `AGENTS.md`, `doc/README.adoc` and `module-structure.adoc`); the rebase
+  was content-clean but voided four head-bound verdicts and cost a second finalize pass (lesson `2026-11-24-07-008`); the operator accepted the same
+  overlaps again for the next block (PLAN-13, PLAN-17, PLAN-22 on `AGENTS.md`, `general.adoc` and `doc/README.adoc`). Still the operator's open
+  question. Open.
 - PLAN-06 is the last foundation plan and the 0.1.0 release follows it (an operator act through `/release`; a Maven Central release
   cannot be withdrawn). PLAN-20 changes the behaviour of public `git-core` and `git-worktrees` operations and adds guards. —
   question to the operator, open: release PLAN-20 before 0.1.0, or release 0.1.0 first and carry the fixes into the next version.
@@ -587,7 +663,11 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   PLAN-12 has landed too (PR #54) and PLAN-23 closed its two majors (PR #59): `git-forms` is on `main` and in the reactor, and its own
   analysis still carries one major (the pointer-string memory amplification) and five minors, unrouted; PLAN-10 has landed too (PR #58,
   `ad9e773`: every save and release commit is signed, the identity trailers, the verifier and its CI main class, no new dependency) with ten
-  minors, unrouted; PLAN-11, PLAN-22 and PLAN-20 are what is still open against the cut. The operator's #50 (2026-11-21) added the consumer
+  minors, now routed to PLAN-22; PLAN-11 has landed too (PR #66, `b30ec14`: the anchoring engine, checkpoints, proofs as notes, the provider `signed`
+  and the verifier, with a public `AnchorProvider.obtain` signature change) with one major and eleven minors, routed to PLAN-22 deliverable 4; PLAN-20 has landed
+  (PR #69, `f7eda4e`: `git-core` and worktrees hardening, `git-testing` fixtures, the fourth build guard, EasyMock at test scope in `git-core`) with one
+  major of its own (a refused `Delete` of a Windows-invalid name) and four minors, unrouted; PLAN-22 (now four deliverables, emitted 2026-11-24) is what is
+  still open against the cut, besides PLAN-13 (`git-forms`), PLAN-17 (`git-timestamp`) and the unrouted `git-forms` major of PLAN-23. The operator's #50 (2026-11-21) added the consumer
   propagation block to `.github/project.yml` (no version change).
 - The committed architecture inventory `.plan/project-architecture/` still names the removed module `git-worktrees` (`_project.json`,
   `git-document-repository/enriched.json` and a whole `git-worktrees/enriched.json`) after PLAN-21 (`landings/PLAN-21.md` L2-4). It is
@@ -601,7 +681,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   the architecture refresh runs. PLAN-23 raised it for `git-forms` (Q-Gate a061c4 and 5af2f5, the operator accepted both, "no config
   change"), and the persona resolver reported `module_status=unreadable` for the module `documentation`: the same refresh settles
   `git-store`, `git-forms` and `documentation` at once, and every later `git-forms`, `git-directory` and `git-timestamp` plan will
-  repeat the finding until it runs.
+  repeat the finding until it runs. PLAN-11 raised it for `git-store` again (Q-Gate findings 4ad387 and e95926, both accepted as informational, messages
+  001 and 002 of 2026-11-23): the third `git-store` plan to do so.
 - The execution manifest of PLAN-04 carried `final_merge_without_asking=true`, which contradicted the AGENTS.md rule "do not merge
   unless the user says so". — resolved by the operator's #42 (`3c609a7`): AGENTS.md on `main` now authorises a plan-marshall run
   to merge its own pull request once the checks are green and every review comment is handled (never a PR that changes

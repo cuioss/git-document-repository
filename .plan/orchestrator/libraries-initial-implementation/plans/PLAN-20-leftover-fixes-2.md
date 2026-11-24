@@ -215,6 +215,7 @@ Dependencies and Sequencing) until the operator releases it.
 - HYPOTHESIS: `Repository.isValidRefName` of JGit 7.8.0 accepts `HEAD`, a leading `-`, `a.lock/b` and `@` where git
   refuses or reads them differently — confirm/refute at JGit 7.8.0 `org.eclipse.jgit/src/org/eclipse/jgit/lib/Repository.java`
   § `isValidRefName` and `git check-ref-format` (verify-at-outline).
+  - verdict: corroborated | checked_at: f7eda4e460d6c086238900309baa3513ea80b084 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: read in the three-layer analysis at f7eda4e: Repository.isValidRefName of JGit 7.8.0 accepts HEAD, a leading dash, a.lock/b and @ under refs/heads/; the tests assert it and git-core.adoc (808-820) records it.
 - OBSERVED: `InCoreWriter.write` reads the parent tree with `DirCache.read(reader, tree)` outside any handler for
   `IllegalArgumentException`, and JGit 7.8.0 `DirCacheEntry.checkPath` throws `dircache.InvalidPathException`, which
   extends `IllegalArgumentException` — read at `git-core/src/main/java/de/cuioss/git/document/core/InCoreWriter.java`
@@ -240,12 +241,14 @@ Dependencies and Sequencing) until the operator releases it.
   `setSafeForMacOS` by host), so a Windows name or a trailing dot is accepted on Linux — confirm/refute at JGit 7.8.0
   `org/eclipse/jgit/util/SystemReader.java` § `checkPath` and `org/eclipse/jgit/lib/ObjectChecker.java`
   (verify-at-outline); the call itself is read at `InCoreWriter.java` § `checkPaths` (155).
+  - verdict: corroborated | checked_at: f7eda4e460d6c086238900309baa3513ea80b084 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at f7eda4e: git-core.adoc 262-266 records the owner decision (ObjectChecker setSafeForWindows and setSafeForMacOS on every host) because SystemReader.checkPath depends on the host; InCoreWriter.checkPaths 246-253 applies it.
 - OBSERVED: the clone removes only user name and password from the stored origin — read at
   `git-core/.../JGitRepositoryOperations.java` § `cloneIfMissing` (261 at `c1e02fc`, 251 at `c8feb0b`; PLAN-08 added a line above, `setUser(null).setPass(null)`).
   - verdict: corroborated | checked_at: c1e02fced1353da9ad953ab7a32c1a7eb44f1f39 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at c1e02fc: JGitRepositoryOperations.java 261 (and 623) new URIish(input.url()).setUser(null).setPass(null); PLAN-08 added lines above, the site moved from 251
 - HYPOTHESIS: a token in the query string, and an uppercase-scheme URL that `URIish` parses as a local path, stay in the
   clone's stored origin — confirm/refute at `JGitRepositoryOperations.java` § `cloneIfMissing` (261 at `c1e02fc`) and JGit 7.8.0
   `org/eclipse/jgit/transport/URIish.java` § `setUser` / `toString` (verify-at-outline).
+  - verdict: corroborated | checked_at: f7eda4e460d6c086238900309baa3513ea80b084 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: read in the three-layer analysis at f7eda4e: a query token and an uppercase-scheme URL stayed in the stored origin before the change (URIish keeps the query in the path); storedOrigin 373 now refuses the unparsed authority. Whether the owner was asked for the bound is not shown by reading.
 - OBSERVED: `readFile` reads a blob with `content.readAllBytes()` and the accepted exception rests on "a source the
   remote policy admitted" — read at `JGitRepositoryOperations.java` § `readFile` (708) and `doc/specification/git-core.adoc`
   § GDR-CORE-8 (363-365).
@@ -284,6 +287,7 @@ Dependencies and Sequencing) until the operator releases it.
   `org.eclipse.jgit.internal.storage.dfs.DfsText` or `RepoText`, which the metadata does not list — confirm/refute at JGit 7.8.0
   `org/eclipse/jgit/internal/storage/dfs/DfsText.java` (callers) and the main sources of `git-core` (a search for `DfsText` and
   `storage.dfs` finds none at `e43c7e9`) (verify-at-outline).
+  - verdict: unverifiable | checked_at: f7eda4e460d6c086238900309baa3513ea80b084 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: read in the three-layer analysis at f7eda4e: no storage.dfs import in the git-core main code (half answered); whether a native-image consumer on an in-memory DFS repository loads DfsText through the translation bundle is not shown by reading.
 - HYPOTHESIS: the `git-testing` leftovers of PLAN-18 (the tautological positive half of the `@InMemory` type assertion,
   the unobserved rollback wiring, the unasserted "auto-close off" setting, the lost first close failure, the stale
   `PER_CLASS` Javadoc) still hold after PR #29 — confirm/refute at
