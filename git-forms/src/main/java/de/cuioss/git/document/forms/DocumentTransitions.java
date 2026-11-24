@@ -15,7 +15,6 @@
  */
 package de.cuioss.git.document.forms;
 
-import java.io.IOException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -40,17 +39,9 @@ import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.git.document.store.StoreWriter;
+import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.tools.logging.CuiLogger;
-import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.FileMode;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectLoader;
-import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevWalk;
-import org.eclipse.jgit.revwalk.filter.RevFilter;
-import org.eclipse.jgit.treewalk.TreeWalk;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -91,7 +82,8 @@ import org.jspecify.annotations.Nullable;
  * The draft written before a save stays when the save does not succeed, as every draft of the user does.
  * <p>
  * The current state is read through the bare clone of the writer, which the caller opens on the git directory it
- * passed to {@link StoreWriter#open}; this class only reads it. A detail names a path of the document, a reference or
+ * passed to {@link StoreWriter#open}; this class only reads it, through the package-private {@link CloneReader}. A
+ * detail names a path of the document, a reference or
  * the problem, never a data value, a pseudonym or a claim; violations and the JSON Pointers of missing fields are data
  * of {@link Result.Refused}, conflicting paths data of {@link Result.Conflicting} (GDR-NFR-3). Every result is logged
  * as {@code GIT_FORMS-2} or {@code GIT_FORMS-3} with the mechanism and the commit id or the name of the outcome only.
@@ -112,7 +104,7 @@ public final class DocumentTransitions {
     private static final String NO_MECHANISM = "none";
 
     private final StoreWriter writer;
-    private final Repository repository;
+    private final CloneReader clone;
     private final Definition definition;
     private final StepUpPolicy policy;
     private final Clock clock;
@@ -134,7 +126,7 @@ public final class DocumentTransitions {
     public DocumentTransitions(StoreWriter writer, Repository repository, Definition definition, StepUpPolicy policy,
             Clock clock) {
         this.writer = Objects.requireNonNull(writer, "writer");
-        this.repository = Objects.requireNonNull(repository, "repository");
+        this.clone = new CloneReader(repository);
         this.definition = Objects.requireNonNull(definition, "definition");
         this.policy = Objects.requireNonNull(policy, "policy");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -171,7 +163,8 @@ public final class DocumentTransitions {
         String documentPath = documentPath(key);
         FormsResult<String> current;
         try {
-            current = TransitionStep.readState(codec, read(branchOf(key), documentPath), documentPath, initialState());
+            current = TransitionStep.readState(codec, clone.read(branchOf(key), documentPath), documentPath,
+                    initialState());
         } catch (ReadFailure e) {
             return report(NO_MECHANISM, readFailed(e));
         }
@@ -249,7 +242,7 @@ public final class DocumentTransitions {
     /**
      * Verifies the commit of a save that did not run the step, because its draft changed nothing (a self-loop such as
      * {@code approved} to {@code approved} writes identical content): the checks of the step are applied to the saved
-     * commit through a {@link SavedCommit} view. A refusal ends the transition as the refusal of a step would, before
+     * commit through the view {@link CloneReader#savedCommit(String)}. A refusal ends the transition as the refusal of a step would, before
      * anything is released or written. When the step's edits equal the files of the saved commit, the commit stands;
      * otherwise its output is stale, and the edits are written through a second draft and save with a fresh step, whose
      * commit the transition continues with. That second draft changes the stale paths against the saved commit, so its
@@ -258,7 +251,7 @@ public final class DocumentTransitions {
      * @return {@link Result.Performed} with the commit the transition continues with, or the result that ends it
      */
     private Result verifySaved(Call call, String commitId) {
-        var view = new SavedCommit(commitId);
+        SaveStep.Attempt view = clone.savedCommit(commitId);
         var check = step(call, Map.of());
         SaveStep.Outcome outcome;
         List<TreeEdit> stale = new ArrayList<>();
@@ -281,7 +274,7 @@ public final class DocumentTransitions {
     }
 
     /** Writes the regenerated edits of a stale saved commit through a second draft and save with a fresh step. */
-    private Result rewrite(Call call, SavedCommit view, List<TreeEdit> stale) {
+    private Result rewrite(Call call, SaveStep.Attempt view, List<TreeEdit> stale) {
         StoreResult<Map<String, @Nullable Object>> saved;
         try {
             saved = codec.decode(view.content(call.documentPath()).orElseThrow());
@@ -303,7 +296,7 @@ public final class DocumentTransitions {
     }
 
     /** The edits whose content differs from the file the saved commit holds at their path. */
-    private static List<TreeEdit> stale(SavedCommit view, List<TreeEdit> edits) {
+    private static List<TreeEdit> stale(SaveStep.Attempt view, List<TreeEdit> edits) {
         List<TreeEdit> stale = new ArrayList<>();
         for (TreeEdit edit : edits) {
             if (edit instanceof TreeEdit.Put put
@@ -322,16 +315,14 @@ public final class DocumentTransitions {
 
     /**
      * The decoded file the draft started from, the base of the merge of {@link StateMerge}: the file at the merge base
-     * of the draft and the branch of the key ({@code RevFilter.MERGE_BASE} of JGit 7.8.0) when the draft exists and
-     * they have a common commit, else the file on that branch, so that a draft that does not exist yet has changed
-     * nothing; empty when there is no file.
+     * of the draft and the branch of the key when the draft exists and they have a common commit, else the file on that
+     * branch ({@link CloneReader#startedFrom(String, String, String)}), so that a draft that does not exist yet has
+     * changed nothing; empty when there is no file.
      *
      * @throws ReadFailure for an I/O failure while reading the clone
      */
     private FormsResult<Map<String, @Nullable Object>> base(String draft, DocumentKey key, String documentPath) {
-        String branch = branchOf(key);
-        @Nullable ObjectId mergeBase = exists(draft) ? mergeBase(draft, branch) : null;
-        Optional<byte[]> content = mergeBase == null ? read(branch, documentPath) : read(mergeBase, documentPath);
+        Optional<byte[]> content = clone.startedFrom(draft, branchOf(key), documentPath);
         if (content.isEmpty()) {
             return FormsResult.ok(Map.of());
         }
@@ -340,28 +331,6 @@ public final class DocumentTransitions {
             return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, documentPath + ": " + decoded.detail()));
         }
         return FormsResult.ok(Objects.requireNonNull(decoded.value()));
-    }
-
-    /**
-     * The merge base of two references, or {@code null} when one is absent or they have no common commit.
-     *
-     * @throws ReadFailure for an I/O failure while reading the clone
-     */
-    private @Nullable ObjectId mergeBase(String first, String second) {
-        try (RevWalk walk = new RevWalk(repository)) {
-            Ref one = repository.exactRef(first);
-            Ref other = repository.exactRef(second);
-            if (one == null || other == null || one.getObjectId() == null || other.getObjectId() == null) {
-                return null;
-            }
-            walk.setRevFilter(RevFilter.MERGE_BASE);
-            walk.markStart(walk.parseCommit(one.getObjectId()));
-            walk.markStart(walk.parseCommit(other.getObjectId()));
-            RevCommit found = walk.next();
-            return found == null ? null : found.copy();
-        } catch (IOException e) {
-            throw new ReadFailure(e);
-        }
     }
 
     /**
@@ -401,7 +370,7 @@ public final class DocumentTransitions {
      * @throws ReadFailure for an I/O failure while reading the clone
      */
     private Optional<byte[]> draftContent(String draft, DocumentKey key, String documentPath) {
-        return read(exists(draft) ? draft : branchOf(key), documentPath);
+        return clone.read(clone.exists(draft) ? draft : branchOf(key), documentPath);
     }
 
     /**
@@ -475,52 +444,6 @@ public final class DocumentTransitions {
     String documentPath) {
     }
 
-    /**
-     * A saved commit read as the attempt of a save: its tip and its produced tree are both the commit, so the checks of
-     * the step apply to what the commit holds.
-     */
-    private final class SavedCommit implements SaveStep.Attempt {
-
-        private final String commitId;
-
-        SavedCommit(String commitId) {
-            this.commitId = commitId;
-        }
-
-        @Override
-        public String tip() {
-            return commitId;
-        }
-
-        @Override
-        public Optional<byte[]> tipContent(String path) {
-            return read(ObjectId.fromString(commitId), path);
-        }
-
-        @Override
-        public Optional<byte[]> content(String path) {
-            return tipContent(path);
-        }
-
-        @Override
-        public List<String> paths(String directory) {
-            String prefix = directory.isEmpty() ? "" : directory + "/";
-            List<String> paths = new ArrayList<>();
-            try (RevWalk walk = new RevWalk(repository); TreeWalk tree = new TreeWalk(repository)) {
-                tree.addTree(walk.parseCommit(ObjectId.fromString(commitId)).getTree());
-                tree.setRecursive(true);
-                while (tree.next()) {
-                    if (tree.getPathString().startsWith(prefix)) {
-                        paths.add(tree.getPathString());
-                    }
-                }
-            } catch (IOException e) {
-                throw new ReadFailure(e);
-            }
-            return paths.stream().sorted().toList();
-        }
-    }
-
     private void requireCollection(DocumentKey key) {
         Kind kind = definition.kind();
         DocumentCollection collection = key.collection();
@@ -543,56 +466,7 @@ public final class DocumentTransitions {
     /** The branch the current state is read from: the local target branch of the key, else {@code main}. */
     private String branchOf(DocumentKey key) {
         String target = StoreReferences.target(key);
-        return exists(target) ? target : StoreReferences.MAIN;
-    }
-
-    private boolean exists(String ref) {
-        try {
-            Ref found = repository.exactRef(ref);
-            return found != null && found.getObjectId() != null;
-        } catch (IOException e) {
-            throw new ReadFailure(e);
-        }
-    }
-
-    /**
-     * Reads a file of the commit a reference points at.
-     *
-     * @return the content, or empty when the reference, the commit or the file is absent
-     * @throws ReadFailure for an I/O failure, and for a file larger than {@link OutputCheck#MAX_FILE_BYTES}
-     */
-    private Optional<byte[]> read(String ref, String path) {
-        Ref found;
-        try {
-            found = repository.exactRef(ref);
-        } catch (IOException e) {
-            throw new ReadFailure(e);
-        }
-        ObjectId commit = found == null ? null : found.getObjectId();
-        return commit == null ? Optional.empty() : read(commit, path);
-    }
-
-    /**
-     * Reads a file of a commit.
-     *
-     * @return the content, or empty when the file is absent
-     * @throws ReadFailure for an I/O failure, and for a file larger than {@link OutputCheck#MAX_FILE_BYTES}
-     */
-    private Optional<byte[]> read(ObjectId commit, String path) {
-        try (RevWalk walk = new RevWalk(repository);
-             TreeWalk file = TreeWalk.forPath(repository, path, walk.parseCommit(commit).getTree())) {
-            if (file == null || FileMode.TREE.equals(file.getRawMode(0))) {
-                return Optional.empty();
-            }
-            ObjectLoader loader = repository.open(file.getObjectId(0), Constants.OBJ_BLOB);
-            // JGit 7.8.0 ObjectLoader.getBytes(int) returns a cached object whole, so the size is checked first.
-            if (loader.getSize() > OutputCheck.MAX_FILE_BYTES) {
-                throw new ReadFailure(new IOException("too large"));
-            }
-            return Optional.of(loader.getBytes(OutputCheck.MAX_FILE_BYTES));
-        } catch (IOException e) {
-            throw new ReadFailure(e);
-        }
+        return clone.exists(target) ? target : StoreReferences.MAIN;
     }
 
     private static Result readFailed(ReadFailure failure) {
@@ -911,16 +785,6 @@ public final class DocumentTransitions {
             public Optional<String> detail() {
                 return Optional.of(reason);
             }
-        }
-    }
-
-    /** An I/O failure while reading the clone; its message is unused. */
-    private static final class ReadFailure extends RuntimeException {
-
-        private static final long serialVersionUID = 1L;
-
-        ReadFailure(IOException cause) {
-            super(null, cause, false, false);
         }
     }
 }

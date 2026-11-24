@@ -559,11 +559,14 @@ java ... de.cuioss.git.document.forms.VerifyOutput <git-dir> <revision> per-docu
 
 The arguments describe the one kind to check, so the class reads neither `kinds.yaml` nor the repository registry: the
 layout (`per-document` or `numbered`), the collection, and the schema and template files, read from the file system,
-never through a symbolic link and at most 1 MiB each. Since the template file is required, a numbered kind without a
+never through a symbolic link and at most 1 MiB each. No component of the path as given may be a symbolic link, the
+parent directories included, so `cfg/template.adoc.tpl` with `cfg` a link to a directory is refused as well; such a path
+is the exit code `2` with the passed-on `MALFORMED` and the detail `<argument>: a symbolic link, not read`, naming the
+argument, never the path or the linked component. Since the template file is required, a numbered kind without a
 template is not checked through the main class; its check checks nothing. The repository at `<git-dir>` is opened on
 `RefusingFS` (xref:git-core.adoc#GDR-CORE-1[GDR-CORE-1]). The exit code is `0` when every checked output matches, `1`
 when an output mismatches or is missing, each such output path printed on one line of standard output, and `2` for a
-usage error, an argument that is no valid path, a schema or template file that is missing, a symbolic link, too large
+usage error, an argument that is no valid path, a schema or template file that is missing, a symbolic link or reached through one, too large
 or refused, a collection that is no name segment, a repository that cannot be opened, or any other non-success, printed
 to standard error as `<outcome> <detail>`. Nothing printed names data, a pseudonym or a secret
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).

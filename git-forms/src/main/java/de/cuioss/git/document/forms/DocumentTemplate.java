@@ -169,46 +169,6 @@ public final class DocumentTemplate {
         return FormsResult.ok(withoutTrailingLineFeeds(rendered) + "\n");
     }
 
-    /** Whether a section renders for a value: present, not {@code false} and not an empty sequence. */
-    private static boolean isPresent(@Nullable Object value) {
-        return switch (value) {
-            case null -> false;
-            case Boolean bool -> bool;
-            case List<?> list -> !list.isEmpty();
-            default -> true;
-        };
-    }
-
-    /** Looks a name up in the context, innermost value first; {@code null} for an absent value. */
-    private static @Nullable Object lookup(String name, List<@Nullable Object> context) {
-        if (CURRENT.equals(name)) {
-            return context.getLast();
-        }
-        String[] keys = name.split(SEPARATOR);
-        @Nullable Object value = null;
-        boolean found = false;
-        for (int index = context.size() - 1; index >= 0 && !found; index--) {
-            if (context.get(index) instanceof Map<?, ?> map && map.containsKey(keys[0])) {
-                value = map.get(keys[0]);
-                found = true;
-            }
-        }
-        for (int index = 1; index < keys.length && value != null; index++) {
-            value = value instanceof Map<?, ?> map ? map.get(keys[index]) : null;
-        }
-        return value;
-    }
-
-    /** The text a variable inserts for a value. */
-    private static String scalar(@Nullable Object value) {
-        return switch (value) {
-            case String string -> string;
-            case Boolean bool -> bool.toString();
-            case Number number -> number.toString();
-            case null, default -> "";
-        };
-    }
-
     /** Turns every line end into a line feed. */
     private static String lineFeeds(String text) {
         return text.replace("\r\n", "\n").replace('\r', '\n');
@@ -358,6 +318,46 @@ public final class DocumentTemplate {
                 throw new LimitReached("output larger than " + MAX_OUTPUT_CHARS + " characters");
             }
             out.append(text);
+        }
+
+        /** Whether a section renders for a value: present, not {@code false} and not an empty sequence. */
+        private static boolean isPresent(@Nullable Object value) {
+            return switch (value) {
+                case null -> false;
+                case Boolean bool -> bool;
+                case List<?> list -> !list.isEmpty();
+                default -> true;
+            };
+        }
+
+        /** Looks a name up in the context, innermost value first; {@code null} for an absent value. */
+        private static @Nullable Object lookup(String name, List<@Nullable Object> context) {
+            if (CURRENT.equals(name)) {
+                return context.getLast();
+            }
+            String[] keys = name.split(SEPARATOR);
+            @Nullable Object value = null;
+            boolean found = false;
+            for (int index = context.size() - 1; index >= 0 && !found; index--) {
+                if (context.get(index) instanceof Map<?, ?> map && map.containsKey(keys[0])) {
+                    value = map.get(keys[0]);
+                    found = true;
+                }
+            }
+            for (int index = 1; index < keys.length && value != null; index++) {
+                value = value instanceof Map<?, ?> map ? map.get(keys[index]) : null;
+            }
+            return value;
+        }
+
+        /** The text a variable inserts for a value. */
+        private static String scalar(@Nullable Object value) {
+            return switch (value) {
+                case String string -> string;
+                case Boolean bool -> bool.toString();
+                case Number number -> number.toString();
+                case null, default -> "";
+            };
         }
     }
 

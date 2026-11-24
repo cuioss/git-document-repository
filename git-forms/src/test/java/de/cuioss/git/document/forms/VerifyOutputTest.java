@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
  * The main class of the check of the generated output (GDR-FORMS-4) through {@link VerifyOutput#run}, against local
  * repositories of {@code git-testing} and without network: exit code {@code 0} when every output matches, {@code 1}
  * with one line per mismatching output path, {@code 2} for a usage error, a missing or refused schema or template file,
- * a collection that is no name segment, a directory that is no repository and an unknown revision; nothing printed
+ * a file that is a symbolic link or whose parent directory is one, a collection that is no name segment, a directory that is no repository and an unknown revision; nothing printed
  * carries data.
  * <p>
  * The exit codes, the usage line and the printed details are the specified vocabulary and kept as literals; the data
@@ -67,10 +68,28 @@ class VerifyOutputTest {
         return new Ran(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
     }
 
+    /**
+     * The real path of the temporary directory: the check refuses a path through a symbolic link, so a temporary root
+     * that is itself reached through one must not reach the paths of the tests.
+     */
+    private Path real() throws IOException {
+        return temp.toRealPath();
+    }
+
     private Path file(String name, String content) throws IOException {
-        Path file = temp.resolve(name);
+        Path file = real().resolve(name);
         Files.writeString(file, content);
         return file;
+    }
+
+    /** Creates a symbolic link, {@code false} when the file system refuses to. */
+    private static boolean createLink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (IOException | UnsupportedOperationException | SecurityException e) {
+            return false;
+        }
     }
 
     private Ran runOn(Repository repository, String layout) throws IOException {
@@ -141,8 +160,8 @@ class VerifyOutputTest {
         var schema = file("schema.json", SchemaValidatorTest.SCHEMA).toString();
         var template = file("template.adoc.tpl", OutputCheckTest.TEMPLATE).toString();
         var badTemplate = file("bad.adoc.tpl", "{{#open}}").toString();
-        var link = Files.createSymbolicLink(temp.resolve("link.json"), Path.of(schema)).toString();
-        var missing = temp.resolve("missing.json").toString();
+        var link = Files.createSymbolicLink(real().resolve("link.json"), Path.of(schema)).toString();
+        var missing = real().resolve("missing.json").toString();
         String branch = OutputCheckTest.BRANCH;
         String collection = OutputCheckTest.COLLECTION;
 
@@ -158,6 +177,37 @@ class VerifyOutputTest {
                         run(gitDir, branch, VerifyOutput.PER_DOCUMENT, ".hidden", schema, template), "collection"),
                 () -> assertEquals(new Ran(VerifyOutput.FAILED, "", VerifyOutput.INVALID_PATH + "\n"),
                         run(gitDir, branch, VerifyOutput.PER_DOCUMENT, collection, "a\0b", template), "no path"));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: exit code 2 for a schema or template file whose parent directory is a symbolic link")
+    void linkedParentDirectory(@LocalRepository Repository repository) throws Exception {
+        var document = OutputCheckTest.Document.generate();
+        OutputCheckTest.commit(repository, document.files(document.output()));
+        Path directory = Files.createDirectory(real().resolve("configuration"));
+        Path schema = Files.writeString(directory.resolve("schema.json"), SchemaValidatorTest.SCHEMA);
+        Path template = Files.writeString(directory.resolve("template.adoc.tpl"), OutputCheckTest.TEMPLATE);
+        Path linked = real().resolve("cfg");
+        assumeTrue(createLink(linked, directory), "the file system creates symbolic links");
+        var gitDir = repository.getDirectory().toString();
+        String branch = OutputCheckTest.BRANCH;
+        String collection = OutputCheckTest.COLLECTION;
+
+        var linkedSchema = run(gitDir, branch, VerifyOutput.PER_DOCUMENT, collection,
+                linked.resolve("schema.json").toString(), template.toString());
+        var linkedTemplate = run(gitDir, branch, VerifyOutput.PER_DOCUMENT, collection, schema.toString(),
+                linked.resolve("template.adoc.tpl").toString());
+        var ordinary = run(gitDir, branch, VerifyOutput.PER_DOCUMENT, collection, schema.toString(),
+                template.toString());
+
+        assertAll(
+                () -> assertEquals(new Ran(VerifyOutput.FAILED, "", "MALFORMED schema-file: a symbolic link, not read\n"),
+                        linkedSchema, "a linked parent of the schema file, no path printed"),
+                () -> assertEquals(
+                        new Ran(VerifyOutput.FAILED, "", "MALFORMED template-file: a symbolic link, not read\n"),
+                        linkedTemplate, "a linked parent of the template file, no path printed"),
+                () -> assertEquals(new Ran(VerifyOutput.MATCHING, "", ""), ordinary,
+                        "the same files in an ordinary directory are read"));
     }
 
     @Test

@@ -103,8 +103,9 @@ a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to 
 `Workflow` with `Transition`, `Mechanism` and `Deadline` (GDR-FORMS-5, deadlines read but not evaluated),
 `StepUpPolicy` (the step-up setting the application passes in, GDR-FORMS-7) and `DocumentTransitions` (the transition
 operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`), over the
-package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt)
-and `StateMerge` (the merge of the document file onto the tip);
+package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt),
+`StateMerge` (the merge of the document file onto the tip) and `CloneReader` (the read side of the writer's bare
+clone: references, files, the file a draft started from, a saved commit read as an attempt);
 its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.

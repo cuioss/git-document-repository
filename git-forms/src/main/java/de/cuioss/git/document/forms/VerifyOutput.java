@@ -50,14 +50,15 @@ import org.jspecify.annotations.Nullable;
  *
  * It describes the kind to check by its arguments, so it needs neither the configuration of the kinds nor the
  * repository registry: the layout ({@code per-document} or {@code numbered}), the collection, and the schema and the
- * template files, read from the file system. It opens the repository at {@code <git-dir>} on a {@link RefusingFS},
+ * template files, read from the file system, never through a symbolic link in any component of the path as given, the
+ * parent directories included. It opens the repository at {@code <git-dir>} on a {@link RefusingFS},
  * runs {@link OutputCheck} on the commit of {@code <revision>}, and prints one line per mismatching output path to
  * standard output. It exits with
  * <ul>
  * <li>{@code 0} when every checked output matches its data,</li>
  * <li>{@code 1} when an output mismatches or is missing, and</li>
  * <li>{@code 2} for a usage error, an argument that is no valid path, a schema or template file that is missing, a
- * symbolic link, larger than {@value DocumentTemplate#MAX_TEMPLATE_BYTES} bytes or refused, a collection that is no
+ * symbolic link or reached through one, larger than {@value DocumentTemplate#MAX_TEMPLATE_BYTES} bytes or refused, a collection that is no
  * name segment, a repository that cannot be opened, or any other non-success, printed to standard error as
  * {@code <outcome> <detail>}.</li>
  * </ul>
@@ -197,9 +198,12 @@ public final class VerifyOutput {
         return new Kind(collection, UNREAD, collection, SCHEMA_FILE, TEMPLATE_FILE, UNREAD, numbering);
     }
 
-    /** Reads a file of at most {@value DocumentTemplate#MAX_TEMPLATE_BYTES} bytes, never through a symbolic link. */
+    /**
+     * Reads a file of at most {@value DocumentTemplate#MAX_TEMPLATE_BYTES} bytes, never through a symbolic link: a path
+     * any component of which, the file or a parent directory, is a symbolic link is refused unread.
+     */
     private static FormsResult<byte[]> read(Path file, String argument) {
-        if (Files.isSymbolicLink(file)) {
+        if (holdsSymbolicLink(file)) {
             return malformed(argument, "a symbolic link, not read");
         }
         byte[] content;
@@ -215,6 +219,22 @@ public final class VerifyOutput {
             return malformed(argument, "too large, more than " + DocumentTemplate.MAX_TEMPLATE_BYTES + " bytes");
         }
         return FormsResult.ok(content);
+    }
+
+    /**
+     * Whether a component of the path as given is a symbolic link: each prefix below the root, from the first element
+     * down to the file itself, is tested without following a link. The path is neither normalised nor resolved, which
+     * would hide a link; a prefix that does not exist is no link, so a missing file stays a missing file.
+     */
+    private static boolean holdsSymbolicLink(Path file) {
+        @Nullable Path prefix = file.getRoot();
+        for (Path element : file) {
+            prefix = prefix == null ? element : prefix.resolve(element);
+            if (Files.isSymbolicLink(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static <T> FormsResult<T> malformed(String argument, String problem) {

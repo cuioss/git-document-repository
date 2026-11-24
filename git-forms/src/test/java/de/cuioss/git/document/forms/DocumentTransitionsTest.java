@@ -44,9 +44,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -324,8 +326,20 @@ class DocumentTransitionsTest {
                 () -> "performed: " + result.outcome() + " " + result.detail());
     }
 
-    /** The transitions of the default workflow that require step-up, performed with {@link #MFA}. */
-    private static final List<String> STEP_UP_TRANSITIONS = List.of("approve", "supersede");
+    /**
+     * The transitions of the default workflow that require step-up, performed with {@link #MFA}: derived from the
+     * {@link Transition#stepUp()} flags of {@link Workflow#defaultWorkflow()}, so a change of the workflow moves them.
+     */
+    private static final Set<String> STEP_UP_TRANSITIONS = stepUpTransitions();
+
+    private static Set<String> stepUpTransitions() {
+        Set<String> names = Workflow.defaultWorkflow().transitions().stream().filter(Transition::stepUp)
+                .map(Transition::name).collect(Collectors.toUnmodifiableSet());
+        if (names.isEmpty()) {
+            throw new IllegalStateException("the default workflow has no transition that requires step-up");
+        }
+        return names;
+    }
 
     /** The transitions up to and including the first release of the default workflow. */
     private static final String[] TO_FIRST_RELEASE = {"edit", "submit", "rework", "submit", "approve"};
