@@ -23,6 +23,13 @@
  * requires {@code java.net.http} for the transport to the timestamp authority, and {@code org.jspecify} statically for
  * the null-safety annotations. It adds no third-party dependency: the DER/CMS reading and writing of RFC 3161 is its
  * own, on the JDK.
+ * <p>
+ * It provides the anchor provider {@code rfc3161} ({@code Rfc3161AnchorProvider}) to {@link java.util.ServiceLoader}.
+ * The instance {@code ServiceLoader} creates through the public no-argument constructor is unconfigured: it never
+ * reaches the network, its {@code obtain} refuses and its {@code verify} reports an invalid signature, each naming the
+ * missing {@code timestamp} section. An application builds the configured provider with
+ * {@code Rfc3161AnchorProvider.from} from its configuration and hands it to {@code StoreProviders.select} as a
+ * candidate in place of the loaded one.
  */
 module de.cuioss.git.document.timestamp {
     exports de.cuioss.git.document.timestamp;
@@ -30,4 +37,6 @@ module de.cuioss.git.document.timestamp {
     requires transitive de.cuioss.git.document.store;
     requires java.net.http;
     requires static org.jspecify;
+
+    provides de.cuioss.git.document.store.AnchorProvider with de.cuioss.git.document.timestamp.Rfc3161AnchorProvider;
 }

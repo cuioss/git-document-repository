@@ -97,6 +97,27 @@
                     <useModulePath>false</useModulePath>
                 </configuration>
             </plugin>
+            <!-- The test authority runs on the JDK HttpsServer of the module jdk.httpserver, part of the JDK and no
+                 dependency. The tests are compiled into the module de.cuioss.git.document.timestamp, which does not
+                 read it, so the test compilation adds the module and the read edge; the tests run on the class path,
+                 where the JDK resolves jdk.httpserver as a root module. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs combine.children="append">
+                                <arg>--add-modules</arg>
+                                <arg>jdk.httpserver</arg>
+                                <arg>--add-reads</arg>
+                                <arg>de.cuioss.git.document.timestamp=jdk.httpserver</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>

@@ -16,15 +16,16 @@
 package de.cuioss.git.document.timestamp;
 
 import de.cuioss.tools.logging.LogRecord;
+import de.cuioss.tools.logging.LogRecordModel;
 
 /**
  * The {@link LogRecord} holder of {@code git-timestamp} (GDR-GEN-4). Identifiers carry the prefix {@value #PREFIX} and
  * follow the CUI ranges: INFO 1-99, WARN 100-199, ERROR 200-299. The catalogue is
  * {@code git-timestamp/doc/LogMessages.adoc}.
  * <p>
- * No message carries anything GDR-NFR-3 forbids: a message never names the bearer token of
- * {@code timestamp.credentials}, the user information of a URL, the body of a response or the content of a
- * certificate file.
+ * No message carries anything GDR-NFR-3 forbids: a message names a repository alias, an object id, a time or the
+ * fixed detail of an outcome, never the URL of the authority, the bearer token of {@code timestamp.credentials}, the
+ * body of a reply or the content of a certificate file.
  *
  * @since 0.1
  */
@@ -35,5 +36,58 @@ public final class GitTimestampLogMessages {
 
     private GitTimestampLogMessages() {
         // holder of constants
+    }
+
+    /**
+     * Messages at level INFO.
+     *
+     * @since 0.1
+     */
+    public static final class INFO {
+
+        /**
+         * A timestamp token was obtained: the repository alias, the object id and the time the token states.
+         */
+        public static final LogRecord TOKEN_OBTAINED = LogRecordModel.builder()
+                .template("Obtained a timestamp token for repository %s, object %s, time %s")
+                .prefix(PREFIX)
+                .identifier(1)
+                .build();
+
+        private INFO() {
+            // holder of constants
+        }
+    }
+
+    /**
+     * Messages at level WARN.
+     *
+     * @since 0.1
+     */
+    public static final class WARN {
+
+        /**
+         * The timestamp authority could not be reached: the repository alias, the object id and the fixed detail of
+         * the outcome. The subject stays pending.
+         */
+        public static final LogRecord AUTHORITY_UNAVAILABLE = LogRecordModel.builder()
+                .template("Timestamp authority unavailable for repository %s, object %s: %s")
+                .prefix(PREFIX)
+                .identifier(100)
+                .build();
+
+        /**
+         * The timestamp authority refused or answered with an error: the repository alias, the object id and the fixed
+         * detail of the outcome. The subject stays pending.
+         */
+        public static final LogRecord AUTHORITY_REFUSED = LogRecordModel.builder()
+                .template("Timestamp authority refused for repository %s, object %s: %s")
+                .prefix(PREFIX)
+                .identifier(101)
+                .build();
+
+        private WARN() {
+            // holder of constants
+        }
     }
 }
