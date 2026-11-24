@@ -165,7 +165,7 @@ class CheckpointsTest {
         var signing = TestKeys.ed25519().source();
         var provider = new ScriptedAnchorProvider("a" + word());
         var gitDir = temp.resolve(word() + ".git");
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()), List.of(),
                 new StoreProviders(signing, new TestPersonDirectory(), provider), operations, clock));
         return new Fixture(writer, operations, signing, provider, user, clock, gitDir);
     }

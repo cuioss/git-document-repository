@@ -40,7 +40,8 @@ repository fixtures (`@LocalRepository`, `@InMemory`, `@Remote`) and the host-co
 `@HermeticGitConfiguration` with `HermeticGitConfigurationExtension` (not for tests that run concurrently in one JVM). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
 `pm-provider-git` as a plain copy: `RefusingFS` with `CapabilityRefusedException`, `RemotePolicy`, `GitIdentity`,
 `GitResult` and `GitOutcome`, `RepositoryOperations` with `JGitRepositoryOperations` (open, init, `cloneIfMissing`,
-log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
+log, fetch, push, whose leased push that lost a race on the remote reference is `LEASE_REFUSED` and whose permanent
+refusal is `REJECTED`, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
 compare-and-swap: `InCoreWriter` with `TreeEdit`, `CommitMetadata` and `CommitSigning`, and `ReferenceUpdater` with
 `TreeOperation` (compare-and-swap and compare-and-delete of a reference), and with in-core merge, reading and notes:
 `InCoreMerger` with the sealed `MergeResult` (the merged tree, or the conflicting paths as data), `RepositoryReader`
@@ -59,7 +60,8 @@ sections include `commit`, the record `Commit` with `commit.email`), the
 service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` with `PersonEntry` and `Membership`, the
 provider selection `StoreProviders` through `ServiceLoader`, the signing key source `FileSigningKeySource` (id `file`,
 an unencrypted OpenSSH Ed25519 key), and the `LogRecord` holder `GitStoreLogMessages`; and the
-write path: `StoreWriter` (`open` with the active `SigningKeySource`; drafts, listing, explicit save with lease and the
+write path: `StoreWriter` (`open` with the declared collections, a name declared twice refused as `MALFORMED`, and the
+active `SigningKeySource`; drafts, listing, explicit save with lease, retried only on a lost lease, and the
 optional per-attempt `SaveStep` taking the `IdentityClaims` of the user,
 `release` of a document with its tag taking the `IdentityClaims` and returning `Release`, draft expiry with garbage collection, `fetch` and
 `fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with

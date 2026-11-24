@@ -193,6 +193,12 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     /** git's {@code upload-pack} refusing a want it does not serve, lower case. */
     private static final String NOT_OUR_REF = "not our ref";
 
+    /**
+     * The message of a reference update a remote could not make because the reference moved or was locked: JGit 7.8.0
+     * {@code ReceivePack} reports a {@code LOCK_FAILURE} with exactly this text.
+     */
+    private static final String REMOTE_LOCK_FAILURE = "failed to lock";
+
     /** A remote refusing a want by its object id: JGit's {@code UploadPack} or a remote reporting it absent. */
     private static final Pattern WANT_REFUSED =
             Pattern.compile("(?i)\\bwant [0-9a-f]{40}(?:[0-9a-f]{24})? not (?:valid|found)\\b");
@@ -944,6 +950,15 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * it compares the lease and before it sets the expected old id. An up-to-date update is therefore checked here
      * against the lease, from the advertised reference of the same push, and its old id is the advertised id: the
      * reference existed and was not created.
+     * <p>
+     * A leased update the remote refuses with {@link #REMOTE_LOCK_FAILURE} lost a race on the remote reference: the
+     * lease held when the advertisement was read, and the reference moved, or another writer held its lock, before the
+     * remote updated it. JGit 7.8.0 {@code ReceivePack} updates the reference against the advertised id, which equals
+     * the lease, and answers both cases, a {@code LOCK_FAILURE} of {@code RefUpdate}, with {@code ng <ref> failed to
+     * lock}; {@code BasePackPushConnection.readStatusReport} turns every {@code ng} into {@code REJECTED_OTHER_REASON}
+     * with that text as the message. Such an update is {@link GitOutcome#LEASE_REFUSED}, like a lease the advertisement
+     * already refused; every other refusal, among them a protected branch or a refusing hook, stays
+     * {@link GitOutcome#REJECTED}, and so does a lock failure of a plain push, which carries no lease.
      *
      * @param update             the update of the pushed reference
      * @param advertised         the remote reference the push saw; {@code null} if the remote had none
@@ -969,7 +984,10 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 .build();
         return switch (update.getStatus()) {
             case OK, UP_TO_DATE -> GitResult.ok(ref);
-            case REJECTED_NONFASTFORWARD, REJECTED_OTHER_REASON, REJECTED_NODELETE ->
+            case REJECTED_OTHER_REASON -> expectedRemoteHead != null && REMOTE_LOCK_FAILURE.equals(update.getMessage())
+                    ? GitResult.of(GitOutcome.LEASE_REFUSED, remoteRef)
+                    : GitResult.of(GitOutcome.REJECTED, remoteRef + ": " + status);
+            case REJECTED_NONFASTFORWARD, REJECTED_NODELETE ->
                 GitResult.of(GitOutcome.REJECTED, remoteRef + ": " + status);
             case REJECTED_REMOTE_CHANGED -> GitResult.of(GitOutcome.LEASE_REFUSED, remoteRef);
             default -> GitResult.of(GitOutcome.FAILED, remoteRef + ": " + status);

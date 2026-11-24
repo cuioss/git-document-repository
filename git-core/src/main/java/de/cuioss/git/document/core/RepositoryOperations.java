@@ -128,13 +128,21 @@ public interface RepositoryOperations {
      * old id is {@code null} only for a reference the push created; for one that was already up to date it is the id
      * the remote reference already had.
      * <p>
+     * A leased push that loses a race on the remote reference is {@link GitOutcome#LEASE_REFUSED} whether the
+     * advertisement already showed another head or the remote could not lock the reference for the update because it
+     * moved, or another writer held it, after the advertisement; a caller may fetch and try again. Every other refusal
+     * of the remote, for example a protected branch, a refusing hook or a push that is no fast-forward, is
+     * {@link GitOutcome#REJECTED} and does not go away on a retry; a plain push without a lease is
+     * {@link GitOutcome#REJECTED} for a lost race as well.
+     * <p>
      * A refusal by the policy or by more than one push destination happens before any contact, so nothing is sent. A
      * refused pre-push hook is different: JGit 7.8.0 {@code PushProcess} runs the hook after it read the remote's
      * reference advertisement, so the remote was contacted, but before any reference update or object is sent.
      *
      * @param input the input
-     * @return {@link GitOutcome#OK} with the reference update, {@link GitOutcome#REJECTED},
-     *         {@link GitOutcome#LEASE_REFUSED}, {@link GitOutcome#REFUSED_BY_POLICY} (a URL outside the policy or more
+     * @return {@link GitOutcome#OK} with the reference update, {@link GitOutcome#REJECTED} for a permanent refusal,
+     *         {@link GitOutcome#LEASE_REFUSED} for a leased push that lost a race on the remote reference,
+     *         {@link GitOutcome#REFUSED_BY_POLICY} (a URL outside the policy or more
      *         than one push destination, nothing was sent; or a refused pre-push hook, after the advertisement was read
      *         and before any update was sent), {@link GitOutcome#AMBIGUOUS} for
      *         an ambiguous local reference, {@link GitOutcome#NOT_FOUND}

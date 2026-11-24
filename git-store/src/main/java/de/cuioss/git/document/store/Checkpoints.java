@@ -72,9 +72,6 @@ final class Checkpoints {
     /** The message of a checkpoint commit before its number. */
     static final String MESSAGE = "Checkpoint ";
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     private static final CuiLogger LOGGER = new CuiLogger(Checkpoints.class);
 
     private final ExplicitSave.Clone clone;
@@ -349,7 +346,7 @@ final class Checkpoints {
         if (!createTag(tag, commit)) {
             return Standing.BLOCKED;
         }
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit.name())
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN).localRef(commit.name())
                 .remoteRef(tag).expectedRemoteHead(ObjectId.zeroId().name()).credentials(user.credentials()).build());
         if (!pushed.isOk()) {
             LOGGER.warn(GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE, clone.alias(), pushed.outcome().name());

@@ -107,9 +107,6 @@ final class DocumentRelease {
 
     private static final CuiLogger LOGGER = new CuiLogger(DocumentRelease.class);
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     /** The detail of a key of content without release. */
     private static final String NO_RELEASE = "key: content without release";
 
@@ -215,7 +212,7 @@ final class DocumentRelease {
     private Optional<StoreResult<Release>> attempt(Request request, CommitSignatures.Lazy lazySigning) {
         Repository repository = clone.repository();
         try {
-            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                     .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                     .prune(true).build());
             if (!fetched.isOk()) {
@@ -272,7 +269,7 @@ final class DocumentRelease {
         }
         @Nullable ObjectId main = state.main();
         ObjectId lease = main == null ? ObjectId.zeroId() : main;
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN)
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                 .localRef(commit.name()).remoteRef(StoreReferences.MAIN).expectedRemoteHead(lease.name())
                 .credentials(user.credentials()).build());
         if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
@@ -300,7 +297,7 @@ final class DocumentRelease {
      * {@link StoreOutcome#INCOMPLETE}.
      */
     private StoreResult<Release> pushTag(Request request, String tag, ObjectId commit, int version) {
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit.name())
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN).localRef(commit.name())
                 .remoteRef(tag).expectedRemoteHead(ObjectId.zeroId().name()).credentials(user.credentials())
                 .build());
         if (!pushed.isOk()) {

@@ -328,7 +328,7 @@ class IdentityTrailersTest {
                     new UsernamePasswordCredentialsProvider(word(), word()));
             var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
 
-            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(),
+            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), List.of(),
                          TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()),
                          Clock.fixed(time(), ZoneOffset.UTC)))) {
                 var draftId = value(writer.draft(author, key, List.of(new TreeEdit.Put(word() + "x",

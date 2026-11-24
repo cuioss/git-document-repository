@@ -37,7 +37,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Opens the bare clone of one {@link StoreWriter}: clones the remote if the clone does not exist yet, opens the clone
- * on a {@link RefusingFS}, refuses a clone whose {@code origin} is not the registered remote, and builds the parts
+ * on a {@link RefusingFS}, refuses declared collections that hold one name twice and a clone whose {@code origin} is
+ * not the registered remote, and builds the parts
  * that work on the opened clone into a {@link StoreClone}: among them one {@link CommitSignatures} per clone over the
  * active signing key source and {@code signing.key}, whose presence is checked before anything is cloned, and the
  * {@link AnchorEngine} over the active anchor provider, the section {@code anchor}, that signing seam, the technical
@@ -76,13 +77,20 @@ final class CloneOpening {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user
      * @param configuration   the configuration of the store
+     * @param collections     the declared collections of the repository, checked before anything is cloned
      * @param providers       the active signing key source and anchor provider
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return the results of {@link StoreWriter#open}, with the clone as the value
+     * @throws NullPointerException if a collection is {@code null}
      */
     static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, Providers providers, RepositoryOperations operations, Clock clock) {
+            StoreConfiguration configuration, List<DocumentCollection> collections, Providers providers,
+            RepositoryOperations operations, Clock clock) {
+        if (!StoreReferences.collections(collections).isOk()) {
+            // the detail of StoreReferences names the collection; the writer names the argument only
+            return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.COLLECTIONS_DECLARED_TWICE);
+        }
         SigningKeySource signing = providers.signing();
         @Nullable AnchorProvider anchor = providers.anchor();
         String keyReference = configuration.signing().key();

@@ -80,9 +80,6 @@ final class AnchorNotes {
     /** The message of a notes commit before the anchored commit id. */
     static final String MESSAGE = "Anchor ";
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     /** The detail of a proof whose notes tip moved: it would fork the chain of the proofs. */
     static final String TIP_MOVED = "the notes tip moved";
 
@@ -427,7 +424,7 @@ final class AnchorNotes {
             reset(commit, parent(commit));
             return StoreResult.of(StoreOutcome.INCOMPLETE, notesRef + ": " + TIP_MOVED);
         }
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit.name())
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN).localRef(commit.name())
                 .remoteRef(notesRef).expectedRemoteHead(lease.name()).credentials(user.credentials()).build());
         if (!pushed.isOk()) {
             LOGGER.warn(GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE, clone.alias(), pushed.outcome().name());

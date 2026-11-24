@@ -32,6 +32,7 @@ import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.core.TreeOperation;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -207,8 +208,9 @@ final class DraftReferences {
      * Lists the drafts of a user, sorted by reference name.
      *
      * @param pseudonym the pseudonym of the user
-     * @return {@link StoreOutcome#OK} with the drafts, possibly none; {@link StoreOutcome#MALFORMED} for an invalid
-     *         pseudonym; the passed-on {@link GitOutcome#FAILED} for an I/O failure
+     * @return {@link StoreOutcome#OK} with the drafts, possibly none, without a reference whose tip is no commit;
+     *         {@link StoreOutcome#MALFORMED} for an invalid pseudonym; the passed-on {@link GitOutcome#FAILED} for an
+     *         I/O failure
      * @throws NullPointerException if {@code pseudonym} is {@code null}
      */
     StoreResult<List<Draft>> list(String pseudonym) {
@@ -230,7 +232,15 @@ final class DraftReferences {
                             ref.getName());
                     continue;
                 }
-                RevCommit commit = walk.parseCommit(id);
+                RevCommit commit;
+                try {
+                    commit = walk.parseCommit(id);
+                } catch (IncorrectObjectTypeException e) {
+                    // a reference of this form whose tip is no commit was not written by this class; it is no draft
+                    LOGGER.debug("Skipped a reference below %s whose tip is no commit: %s", StoreReferences.DRAFTS,
+                            e.getClass().getSimpleName());
+                    continue;
+                }
                 drafts.add(new Draft(segments[0], segments[1], id.name(),
                         commit.getCommitterIdent().getWhenAsInstant()));
             }

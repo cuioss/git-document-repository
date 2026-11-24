@@ -74,9 +74,6 @@ final class AnchorEngine {
 
     private static final CuiLogger LOGGER = new CuiLogger(AnchorEngine.class);
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     private final ExplicitSave.Clone clone;
     private final @Nullable AnchorProvider provider;
     private final StoreConfiguration.Anchor configuration;
@@ -235,7 +232,7 @@ final class AnchorEngine {
      * derive the pending subjects with the notes tip.
      */
     private StoreResult<Plan> prepare(AnchorNotes proofs, List<String> anchored, List<StoreEvents.Update> updates) {
-        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                 .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                 .prune(true).build());
         if (!fetched.isOk()) {

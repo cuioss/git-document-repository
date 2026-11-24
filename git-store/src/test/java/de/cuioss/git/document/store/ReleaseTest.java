@@ -323,8 +323,8 @@ class ReleaseTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), source, operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), List.of(), source,
+                operations, Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, operations);
     }
 

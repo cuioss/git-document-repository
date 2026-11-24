@@ -205,8 +205,8 @@ class AnchorEngineTest {
         var clock = new MovableClock(Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next()));
         var providers = new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider);
         var writer = value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user,
-                configuration(provider == null ? null : provider.id(), releases, retry), providers, operations,
-                clock));
+                configuration(provider == null ? null : provider.id(), releases, retry), List.of(), providers,
+                operations, clock));
         return new Fixture(writer, operations, provider, clock);
     }
 
@@ -313,7 +313,7 @@ class AnchorEngineTest {
                  var legacy = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                          temp.resolve(word() + ".git"), new TechnicalUser(word(), null,
                                  new UsernamePasswordCredentialsProvider(word(), word())),
-                         configuration(null, null, NO_RETRY), TestKeys.ed25519().source(),
+                         configuration(null, null, NO_RETRY), List.of(), TestKeys.ed25519().source(),
                          new ScriptedRepositoryOperations(), Clock.systemUTC()))) {
                 save(fixture.writer(), key);
                 int fetches = fixture.operations().fetches().size();

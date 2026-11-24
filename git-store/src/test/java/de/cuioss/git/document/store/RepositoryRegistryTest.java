@@ -122,9 +122,9 @@ class RepositoryRegistryTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 
     @Nested

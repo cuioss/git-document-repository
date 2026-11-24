@@ -177,7 +177,7 @@ class AnchorVerificationTest {
     private StoreWriter open(LocalRemote remote) {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
-        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(),
+        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(), List.of(),
                 new StoreProviders(commitKeys, new TestPersonDirectory(), signing()),
                 new ScriptedRepositoryOperations(), clock));
     }

@@ -126,30 +126,36 @@ class StoreConfigurationTest {
     }
 
     /** Puts a value under a dotted key, creating the maps on the way and replacing a non-map. */
-    @SuppressWarnings("unchecked")
     private static void put(Map<String, Object> tree, String key, Object value) {
         String[] segments = key.split("\\.");
         Map<String, Object> current = tree;
         for (int index = 0; index < segments.length - 1; index++) {
-            Object next = current.get(segments[index]);
-            if (!(next instanceof Map<?, ?>)) {
-                next = new LinkedHashMap<String, Object>();
-                current.put(segments[index], next);
-            }
-            current = (Map<String, Object>) next;
+            current = child(current, segments[index]);
         }
         current.put(segments[segments.length - 1], value);
     }
 
     /** Removes a dotted key. */
-    @SuppressWarnings("unchecked")
     private static void remove(Map<String, Object> tree, String key) {
         String[] segments = key.split("\\.");
         Map<String, Object> current = tree;
         for (int index = 0; index < segments.length - 1; index++) {
-            current = (Map<String, Object>) current.get(segments[index]);
+            current = child(current, segments[index]);
         }
         current.remove(segments[segments.length - 1]);
+    }
+
+    /**
+     * Replaces the value under a segment by a mutable copy of the map it holds, or by an empty map for a non-map, and
+     * returns the copy; copying the entries avoids an unchecked cast of the nested map.
+     */
+    private static Map<String, Object> child(Map<String, Object> parent, String segment) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        if (parent.get(segment) instanceof Map<?, ?> existing) {
+            existing.forEach((name, nested) -> copy.put(String.valueOf(name), nested));
+        }
+        parent.put(segment, copy);
+        return copy;
     }
 
     private static StoreConfiguration configuration(StoreResult<StoreConfiguration> result) {
@@ -639,9 +645,9 @@ class StoreConfigurationTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 
     @Nested

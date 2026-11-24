@@ -315,8 +315,8 @@ class CommitSignatureTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(true), signing, operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(true), List.of(), signing,
+                operations, Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, operations);
     }
 
@@ -571,7 +571,7 @@ class CommitSignatureTest {
             var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
             var operations = new ScriptedRepositoryOperations();
 
-            var opened = StoreWriter.open(storeRepository, gitDir, user, configuration(false),
+            var opened = StoreWriter.open(storeRepository, gitDir, user, configuration(false), List.of(),
                     TestKeys.ed25519().source(), operations, Clock.systemUTC());
 
             assertAll(

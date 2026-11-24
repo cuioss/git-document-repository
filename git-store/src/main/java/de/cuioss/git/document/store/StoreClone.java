@@ -50,9 +50,6 @@ final class StoreClone {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreClone.class);
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     private final ExplicitSave.Clone clone;
     private final Transport transport;
     private final StoreEvents events;
@@ -289,7 +286,7 @@ final class StoreClone {
     }
 
     private StoreResult<List<String>> mirror(List<StoreEvents.Update> updates) {
-        var fetched = transport.operations().fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+        var fetched = transport.operations().fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                 .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(transport.user().credentials())
                 .prune(true).build());
         if (!fetched.isOk()) {

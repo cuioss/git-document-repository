@@ -191,7 +191,7 @@ class ConcurrentWritersTest {
 
     private StoreWriter open(StoreRepository storeRepository, RepositoryOperations operations) {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
-        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(),
+        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(), List.of(),
                 TestKeys.ed25519().source(), operations, Clock.fixed(Instant.now(), ZoneOffset.UTC)));
     }
 
@@ -238,19 +238,40 @@ class ConcurrentWritersTest {
         return results;
     }
 
+    /**
+     * Ten writers, each with its own clone and its own repository operations, are released together and held before
+     * their first push until all ten fetched the same base, so all ten push against the same lease: one wins and nine
+     * lose, and each loser fetches and re-applies. A writer can lose at most once per other writer, nine times, so with
+     * {@code save.max-attempts} 10 every writer ends {@link SaveResult.Saved}.
+     * <p>
+     * The lost race was observed in two forms on the {@code git-testing} local remote (JGit 7.8.0 in-process
+     * {@code ReceivePack}): a refused lease when the advertisement already showed the moved branch, and, when the
+     * branch moved after the advertisement, the status line {@code ng <ref> failed to lock}, which {@code git-core}
+     * reported before as
+     * {@code NotSaved[outcome=PassedOn[git=REJECTED], reason=refs/heads/<collection>/<id>: rejected_other_reason]} and
+     * now reports as {@code LEASE_REFUSED} (GDR-CORE-7), so the save retries it and ends a permanent rejection at once.
+     */
     @Test
-    @DisplayName("GDR-NFR-2: ten writers with their own clones save different files of one branch and all succeed")
+    @DisplayName("GDR-NFR-2: ten writers with their own clones racing at one lease all succeed after retrying")
     void tenWritersWithOwnClones(@Remote LocalRemote remote) throws Exception {
         var key = key();
         var target = StoreReferences.target(key);
         Map<String, String> expected = new TreeMap<>(Map.of(word() + "-base", text()));
         commit(remote.repository(), target, expected);
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+        var atTheLease = new CountDownLatch(WRITERS);
+        List<ScriptedRepositoryOperations> handles = new ArrayList<>();
         List<StoreWriter> writers = new ArrayList<>();
         try {
             List<Callable<SaveResult>> saves = new ArrayList<>();
             for (int index = 0; index < WRITERS; index++) {
-                var writer = open(storeRepository);
+                var operations = new ScriptedRepositoryOperations();
+                operations.beforeNextPush(() -> {
+                    atTheLease.countDown();
+                    awaitAll(atTheLease);
+                });
+                handles.add(operations);
+                var writer = open(storeRepository, operations);
                 writers.add(writer);
                 var author = Author.of(pseudonym());
                 var path = word() + "-" + index;
@@ -262,12 +283,30 @@ class ConcurrentWritersTest {
 
             var results = concurrently(saves);
 
+            List<Integer> pushes = handles.stream().map(handle -> handle.pushes().size()).toList();
             assertAll(
                     () -> assertTrue(results.stream().allMatch(SaveResult.Saved.class::isInstance),
                             () -> "every save succeeds: " + results),
-                    () -> assertEquals(expected, files(remote.repository(), target), "the branch holds all files"));
+                    () -> assertEquals(expected, files(remote.repository(), target), "the branch holds all files"),
+                    () -> assertTrue(pushes.stream().anyMatch(count -> count > 1),
+                            () -> "at least one writer lost the race and retried: " + pushes),
+                    () -> assertTrue(pushes.stream().mapToInt(Integer::intValue).sum() >= 2 * WRITERS - 1,
+                            () -> "every writer but the winner of the first round pushed again: " + pushes),
+                    () -> assertTrue(pushes.stream().allMatch(count -> count <= ATTEMPTS),
+                            () -> "no writer needed more than save.max-attempts: " + pushes));
         } finally {
+            // every writer is closed before the fixture deletes the temporary remote
             writers.forEach(StoreWriter::close);
+        }
+    }
+
+    /** Waits for every writer at the lease, from a callback that may not throw a checked exception. */
+    private static void awaitAll(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "every writer reaches the lease");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("the wait at the lease is interrupted", e);
         }
     }
 

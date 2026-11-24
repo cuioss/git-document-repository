@@ -87,9 +87,6 @@ public final class StoreIndex<E> implements AutoCloseable {
 
     private static final CuiLogger LOGGER = new CuiLogger(StoreIndex.class);
 
-    /** The prefix of every branch. */
-    private static final String HEADS = "refs/heads/";
-
     /** The name of a collection argument in the null checks. */
     private static final String COLLECTION = "collection";
 
@@ -300,7 +297,7 @@ public final class StoreIndex<E> implements AutoCloseable {
             Map<String, Source<E>> before = current.get();
             Map<String, Source<E>> next = new HashMap<>();
             try (RevWalk walk = new RevWalk(repository)) {
-                for (Ref ref : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
+                for (Ref ref : repository.getRefDatabase().getRefsByPrefix(StoreReferences.HEADS)) {
                     @Nullable Scope scope = scope(ref.getName());
                     @Nullable ObjectId tip = ref.getObjectId();
                     if (scope == null || tip == null) {
@@ -331,7 +328,7 @@ public final class StoreIndex<E> implements AutoCloseable {
         if (StoreReferences.MAIN.equals(ref)) {
             return new Scope(List.copyOf(collections.values()), null);
         }
-        String rest = ref.substring(HEADS.length());
+        String rest = ref.substring(StoreReferences.HEADS.length());
         int slash = rest.indexOf('/');
         @Nullable DocumentCollection collection = collections.get(slash < 0 ? rest : rest.substring(0, slash));
         if (collection == null) {

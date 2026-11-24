@@ -172,7 +172,7 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
     }
 
     private static boolean anchorKeyIsSigningKey(Signing signing, Anchor.Signed signed) {
-        String anchorKeySource = Objects.requireNonNullElse(signed.keySource(), Signing.DEFAULT_KEY_SOURCE);
+        String anchorKeySource = orDefault(signed.keySource(), Signing.DEFAULT_KEY_SOURCE);
         String anchorKey = signed.key();
         return anchorKey != null && anchorKey.equals(signing.key()) && anchorKeySource.equals(signing.keySource());
     }
@@ -190,14 +190,24 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
                 : StoreResult.ok(new Save(attempts));
     }
 
-    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
-    @SuppressWarnings("java:S4449")
+    /**
+     * The value of an optional key, or its default when the key is absent.
+     *
+     * @param value    the value read, {@code null} for an absent key
+     * @param fallback the default of the key
+     * @param <T>      the value type
+     * @return {@code value} when it is present, otherwise {@code fallback}
+     */
+    private static <T> T orDefault(@Nullable T value, T fallback) {
+        return value == null ? fallback : value;
+    }
+
     private static StoreResult<Commit> readCommit(ConfigurationTree tree) {
         var email = tree.bool(COMMIT_EMAIL);
         if (!email.isOk()) {
             return retype(email);
         }
-        return StoreResult.ok(new Commit(Objects.requireNonNullElse(email.value(), Commit.DEFAULT_EMAIL)));
+        return StoreResult.ok(new Commit(orDefault(email.value(), Commit.DEFAULT_EMAIL)));
     }
 
     private static StoreResult<Drafts> readDrafts(ConfigurationTree tree) {
@@ -221,7 +231,8 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
     // S4449 does not reliably recognise the JSpecify @Nullable on record components (a false positive reported to
     // Sonar, see https://community.sonarsource.com/t/nullable-not-detected-for-java-records-when-parametersarenonnullbydefault-is-set-on-declaration/132442);
     // the nullable components are marked with the JSpecify @Nullable. The rule's own suggestion, the javax
-    // annotation, would need a new dependency (AGENTS.md: no new dependency without the owner's approval)
+    // annotation, would need a new dependency (AGENTS.md: no new dependency without the owner's approval). The cause,
+    // a nullable value passed to a nullable component, cannot be removed; the defaults go through orDefault
     @SuppressWarnings("java:S4449")
     private static StoreResult<Signing> readSigning(ConfigurationTree tree) {
         var keySource = tree.string(SIGNING_KEY_SOURCE);
@@ -236,11 +247,12 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
         if (!allowedSigners.isOk()) {
             return retype(allowedSigners);
         }
-        return StoreResult.ok(new Signing(Objects.requireNonNullElse(keySource.value(), Signing.DEFAULT_KEY_SOURCE),
+        return StoreResult.ok(new Signing(orDefault(keySource.value(), Signing.DEFAULT_KEY_SOURCE),
                 key.value(), allowedSigners.value()));
     }
 
-    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning
+    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning; the cause, a
+    // nullable value passed to the nullable component provider, cannot be removed without dropping the annotation
     @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor> readAnchor(ConfigurationTree tree) {
         var provider = tree.string(ANCHOR_PROVIDER);
@@ -268,13 +280,14 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
         if (!signed.isOk()) {
             return retype(signed);
         }
-        return StoreResult.ok(new Anchor(providerId, Objects.requireNonNullElse(releases.value(), true),
-                Objects.requireNonNullElse(checkpointInterval.value(), Anchor.DEFAULT_CHECKPOINT_INTERVAL),
-                Objects.requireNonNullElse(retryInterval.value(), Anchor.DEFAULT_RETRY_INTERVAL),
+        return StoreResult.ok(new Anchor(providerId, orDefault(releases.value(), true),
+                orDefault(checkpointInterval.value(), Anchor.DEFAULT_CHECKPOINT_INTERVAL),
+                orDefault(retryInterval.value(), Anchor.DEFAULT_RETRY_INTERVAL),
                 Objects.requireNonNull(signed.value())));
     }
 
-    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning
+    // S4449 does not reliably recognise the JSpecify @Nullable on record components, see readSigning; the cause, a
+    // nullable value passed to the nullable components keySource, key and allowedSigners, cannot be removed
     @SuppressWarnings("java:S4449")
     private static StoreResult<Anchor.Signed> readSigned(ConfigurationTree tree) {
         var keySource = tree.string(SIGNED_KEY_SOURCE);
@@ -294,18 +307,16 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
             return retype(maxClockSkew);
         }
         return StoreResult.ok(new Anchor.Signed(keySource.value(), key.value(), allowedSigners.value(),
-                Objects.requireNonNullElse(maxClockSkew.value(), Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)));
+                orDefault(maxClockSkew.value(), Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)));
     }
 
-    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
-    @SuppressWarnings("java:S4449")
     private static StoreResult<Directory> readDirectory(ConfigurationTree tree) {
         var personsProvider = tree.string(PERSONS_PROVIDER);
         if (!personsProvider.isOk()) {
             return retype(personsProvider);
         }
         return StoreResult.ok(new Directory(
-                Objects.requireNonNullElse(personsProvider.value(), Directory.DEFAULT_PERSONS_PROVIDER)));
+                orDefault(personsProvider.value(), Directory.DEFAULT_PERSONS_PROVIDER)));
     }
 
     private static StoreResult<RepositoryRegistry> readRegistry(ConfigurationTree tree, RemotePolicy policy) {
@@ -314,7 +325,7 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
             return retype(sections);
         }
         List<StoreRepository> repositories = new ArrayList<>();
-        for (ConfigurationTree section : Objects.requireNonNullElse(sections.value(), List.<ConfigurationTree>of())) {
+        for (ConfigurationTree section : orDefault(sections.value(), List.<ConfigurationTree>of())) {
             var repository = readRepository(section);
             if (!repository.isOk()) {
                 return retype(repository);

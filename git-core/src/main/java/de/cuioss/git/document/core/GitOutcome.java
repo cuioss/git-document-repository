@@ -38,13 +38,16 @@ public enum GitOutcome {
 
     /**
      * Rejected: {@code push} was refused by the remote (non-fast-forward, a protected branch or another refusal of the
-     * remote), or a reference update was refused locally: by JGit, or, for compare-and-swap, compare-and-delete and the
+     * remote, but not a leased push that lost a race, which is {@link #LEASE_REFUSED}), or a reference update was refused locally: by JGit, or, for compare-and-swap, compare-and-delete and the
      * write of a note, because the reference does not exist and its name conflicts with an existing reference (detail
      * {@code refName: name conflict}) or because the reference points at no commit.
      */
     REJECTED,
 
-    /** Lease refused: {@code push} with a lease, the remote reference moved away from the expected value. */
+    /**
+     * Lease refused: {@code push} with a lease, the remote reference moved away from the expected value, seen in the
+     * advertisement or, after it, by a remote that could not lock the reference for the update (a lost race).
+     */
     LEASE_REFUSED,
 
     /**

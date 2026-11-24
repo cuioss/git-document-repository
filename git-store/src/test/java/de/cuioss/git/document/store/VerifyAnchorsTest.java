@@ -152,7 +152,7 @@ class VerifyAnchorsTest {
                 null, Duration.ofMinutes(5), clock);
         try (var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                      temp.resolve(word() + ".git"), new TechnicalUser(word(), null,
-                             new UsernamePasswordCredentialsProvider(word(), word())), configuration,
+                             new UsernamePasswordCredentialsProvider(word(), word())), configuration, List.of(),
                      new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider),
                      new ScriptedRepositoryOperations(), clock))) {
             assertEquals(1, value(writer.anchor()).anchored().size(), "the first checkpoint is anchored");

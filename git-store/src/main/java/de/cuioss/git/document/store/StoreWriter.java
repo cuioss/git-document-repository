@@ -90,8 +90,8 @@ public final class StoreWriter implements AutoCloseable {
     /** The detail of a configuration without the key reference of the commit signature. */
     static final String SIGNING_KEY_MISSING = "signing.key is missing";
 
-    /** The prefix of every branch. */
-    private static final String HEADS = "refs/heads/";
+    /** The detail of declared collections that hold one name twice; it names the argument, never the name. */
+    static final String COLLECTIONS_DECLARED_TWICE = "collections: a name is declared twice";
 
     /** The opened clone and the parts that work on it; every operation delegates to it. */
     private final StoreClone clone;
@@ -107,29 +107,34 @@ public final class StoreWriter implements AutoCloseable {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user: committer and holder of the transport credentials
      * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param collections     the declared collections of the repository, in declaration order; no name twice
+     *                        (GDR-STORE-2)
      * @param signing         the active signing key source ({@link StoreProviders#signing()}), which signs every save
      *                        and release commit under {@code signing.key}
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return {@link StoreOutcome#OK} with the writer; {@link StoreOutcome#MALFORMED} with the detail
-     *         {@code signing.key is missing} for a configuration without the key reference, checked before anything is
-     *         cloned; or the passed-on Git outcome of the clone or of opening it, for example
+     *         {@code collections: a name is declared twice} for collections that declare one name twice, checked with
+     *         {@link StoreReferences#collections(List)}, or with the detail {@code signing.key is missing} for a
+     *         configuration without the key reference, both checked before anything is cloned; or the passed-on Git
+     *         outcome of the clone or of opening it, for example
      *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
      *         {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#FAILED}, or {@link GitOutcome#NOT_A_REPOSITORY}
      *         with the detail {@code <alias>: clone: remote does not match the registry} for an existing clone whose
-     *         remote is not the registered one; no detail names a URL, a credential, a key reference or a path
-     * @throws NullPointerException if an argument is {@code null}
+     *         remote is not the registered one; no detail names a URL, a credential, a key reference, a collection or
+     *         a path
+     * @throws NullPointerException if an argument or a collection is {@code null}
      */
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations,
-            Clock clock) {
-        return open(storeRepository, gitDir, user, configuration, new CloneOpening.Providers(signing, null),
-                operations, clock);
+            StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
+            RepositoryOperations operations, Clock clock) {
+        return open(storeRepository, gitDir, user, configuration, collections,
+                new CloneOpening.Providers(signing, null), operations, clock);
     }
 
     /**
      * Opens the write path of a repository like
-     * {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)},
+     * {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)},
      * with the providers selected at start: the signing key source signs every save and release commit, and the anchor
      * provider, when one is active, anchors the release commits and checkpoints of the repository (GDR-STORE-15).
      *
@@ -137,31 +142,35 @@ public final class StoreWriter implements AutoCloseable {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user: committer and holder of the transport credentials
      * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param collections     the declared collections of the repository, in declaration order; no name twice
+     *                        (GDR-STORE-2)
      * @param providers       the selected providers ({@link StoreProviders#load} or {@link StoreProviders#select})
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time and of the due checks of the anchoring
      * @return the results of
-     *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)}
-     * @throws NullPointerException if an argument is {@code null}
+     *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}
+     * @throws NullPointerException if an argument or a collection is {@code null}
      */
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, StoreProviders providers, RepositoryOperations operations,
-            Clock clock) {
+            StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
+            RepositoryOperations operations, Clock clock) {
         Objects.requireNonNull(providers, "providers");
-        return open(storeRepository, gitDir, user, configuration,
+        return open(storeRepository, gitDir, user, configuration, collections,
                 new CloneOpening.Providers(providers.signing(), providers.anchor()), operations, clock);
     }
 
     private static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, CloneOpening.Providers providers, RepositoryOperations operations,
-            Clock clock) {
+            StoreConfiguration configuration, List<DocumentCollection> collections, CloneOpening.Providers providers,
+            RepositoryOperations operations, Clock clock) {
         Objects.requireNonNull(storeRepository, "storeRepository");
         Objects.requireNonNull(gitDir, "gitDir");
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(configuration, "configuration");
+        Objects.requireNonNull(collections, "collections");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, providers, operations, clock);
+        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, collections, providers,
+                operations, clock);
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
@@ -237,12 +246,15 @@ public final class StoreWriter implements AutoCloseable {
      * @param message         the commit message, before the trailers
      * @return {@link SaveResult.Saved} with the commit the target branch points at, {@link SaveResult.Conflicting}
      *         with every conflicting path, or {@link SaveResult.NotSaved} with the outcome that prevented the save, for
-     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message,
+     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym, an expected blob id that is no full
+     *         object id (detail {@code expectedBlobIds: not a full object id}, never the value) or a release subject
+     *         as the message,
      *         {@link StoreOutcome#REFUSED} for a
      *         signing key source that refuses or a key of another type than Ed25519,
      *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that cannot be reached,
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing draft,
-     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt,
+     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt lost its lease or at once
+     *         for a permanent rejection of the push, for example by a protected branch or a hook,
      *         {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE} or
      *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
@@ -450,7 +462,7 @@ public final class StoreWriter implements AutoCloseable {
     public CommitListener.Subscription subscribe(String branch, CommitListener listener) {
         Objects.requireNonNull(branch, "branch");
         Objects.requireNonNull(listener, "listener");
-        String full = branch.startsWith(HEADS) ? branch : HEADS + branch;
+        String full = branch.startsWith(StoreReferences.HEADS) ? branch : StoreReferences.HEADS + branch;
         return clone.subscribe(full, listener);
     }
 

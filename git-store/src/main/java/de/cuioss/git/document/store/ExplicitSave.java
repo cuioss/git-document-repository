@@ -112,8 +112,10 @@ import org.jspecify.annotations.Nullable;
  * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step. The step's
  * edits are written into the one signed, trailer-carrying save commit; there is no second commit path.
  * <p>
- * The save is a cooperative compare-and-swap against the remote: a lease refusal or a rejection starts the next
- * attempt from the fetch, up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; an unreachable
+ * The save is a cooperative compare-and-swap against the remote: a lease refusal, which {@code git-core} also reports
+ * for a push that lost a race on the remote reference after the advertisement, starts the next attempt from the fetch,
+ * up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; a permanent rejection of the push, for
+ * example by a protected branch or a hook, ends the save at once as {@link GitOutcome#REJECTED}, and an unreachable
  * remote or invalid credentials end the save at once with nothing changed. Only after the remote accepted the commit
  * the local target branch moves by a {@link RefUpdate} expecting the base, with the reflog disabled (an I/O failure
  * there is logged and the save stays {@link SaveResult.Saved}), and the draft is deleted by
@@ -132,9 +134,6 @@ import org.jspecify.annotations.Nullable;
 final class ExplicitSave {
 
     private static final CuiLogger LOGGER = new CuiLogger(ExplicitSave.class);
-
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
 
     /** The detail of a save whose draft does not exist. */
     private static final String DRAFT_NOT_FOUND = "draft: not found";
@@ -253,13 +252,14 @@ final class ExplicitSave {
      * @param step            the per-attempt step; {@code null} for none
      * @return {@link SaveResult.Saved} with the commit the target branch points at; {@link SaveResult.Conflicting}
      *         with every path whose blob on the fetched tip differs from its expected id; {@link SaveResult.NotSaved}
-     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message (of
-     *         the document, and onto {@code main} of any document),
+     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym, an expected blob id that is no full object
+     *         id (detail {@code expectedBlobIds: not a full object id}, never the value) or a release subject as the
+     *         message (of the document, and onto {@code main} of any document),
      *         {@link StoreOutcome#REFUSED} for a refusal
      *         of the step or of the signing key source, {@link StoreOutcome#UNAVAILABLE} for a signing key source that
-     *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
-     *         object id, {@link GitOutcome#FAILED} for a step that threw, {@link GitOutcome#REJECTED} after every
-     *         attempt lost its lease or was rejected, or the passed-on outcome that ended the save, for example
+     *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft, {@link GitOutcome#FAILED} for a step
+     *         that threw, {@link GitOutcome#REJECTED} after every attempt lost its lease or at once for a permanent
+     *         rejection of the push, or the passed-on outcome that ended the save, for example
      *         {@link GitOutcome#UNREACHABLE} or {@link GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument but {@code step}, a path or an expected blob id is {@code null}
      */
@@ -274,7 +274,7 @@ final class ExplicitSave {
         Map<String, ObjectId> expected = new HashMap<>();
         for (Map.Entry<String, String> expectation : expectations.entrySet()) {
             if (!ObjectId.isId(expectation.getValue())) {
-                return report(target, notSaved(GitOutcome.NOT_FOUND, INVALID_EXPECTED_BLOB_ID));
+                return report(target, new SaveResult.NotSaved(StoreOutcome.MALFORMED, INVALID_EXPECTED_BLOB_ID));
             }
             expected.put(expectation.getKey(), ObjectId.fromString(expectation.getValue()));
         }
@@ -326,24 +326,23 @@ final class ExplicitSave {
             if (done.isPresent()) {
                 return done.get();
             }
-            LOGGER.debug("The save onto %s lost its lease or was rejected, attempt %s of %s", request.target(),
-                    attempt, attempts);
+            LOGGER.debug("The save onto %s lost its lease, attempt %s of %s", request.target(), attempt, attempts);
         }
         return notSaved(GitOutcome.REJECTED,
-                request.target() + ": lease refused or rejected on every attempt (" + attempts + ")");
+                request.target() + ": lease refused on every attempt (" + attempts + ")");
     }
 
     /**
      * Runs one attempt on the draft commit the save started with: fetches, pruning the mirrored references the remote
      * deleted, and applies the draft's changes onto the fetched base.
      *
-     * @return the result of the save, or empty when the push lost its lease or was rejected and the next attempt
-     *         starts from the fetch
+     * @return the result of the save, or empty when the push lost its lease and the next attempt starts from the
+     *         fetch
      */
     private Optional<SaveResult> attempt(Request request, Drafted drafted) {
         Repository repository = clone.repository();
         try {
-            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                     .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                     .prune(true).build());
             if (!fetched.isOk()) {
@@ -476,10 +475,12 @@ final class ExplicitSave {
         }
         ObjectId draft = drafted.draft();
         String commit = Objects.requireNonNull(written.value());
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit)
-                .remoteRef(request.target()).expectedRemoteHead(base.lease().name()).credentials(user.credentials())
-                .build());
-        if (pushed.outcome() == GitOutcome.LEASE_REFUSED || pushed.outcome() == GitOutcome.REJECTED) {
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
+                .localRef(commit).remoteRef(request.target()).expectedRemoteHead(base.lease().name())
+                .credentials(user.credentials()).build());
+        // git-core reports a leased push that lost a race on the remote reference as LEASE_REFUSED, also when the
+        // remote could not lock it after the advertisement; REJECTED is permanent and ends the save at once
+        if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
             return Optional.empty();
         }
         if (!pushed.isOk()) {

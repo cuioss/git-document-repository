@@ -237,8 +237,8 @@ class CommitListenerTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), TestKeys.ed25519().source(),
-                new ScriptedRepositoryOperations(), Clock.fixed(now, ZoneOffset.UTC)));
+        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), List.of(),
+                TestKeys.ed25519().source(), new ScriptedRepositoryOperations(), Clock.fixed(now, ZoneOffset.UTC)));
     }
 
     private StoreWriter open(LocalRemote remote) {

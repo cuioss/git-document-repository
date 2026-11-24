@@ -153,7 +153,7 @@ class AnchorNotesTest {
         var operations = new ScriptedRepositoryOperations();
         var provider = new ScriptedAnchorProvider(providerId);
         var gitDir = temp.resolve(word() + ".git");
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(providerId),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(providerId), List.of(),
                 new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider), operations,
                 Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, operations, provider, user, gitDir);

@@ -171,7 +171,7 @@ class AnchorInterleavingTest {
         var provider = new ScriptedAnchorProvider("a" + word());
         var clock = new MovableClock(Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next()));
         var gitDir = temp.resolve(word() + ".git");
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()), List.of(),
                 new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider), operations,
                 clock));
         return new Fixture(writer, operations, provider, clock, gitDir);

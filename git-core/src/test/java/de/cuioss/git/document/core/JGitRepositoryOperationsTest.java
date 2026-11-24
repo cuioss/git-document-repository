@@ -871,6 +871,35 @@ class JGitRepositoryOperationsTest {
         }
 
         @Test
+        @DisplayName("GDR-CORE-7: a leased push the remote cannot lock lost a race and is LEASE_REFUSED, a plain one REJECTED")
+        void lostRaceOnRemote(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var remoteHead = TestCommits.commitOn(remote.repository(), ref);
+            assertTrue(operations.fetch(fetch(client)).isOk(), "the client fetches the remote head");
+            TestCommits.setRef(client, ref, remoteHead);
+            var next = TestCommits.commitOn(client, ref);
+            // another writer holds the lock of the remote reference: JGit 7.8.0 ReceivePack answers the update of the
+            // advertised id with "failed to lock", as it does when the reference moved after the advertisement
+            Path lock = dir(remote.repository()).resolve(ref + ".lock");
+            Files.createFile(lock);
+
+            var leased = operations.push(push(client, ref, remoteHead.name()));
+            var plain = operations.push(push(client, ref, null));
+            Files.delete(lock);
+            var retried = operations.push(push(client, ref, remoteHead.name()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.LEASE_REFUSED, leased.outcome(),
+                            "a leased push that lost the race on the remote reference is a refused lease"),
+                    () -> assertEquals(ref, leased.detail(), "the detail names the reference"),
+                    () -> assertEquals(GitOutcome.REJECTED, plain.outcome(),
+                            "a plain push carries no lease and stays rejected"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "the retried leased push is accepted"),
+                    () -> assertEquals(next, refId(remote.repository(), ref), "the remote moves to the new commit"));
+        }
+
+        @Test
         @DisplayName("GDR-CORE-2: a fetch into a working tree never fetches a submodule from a remote outside the check")
         void submodulesNotFetched(@Remote LocalRemote remote) throws Exception {
             var marker = TestCommits.name();

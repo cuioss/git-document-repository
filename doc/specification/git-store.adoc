@@ -230,10 +230,13 @@ it starts the suffix. A path whose segment after the collection starts with a do
 `<collection>/.counter` of a numbered collection, belongs to no document. The release of a numbered entry
 (<<GDR-STORE-6>>) takes exactly the paths that belong to it.
 
-`StoreWriter.open(repository, gitDir, user, configuration, signing, operations, clock)` clones the remote into a bare
-clone if none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user; `signing` is the active
-`SigningKeySource` (<<GDR-STORE-12>>), and a configuration without `signing.key` is `MALFORMED` with the detail
-`signing.key is missing`, checked before anything is cloned. An existing clone is reused only
+`StoreWriter.open(repository, gitDir, user, configuration, collections, signing, operations, clock)` clones the
+remote into a bare clone if none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user;
+`collections` are the declared collections of the repository, `signing` is the active `SigningKeySource`
+(<<GDR-STORE-12>>). The writer refuses at open, before anything is cloned, collections that declare one name twice,
+checked with `StoreReferences.collections`, as `MALFORMED` with the detail `collections: a name is declared twice`,
+which names the argument and never the collection, as `StoreIndex.open` refuses them for the index; and a
+configuration without `signing.key` as `MALFORMED` with the detail `signing.key is missing`. An existing clone is reused only
 when its `origin` has exactly one fetch URL and every push URL (the fetch URL when none is configured) equal to the
 registered remote, read through JGit 7.8.0 `RemoteConfig`, which applies `insteadOf` and `pushInsteadOf`; a clone of
 another repository at the path is the passed-on `NOT_A_REPOSITORY` with the detail
@@ -260,8 +263,9 @@ tip as the time of the last intermediate save).
 * An explicit save must apply the draft's changes onto the remote tip of the working branch as one commit whose only
   parent is that tip (a squash merge in core, path-level as in xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]); no draft
   commit may become reachable from a pushed reference.
-* The save must push with lease; when the lease is refused or the push rejected, it must fetch and re-apply its
-  operation onto the new tip, up to `save.max-attempts`.
+* The save must push with lease; when the lease is refused, the push having lost a race on the remote reference, it
+  must fetch and re-apply its operation onto the new tip, up to `save.max-attempts`. A permanent rejection of the push,
+  such as by a protected branch or a hook, must end the save at once as rejected.
 * A save may carry a per-attempt step of the caller. The store must call it on every attempt, after the conflict
   check, with a read-only view of the tip and of the tree the draft's changes produce on it; the edits it returns must
   become part of the one save commit, and a refusal or a failure of the step must end the save with nothing pushed and
@@ -277,7 +281,8 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 . Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
   Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>). Then call the per-attempt step, if any: its
   edits join the commit, and its refusal or failure ends the save before anything is written or pushed.
-. Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
+. Push with lease, the expected remote id being the base. On a lease refusal, repeat from step 1; a permanent
+  rejection ends the save.
 . After the accepted push, move the local working branch to the new commit and delete the draft reference by
   compare-and-delete (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]); a draft reference that moved meanwhile is kept.
 
@@ -317,10 +322,34 @@ overwrite a later change of another writer to a path it saved already. The refer
 draft, and lives in the clone only. One commit with the base as its only parent and the changes as its edits is
 written in core by `InCoreWriter` of `git-core` and pushed to the target with the lease of the base; a
 target branch that does not exist yet is pushed against the zero-id lease, which expects the remote branch to be
-absent. A lease refusal or a rejection starts the next attempt from the fetch; after the last of `save.max-attempts`
-the save is `NotSaved` with the passed-on `REJECTED`. An unreachable remote and invalid credentials end the save at once
-as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing changed. A save without a draft is the passed-on
-`NOT_FOUND`. A draft without changes is `Saved` with the tip of its existing target branch, with no commit and no push;
+absent. A lease refusal starts the next attempt from the fetch; after the last of `save.max-attempts` the save is
+`NotSaved` with the passed-on `REJECTED` and the detail `<target>: lease refused on every attempt (<n>)`. `git-core`
+reports a leased push that lost a race on the remote reference as `LEASE_REFUSED`, also when the lease held in the
+advertisement and the remote could not lock the reference for the update
+(xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]), so every `REJECTED` of the push is a permanent refusal of the remote,
+such as a protected branch, a refusing hook or a push that is no fast-forward: it ends the save at once as the
+passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. An unreachable remote
+and invalid credentials end the save at once as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing
+changed.
+
+[cols="2,1,2"]
+|===
+|Situation |Outcome |Attempts
+
+|the remote accepted the push |`Saved` |one
+|a changed path conflicts (<<GDR-STORE-4>>) |`Conflicting`, passed-on `CONFLICT` |one
+|an invalid pseudonym, an expected blob id that is no full object id, a release subject as the message |`MALFORMED`
+|none
+|the step or the signing key source refuses |`REFUSED` |one
+|the signing key source cannot be reached |`UNAVAILABLE` |one
+|no draft, or no changes and no target branch |passed-on `NOT_FOUND` |none or one
+|the step throws |passed-on `FAILED` |one
+|the lease is refused on every attempt |passed-on `REJECTED` |`save.max-attempts`
+|the remote refuses the push permanently |passed-on `REJECTED` |one
+|the remote cannot be reached, the credentials are invalid |passed-on `UNREACHABLE`, `CREDENTIALS_INVALID` |one
+|===
+
+A save without a draft is the passed-on `NOT_FOUND`. A draft without changes is `Saved` with the tip of its existing target branch, with no commit and no push;
 when the target branch does not exist, the save is `NotSaved` with the passed-on `NOT_FOUND` and the detail
 `draft: no changes and no target branch`, and the draft is kept. After the accepted
 push the local target branch moves by a reference update that expects the base and writes no reflog; an I/O failure
@@ -364,7 +393,11 @@ exclusive side, one lock per draft reference serialises the saves of that draft,
 fetch, apply and push of a save attempt. A save takes the shared side of the maintenance lock, then the lock of its
 draft, then the transport lock per attempt; the expiry takes only the exclusive side, so no cycle arises. Under the
 draft lock a save reads the draft and its `refs/applied/` reference only after every earlier save of that draft in the
-process has settled, so it does not apply again the changes an earlier save applied. The draft lock is in-process only,
+process has settled, so it does not apply again the changes an earlier save applied. A draft lock exists only while a
+save holds or waits for it: it is registered and released inside one atomic operation of the lock map on its
+reference name, together with the count of its holders, and the last holder removes it, so the map stays bounded by
+the saves in flight and a save never takes a lock that is no longer in the map. The map of the guards themselves is
+bounded by the clone paths the process opens, one guard per clone, and is never shrunk. The draft lock is in-process only,
 and a failed write of the `refs/applied/` reference for a kept draft is outside it: the next save then applies the
 draft's changes since its merge base. The guard does not close the window
 between reading a reference and moving it; the expected-id comparison under the reference's lock
@@ -400,9 +433,10 @@ that differs is a conflict (<<GDR-STORE-4>>). A written path also conflicts when
 file and a directory in a way the draft did not resolve: when a parent of the path is a file on the base that the
 draft does not delete (the edit would turn it into a directory), or when the path is a directory on the base holding
 a file the draft does not change (the edit would replace it); this holds with and without an expected blob id, and an
-addition below an existing directory is no overlap. An expected blob id that is no full object id is `NotSaved` with
-the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the detail
-`expectedBlobIds: not a full object id`, which names no path.
+addition below an existing directory is no overlap. An expected blob id that is no full object id is a malformed
+argument, not a missing object: the save is `NotSaved` with `StoreOutcome.MALFORMED` and the detail
+`expectedBlobIds: not a full object id`, which names the argument and never the value or a path; nothing is fetched,
+written or pushed.
 
 [#GDR-STORE-6]
 == GDR-STORE-6: Release
@@ -516,6 +550,20 @@ after it took `gc.pid`. The expiry gives the command a progress monitor; when th
 collection was skipped, however late the other collection took `gc.pid`, and the expiry logs `GIT_STORE-104` and ends
 in the passed-on `CONFLICT` with the detail `gc: skipped, another collection holds gc.pid`, which may be retried, so a
 skipped collection is never reported as a successful expiry; the drafts it deleted stay deleted.
+
+The expiry `now` is kept, without a grace period. JGit 7.8.0 `GC.prune` deletes a loose object only when no
+reference reaches it and its file time lies before the expiry instant, which `GC.getExpireDate` parses once per
+collection, and it checks the file time once more right before the delete, so an object written after the collection
+started is never pruned. An older unreferenced object belongs to no write in flight: the bare clone is the cache of
+one process
+(xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]), and
+every write of that process holds the shared side of the maintenance lock the collection holds exclusively. `gc.pid`
+only keeps a second collection off the clone; it does not protect a writer. A grace period would protect a writer
+outside the process, which the store does not have, and would keep the objects of a deleted draft past its expiry.
+
+A reference below `refs/drafts/` whose tip is no commit, such as one pointing at a blob, was not written by the store
+and is no draft: the expiry and the listing of drafts skip it, log it at DEBUG with the exception class only, and go
+on, and the expiry leaves it in place.
 
 [#GDR-STORE-8]
 == GDR-STORE-8: Author, Committer and Credentials
@@ -939,8 +987,8 @@ pipeline keep a copy outside Git. A single proof can be checked with a stock Ope
 The requirements from <<GDR-STORE-15>> to <<GDR-STORE-18>> are implemented in `git-store`; `git-core` is used and not
 changed (JGit 7.8.0).
 
-* *Opening and triggering.* `StoreWriter.open(storeRepository, gitDir, user, configuration, providers, operations,
-  clock)` takes the `StoreProviders` of the start: the signing key source signs the save and release commits, and the
+* *Opening and triggering.* `StoreWriter.open(storeRepository, gitDir, user, configuration, collections, providers,
+  operations, clock)` takes the `StoreProviders` of the start: the signing key source signs the save and release commits, and the
   active anchor provider, when there is one, anchors. `StoreWriter.anchor()` runs one due check on the calling thread
   and returns a `StoreResult` of `StoreWriter.Anchoring` (the commits whose note it pushed, and those left pending,
   oldest first). `StoreWriter.anchorPeriodically(executor)` runs a due check every `anchor.retry-interval` on the

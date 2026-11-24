@@ -118,7 +118,7 @@ class VerifySignaturesTest {
         try (var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                      temp.resolve(word() + ".git"),
                      new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word())),
-                     configuration, source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                     configuration, List.of(), source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
                      Clock.fixed(Instant.ofEpochSecond(1_800_000_000L), ZoneOffset.UTC)))) {
             value(writer.draft(author, key, List.of(new TreeEdit.Put(word(), word().getBytes(StandardCharsets.UTF_8))),
                     word()));

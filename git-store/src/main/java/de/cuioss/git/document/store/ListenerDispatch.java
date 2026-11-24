@@ -67,9 +67,6 @@ final class ListenerDispatch implements StoreEvents.Observer {
 
     private static final CuiLogger LOGGER = new CuiLogger(ListenerDispatch.class);
 
-    /** The prefix of every branch. */
-    private static final String HEADS = "refs/heads/";
-
     /** How deep the current thread is inside listener calls, of every dispatch; absent outside any. */
     private static final ThreadLocal<int[]> CALLBACK_DEPTH = new ThreadLocal<>();
 
@@ -110,7 +107,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
     public void moved(List<StoreEvents.Update> updates) {
         for (StoreEvents.Update update : updates) {
             @Nullable String newId = update.newId();
-            if (newId == null || !update.ref().startsWith(HEADS)) {
+            if (newId == null || !update.ref().startsWith(StoreReferences.HEADS)) {
                 continue;
             }
             for (Subscription subscription : subscriptions) {
@@ -130,7 +127,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
                 return List.of(tip);
             }
             List<ObjectId> tips = new ArrayList<>();
-            for (Ref other : repository.getRefDatabase().getRefsByPrefix(HEADS)) {
+            for (Ref other : repository.getRefDatabase().getRefsByPrefix(StoreReferences.HEADS)) {
                 @Nullable ObjectId id = other.getObjectId();
                 if (id != null) {
                     tips.add(id);

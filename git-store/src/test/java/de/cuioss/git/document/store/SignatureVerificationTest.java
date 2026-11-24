@@ -146,7 +146,7 @@ class SignatureVerificationTest {
         var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                 temp.resolve(word() + ".git"),
                 new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word())),
-                configuration(), source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                configuration(), List.of(), source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
                 Clock.fixed(now, ZoneOffset.UTC)));
         var key = value(DocumentKey.of(value(DocumentCollection.of("c" + word(), Kind.MAIN)), "R-" + word()));
         return new Store(writer, source, now, key);

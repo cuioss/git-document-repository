@@ -335,7 +335,7 @@ class StoreIndexTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval), List.of(),
                 TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
         Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
         contributors.put(layout.documents(), recorder);

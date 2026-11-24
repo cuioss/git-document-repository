@@ -497,9 +497,21 @@ and `CloneInput`. A secret in the URL of a clone is not stored: the origin of a 
 query data or fragment, and a URL whose user information cannot be separated is refused (<<GDR-CORE-3>>). The
 outcomes:
 
-* `REJECTED`: the remote refuses the update (non-fast-forward, a protected branch or another refusal; JGit's
-  `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or `REJECTED_NODELETE`);
-* `LEASE_REFUSED`: the remote reference differs from the expected value (`REJECTED_REMOTE_CHANGED`);
+* `REJECTED`: the remote refuses the update permanently (non-fast-forward, a protected branch, a refusing hook or
+  another refusal; JGit's `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or
+  `REJECTED_NODELETE`), and a plain push without a lease that lost a race;
+* `LEASE_REFUSED`: a leased push lost a race on the remote reference, so a fetch and a new attempt may succeed: the
+  advertised reference differs from the expected value (`REJECTED_REMOTE_CHANGED`), or the lease held in the
+  advertisement and the remote could not lock the reference for the update because it moved or another writer held it
+  after the advertisement. JGit's `ReceivePack` updates the reference against the advertised id and answers its
+  `LOCK_FAILURE` with `ng <ref> failed to lock`
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceivePack.java[JGit
+  7.8.0 `ReceivePack.sendStatusReport`],
+  link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceiveCommand.java[`ReceiveCommand.execute`]);
+  the client turns every `ng` into `REJECTED_OTHER_REASON` with that text as the message
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/BasePackPushConnection.java[`BasePackPushConnection.readStatusReport`]),
+  and a leased update with exactly the message `failed to lock` is `LEASE_REFUSED`. Another remote that words a lost
+  race differently is reported as `REJECTED`;
 * `CREDENTIALS_INVALID`: the remote refuses the authentication, HTTP 401 or 403, recognised by the wordings of JGit's
   `JGitText` and `TransportHttp` for it (`notAuthorized`, `noCredentialsProvider`, `authenticationNotSupported`,
   `serviceNotPermitted`;

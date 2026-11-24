@@ -282,7 +282,7 @@ class WritePathSecretsTest {
         var claims = claims();
 
         try (var writer = value(StoreWriter.open(storeRepository, gitDir, user,
-                     configuration(email, secrets.keyReference()), signing,
+                     configuration(email, secrets.keyReference()), List.of(), signing,
                      new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)))) {
             var draft = writer.draft(author, key, put(path, secrets.personName() + " " + word()), word());
             rendered.add(draft);
@@ -484,7 +484,8 @@ class WritePathSecretsTest {
         for (SigningKeySource source : sources) {
             var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
             try (var writer = value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user,
-                         configuration(null, keyReference), source, new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                         configuration(null, keyReference), List.of(), source,
+                         new JGitRepositoryOperations(RemotePolicy.localOnly()),
                          Clock.fixed(now, ZoneOffset.UTC)))) {
                 var author = new Author(pseudonym(), authorAddress);
                 value(writer.draft(author, key, put(word() + "x", word()), word()));
@@ -613,7 +614,7 @@ class WritePathSecretsTest {
         String releaseTag;
 
         try (var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
-                     temp.resolve(word() + ".git"), user, configuration,
+                     temp.resolve(word() + ".git"), user, configuration, List.of(),
                      new StoreProviders(signing, new TestPersonDirectory(), provider), operations,
                      Clock.fixed(now, ZoneOffset.UTC)))) {
             var author = new Author(pseudonym(), authorAddress);
