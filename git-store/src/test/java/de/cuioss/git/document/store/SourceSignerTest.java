@@ -45,6 +45,9 @@ import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.lib.GpgConfig;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -65,6 +68,7 @@ import org.junit.jupiter.params.provider.EnumSource;
  * reference or the source's detail (GDR-NFR-3).
  */
 @EnableGeneratorController
+@EnableTestLogger(rootLevel = TestLogLevel.DEBUG)
 @DisplayName("SourceSigner (GDR-STORE-12)")
 class SourceSignerTest {
 
@@ -250,6 +254,63 @@ class SourceSignerTest {
         assertAll(() -> assertArrayEquals(made, decoded.signature(), "the signature the source made and verified"),
                 () -> assertTrue(SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, signedPayload(commit)),
                         "the embedded signature verifies after the source overwrote its array"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-12, GDR-NFR-3: a source that throws is isolated as REFUSED; no log record names the key")
+    void throwingSource(@InMemory Repository repository) {
+        String keyReference = keyReference();
+        var source = new ThrowingSource(keyReference, TestKeys.ed25519().publicKeyLine());
+        var signer = new SourceSigner(source, keyReference, source.line);
+        var config = new GpgConfig(repository.getConfig());
+
+        var result = write(repository, signer);
+        var thrown = assertThrows(IOException.class,
+                () -> signer.sign(repository, config, new byte[]{1, 2, 3}, person(), keyReference, null));
+
+        var failure = signer.failure().orElseThrow();
+        assertAll(() -> assertEquals(GitOutcome.FAILED, result.outcome(), "the write failed, nothing escaped"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, CommitSignatures.SOURCE_REFUSED), failure,
+                        "the isolated failure"),
+                () -> assertEquals(SourceSigner.FAILURE_MESSAGE, thrown.getMessage(), "the fixed message"),
+                () -> assertNull(thrown.getCause(), "the throwable of the source is not attached"),
+                () -> assertFalse(logged().contains(keyReference), "no log record names the key reference"));
+    }
+
+    /** The messages and parameters of every captured log record. */
+    static String logged() {
+        var text = new StringBuilder();
+        for (var logRecord : TestLoggerFactory.getTestHandler().getRecords()) {
+            text.append(logRecord.getMessage()).append('\n');
+            if (logRecord.getParameters() != null) {
+                for (Object parameter : logRecord.getParameters()) {
+                    text.append(parameter).append('\n');
+                }
+            }
+            if (logRecord.getThrown() != null) {
+                text.append(logRecord.getThrown()).append('\n');
+            }
+        }
+        return text.toString();
+    }
+
+    /** A signing key source that throws on signing, with the key reference in the message. */
+    private record ThrowingSource(String keyReference, String line) implements SigningKeySource {
+
+        @Override
+        public String id() {
+            return "throwing";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String reference, byte[] data) {
+            throw new IllegalStateException("no key at " + keyReference);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String reference) {
+            return StoreResult.ok(line);
+        }
     }
 
     /** A signing key source that writes every signature into one array it keeps and hands out. */

@@ -72,6 +72,9 @@ import org.jspecify.annotations.Nullable;
  * one, as long as the tip is still the one the proof extends. Every method runs under the transport lock of the clone,
  * which the caller holds ({@link RepositoryGuard}).
  * <p>
+ * Every note and every kept proof is read bounded by {@link ExplicitSave#BLOB_LIMIT}, since a fetched notes reference
+ * controls it; a larger one ends the due check like an unreadable object.
+ * <p>
  * The notes reference, the kept references and the notes commits name commit ids only; no log record names more than
  * the alias and an outcome (GDR-NFR-3).
  */
@@ -82,6 +85,9 @@ final class AnchorNotes {
 
     /** The detail of a proof whose notes tip moved: it would fork the chain of the proofs. */
     static final String TIP_MOVED = "the notes tip moved";
+
+    /** The detail, after the notes reference, of a publication whose push failed, before the outcome of the push. */
+    private static final String NOT_PUSHED = ": not pushed (";
 
     private static final CuiLogger LOGGER = new CuiLogger(AnchorNotes.class);
 
@@ -258,8 +264,8 @@ final class AnchorNotes {
                     return Optional.empty();
                 }
                 if (added.size() == 1) {
-                    return Optional.ofNullable(decode(reader.open(added.getFirst().getData(), Constants.OBJ_BLOB)
-                            .getBytes(Integer.MAX_VALUE))).map(proof -> new Tip(commit, proof));
+                    return Optional.ofNullable(decode(ExplicitSave.readBlob(reader, added.getFirst().getData())))
+                            .map(proof -> new Tip(commit, proof));
                 }
                 step = parent;
             }
@@ -318,8 +324,7 @@ final class AnchorNotes {
             @Nullable ObjectId blob = ref.getObjectId();
             if (blob != null && ObjectId.isId(name)) {
                 ObjectId subject = ObjectId.fromString(name);
-                @Nullable Kept proof = decodeKept(repository.open(blob, Constants.OBJ_BLOB)
-                        .getBytes(Integer.MAX_VALUE));
+                @Nullable Kept proof = decodeKept(ExplicitSave.readBlob(repository, blob));
                 if (proof == null) {
                     LOGGER.debug("A kept proof is not of the kept form and is dropped");
                     drop(subject);
@@ -429,11 +434,22 @@ final class AnchorNotes {
         if (!pushed.isOk()) {
             LOGGER.warn(GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE, clone.alias(), pushed.outcome().name());
             reset(commit, basis);
-            return StoreResult.of(StoreOutcome.INCOMPLETE,
-                    notesRef + ": not pushed (" + pushed.outcome().name() + ")");
+            return StoreResult.of(StoreOutcome.INCOMPLETE, notesRef + NOT_PUSHED + pushed.outcome().name() + ")");
         }
         drop(subject);
         return StoreResult.ok(commit);
+    }
+
+    /**
+     * Tells whether a publication failed because its push failed, which {@link #publish} has logged already
+     * ({@code GIT_STORE-112}), so the caller logs no second record for it.
+     *
+     * @param published the result of {@link #publish}
+     * @return whether the push of the notes reference failed
+     */
+    static boolean pushFailed(StoreResult<?> published) {
+        @Nullable String detail = published.detail();
+        return published.outcome() == StoreOutcome.INCOMPLETE && detail != null && detail.contains(NOT_PUSHED);
     }
 
     /**

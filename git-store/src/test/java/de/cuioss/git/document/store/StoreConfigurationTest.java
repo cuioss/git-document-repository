@@ -57,6 +57,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -514,6 +515,30 @@ class StoreConfigurationTest {
             put(tree, key, value);
 
             assertMalformed(namedKey + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
+        @ParameterizedTest(name = "{0} = {1}")
+        @CsvSource({
+                "fetch.interval, P1000000000000D", "fetch.interval, P36526D",
+                "anchor.checkpoint-interval, P1000000000000D", "anchor.checkpoint-interval, PT876625H",
+                "anchor.retry-interval, P1000000000000D", "anchor.signed.max-clock-skew, P1000000000000D"})
+        @DisplayName("GDR-STORE-18: a duration above 100 years is MALFORMED at configuration time, naming the key")
+        void durationAboveBound(String key, String value) {
+            var tree = minimal();
+            put(tree, key, value);
+
+            assertMalformed(key + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
+        @ParameterizedTest(name = "{0} = 36525 days")
+        @ValueSource(strings = {"fetch.interval", "anchor.checkpoint-interval", "anchor.retry-interval",
+                "anchor.signed.max-clock-skew"})
+        @DisplayName("GDR-STORE-18: a duration of exactly 100 years is accepted")
+        void durationAtBound(String key) {
+            var tree = minimal();
+            put(tree, key, StoreConfiguration.MAX_DURATION.toString());
+
+            assertTrue(StoreConfiguration.from(tree, HTTPS).isOk(), "the bound itself is accepted");
         }
 
         @ParameterizedTest(name = "{0} = [{1}]")

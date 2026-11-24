@@ -239,6 +239,39 @@ class CheckpointsTest {
     }
 
     @Test
+    @DisplayName("GDR-STORE-16: a fetched checkpoint whose refs file exceeds 16 MiB ends the due check, never read whole")
+    void oversizedRefsFileIsBounded(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        ObjectId oversized;
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            var tree = new TreeFormatter();
+            tree.append(Checkpoints.REFS_FILE, FileMode.REGULAR_FILE,
+                    inserter.insert(Constants.OBJ_BLOB, new byte[ExplicitSave.BLOB_LIMIT + 1]));
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(word(), "", Instant.ofEpochSecond(100_000), ZoneOffset.UTC);
+            commit.setTreeId(inserter.insert(tree));
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(Checkpoints.MESSAGE + 1);
+            oversized = inserter.insert(commit);
+            inserter.flush();
+        }
+        setRef(repository, StoreReferences.checkpoint(1), oversized);
+
+        try (var fixture = open(remote)) {
+            var anchoring = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                    "anchor: " + ExplicitSave.BlobTooLargeException.class.getSimpleName()), anchoring,
+                            "a defined outcome naming the class only"),
+                    () -> assertNull(tip(repository, StoreReferences.checkpoint(2)), "no checkpoint follows it"),
+                    () -> assertEquals(List.of(), fixture.provider().calls(), "the provider was not asked"));
+        }
+    }
+
+    @Test
     @DisplayName("GDR-STORE-16: the tree holds the file refs, one line per listed reference sorted in byte order")
     void treeListsReferencesInByteOrder(@Remote LocalRemote remote) throws Exception {
         var repository = remote.repository();

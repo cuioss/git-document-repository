@@ -305,8 +305,6 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * or a refused allowed-signers file; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED} for a key
      * source that handed out no public key, or the result of a file that cannot be read
      */
-    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
-    @SuppressWarnings("java:S4449")
     private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
             Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
         for (AnchorProvider candidate : anchors) {
@@ -325,9 +323,11 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         if (keyReference == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, SIGNED_KEY + " is missing");
         }
-        var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE,
-                Objects.requireNonNullElse(section.keySource(), StoreConfiguration.Signing.DEFAULT_KEY_SOURCE),
-                signing, SigningKeySource::id);
+        @Nullable String configuredSource = section.keySource();
+        String anchorSourceId = configuredSource == null ? StoreConfiguration.Signing.DEFAULT_KEY_SOURCE
+                : configuredSource;
+        var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE, anchorSourceId, signing,
+                SigningKeySource::id);
         if (!anchorSource.isOk()) {
             return retype(anchorSource);
         }

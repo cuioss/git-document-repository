@@ -78,6 +78,9 @@ public final class VerifySignatures {
     /** The diagnostic of an argument that is no valid path; it names neither the argument nor the path. */
     static final String INVALID_PATH = "MALFORMED arguments: not a valid path";
 
+    /** The diagnostic, after the outcome, of a git directory that cannot be opened as a repository. */
+    static final String NOT_A_REPOSITORY = " git-dir: not a repository";
+
     private VerifySignatures() {
     }
 
@@ -126,8 +129,18 @@ public final class VerifySignatures {
             return failed(err, allowedSigners);
         }
         List<String> references = Arrays.asList(args).subList(2, args.length);
-        try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile())
-                     .setFS(new RefusingFS()).setMustExist(true).build()) {
+        Repository opened;
+        try {
+            opened = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setFS(new RefusingFS()).setMustExist(true)
+                    .build();
+        }
+        // only a failure of the opening is labelled as a git directory that is no repository; the verification of each
+        // reference reports its own failures as results
+        catch (IOException | IllegalArgumentException e) {
+            err.println(GitOutcome.NOT_A_REPOSITORY + NOT_A_REPOSITORY);
+            return FAILED;
+        }
+        try (Repository repository = opened) {
             int code = VERIFIED;
             for (String reference : references) {
                 var verified = SignatureVerification.verify(repository, reference,
@@ -141,9 +154,6 @@ public final class VerifySignatures {
                 }
             }
             return code;
-        } catch (IOException | IllegalArgumentException e) {
-            err.println(GitOutcome.NOT_A_REPOSITORY + " git-dir: not a repository");
-            return FAILED;
         }
     }
 

@@ -32,8 +32,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
 
+import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
 import de.cuioss.git.document.testing.InMemory;
@@ -87,6 +90,48 @@ class StoreReferencesTest {
 
     private static DocumentKey key(Kind kind, String id) {
         return value(DocumentKey.of(value(DocumentCollection.of(name(), kind)), id));
+    }
+
+    /** The namespaces of reference specifications on one side, {@code [+]<source>:<destination>}, wildcard dropped. */
+    private static Set<String> namespaces(List<String> specs, boolean destination) {
+        Set<String> namespaces = new TreeSet<>();
+        for (String spec : specs) {
+            String plain = spec.startsWith("+") ? spec.substring(1) : spec;
+            String side = destination ? plain.substring(plain.indexOf(':') + 1) : plain.substring(0, plain.indexOf(':'));
+            namespaces.add(side.endsWith("*") ? side.substring(0, side.length() - 1) : side);
+        }
+        return namespaces;
+    }
+
+    private static boolean covered(Set<String> namespaces, String reference) {
+        return namespaces.stream().anyMatch(reference::startsWith);
+    }
+
+    @Nested
+    @DisplayName("Push and mirror scope (GDR-STORE-16, GDR-STORE-17)")
+    class PushAndMirrorScope {
+
+        @Test
+        @DisplayName("GDR-STORE-16: the namespaces the clone pushes are exactly those the mirror fetch of git-core prunes")
+        void pushNamespacesEqualMirrorPruneScope() {
+            var pushed = namespaces(StoreReferences.PUSH_REF_SPECS, false);
+            var mirrored = namespaces(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS, true);
+            var checkpoint = StoreReferences.checkpoint(Generators.integers(1, 999).next());
+            var notes = StoreReferences.anchorNotes("a" + name());
+            var kept = StoreReferences.ANCHORING + "checkpoints/" + Generators.integers(1, 999).next();
+
+            assertAll(
+                    () -> assertEquals(mirrored, pushed,
+                            "what the clone pushes is what the mirror fetch overwrites and prunes"),
+                    () -> assertTrue(covered(pushed, checkpoint) && covered(mirrored, checkpoint),
+                            "a checkpoint tag is pushed and mirrored"),
+                    () -> assertTrue(covered(pushed, notes) && covered(mirrored, notes),
+                            "an anchor notes reference is pushed and mirrored"),
+                    () -> assertFalse(covered(pushed, kept) || covered(mirrored, kept),
+                            "a kept checkpoint is neither pushed nor pruned"),
+                    () -> assertFalse(covered(pushed, StoreReferences.DRAFTS) || covered(mirrored,
+                            StoreReferences.DRAFTS), "a draft is neither pushed nor pruned"));
+        }
     }
 
     @Nested

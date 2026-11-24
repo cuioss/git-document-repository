@@ -43,17 +43,21 @@ drafts, never a draft reference, which names a pseudonym.
 |Logged when a release completed, `main` and the release tag both accepted by the remote
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
 release tag and the full id of the release commit.
-|GIT_STORE-6 |GIT_STORE |Verified the signatures of reference %s: %s commits, %s unverified
+|GIT_STORE-6 |GIT_STORE |Verified the signatures of a reference: %s commits, %s unverified
 |Logged when a signature verification of a reference against the allowed signers finished
-(xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the full name of the reference, the number of
-commits reachable from it and the number of those without a signature valid at their committer time, never a
-principal, a key or a commit message.
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-14[GDR-STORE-14]): the number of commits reachable from the
+reference and the number of those without a signature valid at their committer time, never the reference name, which
+may carry a document id, a principal, a key or a commit message.
 |GIT_STORE-7 |GIT_STORE |Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s
 |Logged once per proof the anchor provider `signed` signed
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-18[GDR-STORE-18]): the repository alias, the full object id of
 the subject, the time of the statement (UTC, ISO 8601 with seconds), its sequence number and the SHA-256 of the proof
 in lowercase hex, nothing else; never the key reference, key material or the detail of the anchor key source. The
-record lets the operator's log pipeline keep a copy of the chain outside Git.
+record lets the operator's log pipeline keep a copy of the chain outside Git. It records the signing, not the
+publication: it is logged when the proof is made, before its note is written. A proof whose note is not published,
+because the notes tip moved or the push failed, is dropped, and a later due check signs a new one, so one subject may
+have several of these records; the proof that counts is the one whose SHA-256 matches the published note, and its
+publication is `GIT_STORE-9`.
 |GIT_STORE-8 |GIT_STORE |Created a checkpoint of repository %s: number %s at commit %s
 |Logged when a due check wrote a checkpoint commit
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16]): the repository alias, the number `n` of its
@@ -127,17 +131,20 @@ called with a new commit of its branch
 branch and the class name (`Class.getName()`) of the throwable, never its message; no throwable is attached. The save,
 release or fetch that triggered the call is unaffected, the next listener is still called, and the commit counts as
 delivered.
-|GIT_STORE-110 |GIT_STORE |Did not sign the commit of repository %s, reference %s: %s
-|Logged when a save or release was refused because its commit could not be signed
-(xref:../../doc/specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]): the signing key source refused or could not
-be reached for the public key or the signature, or handed out a key of another type than Ed25519. It names the
-repository alias, the target reference or the working or collection branch, and the name of the outcome (`REFUSED` or
-`UNAVAILABLE`); never the key reference, a key path, key material, the detail of the source or a claim. No throwable is
-attached. Nothing of the save or release is on the remote.
+|GIT_STORE-110 |GIT_STORE |Did not sign the commit of repository %s for a %s: %s
+|Logged when a save, release, checkpoint or anchor note was refused because its commit could not be signed
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]): the signing key source refused, could not
+be reached or threw a `RuntimeException` for the public key or the signature, or handed out a key of another type than
+Ed25519. It names the repository alias, the class of the reference the commit was for (`main`, `branch`, `tag`,
+`checkpoint tag`, `notes reference` or `reference`) and the name of the outcome (`REFUSED` or `UNAVAILABLE`); never the
+reference name, which may carry a document id, the key reference, a key path, key material, the detail of the source
+or a claim. No throwable is attached. Nothing of the save or release is on the remote.
 |GIT_STORE-111 |GIT_STORE |Left anchor subjects of repository %s pending: %s
 |Logged when a due check of the anchoring ended with subjects still pending
-(xref:../../doc/specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15]): the fetch failed, the anchor provider refused
-or could not be reached, or the note of a proof was not pushed. It names the repository alias and the name of the
+(xref:../../doc/specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15]): the fetch failed, the anchor provider refused,
+returned an empty proof or could not be reached, the notes tip moved, or the due check failed unchecked. A failed push
+of a checkpoint tag or a note is logged once, as `GIT_STORE-112`, and not here again. It names the repository alias and
+the name of the
 outcome, or the class name (`Class.getName()`) of any throwable a due check off the caller's thread threw, never a
 reference name, a proof or the detail of the provider; no throwable is attached. The save, release or fetch that
 triggered the due check is unaffected, the schedule goes on, and the next due check retries.

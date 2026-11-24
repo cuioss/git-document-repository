@@ -34,7 +34,6 @@ import de.cuioss.git.document.core.RepositoryOperations.PushInput;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -373,15 +372,15 @@ final class Checkpoints {
      *
      * @param repository the repository
      * @param commit     the checkpoint commit
-     * @return its content; empty when the tree holds no such file
-     * @throws IOException if the tree cannot be read
+     * @return its content, read bounded by {@link ExplicitSave#BLOB_LIMIT}; empty when the tree holds no such file
+     * @throws IOException if the tree cannot be read, or {@link ExplicitSave.BlobTooLargeException} for a larger file
      */
     static byte[] content(Repository repository, RevCommit commit) throws IOException {
         try (TreeWalk walk = TreeWalk.forPath(repository, REFS_FILE, commit.getTree())) {
             if (walk == null) {
                 return new byte[0];
             }
-            return repository.open(walk.getObjectId(0), Constants.OBJ_BLOB).getBytes(Integer.MAX_VALUE);
+            return ExplicitSave.readBlob(repository, walk.getObjectId(0));
         }
     }
 

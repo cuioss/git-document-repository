@@ -28,7 +28,10 @@ import java.util.Set;
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -44,7 +47,8 @@ import org.jspecify.annotations.Nullable;
  * verifies, in the namespace {@value SshSignatures#NAMESPACE_GIT}, over the commit without that header, and whose key
  * the allowed signers list for commits with a validity that includes the committer time, as Git checks it
  * ({@code git verify-commit} with {@code gpg.ssh.allowedSignersFile}, Git 2.35 or later). Every other commit is listed
- * once, with the first {@link Reason} that applies when the header, the format, the decoding, the signature over the
+ * once, with the first {@link Reason} that applies when the number of headers, the header, the format, the decoding,
+ * the signature over the
  * commit and then the key are checked in this order: {@link Reason#UNSIGNED}, {@link Reason#NOT_SSH},
  * {@link Reason#MALFORMED}, {@link Reason#INVALID}, then {@link Reason#UNKNOWN_KEY} or
  * {@link Reason#OUTSIDE_VALIDITY}. The allowed signers are those given, never a file of the repository.
@@ -54,8 +58,14 @@ import org.jspecify.annotations.Nullable;
  * the boundary cannot be checked. The shallow commits are read again after the walk; a boundary that changed while the
  * walk ran is {@link StoreOutcome#INCOMPLETE} as well.
  * <p>
+ * A commit with more than one {@code gpgsig} header is {@link Reason#INVALID}: Git verifies the first and removes every
+ * one from the signed payload, so a second header would travel along unverified. The walk retains no commit body
+ * (JGit 7.8.0 {@code RevWalk.setRetainBody(false)}); each commit is read again, bounded by
+ * {@link ExplicitSave#BLOB_LIMIT}, checked and released, so the memory of the verification does not grow with the
+ * history, and a larger commit is {@link Reason#MALFORMED}.
+ * <p>
  * The verification reads only: it changes no reference and writes no object. A finished verification is logged as
- * {@code GIT_STORE-6} with the reference and the counts.
+ * {@code GIT_STORE-6} with the counts only, never the reference, whose name may carry a document id.
  *
  * @since 0.1
  */
@@ -155,13 +165,17 @@ public final class SignatureVerification {
             List<UnverifiedCommit> unverified = new ArrayList<>();
             int commits = 0;
             try (RevWalk walk = new RevWalk(repository)) {
+                // JGit 7.8.0 RevWalk.setRetainBody(false) drops the raw buffer of every commit once the walk parsed its
+                // parents, so the walk holds no commit body; each body is read again, checked and released in turn
+                walk.setRetainBody(false);
                 walk.markStart(walk.parseCommit(ref.getObjectId()));
+                ObjectReader reader = walk.getObjectReader();
                 for (RevCommit commit : walk) {
                     if (shallow.contains(commit)) {
                         return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW);
                     }
                     commits++;
-                    Reason reason = check(commit, allowedSigners);
+                    Reason reason = check(reader, walk, commit, allowedSigners);
                     if (reason != null) {
                         unverified.add(new UnverifiedCommit(commit.getId().name(), reason));
                     }
@@ -172,7 +186,7 @@ public final class SignatureVerification {
             if (!shallow.equals(Set.copyOf(repository.getObjectDatabase().getShallowCommits()))) {
                 return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW_CHANGED);
             }
-            LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, reference, commits, unverified.size());
+            LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, commits, unverified.size());
             return StoreResult.ok(List.copyOf(unverified));
         }
         // an unexpected failure reading the repository ends the verification as a result, never as an exception,
@@ -184,8 +198,24 @@ public final class SignatureVerification {
         }
     }
 
-    /** The reason a commit has no valid signature; {@code null} for a valid one. */
-    private static @Nullable Reason check(RevCommit commit, AllowedSigners allowedSigners) {
+    /**
+     * The reason a commit has no valid signature; {@code null} for a valid one. The raw commit is read bounded by
+     * {@link ExplicitSave#BLOB_LIMIT}, parsed apart from the walk and released after the check; a larger commit is
+     * {@link Reason#MALFORMED}.
+     */
+    private static @Nullable Reason check(ObjectReader reader, RevWalk walk, RevCommit walked,
+            AllowedSigners allowedSigners) throws IOException {
+        ObjectLoader loader = reader.open(walked, Constants.OBJ_COMMIT);
+        if (loader.getSize() > ExplicitSave.BLOB_LIMIT) {
+            return Reason.MALFORMED;
+        }
+        byte[] raw = loader.getBytes(ExplicitSave.BLOB_LIMIT);
+        if (gpgsigHeaders(raw) > 1) {
+            // Git verifies the first gpgsig header and strips every one from the payload, so a second header would be
+            // carried along unverified
+            return Reason.INVALID;
+        }
+        RevCommit commit = RevCommit.parse(walk, raw);
         byte[] signature = commit.getRawGpgSignature();
         if (signature == null) {
             return Reason.UNSIGNED;
@@ -239,6 +269,28 @@ public final class SignatureVerification {
             position = next;
         }
         return out.toByteArray();
+    }
+
+    /**
+     * The number of {@code gpgsig} headers of a raw commit: the header lines before the first empty line that start
+     * with {@code gpgsig }, continuation lines not counted.
+     *
+     * @param raw the raw commit
+     * @return the number of {@code gpgsig} headers
+     */
+    static int gpgsigHeaders(byte[] raw) {
+        int count = 0;
+        int position = 0;
+        while (position < raw.length && raw[position] != '\n') {
+            if (startsWith(raw, position, GPGSIG)) {
+                count++;
+            }
+            while (position < raw.length && raw[position] != '\n') {
+                position++;
+            }
+            position++;
+        }
+        return count;
     }
 
     private static boolean startsWith(byte[] data, int offset, byte[] prefix) {

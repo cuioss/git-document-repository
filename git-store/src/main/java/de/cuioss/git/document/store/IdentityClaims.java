@@ -31,18 +31,23 @@ import org.jspecify.annotations.Nullable;
  * itself. There is deliberately no component for {@code sub} or {@code sid}: the commit names the user by the
  * pseudonym only (GDR-NFR-3).
  * <p>
- * Every component is checked so that it fits on one trailer line: a violation is an {@link IllegalArgumentException}
- * whose message names the component, never its value.
+ * Every component is checked so that it fits on one trailer line. The claims come from a token, so the caller builds
+ * them with {@link #of}, which returns a violation as {@link StoreOutcome#MALFORMED} naming the component, never its
+ * value; the canonical constructor, for values the caller already checked, throws an {@link IllegalArgumentException}
+ * with the same message instead.
  *
  * @param issuer   the issuer ({@code iss}), not blank, without whitespace or control characters
  * @param authTime the time of the authentication ({@code auth_time})
- * @param acr      the authentication context class reference ({@code acr}), without control characters and
- *                 {@code ;}, not blank; {@code null} when the token carries none
+ * @param acr      the authentication context class reference ({@code acr}), not blank, without whitespace, control
+ *                 characters, {@code ,} and {@code ;}; {@code null} when the token carries none
  * @param amr      the authentication methods ({@code amr}), each not blank, without whitespace, control characters,
  *                 {@code ,} and {@code ;}; empty when the token carries none
  * @since 0.1
  */
 public record IdentityClaims(String issuer, Instant authTime, @Nullable String acr, List<String> amr) {
+
+    /** The message after the component of a component that violates its form. */
+    private static final String INVALID = ": invalid";
 
     /**
      * Checks the components and copies {@code amr} immutably.
@@ -53,25 +58,65 @@ public record IdentityClaims(String issuer, Instant authTime, @Nullable String a
      * @param amr      the authentication methods
      * @throws NullPointerException     if {@code issuer}, {@code authTime}, {@code amr} or an element of it is
      *                                  {@code null}
-     * @throws IllegalArgumentException if a component violates its form; the message names the component
-     *                                  ({@code issuer}, {@code acr} or {@code amr}), never the value
+     * @throws IllegalArgumentException if a component violates its form; the message {@code <component>: invalid}
+     *                                  names the component ({@code issuer}, {@code acr} or {@code amr}), never the
+     *                                  value
      */
     public IdentityClaims {
         Objects.requireNonNull(issuer, "issuer");
         Objects.requireNonNull(authTime, "authTime");
-        Objects.requireNonNull(amr, "amr");
+        amr = List.copyOf(Objects.requireNonNull(amr, "amr"));
+        @Nullable String violated = violated(issuer, acr, amr);
+        if (violated != null) {
+            throw new IllegalArgumentException(violated + INVALID);
+        }
+    }
+
+    /**
+     * Builds the claims from the values of a validated ID Token, returning a value that does not fit on a trailer line
+     * as a result instead of throwing.
+     *
+     * @param issuer   the issuer ({@code iss})
+     * @param authTime the time of the authentication ({@code auth_time})
+     * @param acr      the authentication context class reference ({@code acr}), or {@code null}
+     * @param amr      the authentication methods ({@code amr})
+     * @return {@link StoreOutcome#OK} with the claims; {@link StoreOutcome#MALFORMED} with the detail
+     *         {@code issuer: invalid}, {@code acr: invalid} or {@code amr: invalid} for a blank issuer or a component
+     *         with a separator ({@code ,} or {@code ;}), whitespace where none is allowed or a control character; the
+     *         detail never names the value
+     * @throws NullPointerException if {@code issuer}, {@code authTime}, {@code amr} or an element of it is {@code null}
+     */
+    public static StoreResult<IdentityClaims> of(String issuer, Instant authTime, @Nullable String acr,
+            List<String> amr) {
+        Objects.requireNonNull(issuer, "issuer");
+        Objects.requireNonNull(authTime, "authTime");
+        List<String> methods = List.copyOf(Objects.requireNonNull(amr, "amr"));
+        @Nullable String violated = violated(issuer, acr, methods);
+        if (violated != null) {
+            return StoreResult.of(StoreOutcome.MALFORMED, violated + INVALID);
+        }
+        return StoreResult.ok(new IdentityClaims(issuer, authTime, acr, methods));
+    }
+
+    /** The first component that violates its form, or {@code null} when every one fits on a trailer line. */
+    private static @Nullable String violated(String issuer, @Nullable String acr, List<String> amr) {
         if (issuer.isBlank() || issuer.chars().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) {
-            throw new IllegalArgumentException("issuer: invalid");
+            return "issuer";
         }
-        if (acr != null && (acr.isBlank() || acr.chars().anyMatch(c -> Character.isISOControl(c) || c == ';'))) {
-            throw new IllegalArgumentException("acr: invalid");
+        if (acr != null && !isToken(acr)) {
+            return "acr";
         }
-        amr = List.copyOf(amr);
         for (String method : amr) {
-            if (method.isBlank() || method.chars().anyMatch(
-                    c -> Character.isWhitespace(c) || Character.isISOControl(c) || c == ',' || c == ';')) {
-                throw new IllegalArgumentException("amr: invalid");
+            if (!isToken(method)) {
+                return "amr";
             }
         }
+        return null;
+    }
+
+    /** Whether a value is not blank and holds no whitespace, control character, {@code ,} or {@code ;}. */
+    private static boolean isToken(String value) {
+        return !value.isBlank() && value.chars().noneMatch(
+                c -> Character.isWhitespace(c) || Character.isISOControl(c) || c == ',' || c == ';');
     }
 }

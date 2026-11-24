@@ -35,7 +35,6 @@ import de.cuioss.git.document.core.RepositoryReader;
 import de.cuioss.git.document.core.RepositoryReader.PathChange;
 import de.cuioss.git.document.core.RepositoryReader.SnapshotFile;
 import de.cuioss.tools.logging.CuiLogger;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -72,7 +71,9 @@ import org.jspecify.annotations.Nullable;
  * Each source is read in isolation: a source that cannot be read, for example because a blob of its tip is missing
  * from the clone, keeps the entries it was indexed with before (a new source stays out of the index), is logged
  * ({@code GIT_STORE-113}) with the alias and the class of the source ({@code main}, {@code working branch} or
- * {@code collection branch}), never its reference name, and the other sources are published fresh.
+ * {@code collection branch}), never its reference name, and the other sources are published fresh. Every blob handed to
+ * a contributor is read bounded by {@link ExplicitSave#BLOB_LIMIT}, so a document with a larger blob makes its source
+ * unreadable in that sense, and makes a snapshot the passed-on {@link GitOutcome#FAILED}.
  * <p>
  * Refreshes are serialised by one lock of the index and always rebuild from the tips read under that lock, so a refresh
  * started after a save and one started after a fetch can never publish out of order. The published index is an
@@ -161,7 +162,8 @@ public final class StoreIndex<E> implements AutoCloseable {
     public static <E> StoreResult<StoreIndex<E>> open(StoreWriter writer,
             Map<DocumentCollection, ? extends IndexContributor<? extends E>> contributors) {
         Objects.requireNonNull(writer, "writer");
-        return open(writer.alias(), writer.repository(), writer.events(), contributors);
+        StoreClone opened = writer.storeClone();
+        return open(opened.alias(), opened.repository(), opened.events(), contributors);
     }
 
     /**
@@ -458,8 +460,7 @@ public final class StoreIndex<E> implements AutoCloseable {
     private @Nullable E contribute(DocumentKey key, String source, Map<String, ObjectId> blobs) throws IOException {
         Map<String, byte[]> contents = new LinkedHashMap<>();
         for (Map.Entry<String, ObjectId> blob : blobs.entrySet()) {
-            contents.put(blob.getKey(), repository.open(blob.getValue(), Constants.OBJ_BLOB)
-                    .getBytes(Integer.MAX_VALUE));
+            contents.put(blob.getKey(), ExplicitSave.readBlob(repository, blob.getValue()));
         }
         IndexContributor<? extends E> contributor = Objects.requireNonNull(contributors.get(key.collection()));
         try {

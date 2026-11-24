@@ -291,6 +291,30 @@ class SignedAnchorProviderTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-18: obtain chains to a previous proof without verifying its signature; verify reports it")
+        void previousProofNotVerifiedOnObtain() throws Exception {
+            var provider = provider();
+            var forger = TestKeys.ed25519();
+            var forgedSubject = objectId();
+            byte[] statementBytes = new AnchorStatement(forgedSubject, START, 1, null).encode();
+            byte[] forged = concat(statementBytes, SshSignatures.encode(forger.publicKeyBlob(),
+                    SignedAnchorProvider.NAMESPACE, forger.sign(SshSignatures.signedData(SignedAnchorProvider.NAMESPACE,
+                            statementBytes))).getBytes(US_ASCII));
+            var subject = objectId();
+
+            byte[] chained = value(provider.obtain(alias, subject, START, forged));
+
+            var statement = split(chained).statement();
+            assertAll(
+                    () -> assertEquals(2, statement.sequence(), "the sequence follows the forged proof"),
+                    () -> assertArrayEquals(AnchorStatement.sha256(forged), statement.previous(),
+                            "the chain names the forged proof: obtain reads its statement only"),
+                    () -> assertEquals(StoreOutcome.SIGNATURE_INVALID,
+                            provider.verify(forgedSubject, forged, new byte[0]).outcome(),
+                            "the verification of the chain reports the forged proof"));
+        }
+
+        @Test
         @DisplayName("GDR-STORE-18: an instance that only verifies refuses to obtain")
         void verifierRefuses() throws Exception {
             var verifier = SignedAnchorProvider.verifier(anchorSigners());
@@ -325,6 +349,34 @@ class SignedAnchorProviderTest {
                     + HexFormat.of().formatHex(AnchorStatement.sha256(proof)), expected, "exactly these fields");
             assertNothingLogged(keyReference);
             assertNothingLogged(source.key().publicKeyLine().split(" ")[1]);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-18: GIT_STORE-7 records each signing, so a proof asked for again is logged again")
+        void recordPerSigningNotPerPublication() throws Exception {
+            var provider = provider();
+            var subject = objectId();
+
+            byte[] dropped = value(provider.obtain(alias, subject, START, new byte[0]));
+            clock.set(START.plusSeconds(1));
+            byte[] published = value(provider.obtain(alias, subject, START, new byte[0]));
+
+            long records = TestLoggerFactory.getTestHandler().getRecords().stream()
+                    .filter(logRecord -> String.valueOf(logRecord.getMessage())
+                            .startsWith(GitStoreLogMessages.INFO.PROOF_SIGNED.resolveIdentifierString() + ":"))
+                    .count();
+            assertAll(
+                    () -> assertEquals(2, records, "one record per signing, before any publication"),
+                    () -> LogAsserts.assertLogMessagePresent(TestLogLevel.INFO,
+                            GitStoreLogMessages.INFO.PROOF_SIGNED.format(alias, subject.name(), START, 1,
+                                    HexFormat.of().formatHex(AnchorStatement.sha256(dropped)))),
+                    () -> LogAsserts.assertLogMessagePresent(TestLogLevel.INFO,
+                            GitStoreLogMessages.INFO.PROOF_SIGNED.format(alias, subject.name(),
+                                    START.plusSeconds(1), 1, HexFormat.of().formatHex(AnchorStatement.sha256(
+                                            published)))),
+                    () -> assertNotEquals(HexFormat.of().formatHex(AnchorStatement.sha256(dropped)),
+                            HexFormat.of().formatHex(AnchorStatement.sha256(published)),
+                            "the SHA-256 tells the published proof from the dropped one"));
         }
 
         @Test

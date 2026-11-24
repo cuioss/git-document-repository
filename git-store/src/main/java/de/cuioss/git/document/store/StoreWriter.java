@@ -28,7 +28,6 @@ import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
-import org.eclipse.jgit.lib.Repository;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
@@ -79,9 +78,6 @@ import org.eclipse.jgit.lib.Repository;
  *
  * @since 0.1
  */
-// S6539 counts the types of the public face of the store; the writer delegates every operation to StoreClone and its
-// parts, so its coupling is its purpose as the facade
-@SuppressWarnings("java:S6539")
 public final class StoreWriter implements AutoCloseable {
 
     /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */
@@ -128,8 +124,8 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
             RepositoryOperations operations, Clock clock) {
-        return open(storeRepository, gitDir, user, configuration, collections,
-                new CloneOpening.Providers(signing, null), operations, clock);
+        return writer(CloneOpening.open(storeRepository, gitDir, user, configuration, collections, signing,
+                operations, clock));
     }
 
     /**
@@ -154,23 +150,12 @@ public final class StoreWriter implements AutoCloseable {
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
             RepositoryOperations operations, Clock clock) {
-        Objects.requireNonNull(providers, "providers");
-        return open(storeRepository, gitDir, user, configuration, collections,
-                new CloneOpening.Providers(providers.signing(), providers.anchor()), operations, clock);
+        return writer(CloneOpening.open(storeRepository, gitDir, user, configuration, collections, providers,
+                operations, clock));
     }
 
-    private static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, List<DocumentCollection> collections, CloneOpening.Providers providers,
-            RepositoryOperations operations, Clock clock) {
-        Objects.requireNonNull(storeRepository, "storeRepository");
-        Objects.requireNonNull(gitDir, "gitDir");
-        Objects.requireNonNull(user, "user");
-        Objects.requireNonNull(configuration, "configuration");
-        Objects.requireNonNull(collections, "collections");
-        Objects.requireNonNull(operations, "operations");
-        Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, collections, providers,
-                operations, clock);
+    /** The writer over an opened clone, or the non-success of opening it. */
+    private static StoreResult<StoreWriter> writer(StoreResult<StoreClone> opened) {
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
@@ -204,7 +189,7 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(edits, "edits");
         Objects.requireNonNull(message, "message");
-        return clone.draft(author, key, edits, message);
+        return clone.writes().draft(author, key, edits, message);
     }
 
     /**
@@ -217,7 +202,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public StoreResult<List<Draft>> drafts(String pseudonym) {
         Objects.requireNonNull(pseudonym, "pseudonym");
-        return clone.drafts(pseudonym);
+        return clone.writes().drafts(pseudonym);
     }
 
     /**
@@ -261,7 +246,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message) {
-        return clone.save(author, claims, key, expectedBlobIds, message, null);
+        return clone.writes().save(author, claims, key, expectedBlobIds, message, null);
     }
 
     /**
@@ -294,7 +279,8 @@ public final class StoreWriter implements AutoCloseable {
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message, SaveStep step) {
-        return clone.save(author, claims, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
+        return clone.writes().save(author, claims, key, expectedBlobIds, message,
+                Objects.requireNonNull(step, "step"));
     }
 
     /**
@@ -337,7 +323,7 @@ public final class StoreWriter implements AutoCloseable {
      * @throws NullPointerException if an argument is {@code null}
      */
     public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        return clone.release(author, claims, key);
+        return clone.writes().release(author, claims, key);
     }
 
     /**
@@ -362,7 +348,7 @@ public final class StoreWriter implements AutoCloseable {
      * @throws NullPointerException if {@code now} is {@code null}
      */
     public StoreResult<List<String>> expireDrafts(Instant now) {
-        return clone.expireDrafts(now);
+        return clone.writes().expireDrafts(now);
     }
 
     /**
@@ -379,7 +365,7 @@ public final class StoreWriter implements AutoCloseable {
      *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
      */
     public StoreResult<List<String>> fetch() {
-        return clone.fetch();
+        return clone.schedules().fetch();
     }
 
     /**
@@ -396,7 +382,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public FetchSchedule fetchPeriodically(ScheduledExecutorService executor) {
         Objects.requireNonNull(executor, "executor");
-        return clone.fetchPeriodically(executor);
+        return clone.schedules().fetchPeriodically(executor);
     }
 
     /**
@@ -407,14 +393,18 @@ public final class StoreWriter implements AutoCloseable {
      * the provider for a proof of every pending subject, the commit of each release tag (unless
      * {@code anchor.releases} is {@code false}) and each checkpoint without a note in
      * {@code refs/notes/anchors/<provider>}, oldest first; each proof is written as a base64 note and pushed with lease
-     * right after. A failure of the provider or of a push leaves the subject pending and is logged
-     * ({@code GIT_STORE-111}).
+     * right after. A failure of the provider or of a push leaves the subject pending and is logged once
+     * ({@code GIT_STORE-111}); an empty proof counts as a refusal of the provider. The references the fetch of the due
+     * check moved reach the indexes and the listeners also when the due check ends early.
      *
      * @return {@link StoreOutcome#OK} with the anchored and the pending subjects; or the non-success that ended the
-     *         due check before any subject was asked for, for example the passed-on outcome of its fetch
+     *         due check before any subject was asked for, for example the passed-on outcome of its fetch,
+     *         {@link StoreOutcome#INCOMPLETE} with the detail {@code anchor: <class name of the exception>} for an
+     *         unchecked failure while it fetched, repaired or planned, or {@link StoreOutcome#REFUSED} with the detail
+     *         {@code anchor: the writer is closed} after {@link #close()}
      */
     public StoreResult<Anchoring> anchor() {
-        return clone.anchor();
+        return clone.schedules().anchor();
     }
 
     /**
@@ -432,7 +422,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
         Objects.requireNonNull(executor, "executor");
-        return clone.anchorPeriodically(executor);
+        return clone.schedules().anchorPeriodically(executor);
     }
 
     /**
@@ -485,24 +475,20 @@ public final class StoreWriter implements AutoCloseable {
     }
 
     /**
-     * Returns the opened clone, for the index over this writer.
+     * Returns the opened clone with its repository and its notification seam, for the index over this writer. The
+     * accessor is not named {@code clone()}, which would override {@link Object#clone()} with weaker access.
      *
      * @return the clone
      */
-    Repository repository() {
-        return clone.repository();
+    StoreClone storeClone() {
+        return clone;
     }
 
     /**
-     * Returns the notification seam of this writer, for the index over it.
-     *
-     * @return the events
+     * Releases the opened clone: sets its closed flag under the anchoring lock, so a due check handed to the caller's
+     * executor and run after the close does nothing, and one running waits until it ended. A second call releases
+     * nothing.
      */
-    StoreEvents events() {
-        return clone.events();
-    }
-
-    /** Releases the opened clone. */
     @Override
     public void close() {
         clone.close();

@@ -100,7 +100,7 @@ class LogMessagesCatalogueTest {
 
         assertAll(
                 () -> assertEquals("GIT_STORE-110", signingFailed.resolveIdentifierString(), "the identifier"),
-                () -> assertEquals("Did not sign the commit of repository %s, reference %s: %s",
+                () -> assertEquals("Did not sign the commit of repository %s for a %s: %s",
                         documented.get(signingFailed.resolveIdentifierString()), "the catalogued template"));
     }
 
@@ -126,7 +126,7 @@ class LogMessagesCatalogueTest {
 
         assertAll(
                 () -> assertEquals("GIT_STORE-6", verified.resolveIdentifierString(), "the identifier"),
-                () -> assertEquals("Verified the signatures of reference %s: %s commits, %s unverified",
+                () -> assertEquals("Verified the signatures of a reference: %s commits, %s unverified",
                         documented.get(verified.resolveIdentifierString()), "the catalogued template"));
     }
 }

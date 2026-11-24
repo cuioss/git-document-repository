@@ -50,6 +50,18 @@ import org.jspecify.annotations.Nullable;
  * the object id, the time, the sequence number and the SHA-256 of the proof, nothing else: no detail and no log record
  * names the key reference, key material or the detail of the key source (GDR-NFR-3).
  * <p>
+ * {@code GIT_STORE-7} records the signing, not the publication: it is written when the proof is made, before the store
+ * writes its note. A proof whose note is not published, because its notes tip moved or its push failed, is dropped by
+ * the store, which asks for a new proof in a later due check; so one subject may have several {@code GIT_STORE-7}
+ * records, and only the proof whose SHA-256 the published note holds counts. The publication itself is
+ * {@code GIT_STORE-9}.
+ * <p>
+ * {@code obtain} reads the statement of the previous proof for its sequence number, its time and its SHA-256, but does
+ * not verify its signature: the anchor key may have been rotated since, and the instance that signs need not hold the
+ * anchor allowed signers. A previous proof that was forged in the notes reference is therefore chained to; the chain
+ * check of {@code verify}, which the CI verification runs over every proof in order, reports it. That is a recorded
+ * limit (GDR-STORE-18).
+ * <p>
  * {@link #verify(ObjectId, byte[], byte[])} checks the statement against the subject, the signature in the namespace
  * {@value #NAMESPACE} against {@code anchor.signed.allowed-signers} at the time of the statement, and the chain: the
  * sequence without a gap, the {@code previous} hash equal to the SHA-256 of the previous proof, the time never before

@@ -45,9 +45,13 @@ import de.cuioss.git.document.core.RepositoryReader.ChangeType;
 import de.cuioss.git.document.core.RepositoryReader.PathChange;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.errors.LargeObjectException;
+import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -135,6 +139,10 @@ import org.jspecify.annotations.Nullable;
  * on the target branch are emitted to the {@link StoreEvents} of the writer, so the index refreshes (GDR-STORE-9); a
  * save that moved nothing emits nothing.
  * <p>
+ * Every blob the save reads, of the draft and of the fetched base, is read bounded by {@link #BLOB_LIMIT}; a larger one
+ * ends the attempt like an unreadable object, as the passed-on {@link GitOutcome#FAILED} naming the class of the
+ * exception only.
+ * <p>
  * A detail names a reference or a field, never a path, a content, a pseudonym or an address (GDR-NFR-3).
  */
 final class ExplicitSave {
@@ -158,6 +166,62 @@ final class ExplicitSave {
 
     /** The detail of a save whose per-attempt step threw, after the target and before the class of the exception. */
     private static final String STEP_FAILED = ": step: ";
+
+    /**
+     * The largest blob the store reads into memory, 16 MiB: every read of a blob that a fetched branch, tag or note
+     * controls, and of a draft blob, is bounded by it, so a remote cannot make the store allocate more for one object.
+     */
+    static final int BLOB_LIMIT = 16 * 1024 * 1024;
+
+    /**
+     * A blob larger than {@link #BLOB_LIMIT}: an {@link IOException}, so every read site maps it as it maps an
+     * unreadable object, to a defined outcome naming the class of the exception only.
+     */
+    static final class BlobTooLargeException extends IOException {
+
+        private static final long serialVersionUID = 1L;
+
+        BlobTooLargeException() {
+            super("blob exceeds " + BLOB_LIMIT + " bytes");
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #BLOB_LIMIT} bytes; the size is read from the object header before its content is
+     * inflated (JGit 7.8.0 {@code ObjectLoader.getSize}).
+     *
+     * @param reader the reader of the repository
+     * @param blob   the id of the blob
+     * @return the content of the blob
+     * @throws BlobTooLargeException if the blob is larger than {@link #BLOB_LIMIT}
+     * @throws IOException           if the blob cannot be read
+     */
+    static byte[] readBlob(ObjectReader reader, AnyObjectId blob) throws IOException {
+        ObjectLoader loader = reader.open(blob, Constants.OBJ_BLOB);
+        if (loader.getSize() > BLOB_LIMIT) {
+            throw new BlobTooLargeException();
+        }
+        try {
+            return loader.getBytes(BLOB_LIMIT);
+        } catch (LargeObjectException e) {
+            throw new BlobTooLargeException();
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #BLOB_LIMIT} bytes of a repository; see {@link #readBlob(ObjectReader, AnyObjectId)}.
+     *
+     * @param repository the repository
+     * @param blob       the id of the blob
+     * @return the content of the blob
+     * @throws BlobTooLargeException if the blob is larger than {@link #BLOB_LIMIT}
+     * @throws IOException           if the blob cannot be read
+     */
+    static byte[] readBlob(Repository repository, AnyObjectId blob) throws IOException {
+        try (ObjectReader reader = repository.newObjectReader()) {
+            return readBlob(reader, blob);
+        }
+    }
 
     private final Clone clone;
     private final RepositoryOperations operations;
@@ -691,7 +755,7 @@ final class ExplicitSave {
                 try (TreeWalk found = TreeWalk.forPath(repository, change.path(), draftTree)) {
                     TreeWalk entry = Objects.requireNonNull(found, "a changed path exists on the draft");
                     ObjectId blob = entry.getObjectId(0);
-                    byte[] content = repository.open(blob, Constants.OBJ_BLOB).getBytes(Integer.MAX_VALUE);
+                    byte[] content = readBlob(repository, blob);
                     edits.add(new TreeEdit.Put(change.path(), content, DocumentRelease.mode(entry.getRawMode(0))));
                 }
             }
@@ -937,8 +1001,7 @@ final class ExplicitSave {
                 if (found == null || FileMode.TREE.equals(found.getRawMode(0))) {
                     return Optional.empty();
                 }
-                return Optional.of(repository.open(found.getObjectId(0), Constants.OBJ_BLOB)
-                        .getBytes(Integer.MAX_VALUE));
+                return Optional.of(readBlob(repository, found.getObjectId(0)));
             }
         }
     }

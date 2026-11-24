@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -47,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
@@ -56,6 +58,7 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
@@ -632,6 +635,128 @@ class AnchorEngineTest {
                         () -> assertEquals(List.of(), anchoring.pending(), "afterwards nothing is pending"));
             } finally {
                 release.countDown();
+                stop(executor);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Outcomes of a due check (GDR-STORE-15, GDR-STORE-17)")
+    class Outcomes {
+
+        @Test
+        @DisplayName("GDR-STORE-15: the updates a due check fetched reach the listeners after an unchecked failure")
+        void fetchedUpdatesEmittedAfterRuntimeException(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var main = commit(repository, StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                List<String> received = new CopyOnWriteArrayList<>();
+                try (var subscription = fixture.writer().subscribe(StoreReferences.MAIN,
+                             (branch, commitId) -> received.add(commitId))) {
+                    var moved = commit(repository, StoreReferences.MAIN, main);
+                    fixture.operations().beforeNextPush(() -> {
+                        throw new IllegalStateException(word());
+                    });
+
+                    var anchoring = fixture.writer().anchor();
+
+                    assertAll(
+                            () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                            "anchor: " + IllegalStateException.class.getName()), anchoring,
+                                    "the unchecked failure is a result naming its class"),
+                            () -> assertEquals(List.of(moved.name()), received,
+                                    "the commit the due check fetched is delivered all the same"),
+                            () -> assertEquals(List.of(), fixture.anchors().calls(), "the provider was not asked"));
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: an empty proof is refused like none, and the subject stays pending")
+        void emptyProofRefused(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().emptyNext();
+
+                var refused = fixture.anchor();
+                var notesAfterRefusal = refs(remote.repository(), StoreReferences.ANCHOR_NOTES);
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), refused,
+                                "the empty proof leaves the subject pending"),
+                        () -> assertTrue(notesAfterRefusal.isEmpty(), "no empty note was published"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors it"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.ANCHORING_PENDING.resolveIdentifierString()));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: a failed push of a note is logged once, as GIT_STORE-112 only")
+        void oneWarnPerFailedPush(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.operations().failPushTo(StoreReferences.anchorNotes(fixture.anchors().id()),
+                        GitOutcome.UNREACHABLE);
+
+                var anchoring = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), anchoring,
+                                "the subject stays pending"),
+                        () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()),
+                        () -> assertEquals(List.of(), TestLoggerFactory.getTestHandler().getRecords().stream()
+                                .map(logRecord -> String.valueOf(logRecord.getMessage()))
+                                .filter(message -> message.contains(GitStoreLogMessages.WARN.ANCHORING_PENDING
+                                        .resolveIdentifierString()))
+                                .toList(), "no second record of the same failure"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a closed writer runs no due check, neither asked for nor handed to an executor")
+        void noDueCheckAfterClose(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var executor = executor();
+            var busy = new CountDownLatch(1);
+            var occupied = new CountDownLatch(1);
+            try {
+                var fixture = open(remote);
+                fixture.writer().anchorPeriodically(executor);
+                executor.execute(() -> {
+                    occupied.countDown();
+                    try {
+                        assertTrue(busy.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the test frees the executor");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                assertTrue(occupied.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor is occupied");
+                save(fixture.writer(), key);
+                fixture.close();
+                busy.countDown();
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
+
+                var afterClose = fixture.writer().anchor();
+
+                assertAll(
+                        () -> assertEquals(List.of(), fixture.anchors().calls(),
+                                "the due check handed over before the close did nothing"),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), afterClose,
+                                "a due check asked for after the close is refused"),
+                        () -> assertTrue(refs(remote.repository(), StoreReferences.CHECKPOINTS).isEmpty(),
+                                "no checkpoint was made"));
+            } finally {
+                busy.countDown();
                 stop(executor);
             }
         }

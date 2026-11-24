@@ -906,6 +906,37 @@ class StoreIndexTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-9: a fetched blob above 16 MiB keeps the source's previous entries, never read whole")
+        void oversizedBlobKeepsPreviousEntries(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+
+            try (var index = direct(repository, layout, new Recorder(), events)) {
+                var before = tip(index, layout.workingBranch());
+                var entriesBefore = index.entries(layout.workingBranch(), layout.documents());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var moved = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                        Map.of(path(layout.working(), ".json"), "x".repeat(ExplicitSave.BLOB_LIMIT + 1))), before);
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), moved.name())));
+
+                String identifier = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString();
+                assertAll(
+                        () -> assertEquals(before, tip(index, layout.workingBranch()),
+                                "the source keeps the commit it was indexed at"),
+                        () -> assertEquals(entriesBefore, index.entries(layout.workingBranch(), layout.documents()),
+                                "and its previous entries"),
+                        () -> assertEquals(mainBefore, tip(index, StoreReferences.MAIN), "main is unaffected"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, identifier),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                ExplicitSave.BlobTooLargeException.class.getSimpleName()));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-9: an operation that moves no reference retries a refresh that failed")
         void unchangedOperationRetriesAFailedRefresh(@Remote LocalRemote remote) throws Exception {
             var repository = remote.repository();

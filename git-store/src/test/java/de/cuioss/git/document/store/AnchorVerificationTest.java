@@ -447,13 +447,14 @@ class AnchorVerificationTest {
         }
 
         @Test
-        @DisplayName("GDR-STORE-17: a release tag on a blob fails the verification, never a clean report")
-        void releaseTagOnBlobFails(@Remote LocalRemote remote) throws Exception {
+        @DisplayName("GDR-STORE-17: a release-shaped tag on a blob is no subject, as the due check skips it")
+        void releaseTagOnBlobIsSkipped(@Remote LocalRemote remote) throws Exception {
             var repository = remote.repository();
             commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
             try (var writer = open(remote)) {
                 checkpoints(writer, repository, 1);
             }
+            var before = AnchorVerification.verifyAnchors(repository, SignedAnchorProvider.verifier(anchorSigners()));
             try (ObjectInserter inserter = repository.newObjectInserter()) {
                 var blob = inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8));
                 inserter.flush();
@@ -463,9 +464,8 @@ class AnchorVerificationTest {
             var result = AnchorVerification.verifyAnchors(repository, SignedAnchorProvider.verifier(anchorSigners()));
 
             assertAll(
-                    () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), result.outcome(), "a failure"),
-                    () -> assertEquals("anchors: IncorrectObjectTypeException", result.detail(),
-                            "the target is no commit"));
+                    () -> assertEquals(StoreOutcome.OK, result.outcome(), "the verification completes"),
+                    () -> assertEquals(before.value(), result.value(), "the blob tag adds no subject and no finding"));
         }
 
         @Test
@@ -506,6 +506,133 @@ class AnchorVerificationTest {
             assertAll(
                     () -> assertEquals(List.of(), checkpoints, "every checkpoint commit is signed and valid"),
                     () -> assertEquals(List.of(), notes, "every notes commit is signed and valid"));
+        }
+    }
+
+    @Nested
+    @DisplayName("The chain of the checkpoints (GDR-STORE-16, GDR-STORE-17)")
+    class CheckpointChain {
+
+        /**
+         * Writes a commit shaped as a checkpoint, a message and one file in its tree, and points a checkpoint tag at it.
+         */
+        private ObjectId crafted(Repository repository, int number, String message, String file, byte[] content,
+                ObjectId... parents) throws IOException {
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                var tree = new TreeFormatter();
+                tree.append(file, FileMode.REGULAR_FILE, inserter.insert(Constants.OBJ_BLOB, content));
+                var commit = new CommitBuilder();
+                var ident = new PersonIdent(word(), "", clock.instant(), ZoneOffset.UTC);
+                commit.setTreeId(inserter.insert(tree));
+                commit.setParentIds(parents);
+                commit.setAuthor(ident);
+                commit.setCommitter(ident);
+                commit.setMessage(message);
+                var id = inserter.insert(commit);
+                inserter.flush();
+                setRef(repository, StoreReferences.checkpoint(number), id);
+                return id;
+            }
+        }
+
+        /** Anchors three checkpoints the engine writes and returns their commits, oldest first. */
+        private List<ObjectId> threeCheckpoints(LocalRemote remote) throws IOException {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 3);
+            }
+            assertEquals(List.of(), verify(remote).findings(), "the chain the engine wrote verifies clean");
+            return List.of(tip(repository, StoreReferences.checkpoint(1)), tip(repository,
+                    StoreReferences.checkpoint(2)), tip(repository, StoreReferences.checkpoint(3)));
+        }
+
+        private static Finding chain(ObjectId commit, int number, Kind kind) {
+            return new Finding(kind, commit.name(), StoreReferences.checkpoint(number), null);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a checkpoint tag moved onto another commit breaks the chain at it and after it")
+        void movedTag(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var engine = threeCheckpoints(remote);
+            var elsewhere = commit(repository, "refs/heads/" + word(), clock.instant());
+            setRef(repository, StoreReferences.checkpoint(2), elsewhere);
+
+            var findings = verify(remote).findings();
+
+            assertAll(
+                    () -> assertTrue(findings.contains(chain(elsewhere, 2, Kind.CHECKPOINT_CHAIN_BROKEN)),
+                            () -> "the moved tag does not follow checkpoint 1: " + findings),
+                    () -> assertTrue(findings.contains(chain(elsewhere, 2, Kind.CHECKPOINT_UNREADABLE)),
+                            () -> "nor has it the shape of a checkpoint: " + findings),
+                    () -> assertTrue(findings.contains(chain(engine.get(2), 3, Kind.CHECKPOINT_CHAIN_BROKEN)),
+                            () -> "checkpoint 3 no longer follows checkpoint 2: " + findings),
+                    () -> assertTrue(findings.contains(new Finding(Kind.NO_PROOF, elsewhere.name(), null, null)),
+                            () -> "the new target carries no proof: " + findings));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a checkpoint tag on the commit of a lower checkpoint is a duplicate subject")
+        void duplicateSubject(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var engine = threeCheckpoints(remote);
+            setRef(repository, StoreReferences.checkpoint(3), engine.get(1));
+
+            var findings = verify(remote).findings();
+
+            assertEquals(List.of(chain(engine.get(1), 3, Kind.CHECKPOINT_DUPLICATE)), findings,
+                    "the duplicate, and nothing else");
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a history rewritten between two checkpoints breaks the chain, though every shape holds")
+        void rewrittenBetweenCheckpoints(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var engine = threeCheckpoints(remote);
+            byte[] refs = Checkpoints.content(repository, repository.parseCommit(engine.get(1)));
+            var detour = commit(repository, "refs/heads/" + word(), clock.instant());
+            var rewritten = crafted(repository, 2, Checkpoints.MESSAGE + 2, Checkpoints.REFS_FILE, refs, detour);
+
+            var findings = verify(remote).findings();
+
+            assertAll(
+                    () -> assertTrue(findings.contains(chain(rewritten, 2, Kind.CHECKPOINT_CHAIN_BROKEN)),
+                            () -> "checkpoint 2 does not follow checkpoint 1: " + findings),
+                    () -> assertTrue(findings.contains(chain(engine.get(2), 3, Kind.CHECKPOINT_CHAIN_BROKEN)),
+                            () -> "checkpoint 3 does not follow the rewritten checkpoint 2: " + findings),
+                    () -> assertFalse(findings.stream().anyMatch(finding -> finding.kind()
+                            == Kind.CHECKPOINT_UNREADABLE), () -> "every checkpoint has its shape: " + findings));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-16: a checkpoint tag on a blob, a tree without the refs file and a malformed line are unreadable")
+        void unreadableCheckpoints(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var engine = threeCheckpoints(remote);
+            ObjectId blob;
+            try (ObjectInserter inserter = repository.newObjectInserter()) {
+                blob = inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8));
+                inserter.flush();
+            }
+            setRef(repository, StoreReferences.checkpoint(4), blob);
+            var noRefsFile = crafted(repository, 5, Checkpoints.MESSAGE + 5, word(),
+                    word().getBytes(StandardCharsets.UTF_8));
+            var malformed = crafted(repository, 6, Checkpoints.MESSAGE + 6, Checkpoints.REFS_FILE,
+                    (word() + " " + StoreReferences.MAIN + "\n").getBytes(StandardCharsets.UTF_8), noRefsFile);
+
+            var findings = verify(remote).findings();
+
+            assertAll(
+                    () -> assertTrue(findings.contains(new Finding(Kind.CHECKPOINT_UNREADABLE,
+                                    StoreReferences.checkpoint(4), StoreReferences.checkpoint(4), null)),
+                            () -> "the tag on a blob: " + findings),
+                    () -> assertTrue(findings.contains(chain(noRefsFile, 5, Kind.CHECKPOINT_UNREADABLE)),
+                            () -> "the tree without the refs file: " + findings),
+                    () -> assertTrue(findings.contains(new Finding(Kind.CHECKPOINT_UNREADABLE, malformed.name(),
+                            Checkpoints.REFS_FILE, null)), () -> "the malformed line: " + findings),
+                    () -> assertFalse(findings.contains(chain(engine.get(2), 3, Kind.CHECKPOINT_CHAIN_BROKEN)),
+                            "the engine's checkpoints still follow each other"));
         }
     }
 

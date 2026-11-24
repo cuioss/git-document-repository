@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 
+import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.GpgConfig;
 import org.eclipse.jgit.lib.GpgSignature;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -44,7 +45,9 @@ import org.jspecify.annotations.Nullable;
  * A non-success of the source is captured and surfaces to JGit as an {@link IOException} whose message carries no key
  * reference, no key material and no detail of the source (GDR-NFR-3); JGit reports the write as failed, and
  * {@link #failure()} hands the captured outcome to the commit path, so it can report {@link StoreOutcome#REFUSED} or
- * {@link StoreOutcome#UNAVAILABLE} instead. A signature of the source is verified against the public key line given
+ * {@link StoreOutcome#UNAVAILABLE} instead. A {@link RuntimeException} of the source, which is third-party code, is
+ * captured the same way as {@link StoreOutcome#REFUSED} with the detail {@value CommitSignatures#SOURCE_REFUSED},
+ * logged by its class name only. A signature of the source is verified against the public key line given
  * at construction before it is encoded: a key replaced between the read of the public key and the signing (the source
  * {@code file} reads its key file on every call) is captured as {@link StoreOutcome#REFUSED} with the detail
  * {@value #KEY_MISMATCH}, so no commit carries a key that did not make its signature. An instance serves one save or
@@ -57,6 +60,8 @@ final class SourceSigner implements Signer {
 
     /** The detail of a signature that does not verify with the public key read before the operation. */
     static final String KEY_MISMATCH = "signing: signature does not match the public key";
+
+    private static final CuiLogger LOGGER = new CuiLogger(SourceSigner.class);
 
     private final SigningKeySource source;
     private final String keyReference;
@@ -85,8 +90,18 @@ final class SourceSigner implements Signer {
             failure = StoreResult.of(StoreOutcome.REFUSED, CommitSignatures.KEY_TYPE_NOT_SUPPORTED);
             throw new IOException(FAILURE_MESSAGE);
         }
-        StoreResult<byte[]> signed = source.sign(keyReference,
-                SshSignatures.signedData(SshSignatures.NAMESPACE_GIT, data));
+        StoreResult<byte[]> signed;
+        try {
+            signed = source.sign(keyReference, SshSignatures.signedData(SshSignatures.NAMESPACE_GIT, data));
+        }
+        // a third-party source is pluggable code; its failure is captured as a refusal, logged by its class name only
+        // and without the throwable, whose message may name the key reference (GDR-NFR-3)
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (RuntimeException e) {
+            LOGGER.debug("The signing key source threw %s", e.getClass().getName());
+            failure = StoreResult.of(StoreOutcome.REFUSED, CommitSignatures.SOURCE_REFUSED);
+            throw new IOException(FAILURE_MESSAGE);
+        }
         byte[] signature = signed.value();
         if (!signed.isOk() || signature == null) {
             failure = new StoreResult<>(signed.outcome(), null, signed.detail());

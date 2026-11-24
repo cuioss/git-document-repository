@@ -825,7 +825,7 @@ class ReleaseTest {
                                 "main is unchanged"),
                         () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)),
                                 "no tag on the remote"),
-                        () -> assertNull(tip(fixture.writer().repository(), StoreReferences.releaseTag(key, 1)),
+                        () -> assertNull(tip(fixture.writer().storeClone().repository(), StoreReferences.releaseTag(key, 1)),
                                 "the local tag of the attempt is deleted again"),
                         () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
                                 GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED.resolveIdentifierString()));
@@ -933,7 +933,7 @@ class ReleaseTest {
                         () -> assertEquals(new Release(tag, commit.name(), 1, false), release, "complete, v1"),
                         () -> assertEquals(commit, tip(remote.repository(), StoreReferences.MAIN), "main pushed"),
                         () -> assertEquals(commit, tip(remote.repository(), tag), "the tag the remote holds"),
-                        () -> assertEquals(commit, tip(fixture.writer().repository(), tag), "the local tag"),
+                        () -> assertEquals(commit, tip(fixture.writer().storeClone().repository(), tag), "the local tag"),
                         () -> assertTrue(logTexts().stream().noneMatch(text -> text.contains(
                                         GitStoreLogMessages.WARN.RELEASE_INCOMPLETE.resolveIdentifierString())),
                                 "not logged as incomplete"));
@@ -988,9 +988,37 @@ class ReleaseTest {
                                 "the specified detail"),
                         () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
                         () -> assertEquals(start, tip(remote.repository(), StoreReferences.MAIN), "main unchanged"),
-                        () -> assertNull(tip(fixture.writer().repository(), StoreReferences.releaseTag(key, 1)),
+                        () -> assertNull(tip(fixture.writer().storeClone().repository(), StoreReferences.releaseTag(key, 1)),
                                 "no local tag"),
                         () -> assertNothingLeaks(result.detail(), List.of(link, author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a fetched blob above 16 MiB ends the release with a defined outcome; nothing pushed")
+        void oversizedBlobEndsTheRelease(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var base = files(word());
+            var start = commit(remote.repository(), StoreReferences.MAIN, base);
+            var large = key.collection().name() + "/" + key.id() + ".json";
+            commit(remote.repository(), StoreReferences.target(key),
+                    merged(base, Map.of(large, "x".repeat(ExplicitSave.BLOB_LIMIT + 1))), start);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var result = fixture.release(author, key);
+
+                assertAll(
+                        () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), result.outcome(),
+                                "the passed-on failure of an unreadable object"),
+                        () -> assertTrue(String.valueOf(result.detail()).contains(
+                                        ExplicitSave.BlobTooLargeException.class.getSimpleName()),
+                                () -> "the detail names the class of the failure: " + result.detail()),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                        () -> assertEquals(start, tip(remote.repository(), StoreReferences.MAIN), "main unchanged"),
+                        () -> assertNull(tip(fixture.writer().storeClone().repository(),
+                                StoreReferences.releaseTag(key, 1)), "no local tag"),
+                        () -> assertNothingLeaks(result.detail(), List.of(large, author.pseudonym())));
             }
         }
 

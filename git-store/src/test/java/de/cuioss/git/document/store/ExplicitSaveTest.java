@@ -39,6 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 
 
@@ -375,6 +376,33 @@ class ExplicitSaveTest {
                         () -> assertEquals(FileMode.REGULAR_FILE, modes.get(regular), "the tip's file unchanged"),
                         () -> assertEquals(script, files.get(executable), "the content of the executable"),
                         () -> assertEquals(linkTarget, files.get(link), "the target of the link"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a fetched blob above 16 MiB read by the step ends the save with a defined outcome")
+        void oversizedFetchedBlobEndsTheSave(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var large = word() + "-large";
+            var tipId = commit(remote.repository(), target, Map.of(large, "x".repeat(ExplicitSave.BLOB_LIMIT + 1)));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "d")));
+
+                var result = fixture.writer().save(author, CLAIMS, key, Map.of(), word(),
+                        attempt -> new SaveStep.Edits(attempt.tipContent(large).map(content -> List.<TreeEdit>of())
+                                .orElse(List.of())));
+
+                var notSaved = assertInstanceOf(SaveResult.NotSaved.class, result, "not saved");
+                assertAll(
+                        () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), notSaved.outcome(),
+                                "the passed-on failure of an unreadable object"),
+                        () -> assertEquals(Optional.of(target + ": step: " + UncheckedIOException.class.getName()),
+                                notSaved.detail(), "the read failure ends the save like a failing step"),
+                        () -> assertEquals(tipId, tip(remote.repository(), target), "the remote target unchanged"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"));
             }
         }
 

@@ -55,6 +55,13 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
     private static final String SAVE_MAX_ATTEMPTS = "save.max-attempts";
     private static final String COMMIT_EMAIL = "commit.email";
     private static final String DRAFTS_EXPIRY = "drafts.expiry";
+    /**
+     * The longest duration the configuration accepts for {@code fetch.interval}, {@code anchor.checkpoint-interval},
+     * {@code anchor.retry-interval} and {@code anchor.signed.max-clock-skew}: 100 years of 365.25 days. A longer one is
+     * {@link StoreOutcome#MALFORMED}, so no time plus a configured duration overflows an {@link java.time.Instant}.
+     */
+    static final Duration MAX_DURATION = Duration.ofDays(36_525);
+
     private static final String FETCH_INTERVAL = "fetch.interval";
     static final String SIGNING_KEY_SOURCE = "signing.key-source";
     private static final String SIGNING_KEY = "signing.key";
@@ -97,7 +104,9 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
      * Reads and checks the configuration of the store at start.
      * <p>
      * {@code save.max-attempts} (an integer from 1 to {@value Save#MAX_ATTEMPTS}), {@code drafts.expiry} (a positive
-     * ISO 8601 period) and {@code fetch.interval} (a positive ISO 8601 duration) are required; every other key has the
+     * ISO 8601 period) and {@code fetch.interval} (a positive ISO 8601 duration) are required; every configured
+     * duration, {@code fetch.interval}, {@code anchor.checkpoint-interval}, {@code anchor.retry-interval} and
+     * {@code anchor.signed.max-clock-skew}, is at most 100 years (36 525 days); every other key has the
      * default its section documents, among them {@code commit.email} (a boolean, default
      * {@value Commit#DEFAULT_EMAIL}); only an omitted key takes its default, a key supplied with a {@code null} value
      * is malformed. A
@@ -219,8 +228,27 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
         return value == null ? tree.missing(DRAFTS_EXPIRY) : StoreResult.ok(new Drafts(value));
     }
 
+    /**
+     * Reads a positive ISO 8601 duration of at most {@link #MAX_DURATION}, so that adding it to a
+     * {@link java.time.Instant} or
+     * taking its nanoseconds for a schedule never overflows.
+     *
+     * @param tree the configuration tree
+     * @param key  the dotted key
+     * @return the duration, a success without value when absent, or {@link StoreOutcome#MALFORMED} naming the key for
+     *         another type, an unparsable text, zero, a negative duration or one above {@link #MAX_DURATION}
+     */
+    private static StoreResult<Duration> boundedDuration(ConfigurationTree tree, String key) {
+        var duration = tree.duration(key);
+        @Nullable Duration value = duration.value();
+        if (duration.isOk() && value != null && value.compareTo(MAX_DURATION) > 0) {
+            return tree.malformed(key);
+        }
+        return duration;
+    }
+
     private static StoreResult<Fetch> readFetch(ConfigurationTree tree) {
-        var interval = tree.duration(FETCH_INTERVAL);
+        var interval = boundedDuration(tree, FETCH_INTERVAL);
         if (!interval.isOk()) {
             return retype(interval);
         }
@@ -268,11 +296,11 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
         if (!releases.isOk()) {
             return retype(releases);
         }
-        var checkpointInterval = tree.duration(ANCHOR_CHECKPOINT_INTERVAL);
+        var checkpointInterval = boundedDuration(tree, ANCHOR_CHECKPOINT_INTERVAL);
         if (!checkpointInterval.isOk()) {
             return retype(checkpointInterval);
         }
-        var retryInterval = tree.duration(ANCHOR_RETRY_INTERVAL);
+        var retryInterval = boundedDuration(tree, ANCHOR_RETRY_INTERVAL);
         if (!retryInterval.isOk()) {
             return retype(retryInterval);
         }
@@ -302,7 +330,7 @@ Signing signing, Anchor anchor, Directory directory, Commit commit) {
         if (!allowedSigners.isOk()) {
             return retype(allowedSigners);
         }
-        var maxClockSkew = tree.duration(SIGNED_MAX_CLOCK_SKEW);
+        var maxClockSkew = boundedDuration(tree, SIGNED_MAX_CLOCK_SKEW);
         if (!maxClockSkew.isOk()) {
             return retype(maxClockSkew);
         }

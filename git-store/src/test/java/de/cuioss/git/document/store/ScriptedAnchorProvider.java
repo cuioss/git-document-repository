@@ -112,6 +112,16 @@ final class ScriptedAnchorProvider implements AnchorProvider {
     }
 
     /**
+     * Scripts the next call to succeed with an empty proof, which proves nothing.
+     *
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider emptyNext() {
+        script.add(() -> StoreResult.ok(new byte[0]));
+        return this;
+    }
+
+    /**
      * Scripts the next call to throw an {@link IllegalStateException}.
      *
      * @return this double

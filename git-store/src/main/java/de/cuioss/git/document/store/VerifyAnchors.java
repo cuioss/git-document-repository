@@ -42,8 +42,11 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
  * It opens the repository at {@code <git-dir>} on a {@link RefusingFS}, reads the anchor allowed signers from the file
  * {@code <anchor-allowed-signers>} ({@link AllowedSigners#read}), runs {@link AnchorVerification#verifyAnchors} with
  * {@link SignedAnchorProvider#verifier(AllowedSigners)}, and prints one line per finding to standard output:
- * {@code <kind> <subject>}, followed by the listed reference for a reference finding and by the outcome for a rejected
- * proof. It exits with
+ * {@code <kind> <subject>}, followed by the listed reference for a reference finding, by the checkpoint tag for a
+ * finding of the checkpoint chain ({@link AnchorVerification.Kind#CHECKPOINT_CHAIN_BROKEN},
+ * {@link AnchorVerification.Kind#CHECKPOINT_DUPLICATE}, {@link AnchorVerification.Kind#CHECKPOINT_UNREADABLE}) and by
+ * the outcome for a rejected proof. Every release tag is a subject; a repository anchored with
+ * {@code anchor.releases} set to {@code false} reports a {@code NO_PROOF} line per release. It exits with
  * <ul>
  * <li>{@code 0} when the anchoring is complete and every proof verifies,</li>
  * <li>{@code 1} when there is a finding, and</li>
@@ -124,8 +127,18 @@ public final class VerifyAnchors {
         if (!allowedSigners.isOk()) {
             return failed(err, allowedSigners);
         }
-        try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile())
-                     .setFS(new RefusingFS()).setMustExist(true).build()) {
+        Repository opened;
+        try {
+            opened = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setFS(new RefusingFS()).setMustExist(true)
+                    .build();
+        }
+        // only a failure of the opening is labelled as a git directory that is no repository; the verification reports
+        // its own failures as results
+        catch (IOException | IllegalArgumentException e) {
+            err.println(GitOutcome.NOT_A_REPOSITORY + VerifySignatures.NOT_A_REPOSITORY);
+            return FAILED;
+        }
+        try (Repository repository = opened) {
             var verified = AnchorVerification.verifyAnchors(repository,
                     SignedAnchorProvider.verifier(Objects.requireNonNull(allowedSigners.value())));
             if (!verified.isOk()) {
@@ -136,9 +149,6 @@ public final class VerifyAnchors {
                 out.println(line(finding));
             }
             return report.clean() ? VERIFIED : FINDINGS;
-        } catch (IOException | IllegalArgumentException e) {
-            err.println(GitOutcome.NOT_A_REPOSITORY + " git-dir: not a repository");
-            return FAILED;
         }
     }
 

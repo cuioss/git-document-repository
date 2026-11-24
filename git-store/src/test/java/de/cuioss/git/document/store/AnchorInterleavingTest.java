@@ -39,6 +39,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -82,6 +85,8 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * {@link ScriptedRepositoryOperations} runs a concurrent save right before a push of the due check,
  * {@link ScriptedAnchorProvider} right before a proof is answered; {@link ThreadStates} waits until the save parks.
+ * Every test has one deadline from which every wait takes what is left; a task still running at the deadline is
+ * cancelled and its executor stopped with {@code shutdownNow} and {@code awaitTermination}, so no thread outlives it.
  * Names, ids and contents are generated; the reference layout is the specified vocabulary and kept as literals.
  */
 @EnableGeneratorController
@@ -248,6 +253,38 @@ class AnchorInterleavingTest {
         return new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true).build();
     }
 
+    /** The one deadline of a test that runs several threads, from which every wait takes what is left. */
+    private record Deadline(long nanos) {
+
+        static Deadline in(long seconds) {
+            return new Deadline(System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds));
+        }
+
+        long remainingNanos() {
+            return Math.max(0, nanos - System.nanoTime());
+        }
+    }
+
+    /**
+     * Ends the tasks of an executor by the deadline: an orderly shutdown and a wait for what is left of the deadline;
+     * a task still running then is cancelled and interrupted ({@code shutdownNow}), and the executor is awaited again,
+     * so no thread outlives the test.
+     *
+     * @return whether every task ended within the deadline
+     */
+    private static boolean stop(ExecutorService executor, List<Future<?>> tasks, Deadline deadline)
+            throws InterruptedException {
+        executor.shutdown();
+        boolean ended = executor.awaitTermination(deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+        if (!ended) {
+            tasks.forEach(task -> task.cancel(true));
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                    "the cancelled tasks end once interrupted");
+        }
+        return ended;
+    }
+
     /** A save on its own thread; its result or failure is kept for the test. */
     private static final class SaveThread {
 
@@ -279,11 +316,20 @@ class AnchorInterleavingTest {
             return thread.isAlive();
         }
 
-        SaveResult join() throws InterruptedException {
-            thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
-            assertFalse(thread.isAlive(), "the save ends");
+        /** Waits for the save with what is left of the test's one deadline. */
+        SaveResult join(Deadline deadline) throws InterruptedException {
+            TimeUnit.NANOSECONDS.timedJoin(thread, deadline.remainingNanos());
+            assertFalse(thread.isAlive(), "the save ends within the deadline");
             assertNull(failure.get(), "the save threw nothing");
             return Objects.requireNonNull(result.get(), "the save returned");
+        }
+
+        /** Interrupts a save still running when the test ends and waits for it, so no thread outlives the test. */
+        void stop() throws InterruptedException {
+            if (thread.isAlive()) {
+                thread.interrupt();
+                thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+            }
         }
     }
 
@@ -296,6 +342,7 @@ class AnchorInterleavingTest {
         var secondKey = document(repository, main);
 
         try (var fixture = open(remote)) {
+            var deadline = Deadline.in(TIMEOUT_SECONDS);
             var firstSave = new SaveThread(fixture.writer(), draft(fixture.writer(), firstKey), firstKey);
             var secondSave = new SaveThread(fixture.writer(), draft(fixture.writer(), secondKey), secondKey);
             var firstWaited = new AtomicBoolean();
@@ -304,16 +351,24 @@ class AnchorInterleavingTest {
             fixture.operations().beforeNextPush(() -> firstWaited.set(firstSave.startAndAwaitParked()));
             fixture.provider().beforeNextObtain(() -> {
                 try {
-                    firstResult.set(firstSave.join());
+                    firstResult.set(firstSave.join(deadline));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
                 fixture.operations().beforeNextPush(() -> secondWaited.set(secondSave.startAndAwaitParked()));
             });
 
-            var anchoring = value(fixture.writer().anchor());
-            var second = secondSave.join();
-            var again = value(fixture.writer().anchor());
+            StoreWriter.Anchoring anchoring;
+            SaveResult second;
+            StoreWriter.Anchoring again;
+            try {
+                anchoring = value(fixture.writer().anchor());
+                second = secondSave.join(deadline);
+                again = value(fixture.writer().anchor());
+            } finally {
+                firstSave.stop();
+                secondSave.stop();
+            }
 
             var checkpoint = Objects.requireNonNull(tip(repository, StoreReferences.checkpoint(1)), "checkpoint 1");
             ObjectId localTag;
@@ -351,35 +406,44 @@ class AnchorInterleavingTest {
 
         try (var fixture = open(remote)) {
             List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
-            List<Thread> threads = new ArrayList<>();
-            for (DocumentKey key : keys) {
-                threads.add(new Thread(() -> {
-                    try {
-                        for (int i = 0; i < savesPerWriter; i++) {
-                            var author = draft(fixture.writer(), key);
-                            assertInstanceOf(SaveResult.Saved.class,
-                                    fixture.writer().save(author, CLAIMS, key, Map.of(), word()), "saved");
+            var deadline = Deadline.in(TIMEOUT_SECONDS);
+            ExecutorService executor = Executors.newFixedThreadPool(keys.size() + 1);
+            List<Future<?>> tasks = new ArrayList<>();
+            boolean ended;
+            try {
+                for (DocumentKey key : keys) {
+                    tasks.add(executor.submit(() -> {
+                        try {
+                            for (int i = 0; i < savesPerWriter; i++) {
+                                var author = draft(fixture.writer(), key);
+                                assertInstanceOf(SaveResult.Saved.class,
+                                        fixture.writer().save(author, CLAIMS, key, Map.of(), word()), "saved");
+                            }
                         }
-                    } catch (RuntimeException | AssertionError e) {
+                        // the failure of a writer is kept for the test to assert, whatever its type
+                        // cui-rewrite:disable InvalidExceptionUsageRecipe
+                        catch (RuntimeException | AssertionError e) {
+                            failures.add(e);
+                        }
+                    }));
+                }
+                tasks.add(executor.submit(() -> {
+                    try {
+                        for (int i = 0; i < dueChecks; i++) {
+                            fixture.clock().advance(INTERVAL);
+                            value(fixture.writer().anchor());
+                        }
+                    }
+                    // the failure of a due check is kept for the test to assert, whatever its type
+                    // cui-rewrite:disable InvalidExceptionUsageRecipe
+                    catch (RuntimeException | AssertionError e) {
                         failures.add(e);
                     }
                 }));
+            } finally {
+                ended = stop(executor, tasks, deadline);
             }
-            threads.add(new Thread(() -> {
-                try {
-                    for (int i = 0; i < dueChecks; i++) {
-                        fixture.clock().advance(INTERVAL);
-                        value(fixture.writer().anchor());
-                    }
-                } catch (RuntimeException | AssertionError e) {
-                    failures.add(e);
-                }
-            }));
-            threads.forEach(Thread::start);
-            for (Thread thread : threads) {
-                thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
-                assertFalse(thread.isAlive(), "every thread ends");
-            }
+            assertTrue(ended, "every save and due check ended within the one deadline");
             assertEquals(List.of(), failures, "no save and no due check failed");
             fixture.clock().advance(INTERVAL);
             value(fixture.writer().anchor());

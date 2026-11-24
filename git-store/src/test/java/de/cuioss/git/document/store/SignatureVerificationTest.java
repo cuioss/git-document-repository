@@ -18,6 +18,7 @@ package de.cuioss.git.document.store;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -55,6 +56,7 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -82,7 +84,10 @@ import org.junit.jupiter.api.io.TempDir;
  * an unknown key, a key outside its validity at the committer time and a key whose namespaces exclude {@code git} are
  * listed with their {@link Reason}, in the order of the walk, newest first; an allowed-signers file inside the
  * repository is never consulted; an unknown reference is the passed-on {@code NOT_FOUND}; a walk that reaches a shallow
- * commit, or over a shallow boundary that changed while it ran, is {@code INCOMPLETE}.
+ * commit, or over a shallow boundary that changed while it ran, is {@code INCOMPLETE}. Crafted commits pin the header
+ * rules: a signed merge verifies and both parents are walked, a {@code mergetag} header is part of the signed payload, a
+ * second {@code gpgsig} header is {@code INVALID}, a commit above the read bound is {@code MALFORMED}, and no log
+ * record names the reference.
  * <p>
  * The commit time of the store is fixed per test, and every validity bound lies a day away from it, so the fixture
  * times differ by construction. Principals, paths, contents and pseudonyms are generated; the reasons, the outcomes and
@@ -393,6 +398,169 @@ class SignatureVerificationTest {
                                 "incomplete, no list of verified commits"));
             }
         }
+    }
+
+    /** The armored SSH signature of a payload, made with a key in the namespace {@code git}. */
+    private static String sign(TestKeys.Ed25519 key, byte[] payload) {
+        byte[] signature = key.sign(SshSignatures.signedData(SshSignatures.NAMESPACE_GIT, payload));
+        return SshSignatures.encode(key.publicKeyBlob(), SshSignatures.NAMESPACE_GIT, signature);
+    }
+
+    /** The header lines of a {@code gpgsig} header holding an armored signature, continuation lines indented. */
+    private static String gpgsigHeader(String armored) {
+        return "gpgsig " + String.join("\n ", armored.strip().split("\n")) + "\n";
+    }
+
+    /** Inserts header lines before the blank line that ends the header of a raw commit. */
+    private static byte[] withHeaders(byte[] raw, String headers) {
+        String text = new String(raw, StandardCharsets.UTF_8);
+        int end = text.indexOf("\n\n");
+        return (text.substring(0, end + 1) + headers + text.substring(end + 1)).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Writes a crafted commit onto a reference: the raw commit of the builder, extended by extra header lines, signed by
+     * the key over that payload as Git signs it, with the {@code gpgsig} header placed after the other headers, and
+     * optionally further header lines after it.
+     */
+    private static ObjectId crafted(Repository repository, String ref, Instant when, String extraHeaders,
+            TestKeys.Ed25519 key, String afterSignature, ObjectId... parents) throws IOException {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            var tree = new TreeFormatter();
+            tree.append(word(), FileMode.REGULAR_FILE,
+                    inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8)));
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(word(), "", when, ZoneOffset.UTC);
+            commit.setTreeId(inserter.insert(tree));
+            commit.setParentIds(parents);
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            byte[] payload = withHeaders(commit.build(), extraHeaders);
+            byte[] signed = withHeaders(payload, gpgsigHeader(sign(key, payload)) + afterSignature);
+            var id = inserter.insert(Constants.OBJ_COMMIT, signed);
+            inserter.flush();
+            setRef(repository, ref, id);
+            return id;
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a signed merge commit verifies and both of its parents are walked")
+    void mergeCommit(@Remote LocalRemote remote) throws Exception {
+        var key = TestKeys.ed25519();
+        var now = Instant.ofEpochSecond(Generators.integers(1_500_000_000, 1_900_000_000).next());
+        var first = commit(remote.repository(), "refs/heads/" + word(), now.minus(Duration.ofDays(2)), null);
+        var second = commit(remote.repository(), "refs/heads/" + word(), now.minus(Duration.ofDays(1)), null);
+        var merge = crafted(remote.repository(), StoreReferences.MAIN, now, "", key, "", first, second);
+
+        var result = verify(remote, StoreReferences.MAIN, allowed(line("", key)));
+
+        assertAll(
+                () -> assertEquals(List.of(unverified(second, Reason.UNSIGNED), unverified(first, Reason.UNSIGNED)),
+                        result, "the merge verifies, both unsigned parents are listed"),
+                () -> assertEquals(2, remote.repository().parseCommit(merge).getParentCount(), "a merge commit"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a mergetag header is part of the signed payload, so changing it is INVALID")
+    void mergetagHeader(@Remote LocalRemote remote) throws Exception {
+        var key = TestKeys.ed25519();
+        var now = Instant.ofEpochSecond(Generators.integers(1_500_000_000, 1_900_000_000).next());
+        var parent = commit(remote.repository(), "refs/heads/" + word(), now.minus(Duration.ofDays(1)), null);
+        var tagged = commit(remote.repository(), "refs/heads/" + word(), now.minus(Duration.ofDays(2)), null);
+        var tagName = word();
+        var mergetag = "mergetag object " + tagged.name() + "\n type commit\n tag " + tagName + "\n tagger "
+                + word() + " <> " + now.minus(Duration.ofDays(2)).getEpochSecond() + " +0000\n \n " + word() + "\n";
+        var signedMerge = crafted(remote.repository(), StoreReferences.MAIN, now, mergetag, key, "", parent, tagged);
+        byte[] raw = remote.repository().open(signedMerge).getBytes();
+        byte[] changed = new String(raw, StandardCharsets.UTF_8).replace(" tag " + tagName + "\n",
+                " tag " + word() + "\n").getBytes(StandardCharsets.UTF_8);
+        ObjectId tampered;
+        try (ObjectInserter inserter = remote.repository().newObjectInserter()) {
+            tampered = inserter.insert(Constants.OBJ_COMMIT, changed);
+            inserter.flush();
+        }
+        setRef(remote.repository(), "refs/heads/tampered", tampered);
+        var signers = allowed(line("", key));
+
+        assertAll(
+                () -> assertEquals(List.of(unverified(parent, Reason.UNSIGNED), unverified(tagged, Reason.UNSIGNED)),
+                        verify(remote, StoreReferences.MAIN, signers),
+                        "the signed merge with its mergetag verifies, its unsigned parents are listed"),
+                () -> assertEquals(unverified(tampered, Reason.INVALID),
+                        verify(remote, "refs/heads/tampered", signers).getFirst(), "a changed mergetag"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a second gpgsig header on a validly signed commit is INVALID")
+    void secondGpgsigHeader(@Remote LocalRemote remote) throws Exception {
+        var key = TestKeys.ed25519();
+        var foreign = TestKeys.ed25519();
+        var now = Instant.ofEpochSecond(Generators.integers(1_500_000_000, 1_900_000_000).next());
+        var singleRef = "refs/heads/" + word();
+        crafted(remote.repository(), singleRef, now, "", key, "");
+        var smuggled = gpgsigHeader(sign(foreign, word().getBytes(StandardCharsets.UTF_8)));
+        var doubled = crafted(remote.repository(), StoreReferences.MAIN, now, "", key, smuggled);
+        var signers = allowed(line("", key));
+
+        assertAll(
+                () -> assertEquals(2, SignatureVerification.gpgsigHeaders(remote.repository().open(doubled)
+                        .getBytes()), "the crafted commit carries two gpgsig headers"),
+                () -> assertEquals(List.of(), verify(remote, singleRef, signers),
+                        "a commit crafted the same way with one header verifies"),
+                () -> assertEquals(List.of(unverified(doubled, Reason.INVALID)),
+                        verify(remote, StoreReferences.MAIN, signers), "two headers never verify"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a commit above the 16 MiB read bound is MALFORMED, never read whole")
+    void oversizedCommit(@Remote LocalRemote remote) throws Exception {
+        var now = Instant.ofEpochSecond(Generators.integers(1_500_000_000, 1_900_000_000).next());
+        ObjectId large;
+        try (ObjectInserter inserter = remote.repository().newObjectInserter()) {
+            var tree = new TreeFormatter();
+            tree.append(word(), FileMode.REGULAR_FILE,
+                    inserter.insert(Constants.OBJ_BLOB, word().getBytes(StandardCharsets.UTF_8)));
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(word(), "", now, ZoneOffset.UTC);
+            commit.setTreeId(inserter.insert(tree));
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage("x".repeat(ExplicitSave.BLOB_LIMIT + 1));
+            large = inserter.insert(commit);
+            inserter.flush();
+        }
+        setRef(remote.repository(), StoreReferences.MAIN, large);
+
+        assertEquals(List.of(unverified(large, Reason.MALFORMED)),
+                verify(remote, StoreReferences.MAIN, allowed(line("", TestKeys.ed25519()))), "bounded");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: no log record of the verification names the reference, which may carry a document id")
+    void logCarriesNoReference(@Remote LocalRemote remote) throws Exception {
+        var key = TestKeys.ed25519();
+        var token = word();
+        var reference = "refs/heads/" + token;
+        var now = Instant.ofEpochSecond(Generators.integers(1_500_000_000, 1_900_000_000).next());
+        crafted(remote.repository(), reference, now, "", key, "");
+
+        verify(remote, reference, allowed(line("", key)));
+
+        var logged = new StringBuilder();
+        for (var logRecord : TestLoggerFactory.getTestHandler().getRecords()) {
+            logged.append(logRecord.getMessage()).append('\n');
+            if (logRecord.getParameters() != null) {
+                for (Object parameter : logRecord.getParameters()) {
+                    logged.append(parameter).append('\n');
+                }
+            }
+        }
+        assertAll(
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.INFO,
+                        GitStoreLogMessages.INFO.SIGNATURES_VERIFIED.resolveIdentifierString()),
+                () -> assertFalse(logged.toString().contains(token), "no record names the reference"));
     }
 
     /**

@@ -239,6 +239,29 @@ class VerifySignaturesTest {
     }
 
     @Test
+    @DisplayName("GDR-STORE-14: a failure after the repository opened is the verification's result, never 'not a repository'")
+    void failureAfterOpenIsNotLabelledNoRepository(@Remote LocalRemote remote) throws Exception {
+        var key = saveSigned(remote);
+        var allowed = allowed(word() + "@example.org", key);
+        var corrupt = unsignedOnTop(remote).name();
+        var loose = remote.repository().getDirectory().toPath().resolve("objects").resolve(corrupt.substring(0, 2))
+                .resolve(corrupt.substring(2));
+        assertTrue(Files.exists(loose), "the fixture commit is a loose object");
+        Files.delete(loose);
+        Files.write(loose, word().getBytes(StandardCharsets.UTF_8));
+
+        var ran = run(gitDir(remote), allowed.toString(), StoreReferences.MAIN);
+
+        assertAll(
+                () -> assertEquals(VerifySignatures.FAILED, ran.code(), "failed"),
+                () -> assertEquals("", ran.out(), "no finding printed"),
+                () -> assertTrue(ran.err().startsWith("FAILED " + StoreReferences.MAIN + ": "),
+                        () -> "the verification names the reference and the failure: " + ran.err()),
+                () -> assertFalse(ran.err().contains(VerifySignatures.NOT_A_REPOSITORY),
+                        "the repository label is reserved for a git directory that cannot be opened"));
+    }
+
+    @Test
     @DisplayName("GDR-STORE-14: an unreadable allowed-signers file, an unknown reference and no repository exit 2")
     void failures(@Remote LocalRemote remote) throws Exception {
         var key = saveSigned(remote);

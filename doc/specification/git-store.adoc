@@ -850,6 +850,12 @@ for signatures: SSHSIG and Ed25519 come from the JDK (xref:general.adoc#GDR-GEN-
   an encrypted key (`signing: encrypted key not supported`) and a file that is no valid key
   (`signing: key malformed`) are `REFUSED`. No detail names the path or a key byte.
 
+The signing key source is third-party code: a `RuntimeException` of its `publicKey` or `sign` is isolated by
+`CommitSignatures` and `SourceSigner` as `StoreProviders` isolates a provider, ending the save, release, checkpoint or
+note as `REFUSED` with `signing: key source refused`, logged by its class name only and without the throwable.
+`GIT_STORE-110` names the alias, the class of the reference (`main`, `branch`, `tag`, `checkpoint tag`,
+`notes reference`) and the outcome, never the reference name.
+
 [#GDR-STORE-13]
 == GDR-STORE-13: Identity Trailers
 
@@ -876,9 +882,12 @@ caller supplies the claims; the store never receives the access token.
 
 The caller passes the claims as the public record `IdentityClaims(issuer, authTime, acr, amr)` to `save` and
 `release`; it has no component for `sub` or `sid`. Each component is checked so that it fits on one trailer line: the
-issuer not blank and without whitespace or control characters, `acr` not blank and without control characters and
-`;`, each `amr` not blank and without whitespace, control characters, `,` and `;`; a violation is an
-`IllegalArgumentException` naming the component, never the value. The package-private `IdentityTrailers` appends the
+issuer not blank and without whitespace or control characters, `acr` and each `amr` not blank and without whitespace,
+control characters, `,` and `;`. The claims come from a token, so the caller builds them with the public factory
+`IdentityClaims.of(issuer, authTime, acr, amr)`, which returns a violation as `MALFORMED` with the detail
+`issuer: invalid`, `acr: invalid` or `amr: invalid`, never the value, instead of throwing; the canonical constructor,
+for values the caller already checked, throws an `IllegalArgumentException` with the same message. The package-private
+`IdentityTrailers` appends the
 block to the message, its trailing line breaks stripped, after one blank line, in the trailer form of
 `git interpret-trailers`:
 
@@ -920,7 +929,9 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   latter reading `signing.allowed-signers` (absent: `MALFORMED`, `signing.allowed-signers is missing`). A line is
   `<principals> [<options>] <key type> <base64 key> [<comment>]`, fields may be quoted with `"`, blank lines and `#`
   comments are skipped. The options `valid-after` and `valid-before` take `YYYYMMDD` or `YYYYMMDDHHMM[SS]`, in UTC with
-  a trailing `Z` and in the system time zone otherwise, are resolved strictly (a date the calendar lacks, such as
+  a trailing `Z` or `z` (OpenSSH `misc.c` `parse_absolute_time` compares the suffix case-insensitively,
+  link:https://github.com/openssh/openssh-portable/blob/master/misc.c[misc.c]) and in the system time zone otherwise,
+  are resolved strictly (a date the calendar lacks, such as
   `20260230`, is `timestamp malformed`) and bound the validity inclusively; `namespaces` restricts a key, which is used
   for commits only when the list contains `git`, an entry listed twice counting once. Each option is given at most
   once (a repeated `valid-after`, `valid-before` or `namespaces` is `option repeated`), and a `valid-before` that is
@@ -929,8 +940,14 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   pattern list, in which a negated entry such as `!git` overrides a matching positive one; the store evaluates no
   patterns and refuses a list with an entry that contains `!`, `*` or `?` (`namespace pattern not supported`), so it
   never accepts a key for commits that OpenSSH would reject. Another key type than `ssh-ed25519`, `cert-authority`, any
-  other option and a line that cannot be read are `MALFORMED` with the detail `line <n>: <reason>`; a file that cannot
-  be read is `UNAVAILABLE`. No detail names a principal, key text or a path.
+  other option and a line that cannot be read are `MALFORMED` with the detail `line <n>: <reason>`. The refusal of
+  another key type is a decision: OpenSSH would accept an `ssh-rsa` line, but the store refuses the whole file at that
+  line instead of trusting it in part, so no line is ignored silently. The file is read bounded: a regular file only
+  (a directory, a FIFO or a device is `REFUSED`, `<key>: not a regular file`), at most 64 KiB, the bound of a key file
+  of `FileSigningKeySource`, and 1024 lines (`REFUSED`, `<key>: too large`), valid UTF-8 (`MALFORMED`,
+  `<key>: not UTF-8`); a configured value that is no path, for example one with a NUL character, is `MALFORMED`
+  (`<key>: not a path`), and a file that does not exist or cannot be read is `UNAVAILABLE`, where `<key>` is
+  `signing.allowed-signers` or `anchor.signed.allowed-signers`. No detail names a principal, key text or a path.
 * *Verification.* The public `SignatureVerification.verify(repository, reference, allowedSigners)` walks every commit
   reachable from the reference (JGit 7.8.0 `RevWalk`) and returns a `StoreResult` with the list of
   `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. The verification
@@ -947,14 +964,26 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   file (JGit 7.8.0 `ObjectDatabase.getShallowCommits`, whose parents `RevWalk` treats as absent), is `INCOMPLETE` with
   the detail `<reference>: history is shallow`, never a success, because no commit beyond the boundary is checked. The
   shallow commits are read again after the walk, and a boundary that changed while the walk ran is `INCOMPLETE` with
-  the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A
-  finished verification is logged as `GIT_STORE-6`.
+  the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A commit
+  with more than one `gpgsig` header is `INVALID`: stock Git verifies the first header and strips every one from the
+  signed payload, so a second header would travel along unverified. The walk retains no commit body (JGit 7.8.0
+  `RevWalk.setRetainBody(false)`); each commit is read again, bounded by the blob bound of <<blob-bound>>, checked and
+  released, so the memory of the verification does not grow with the history, and a larger commit is `MALFORMED`. A
+  finished verification is logged as `GIT_STORE-6` with the counts only, never the reference, whose name may carry a
+  document id.
+* *Limit: validity at the committer time.* Like `git verify-commit`, the verification checks the validity of a key at
+  the committer time the commit states, which the signer chooses: a key whose `valid-before` has passed can still sign a
+  commit that states an earlier time. The verification does not close that gap; the anchoring does (<<GDR-STORE-16>>,
+  <<GDR-STORE-18>>): a commit that a checkpoint listed before the end of the validity is anchored with a time the
+  signer does not control, so a backdated commit is one no checkpoint anchored in time.
 * *CI.* The public main class `VerifySignatures` runs from CI without the application:
   `VerifySignatures <git-dir> <allowed-signers> <reference>...` opens the repository read-only on `RefusingFS`, prints
   one line `<commit id> <reason>` per unverified commit, and exits `0` when every commit is valid, `1` when one is not,
   and `2` for a usage error, an argument that is no valid path (`MALFORMED arguments: not a valid path`, naming no
   argument), a repository that cannot be opened or another non-success, such as a shallow history, printed as
-  `<outcome> <detail>`. It writes standard output and standard error in UTF-8. The allowed-signers file must come
+  `<outcome> <detail>`; only a failure to open the repository is printed as `NOT_A_REPOSITORY git-dir: not a
+  repository`, every other failure as the result of the verification. It writes standard output and standard error in
+  UTF-8. The allowed-signers file must come
   from the trusted CI configuration (a secret, a pinned file or the protected base branch), never from the checkout of
   the repository being verified: `VerifySignatures` does not check where the path points, and a file taken from that
   checkout would let a change of the repository add a trusted key.
@@ -1011,15 +1040,25 @@ The checkpoint commit is reachable only through its tag; the tag is pushed with 
 on the remote, separately from the commits of any save, before the proof is requested. The due check runs after every
 push and fetch and every `anchor.retry-interval`.
 
+The anchor verification (<<GDR-STORE-17>>) checks the chain of the checkpoints: checkpoint `n` must have the commit of
+checkpoint `n-1` as its only parent and the first one none (`CHECKPOINT_CHAIN_BROKEN`, which reports a moved checkpoint
+tag and a history rewritten between two checkpoints), no two checkpoint tags may point at one commit
+(`CHECKPOINT_DUPLICATE`), and a checkpoint must be readable as one: its tag points at a commit, its message is
+`Checkpoint <n>`, its tree holds the regular file `refs` and nothing else, and every line of that file is
+`<object id> SP <reference name>` (`CHECKPOINT_UNREADABLE`). Across a gap in the numbers, already reported as
+`CHECKPOINT_MISSING`, the parent is not checked.
+
 [#GDR-STORE-17]
 == GDR-STORE-17: Anchor Proofs as Notes
 
 * A proof must be stored as a note on the anchored commit under `refs/notes/anchors/<provider>`, base64-encoded.
 * The note must be pushed with lease right after it is written, separately from the commits of any save.
 * A subject without a pushed proof must stay pending and be retried; a retry must push a stored proof instead of
-  requesting a new one.
+  requesting a new one, unless the notes tip moved since that proof was obtained: then the stored proof, kept only
+  locally, must be dropped and a new proof requested, so no proof forks the chain.
 * A verification must check every stored proof and list every reference a checkpoint lists whose object id is no
-  longer reachable from that reference (or, for a tag, no longer its target), and every missing checkpoint number.
+  longer reachable from that reference (or, for a tag, no longer its target), every missing checkpoint number, and
+  every break of the checkpoint chain (<<GDR-STORE-16>>).
 
 `<provider>` is the id of the provider, of the form `[a-z0-9-]+` (<<GDR-STORE-15>>); the notes writer and the
 verifier use the same reference name `refs/notes/anchors/<provider>`, which is valid by construction.
@@ -1064,7 +1103,19 @@ source: equal public keys stop the start as `MALFORMED` with `anchor.signed.key 
 whatever key source or spelling of the key reference names them. This comparison is authoritative; the configuration
 check of the two references (<<store-configuration>>) is an early string check that refuses only identical
 references. The log record lets the operator's log
-pipeline keep a copy outside Git. A single proof can be checked with a stock OpenSSH installation:
+pipeline keep a copy outside Git. It records the signing, not the publication: a proof whose note is not published,
+because the notes tip moved or its push failed, is dropped and a later due check signs a new one, so one subject may
+have several `GIT_STORE-7` records; the proof that counts is the one whose SHA-256 the published note matches, and its
+publication is `GIT_STORE-9`. `anchor.signed.max-clock-skew`, like every configured duration, is at most 100 years
+(36 525 days); a longer one is `MALFORMED`, so no time plus a configured duration overflows.
+
+Limit: `obtain` reads the statement of the previous proof for its sequence number, time and SHA-256 but does not
+verify its signature, because the anchor key may have been rotated and the signing instance need not hold the anchor
+allowed signers. A previous proof forged in the notes reference is chained to; the chain check of the verification,
+which CI runs over every proof in order, reports it. A provider that returns an empty proof is refused by the store
+like one that returns none.
+
+A single proof can be checked with a stock OpenSSH installation:
 `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
 (https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
 
@@ -1089,8 +1140,19 @@ changed (JGit 7.8.0).
   lock (`RepositoryGuard`) it fetches with prune, pushes what an earlier due check kept, makes a due checkpoint and
   derives the pending subjects; it then asks the provider without holding a lock of the clone; and it writes and pushes
   each proof under those locks again. A save, a release and a fetch take no anchoring lock, so the order of the locks
-  has no cycle. A failure of the provider (also an exception it throws) or of a push leaves the subject pending, ends
-  the due check, and is logged as `GIT_STORE-111` with the alias and the outcome only.
+  has no cycle. A failure of the provider (also an exception it throws, or an empty proof) or of a push leaves the
+  subject pending, ends the due check, and is logged once with the alias and the outcome only: a failed push as
+  `GIT_STORE-112` by the part that pushed, every other failure as `GIT_STORE-111`. An unchecked failure of the first
+  phase, for example of JGit, ends the due check as `INCOMPLETE` naming the class of the exception, and the reference
+  updates its fetch collected are emitted in every case, also when the due check ended early. The due check reads the
+  closed flag of the clone under the anchoring lock, which `StoreWriter.close()` takes to set it and to release the
+  repository: a due check handed to the caller's executor and run after the close does nothing (`anchor()` then
+  returns `REFUSED` with `anchor: the writer is closed`), and one running when the writer closes ends first.
+* *Structure.* `StoreWriter` delegates to the package-private `StoreClone` (the opened clone, its events, the listener
+  subscription, the closed flag and `close()`), which holds `CloneWrites` (drafts, listing, save, release, expiry) and
+  `CloneSchedules` (fetch, periodic fetch, anchoring and the coalescing due-check trigger); `CloneOpening` checks the
+  arguments of `open`, builds the providers and the three parts. The split keeps the behaviour, the locks and their
+  order, and keeps every class below the dependency threshold of Sonar's `java:S6539` without a suppression.
 * *Checkpoints.* The package-private `Checkpoints` writes the checkpoint commit of <<GDR-STORE-16>> in core, signed
   through `CommitSignatures` without identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), writes its tag locally by
   an update that expects it absent, and pushes the tag against the zero-id lease, so a tag on the remote is never moved.
@@ -1129,8 +1191,13 @@ changed (JGit 7.8.0).
   not verify, the proofs being verified in chain order (the order in which the notes commits added them along their first
   parents) with the proof before as `previous`, and a note that is no base64 being `SIGNATURE_INVALID`;
   `REFERENCE_UNREACHABLE` for a branch or notes reference a checkpoint lists that no longer reaches the listed id or no
-  longer exists (JGit 7.8.0 `RevWalk.isMergedInto`); and `TAG_RETARGETED` for a listed tag that no longer points at the
-  listed id. A repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with
+  longer exists (JGit 7.8.0 `RevWalk.isMergedInto`), decided once per verification for a (reference, object id) pair
+  that several checkpoints list unchanged; `TAG_RETARGETED` for a listed tag that no longer points at the listed id;
+  and `CHECKPOINT_CHAIN_BROKEN`, `CHECKPOINT_DUPLICATE` and `CHECKPOINT_UNREADABLE` for the checkpoint chain of
+  <<GDR-STORE-16>>. A release-shaped tag on a blob or a tree is no subject, as the due check skips it. Every release
+  tag is a subject: the verification reads no configuration, so a repository anchored with `anchor.releases` set to
+  `false` reports a `NO_PROOF` per release, which a CI run that knows the setting filters (a recorded limit). A
+  repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with
   the detail `anchors: history is shallow`; a read failure is the passed-on `FAILED` naming the class of the exception.
   A finished verification is logged as `GIT_STORE-10` with the counts only.
 * *CI.* The public main class `VerifyAnchors <git-dir> <anchor-allowed-signers>` verifies the provider `signed`: it
@@ -1140,6 +1207,21 @@ changed (JGit 7.8.0).
   non-success, with the conventions of `VerifySignatures` (<<GDR-STORE-14>>): UTF-8 output, no path, key or principal
   printed, the allowed-signers file taken from the trusted CI configuration. The checkpoint and notes commits verify
   under `VerifySignatures` with the commit-signing key.
+
+[#blob-bound]
+=== Bounded reads
+
+Every blob the store reads into memory is read bounded by 16 MiB (`ExplicitSave.BLOB_LIMIT`), its size taken from the
+object header before the content is inflated (JGit 7.8.0 `ObjectLoader.getSize`): the documents handed to an index
+contributor (<<GDR-STORE-9>>), the files a release copies (<<GDR-STORE-6>>), the files of the fetched base a save step
+sees and the draft files a save writes (<<GDR-STORE-3>>), the notes and kept proofs of the anchoring and the file
+`refs` of a checkpoint (<<GDR-STORE-16>>, <<GDR-STORE-17>>), the notes the anchor verification reads, and every commit
+the signature verification checks (<<GDR-STORE-14>>). A fetched branch, tag or note controls all of them but the draft
+files, which are bounded as well so that one rule holds. A larger blob ends the operation as an unreadable object does:
+a save or release as the passed-on `FAILED` naming the class of the exception, a refresh of the index by keeping the
+previous entries of that source (`GIT_STORE-113`), a due check as `INCOMPLETE`, the anchor verification as the
+passed-on `FAILED`; the signature verification lists a larger commit as `MALFORMED`. The bound is a limit: a document
+file of more than 16 MiB can be written to a draft, but not saved, released or indexed.
 
 [#GDR-STORE-19]
 == GDR-STORE-19: Person Directory Interface
@@ -1212,6 +1294,10 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
 * `save.max-attempts`, `drafts.expiry` and `fetch.interval` are required. Every other key may be absent at start and
   then takes the default of the table; a key without a default, such as `signing.key` or the allowed-signers files that
   only a verification needs, stays absent.
+* Every duration, `fetch.interval`, `anchor.checkpoint-interval`, `anchor.retry-interval` and
+  `anchor.signed.max-clock-skew`, is positive and at most 100 years (36 525 days); a longer one, such as
+  `P1000000000000D`, is malformed, so no time plus a configured duration overflows an `Instant` and no interval
+  overflows the nanoseconds of a schedule.
 * Only an omitted key is absent. A key supplied with a null value, as a leaf (`anchor.releases:` without a value) or as
   a section on the way (`anchor:` without a value), is malformed and named by its dotted key; it never takes the
   default.

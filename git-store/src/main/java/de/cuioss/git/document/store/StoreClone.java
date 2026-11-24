@@ -15,105 +15,53 @@
  */
 package de.cuioss.git.document.store;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Executor;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 
-import de.cuioss.git.document.core.JGitRepositoryOperations;
-import de.cuioss.git.document.core.RepositoryOperations;
-import de.cuioss.git.document.core.RepositoryOperations.FetchInput;
-import de.cuioss.git.document.core.TreeEdit;
-import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Repository;
-import org.jspecify.annotations.Nullable;
 
 /**
- * The opened bare clone of one {@link StoreWriter} with the parts that work on it: the drafts, the explicit save, the
- * release and the draft expiry, the fetch and its schedule, the notification seam and the listener dispatch. The
- * writer is the public face of the store and delegates every operation here; the behaviour, the locks and their order
- * are those its documentation states. {@link CloneOpening} opens the clone and builds these parts.
+ * The opened bare clone of one {@link StoreWriter}: its alias, its repository and its notification seam, the listener
+ * subscription, the closed flag and {@link #close()}, with the two parts that work on it: the writes
+ * ({@link CloneWrites}: drafts, listing, save, release, expiry) and the fetch with the schedules
+ * ({@link CloneSchedules}: fetch, periodic fetch, anchoring). The writer is the public face of the store and delegates
+ * every operation here; the behaviour, the locks and their order are those its documentation states.
+ * {@link CloneOpening} opens the clone and builds these parts.
  * <p>
- * The two scheduled runners, the periodic fetch and the due check of the anchoring off the caller's thread, isolate
- * every {@link Throwable} and log it by its class name only, so a schedule never ends (the rule of the scheduled
- * runners, {@link StoreEvents}).
+ * {@link #close()} sets the closed flag and releases the repository under the anchoring lock of the clone, which every
+ * due check of the anchoring holds while it runs and under which it reads the flag ({@link AnchorEngine#dueCheck}): a
+ * due check that started before the close ends before the repository is released, and one queued or called after it
+ * does nothing.
  */
-// S6539 counts the parts this class delegates to; it is the one place that wires the parts of the clone, so its
-// coupling is its purpose, and splitting it would only move the wiring
-@SuppressWarnings("java:S6539")
 final class StoreClone {
 
-    private static final CuiLogger LOGGER = new CuiLogger(StoreClone.class);
-
     private final ExplicitSave.Clone clone;
-    private final Transport transport;
     private final StoreEvents events;
     private final ListenerDispatch listeners;
-    private final DraftReferences drafts;
-    private final ExplicitSave saves;
-    private final DocumentRelease releases;
-    private final DraftExpiry expiry;
-    private final AnchorEngine anchors;
-
-    /**
-     * The registration of the schedule whose executor runs the due checks after a save, a release or a fetch;
-     * {@code null} until a schedule is registered and after it was cancelled.
-     */
-    private final AtomicReference<@Nullable Registration> anchorRegistration = new AtomicReference<>();
+    private final CloneWrites writes;
+    private final CloneSchedules schedules;
+    private final AtomicBoolean closed;
 
     /**
      * Holds an opened clone with the parts that work on it.
      *
-     * @param clone     the opened bare clone with its maintenance and transport locks
-     * @param transport what the clone fetches with
-     * @param parts     the parts that work on the clone
-     */
-    StoreClone(ExplicitSave.Clone clone, Transport transport, Parts parts) {
-        this.clone = clone;
-        this.transport = transport;
-        this.events = parts.events();
-        this.listeners = parts.listeners();
-        this.drafts = parts.drafts();
-        this.saves = parts.saves();
-        this.releases = parts.releases();
-        this.expiry = parts.expiry();
-        this.anchors = parts.anchors();
-    }
-
-    /**
-     * What the clone fetches with.
-     *
-     * @param operations    the repository operations of {@code git-core}
-     * @param user          the technical user, holder of the credentials of every fetch
-     * @param fetchInterval the interval of the periodic fetch ({@code fetch.interval})
-     * @param retryInterval the interval of the periodic due check of the anchoring ({@code anchor.retry-interval})
-     */
-    record Transport(RepositoryOperations operations, TechnicalUser user, Duration fetchInterval,
-    Duration retryInterval) {
-    }
-
-    /**
-     * The parts that work on the clone.
-     *
-     * @param events    the notification seam
+     * @param clone     the opened bare clone with its maintenance, transport and anchoring locks
+     * @param events    the notification seam of the clone
      * @param listeners the listener dispatch, the last observer of the events
-     * @param drafts    the drafts
-     * @param saves     the explicit save
-     * @param releases  the release
-     * @param expiry    the draft expiry
-     * @param anchors   the anchoring engine
+     * @param writes    the writes of the clone
+     * @param schedules the fetch and the schedules of the clone
+     * @param closed    the closed flag, shared with {@code schedules}
+     * @throws NullPointerException if an argument is {@code null}
      */
-    record Parts(StoreEvents events, ListenerDispatch listeners, DraftReferences drafts, ExplicitSave saves,
-    DocumentRelease releases, DraftExpiry expiry, AnchorEngine anchors) {
+    StoreClone(ExplicitSave.Clone clone, StoreEvents events, ListenerDispatch listeners, CloneWrites writes,
+            CloneSchedules schedules, AtomicBoolean closed) {
+        this.clone = Objects.requireNonNull(clone, "clone");
+        this.events = Objects.requireNonNull(events, "events");
+        this.listeners = Objects.requireNonNull(listeners, "listeners");
+        this.writes = Objects.requireNonNull(writes, "writes");
+        this.schedules = Objects.requireNonNull(schedules, "schedules");
+        this.closed = Objects.requireNonNull(closed, "closed");
     }
 
     /**
@@ -143,197 +91,22 @@ final class StoreClone {
         return events;
     }
 
-    /** Writes a draft under the shared side of the maintenance lock; see {@link StoreWriter#draft}. */
-    StoreResult<String> draft(Author author, DocumentKey key, List<TreeEdit> edits, String message) {
-        return clone.guard().shared(() -> drafts.write(author, key, edits, message));
-    }
-
-    /** Lists the drafts of a user under the shared side of the maintenance lock; see {@link StoreWriter#drafts}. */
-    StoreResult<List<Draft>> drafts(String pseudonym) {
-        return clone.guard().shared(() -> drafts.list(pseudonym));
-    }
-
-    /** Saves a draft; see {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, SaveStep)}. */
-    SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
-            String message, @Nullable SaveStep step) {
-        SaveResult result = saves.save(author, claims, key, expectedBlobIds, message, step);
-        if (result instanceof SaveResult.Saved) {
-            triggerDueCheck();
-        }
-        return result;
-    }
-
-    /** Releases a document or entry; see {@link StoreWriter#release}. */
-    StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        var result = releases.release(author, claims, key);
-        if (result.isOk() || result.outcome() == StoreOutcome.INCOMPLETE) {
-            triggerDueCheck();
-        }
-        return result;
-    }
-
-    /** Expires the drafts; see {@link StoreWriter#expireDrafts}. */
-    StoreResult<List<String>> expireDrafts(Instant now) {
-        return expiry.expire(now);
+    /**
+     * Returns the writes of the clone.
+     *
+     * @return drafts, listing, save, release and expiry
+     */
+    CloneWrites writes() {
+        return writes;
     }
 
     /**
-     * Fetches the remote under the shared side of the maintenance lock and the transport lock, then hands the moved
-     * references to the events; see {@link StoreWriter#fetch}.
+     * Returns the fetch and the schedules of the clone.
+     *
+     * @return fetch, periodic fetch and anchoring
      */
-    StoreResult<List<String>> fetch() {
-        List<StoreEvents.Update> updates = new ArrayList<>();
-        RepositoryGuard guard = clone.guard();
-        StoreResult<List<String>> result = guard.shared(() -> guard.transport(() -> mirror(updates)));
-        events.emit(updates);
-        if (result.isOk()) {
-            triggerDueCheck();
-        }
-        return result;
-    }
-
-    /** Runs one due check of the anchoring on the calling thread; see {@link StoreWriter#anchor()}. */
-    StoreResult<StoreWriter.Anchoring> anchor() {
-        return anchors.dueCheck();
-    }
-
-    /**
-     * Schedules the due check of the anchoring on the caller's executor at {@code anchor.retry-interval} and registers
-     * the executor for the due checks after a save, a release or a fetch; see {@link StoreWriter#anchorPeriodically}.
-     * The executor is registered only once the schedule exists: when it refuses the schedule, the refusal propagates
-     * and the schedule registered before stays in effect.
-     */
-    AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
-        var registration = new Registration(executor);
-        long interval = nanos(transport.retryInterval());
-        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(this::safeDueCheck, interval, interval,
-                TimeUnit.NANOSECONDS);
-        anchorRegistration.set(registration);
-        return new AnchorSchedule(future, () -> end(registration));
-    }
-
-    /**
-     * Ends a registration: a due check it handed over and that has not started yet does not run, and the registration
-     * is removed unless a later schedule replaced it already.
-     */
-    private void end(Registration registration) {
-        registration.ended = true;
-        anchorRegistration.compareAndSet(registration, null);
-    }
-
-    /**
-     * Hands one due check to the executor of the registered schedule after the locks of a save, a release or a fetch
-     * were released; a trigger while one is handed over through the same registration and not started yet coalesces
-     * with it. Without a registration or a provider nothing happens, a handed-over due check whose registration ended
-     * before it started does not run, and a refusal of the executor is ignored: the next trigger or the schedule
-     * retries. A handed-over due check that its executor discards never clears the flag of its registration, so it
-     * holds back only the triggers of that registration, never those of a later schedule.
-     */
-    private void triggerDueCheck() {
-        Registration registration = anchorRegistration.get();
-        if (registration == null || !anchors.active() || !registration.queued.compareAndSet(false, true)) {
-            return;
-        }
-        try {
-            registration.executor.execute(() -> {
-                registration.queued.set(false);
-                if (!registration.ended) {
-                    safeDueCheck();
-                }
-            });
-        } catch (RejectedExecutionException e) {
-            registration.queued.set(false);
-            LOGGER.debug("The executor refused the due check of the anchoring");
-        }
-    }
-
-    /**
-     * The registration of one schedule of the due check: its identity is the token that only its own schedule
-     * removes, whatever executor a later schedule uses.
-     */
-    private static final class Registration {
-
-        private final Executor executor;
-
-        /**
-         * Whether a due check is handed to the executor through this registration and has not started yet, so further
-         * triggers coalesce with it.
-         */
-        private final AtomicBoolean queued = new AtomicBoolean();
-
-        /** Whether the schedule was cancelled; a due check it handed over and that has not started yet then ends. */
-        private volatile boolean ended;
-
-        Registration(Executor executor) {
-            this.executor = executor;
-        }
-    }
-
-    /**
-     * One due check off the caller's thread: every failure, a {@link Throwable} of any kind (the rule of the scheduled
-     * runners, {@link StoreEvents}), is logged by its class name only and never escapes to the executor, so the
-     * schedule never ends.
-     */
-    private void safeDueCheck() {
-        try {
-            anchors.dueCheck();
-        }
-        // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15); a scheduled runner
-        // isolates every Throwable
-        // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (Throwable e) {
-            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, alias(), e.getClass().getName());
-        }
-    }
-
-    private static long nanos(Duration duration) {
-        try {
-            return duration.toNanos();
-        } catch (ArithmeticException e) {
-            return Long.MAX_VALUE;
-        }
-    }
-
-    private StoreResult<List<String>> mirror(List<StoreEvents.Update> updates) {
-        var fetched = transport.operations().fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
-                .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(transport.user().credentials())
-                .prune(true).build());
-        if (!fetched.isOk()) {
-            return StoreResult.passOn(fetched);
-        }
-        StoreEvents.fetched(fetched.value(), updates);
-        return StoreResult.ok(updates.stream().map(StoreEvents.Update::ref).sorted().toList());
-    }
-
-    /** Schedules the fetch on the caller's executor; see {@link StoreWriter#fetchPeriodically}. */
-    FetchSchedule fetchPeriodically(ScheduledExecutorService executor) {
-        long interval;
-        try {
-            interval = transport.fetchInterval().toNanos();
-        } catch (ArithmeticException e) {
-            interval = Long.MAX_VALUE;
-        }
-        return new FetchSchedule(
-                executor.scheduleWithFixedDelay(this::periodicFetch, interval, interval, TimeUnit.NANOSECONDS));
-    }
-
-    /**
-     * One run of the periodic fetch: a failure is logged and the schedule goes on, also for a {@link Throwable} of any
-     * kind (the rule of the scheduled runners, {@link StoreEvents}), logged by its class name only.
-     */
-    private void periodicFetch() {
-        try {
-            var fetched = fetch();
-            if (!fetched.isOk()) {
-                LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(),
-                        StoreResult.name(fetched.outcome()));
-            }
-        }
-        // a failure of one fetch must not end the schedule (GDR-STORE-9); a scheduled runner isolates every Throwable
-        // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (Throwable e) {
-            LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getName());
-        }
+    CloneSchedules schedules() {
+        return schedules;
     }
 
     /** Subscribes a listener to a branch by its full name; see {@link StoreWriter#subscribe}. */
@@ -341,8 +114,16 @@ final class StoreClone {
         return listeners.subscribe(branch, listener);
     }
 
-    /** Releases the opened clone. */
+    /**
+     * Sets the closed flag and releases the opened clone, both under the anchoring lock of the clone, so no due check
+     * runs on a released repository and none runs after the close; a second call releases nothing.
+     */
     void close() {
-        clone.repository().close();
+        clone.guard().anchoring(() -> {
+            if (!closed.getAndSet(true)) {
+                clone.repository().close();
+            }
+            return Boolean.TRUE;
+        });
     }
 }

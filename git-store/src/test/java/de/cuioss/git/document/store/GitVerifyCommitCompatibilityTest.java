@@ -16,11 +16,12 @@
 package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -38,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.logging.Level;
 import java.util.regex.Pattern;
 
 
@@ -49,10 +51,16 @@ import de.cuioss.git.document.testing.LocalRemote;
 import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import de.cuioss.test.juli.LogAsserts;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.opentest4j.AssertionFailedError;
+import org.opentest4j.TestAbortedException;
 
 /**
  * The cross-check of GDR-STORE-14 with a stock Git installation: {@code git verify-commit} with
@@ -68,8 +76,13 @@ import org.junit.jupiter.api.io.TempDir;
  * same executable is Git's {@code gpg.ssh.program}. The processes run with a temporary {@code HOME} and
  * {@code XDG_CONFIG_HOME}, an empty {@code GIT_CONFIG_GLOBAL}, {@code GIT_CONFIG_NOSYSTEM=1} and no inherited
  * {@code GIT_*} variable, without network.
+ * <p>
+ * A run without those tools is never silent: {@link ExternalTools#assumeCrossCheck} logs the reason as a WARN record
+ * and aborts the test, and fails it instead under {@code GIT_STORE_REQUIRE_CROSS_CHECKS=true}, so a build that sets the
+ * variable is green only when the cross-check ran.
  */
 @EnableGeneratorController
+@EnableTestLogger
 @DisplayName("git verify-commit compatibility (GDR-STORE-14)")
 class GitVerifyCommitCompatibilityTest {
 
@@ -123,17 +136,17 @@ class GitVerifyCommitCompatibilityTest {
     /** The {@code ssh-keygen} Git is to use, after the assumptions on both tools held. */
     private Path assumeToolsPresent() throws IOException, InterruptedException {
         Optional<Path> git = ExternalTools.onPath("git");
-        assumeTrue(git.isPresent(), "git is not on the path");
+        ExternalTools.assumeCrossCheck(git.isPresent(), "git is not on the path");
         var version = git(List.of("--version"));
         var matcher = VERSION.matcher(version.output());
-        assumeTrue(matcher.find(), "git reports its version");
+        ExternalTools.assumeCrossCheck(matcher.find(), "git does not report its version");
         int major = Integer.parseInt(matcher.group(1));
         int minor = Integer.parseInt(matcher.group(2));
-        assumeTrue(major > 2 || major == 2 && minor >= 35, "git 2.35 or later");
+        ExternalTools.assumeCrossCheck(major > 2 || major == 2 && minor >= 35, "git is older than 2.35");
         Optional<Path> keygen = ExternalTools.onPath("ssh-keygen");
-        assumeTrue(keygen.isPresent(), "ssh-keygen is not on the path");
-        assumeTrue(ExternalTools.verifiesWithLifetimes(keygen.get(), temp),
-                "ssh-keygen finds principals and honours key lifetimes at a verify time");
+        ExternalTools.assumeCrossCheck(keygen.isPresent(), "ssh-keygen is not on the path");
+        ExternalTools.assumeCrossCheck(ExternalTools.verifiesWithLifetimes(keygen.get(), temp),
+                "ssh-keygen does not find principals or honour key lifetimes at a verify time");
         return keygen.get();
     }
 
@@ -191,5 +204,45 @@ class GitVerifyCommitCompatibilityTest {
         assertAll(
                 () -> assertEquals(0, accepted.code(), () -> "accepted: " + accepted.output()),
                 () -> assertNotEquals(0, rejected.code(), () -> "rejected: " + rejected.output()));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a cross-check that cannot run logs its reason and is aborted, never passed silently")
+    void skippedCrossCheckIsLogged() {
+        var reason = word() + " is not on the path";
+
+        var aborted = assertThrows(TestAbortedException.class,
+                () -> ExternalTools.assumeCrossCheck(false, reason, null));
+
+        assertAll(
+                () -> assertTrue(aborted.getMessage().contains(reason), "the report names the reason"),
+                () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                        ExternalTools.CROSS_CHECK_SKIPPED.resolveIdentifierString()),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, reason));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: under GIT_STORE_REQUIRE_CROSS_CHECKS=true a cross-check that cannot run fails")
+    void requiredCrossCheckFails() {
+        var reason = word() + " is not on the path";
+
+        var failed = assertThrows(AssertionFailedError.class,
+                () -> ExternalTools.assumeCrossCheck(false, reason, "true"));
+
+        assertAll(
+                () -> assertTrue(failed.getMessage().contains(ExternalTools.REQUIRE_CROSS_CHECKS),
+                        "the failure names the variable"),
+                () -> assertTrue(failed.getMessage().contains(reason), "and the reason"),
+                () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, reason));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a cross-check whose tools are present runs, whatever the variable says")
+    void presentToolsRun() {
+        assertAll(
+                () -> assertDoesNotThrow(() -> ExternalTools.assumeCrossCheck(true, word(), null), "not set"),
+                () -> assertDoesNotThrow(() -> ExternalTools.assumeCrossCheck(true, word(), "true"), "required"),
+                () -> assertEquals(List.of(), TestLoggerFactory.getTestHandler().getRecords().stream()
+                        .filter(logRecord -> logRecord.getLevel() == Level.WARNING).toList(), "nothing is logged"));
     }
 }

@@ -37,7 +37,6 @@ import de.cuioss.git.document.core.RepositoryOperations.PushInput;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.AnyObjectId;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -113,6 +112,10 @@ import org.jspecify.annotations.Nullable;
  * After the release released every lock, the references its fetches moved in the clone, the release commit its push
  * placed on {@code main} and its pushed tag are emitted to the {@link StoreEvents} of the writer, so the index
  * refreshes (GDR-STORE-9).
+ * <p>
+ * Every blob the release copies from the fetched working or collection branch is read bounded by
+ * {@link ExplicitSave#BLOB_LIMIT}; a larger one ends the attempt like an unreadable object, as the passed-on
+ * {@link GitOutcome#FAILED} naming the class of the exception.
  * <p>
  * A detail names a reference or a field, never a path, a content or a pseudonym, and an exception by its class name
  * ({@link Class#getName()}) only (GDR-NFR-3).
@@ -508,7 +511,7 @@ final class DocumentRelease {
             if (blob == null) {
                 edits.add(new TreeEdit.Delete(change.path()));
             } else {
-                byte[] content = repository.open(blob, Constants.OBJ_BLOB).getBytes(Integer.MAX_VALUE);
+                byte[] content = ExplicitSave.readBlob(repository, blob);
                 edits.add(new TreeEdit.Put(change.path(), content, mode(change.mode())));
             }
         }
