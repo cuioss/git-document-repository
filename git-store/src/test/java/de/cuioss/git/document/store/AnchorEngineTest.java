@@ -306,7 +306,7 @@ class AnchorEngineTest {
 
     @Test
     @DisplayName("GDR-STORE-16: a provider closing the writer is refused, the due check completes, a later close closes")
-    void providerClosingWriterIsRefused(@Remote LocalRemote remote) throws IOException {
+    void providerClosingWriterIsRefused(@Remote LocalRemote remote) throws Exception {
         var key = forked(remote.repository());
         try (var fixture = open(remote)) {
             save(fixture.writer(), key);

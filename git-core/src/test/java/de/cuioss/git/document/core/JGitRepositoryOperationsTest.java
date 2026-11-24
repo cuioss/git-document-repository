@@ -969,7 +969,7 @@ class JGitRepositoryOperationsTest {
         }
 
         private record RefusedPushes(String ref, ObjectId remoteHead, GitResult<RefUpdate> leased,
-                GitResult<RefUpdate> plain) {
+        GitResult<RefUpdate> plain) {
         }
 
         @Test

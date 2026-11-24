@@ -669,9 +669,9 @@ class SaveStepTest {
         try (var fixture = open(remote)) {
             fixture.draft(author, key, puts(Map.of(word(), content())));
             try (var subscription = fixture.writer().subscribe(target, (branch, commitId) -> {
-                delivered.add(commitId);
-                fixture.writer().close();
-            })) {
+                     delivered.add(commitId);
+                     fixture.writer().close();
+                 })) {
                 var result = fixture.save(author, key, attempt -> new SaveStep.Edits(List.of()));
                 var afterwards = fixture.writer().anchor();
 
