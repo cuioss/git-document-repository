@@ -558,20 +558,6 @@ final class Der {
         }
 
         /**
-         * Reads a BIT STRING of whole octets.
-         *
-         * @return a copy of the octets
-         * @throws DerException if the element is no BIT STRING or has unused bits
-         */
-        byte[] bits() throws DerException {
-            expect(BIT_STRING);
-            if (end == contentStart || data[contentStart] != 0) {
-                throw new DerException("bit string with unused bits");
-            }
-            return Arrays.copyOfRange(data, contentStart + 1, end);
-        }
-
-        /**
          * Checks a BIT STRING of DER that may end in unused bits, such as a named bit list: the initial octet names 0
          * to 7 unused bits, none when the string is empty, and the unused bits are zero (X.690, 8.6.2 and 11.2).
          *

@@ -200,7 +200,7 @@ final class TimeStampTokens {
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(trust, "trust");
         try {
-            return StoreResult.ok(check(token.clone(), trust));
+            return StoreResult.ok(check(token, trust));
         } catch (Der.DerException e) {
             return StoreResult.of(StoreOutcome.SIGNATURE_INVALID, UNREADABLE);
         } catch (Rejected e) {

@@ -287,16 +287,6 @@ final class TimeStampRequests {
             return encoded.clone();
         }
 
-        /** @return a copy of the hashed message of the imprint */
-        byte[] imprint() {
-            return imprint.clone();
-        }
-
-        /** @return the nonce */
-        BigInteger nonce() {
-            return nonce;
-        }
-
         /**
          * Tells whether a {@code TSTInfo} answers this request: the imprint of SHA-256 over the same octets and the same
          * nonce (RFC 3161, 2.4.2).

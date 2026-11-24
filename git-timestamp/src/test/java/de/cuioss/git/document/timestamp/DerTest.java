@@ -103,7 +103,7 @@ class DerTest {
                 () -> assertEquals(BigInteger.ONE, children.getFirst().integer(), "integer"),
                 () -> assertArrayEquals(new byte[]{9}, children.get(1).inner().octets(), "explicit"),
                 () -> assertEquals(time, children.get(2).generalizedTime(), "time"),
-                () -> assertArrayEquals(new byte[]{1, 2}, children.get(3).bits(), "bits"),
+                () -> assertDoesNotThrow(() -> children.get(3).checkBitString(), "bits"),
                 () -> assertArrayEquals(encoded, Der.parse(encoded).encoded(), "encoding"));
     }
 
@@ -205,7 +205,7 @@ class DerTest {
                 () -> assertThrows(Der.DerException.class, integer::children, "primitive"),
                 () -> assertThrows(Der.DerException.class, () -> Der.parse(HEX.parseHex("010101")).bool(),
                         "boolean 01"),
-                () -> assertThrows(Der.DerException.class, () -> Der.parse(HEX.parseHex("03020701")).bits(),
+                () -> assertThrows(Der.DerException.class, () -> Der.parse(HEX.parseHex("03020701")).checkBitString(),
                         "unused bits"),
                 () -> assertThrows(Der.DerException.class,
                         () -> Der.parse(Der.explicit(0, Der.concat(Der.integer(1), Der.integer(2)))).inner(),
