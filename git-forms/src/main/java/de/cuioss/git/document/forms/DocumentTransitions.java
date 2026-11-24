@@ -156,7 +156,7 @@ public final class DocumentTransitions {
         String documentPath = documentPath(key);
         FormsResult<String> current;
         try {
-            current = TransitionStep.state(codec, read(branchOf(key), documentPath), documentPath, initialState());
+            current = TransitionStep.readState(codec, read(branchOf(key), documentPath), documentPath, initialState());
         } catch (ReadFailure e) {
             return report(NO_MECHANISM, readFailed(e));
         }
@@ -214,25 +214,15 @@ public final class DocumentTransitions {
         if (!draftRef.isOk()) {
             return passOn(draftRef);
         }
-        Optional<byte[]> content = Optional.empty();
-        boolean edited = false;
-        List<TreeEdit> edits = new ArrayList<>();
-        for (TreeEdit edit : change.edits()) {
-            if (edit.path().equals(documentPath)) {
-                edited = true;
-                content = edit instanceof TreeEdit.Put put ? Optional.of(put.content()) : Optional.empty();
-            } else {
-                edits.add(edit);
-            }
+        EditSplit split = EditSplit.of(change.edits(), documentPath);
+        Optional<byte[]> content;
+        try {
+            content = split.edited() ? split.content()
+                    : draftContent(Objects.requireNonNull(draftRef.value()), key, documentPath);
+        } catch (ReadFailure e) {
+            return readFailed(e);
         }
-        if (!edited) {
-            try {
-                String draft = Objects.requireNonNull(draftRef.value());
-                content = read(exists(draft) ? draft : branchOf(key), documentPath);
-            } catch (ReadFailure e) {
-                return readFailed(e);
-            }
-        }
+        List<TreeEdit> edits = new ArrayList<>(split.others());
         Map<String, @Nullable Object> document = new LinkedHashMap<>();
         if (content.isPresent()) {
             StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(content.get());
@@ -246,6 +236,52 @@ public final class DocumentTransitions {
         edits.add(new TreeEdit.Put(documentPath, codec.encode(document)));
         StoreResult<String> drafted = writer.draft(author, key, edits, change.message());
         return drafted.isOk() ? null : passOn(drafted);
+    }
+
+    /**
+     * Reads the file of the document or entry from the draft of the author, else from the branch of the key.
+     *
+     * @throws ReadFailure for an I/O failure while reading the clone
+     */
+    private Optional<byte[]> draftContent(String draft, DocumentKey key, String documentPath) {
+        return read(exists(draft) ? draft : branchOf(key), documentPath);
+    }
+
+    /**
+     * The caller's edits split at the file of the document or entry: the edits of every other path in the caller's
+     * order, whether the caller edited that file, and the content of the caller's last edit of it (empty for a
+     * deletion or when not edited).
+     */
+    private static final class EditSplit {
+
+        private final List<TreeEdit> others = new ArrayList<>();
+        private boolean edited;
+        private Optional<byte[]> content = Optional.empty();
+
+        static EditSplit of(List<TreeEdit> edits, String documentPath) {
+            var split = new EditSplit();
+            for (TreeEdit edit : edits) {
+                if (edit.path().equals(documentPath)) {
+                    split.edited = true;
+                    split.content = edit instanceof TreeEdit.Put put ? Optional.of(put.content()) : Optional.empty();
+                } else {
+                    split.others.add(edit);
+                }
+            }
+            return split;
+        }
+
+        List<TreeEdit> others() {
+            return others;
+        }
+
+        boolean edited() {
+            return edited;
+        }
+
+        Optional<byte[]> content() {
+            return content;
+        }
     }
 
     /** The release after the save of a transition on {@code release}; a failure leaves the saved state in place. */

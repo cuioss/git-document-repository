@@ -89,7 +89,7 @@ final class TransitionStep implements SaveStep {
     @Override
     public Outcome apply(Attempt attempt) {
         captured = null;
-        FormsResult<String> current = state(codec, attempt.tipContent(documentPath), documentPath, initialState);
+        FormsResult<String> current = readState(codec, attempt.tipContent(documentPath), documentPath, initialState);
         if (!current.isOk()) {
             return refuse(current.outcome(), Objects.requireNonNull(current.detail()), null);
         }
@@ -172,7 +172,7 @@ final class TransitionStep implements SaveStep {
      *         without it; the passed-on {@link StoreOutcome#MALFORMED} for a file that cannot be read or whose
      *         {@value #STATE} is no string; the detail names the path, never a value
      */
-    static FormsResult<String> state(YamlDocumentCodec codec, Optional<byte[]> content, String path,
+    static FormsResult<String> readState(YamlDocumentCodec codec, Optional<byte[]> content, String path,
             String initialState) {
         if (content.isEmpty()) {
             return FormsResult.ok(initialState);

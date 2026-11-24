@@ -122,12 +122,14 @@ class StepUpPolicyTest {
     void maxAgeRequiredAndPositive() {
         Set<String> amr = Set.of(StepUpPolicy.MFA);
         Set<String> acr = Set.of();
+        Duration nullMaxAge = nullValue();
+        Duration negative = Duration.ofSeconds(-1);
 
         assertAll(
-                () -> assertThrows(NullPointerException.class, () -> StepUpPolicy.of(nullValue())),
-                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(amr, acr, nullValue())),
+                () -> assertThrows(NullPointerException.class, () -> StepUpPolicy.of(nullMaxAge)),
+                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(amr, acr, nullMaxAge)),
                 () -> assertThrows(IllegalArgumentException.class, () -> StepUpPolicy.of(Duration.ZERO)),
-                () -> assertThrows(IllegalArgumentException.class, () -> StepUpPolicy.of(Duration.ofSeconds(-1))),
+                () -> assertThrows(IllegalArgumentException.class, () -> StepUpPolicy.of(negative)),
                 () -> assertEquals(Duration.ofNanos(1), StepUpPolicy.of(Duration.ofNanos(1)).maxAge(),
                         "the smallest positive duration"));
     }
@@ -160,15 +162,19 @@ class StepUpPolicyTest {
         var policy = new StepUpPolicy(amr, Set.of(), MAX_AGE);
         amr.add("otp");
         Set<String> none = Set.of();
+        Set<String> copied = policy.amr();
+        Set<String> nullSet = nullValue();
+        IdentityClaims nullClaims = nullValue();
+        IdentityClaims mfa = claims(null, List.of(StepUpPolicy.MFA));
+        Instant nullInstant = nullValue();
 
         assertAll(
-                () -> assertEquals(Set.of(StepUpPolicy.MFA), policy.amr(), "a later change of the caller's set"),
-                () -> assertThrows(UnsupportedOperationException.class, () -> policy.amr().add("otp")),
-                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(nullValue(), none, MAX_AGE)),
-                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(none, nullValue(), MAX_AGE)),
-                () -> assertThrows(NullPointerException.class, () -> policy.holds(nullValue(), NOW)),
-                () -> assertThrows(NullPointerException.class,
-                        () -> policy.holds(claims(null, List.of(StepUpPolicy.MFA)), nullValue())));
+                () -> assertEquals(Set.of(StepUpPolicy.MFA), copied, "a later change of the caller's set"),
+                () -> assertThrows(UnsupportedOperationException.class, () -> copied.add("otp")),
+                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(nullSet, none, MAX_AGE)),
+                () -> assertThrows(NullPointerException.class, () -> new StepUpPolicy(none, nullSet, MAX_AGE)),
+                () -> assertThrows(NullPointerException.class, () -> policy.holds(nullClaims, NOW)),
+                () -> assertThrows(NullPointerException.class, () -> policy.holds(mfa, nullInstant)));
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */

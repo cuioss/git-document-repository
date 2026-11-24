@@ -63,6 +63,9 @@ public final class DocumentLayout {
     private static final String YAML = ".yaml";
     private static final String ADOC = ".adoc";
 
+    /** The argument of the running number of an entry, named in a refusal. */
+    private static final String NUMBER = "number";
+
     private final Kind kind;
     private final FormSchema schema;
 
@@ -150,12 +153,12 @@ public final class DocumentLayout {
      */
     public FormsResult<String> entryOutput(String number) {
         requireNumbered();
-        Objects.requireNonNull(number, "number");
+        Objects.requireNonNull(number, NUMBER);
         if (!hasOutput()) {
             throw new IllegalStateException("a kind without a template has no generated output");
         }
         if (!isSegment(number)) {
-            return invalid("number");
+            return invalid(NUMBER);
         }
         return FormsResult.ok(kind.collection() + "/" + number + ADOC);
     }
@@ -223,9 +226,9 @@ public final class DocumentLayout {
      */
     public FormsResult<String> entry(String number) {
         requireNumbered();
-        Objects.requireNonNull(number, "number");
+        Objects.requireNonNull(number, NUMBER);
         if (!isSegment(number)) {
-            return invalid("number");
+            return invalid(NUMBER);
         }
         return FormsResult.ok(kind.collection() + "/" + number + YAML);
     }

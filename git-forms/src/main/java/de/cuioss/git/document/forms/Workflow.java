@@ -105,14 +105,14 @@ public final class Workflow {
     private static final Workflow DEFAULT = Objects.requireNonNull(
             parse(DEFAULT_PATH, DEFAULT_TEXT.getBytes(StandardCharsets.UTF_8)).value(), "the default workflow");
 
-    private final List<String> states;
-    private final Map<String, Transition> transitions;
-    private final List<Deadline> deadlines;
+    private final List<String> stateNames;
+    private final Map<String, Transition> transitionsByName;
+    private final List<Deadline> declaredDeadlines;
 
     private Workflow(List<String> states, Map<String, Transition> transitions, List<Deadline> deadlines) {
-        this.states = List.copyOf(states);
-        this.transitions = transitions;
-        this.deadlines = List.copyOf(deadlines);
+        this.stateNames = List.copyOf(states);
+        this.transitionsByName = transitions;
+        this.declaredDeadlines = List.copyOf(deadlines);
     }
 
     /**
@@ -317,7 +317,7 @@ public final class Workflow {
      * @return the state names in file order, unmodifiable
      */
     public List<String> states() {
-        return states;
+        return stateNames;
     }
 
     /**
@@ -326,7 +326,7 @@ public final class Workflow {
      * @return the first state
      */
     public String initialState() {
-        return states.getFirst();
+        return stateNames.getFirst();
     }
 
     /**
@@ -335,7 +335,7 @@ public final class Workflow {
      * @return the transitions in file order, unmodifiable
      */
     public List<Transition> transitions() {
-        return List.copyOf(transitions.values());
+        return List.copyOf(transitionsByName.values());
     }
 
     /**
@@ -344,7 +344,7 @@ public final class Workflow {
      * @return the deadlines in file order, unmodifiable
      */
     public List<Deadline> deadlines() {
-        return deadlines;
+        return declaredDeadlines;
     }
 
     /**
@@ -360,7 +360,7 @@ public final class Workflow {
     public FormsResult<Transition> transition(String name, String currentState) {
         Objects.requireNonNull(name, NAME);
         Objects.requireNonNull(currentState, "currentState");
-        Optional<Transition> transition = Optional.ofNullable(transitions.get(name));
+        Optional<Transition> transition = Optional.ofNullable(transitionsByName.get(name));
         if (transition.isEmpty()) {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, "transition: not in the workflow");
         }

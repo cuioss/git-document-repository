@@ -84,10 +84,7 @@ public final class DocumentTemplate {
     private static final String CURRENT = ".";
     private static final String SEPARATOR = "\\.";
 
-    /** The form of a name: segments of letters, digits, {@code _} and {@code -}, separated by dots. */
-    private static final Pattern NAME = Pattern.compile("[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*");
-
-    /** The form of a fragment name: one segment. */
+    /** The form of a fragment name and of each segment of a name: letters, digits, {@code _} and {@code -}. */
     private static final Pattern FRAGMENT = Pattern.compile("[A-Za-z0-9_-]+");
 
     private final List<Node> nodes;
@@ -152,10 +149,10 @@ public final class DocumentTemplate {
             StringBuilder out) {
         for (Node node : nodes) {
             switch (node) {
-                case Text text -> out.append(text.text());
-                case Variable variable -> out.append(scalar(lookup(variable.name(), context)));
-                case Fragment fragment -> {
-                    String content = fragments.get(fragment.name());
+                case Text(String text) -> out.append(text);
+                case Variable(String name) -> out.append(scalar(lookup(name, context)));
+                case Fragment(String name) -> {
+                    String content = fragments.get(name);
                     if (content != null) {
                         out.append(withoutTrailingLineFeeds(lineFeeds(content)));
                     }
@@ -376,10 +373,24 @@ public final class DocumentTemplate {
 
         private static String name(String raw, int tagLine) {
             String name = raw.strip();
-            if (!NAME.matcher(name).matches()) {
+            if (!isName(name)) {
                 throw new Refusal(tagLine, "a name that is not of the form [A-Za-z0-9_-]+, separated by dots");
             }
             return name;
+        }
+
+        /**
+         * Whether a text is a name: one or more segments of {@code [A-Za-z0-9_-]+} separated by single dots, so no
+         * empty segment and no leading or trailing dot. Checked per segment rather than by one repeated group, so the
+         * check never recurses.
+         */
+        private static boolean isName(String text) {
+            for (String segment : text.split(SEPARATOR, -1)) {
+                if (!FRAGMENT.matcher(segment).matches()) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private void emit(Tag tag, int tagLine) {

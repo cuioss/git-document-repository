@@ -272,6 +272,35 @@ class DocumentTemplateTest {
                             "no content of the template"));
         }
 
+        @ParameterizedTest(name = "refused name [{0}]")
+        @MethodSource("refusedNames")
+        @DisplayName("GDR-FORMS-4: a section name with an empty segment or a leading or trailing dot is MALFORMED")
+        void refusedName(String name) {
+            var result = DocumentTemplate.parse(PATH,
+                    ("{{#" + name + "}}{{/" + name + "}}").getBytes(StandardCharsets.UTF_8));
+
+            assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                            PATH + ": line 1: a name that is not of the form [A-Za-z0-9_-]+, separated by dots")), result,
+                    "the name is refused");
+        }
+
+        static Stream<String> refusedNames() {
+            return Stream.of("", ".", "a.", ".a", "a..b", "a.b.", "a b", "a.b!");
+        }
+
+        @ParameterizedTest(name = "accepted name [{0}]")
+        @MethodSource("acceptedNames")
+        @DisplayName("GDR-FORMS-4: a name of one or more segments of [A-Za-z0-9_-] separated by single dots is read")
+        void acceptedName(String name) {
+            var output = template("{{#" + name + "}}x{{/" + name + "}}").render(Map.of(), Map.of());
+
+            assertEquals("\n", output, "an absent section renders nothing");
+        }
+
+        static Stream<String> acceptedNames() {
+            return Stream.of("a", "a.b", "a-b", "a_b", "A9.b-c_d.0", "-._");
+        }
+
         @Test
         @DisplayName("GDR-FORMS-4: the deepest allowed nesting is read")
         void deepestNesting() {

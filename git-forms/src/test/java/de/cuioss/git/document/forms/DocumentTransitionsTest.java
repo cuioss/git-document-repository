@@ -322,31 +322,77 @@ class DocumentTransitionsTest {
                 () -> "performed: " + result.outcome() + " " + result.detail());
     }
 
+    /** The transitions of the default workflow that require step-up, performed with {@link #MFA}. */
+    private static final List<String> STEP_UP_TRANSITIONS = List.of("approve", "supersede");
+
+    /** The transitions up to and including the first release of the default workflow. */
+    private static final String[] TO_FIRST_RELEASE = {"edit", "submit", "rework", "submit", "approve"};
+
+    /**
+     * Performs transitions of the default workflow in order, each asserted performed: {@code edit} with a complete
+     * document, every other transition without edits; {@link #MFA} for a transition that requires step-up,
+     * {@link #PASSWORD} otherwise.
+     *
+     * @return the last transition performed
+     */
+    private static DocumentTransitions.Result.Performed perform(Fixture fixture, DocumentKey key,
+            String... transitions) {
+        DocumentTransitions.Result.@Nullable Performed last = null;
+        for (String transition : transitions) {
+            IdentityClaims claims = STEP_UP_TRANSITIONS.contains(transition) ? MFA : PASSWORD;
+            List<TreeEdit> edits = "edit".equals(transition) ? complete(key, "First") : List.of();
+            last = performed(fixture.perform(Author.of("p-author"), claims, key, transition, edits));
+        }
+        return Objects.requireNonNull(last, "at least one transition");
+    }
+
+    private static String[] then(String[] prefix, String... transitions) {
+        String[] all = Arrays.copyOf(prefix, prefix.length + transitions.length);
+        System.arraycopy(transitions, 0, all, prefix.length, transitions.length);
+        return all;
+    }
+
     @Test
-    @DisplayName("GDR-FORMS-5: every transition of the default workflow runs on its mechanism and writes the state")
-    void defaultWorkflow(@Remote LocalRemote remote) {
+    @DisplayName("GDR-FORMS-5: edit of the default workflow is an intermediate save")
+    void defaultWorkflowEdit(@Remote LocalRemote remote) {
         seedMain(remote);
         var key = document();
-        var target = StoreReferences.target(key);
-        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
-        var author = Author.of("p-author");
         try (var fixture = open(remote)) {
-            var edited = performed(fixture.perform(author, PASSWORD, key, "edit", complete(key, "First")));
+            var edited = perform(fixture, key, "edit");
             assertAll("edit is an intermediate save",
                     () -> assertEquals(edited.commitId(),
                             Objects.requireNonNull(tip(fixture.bareClone(), value(StoreReferences.draft("p-author", key))))
                                     .name(), "the draft commit"),
-                    () -> assertNull(tip(remote.repository(), target), "nothing saved"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.target(key)), "nothing saved"),
                     () -> assertNull(edited.release(), "no release"));
+        }
+    }
 
-            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
+    @Test
+    @DisplayName("GDR-FORMS-5: submit and rework of the default workflow save the state")
+    void defaultWorkflowSubmitAndRework(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        try (var fixture = open(remote)) {
+            perform(fixture, key, "edit", "submit");
             assertEquals("review", state(remote.repository(), target, document), "submit saves review");
 
-            performed(fixture.perform(author, PASSWORD, key, "rework", List.of()));
+            perform(fixture, key, "rework");
             assertEquals("draft", state(remote.repository(), target, document), "rework saves draft");
+        }
+    }
 
-            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
-            var approved = performed(fixture.perform(author, MFA, key, "approve", List.of()));
+    @Test
+    @DisplayName("GDR-FORMS-5: approve of the default workflow is a save and a release")
+    void defaultWorkflowApprove(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        try (var fixture = open(remote)) {
+            var approved = perform(fixture, key, TO_FIRST_RELEASE);
             assertAll("approve is a save and a release",
                     () -> assertEquals("approved", state(remote.repository(), target, document), "saved approved"),
                     () -> assertEquals("approved", state(remote.repository(), StoreReferences.MAIN, document),
@@ -355,16 +401,34 @@ class DocumentTransitionsTest {
                     () -> assertEquals(approved.commitId(),
                             Objects.requireNonNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1))).name(),
                             "the tag on the release commit"));
+        }
+    }
 
-            performed(fixture.perform(author, PASSWORD, key, "revise", List.of()));
+    @Test
+    @DisplayName("GDR-FORMS-5: revise of the default workflow saves draft and keeps main")
+    void defaultWorkflowRevise(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        try (var fixture = open(remote)) {
+            perform(fixture, key, then(TO_FIRST_RELEASE, "revise"));
             assertAll("revise saves draft and keeps main",
                     () -> assertEquals("draft", state(remote.repository(), target, document), "the working branch"),
                     () -> assertEquals("approved", state(remote.repository(), StoreReferences.MAIN, document),
                             "main keeps the last release"));
+        }
+    }
 
-            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
-            performed(fixture.perform(author, MFA, key, "approve", List.of()));
-            var superseded = performed(fixture.perform(author, MFA, key, "supersede", List.of()));
+    @Test
+    @DisplayName("GDR-FORMS-5: supersede of the default workflow is the last release")
+    void defaultWorkflowSupersede(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        try (var fixture = open(remote)) {
+            var superseded = perform(fixture, key,
+                    then(TO_FIRST_RELEASE, "revise", "submit", "approve", "supersede"));
             assertAll("supersede is the last release",
                     () -> assertEquals("superseded", state(remote.repository(), StoreReferences.MAIN, document),
                             "released superseded"),

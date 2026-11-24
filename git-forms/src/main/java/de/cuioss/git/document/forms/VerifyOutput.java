@@ -93,6 +93,15 @@ public final class VerifyOutput {
 
     private static final int ARGUMENTS = 6;
 
+    /** The name of the schema file argument, named in a refusal. */
+    private static final String SCHEMA_FILE = "schema-file";
+
+    /** The name of the template file argument, named in a refusal. */
+    private static final String TEMPLATE_FILE = "template-file";
+
+    /** The placeholder of a component of the kind the check never reads. */
+    private static final String UNREAD = "-";
+
     private VerifyOutput() {
     }
 
@@ -138,20 +147,20 @@ public final class VerifyOutput {
             err.println(INVALID_PATH);
             return FAILED;
         }
-        FormsResult<byte[]> schemaContent = read(schemaFile, "schema-file");
+        FormsResult<byte[]> schemaContent = read(schemaFile, SCHEMA_FILE);
         if (!schemaContent.isOk()) {
             return failed(err, schemaContent);
         }
-        FormsResult<byte[]> templateContent = read(templateFile, "template-file");
+        FormsResult<byte[]> templateContent = read(templateFile, TEMPLATE_FILE);
         if (!templateContent.isOk()) {
             return failed(err, templateContent);
         }
-        FormsResult<FormSchema> schema = FormSchema.parse("schema-file",
+        FormsResult<FormSchema> schema = FormSchema.parse(SCHEMA_FILE,
                 Objects.requireNonNull(schemaContent.value()));
         if (!schema.isOk()) {
             return failed(err, schema);
         }
-        FormsResult<DocumentTemplate> template = DocumentTemplate.parse("template-file",
+        FormsResult<DocumentTemplate> template = DocumentTemplate.parse(TEMPLATE_FILE,
                 Objects.requireNonNull(templateContent.value()));
         if (!template.isOk()) {
             return failed(err, template);
@@ -185,7 +194,7 @@ public final class VerifyOutput {
      */
     private static Kind kind(String collection, boolean numbered) {
         @Nullable Numbering numbering = numbered ? new Numbering("", 1) : null;
-        return new Kind(collection, "-", collection, "schema-file", "template-file", "-", numbering);
+        return new Kind(collection, UNREAD, collection, SCHEMA_FILE, TEMPLATE_FILE, UNREAD, numbering);
     }
 
     /** Reads a file of at most {@value DocumentTemplate#MAX_TEMPLATE_BYTES} bytes, never through a symbolic link. */
