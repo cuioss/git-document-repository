@@ -47,6 +47,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogRecord;
@@ -783,6 +784,9 @@ class StoreIndexTest {
     /** The deadline of every wait for another thread. */
     private static final long WAIT_SECONDS = 10;
 
+    /** The calls after which a re-entering contributor stops re-entering, far below the depth of the stack. */
+    private static final int REENTRY_BOUND = 50;
+
     /** Opens an index directly over a repository and its own events, as {@link StoreIndex#open} does for a writer. */
     private static StoreIndex<String> direct(Repository repository, Layout layout, IndexContributor<String> contributor,
             StoreEvents events) {
@@ -1058,6 +1062,79 @@ class StoreIndexTest {
                         () -> assertTrue(reentered, "the nested unchanged() returns"),
                         () -> assertFalse(refresh.isAlive(), "the refresh ends"),
                         () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"));
+            }
+        }
+
+        /**
+         * A contributor that performs a no-move operation on every call, while the index is stale: without the retry
+         * restricted to the outermost holder of the index lock, every nested {@code unchanged()} read the flag still
+         * set and refreshed again, calling the contributor again, until the stack overflowed. The contributor stops
+         * re-entering at {@value #REENTRY_BOUND} calls, so the test fails on that bound instead of overflowing.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a contributor re-entering unchanged() on a stale index defers the retry, no recursion")
+        void reenteringContributorOnStaleIndexDoesNotRecurse(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var calls = new AtomicInteger();
+            var armed = new AtomicBoolean();
+            var bounded = new AtomicBoolean();
+            IndexContributor<String> contributor = document -> {
+                if (armed.get()) {
+                    if (calls.incrementAndGet() < REENTRY_BOUND) {
+                        events.emit(List.of());
+                    } else {
+                        bounded.set(true);
+                    }
+                }
+                return document.key().id();
+            };
+
+            try (var index = direct(repository, layout, contributor, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob,
+                        workingBefore);
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingBefore.name(),
+                        broken.name())));
+                var staleAfterMove = tip(index, layout.workingBranch());
+
+                armed.set(true);
+                events.emit(List.of());
+                int failingRetryCalls = calls.getAndSet(0);
+                var staleAfterFailingRetry = tip(index, layout.workingBranch());
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                    inserter.flush();
+                }
+                events.emit(List.of());
+                int recoveringRetryCalls = calls.getAndSet(0);
+                var recovered = tip(index, layout.workingBranch());
+                events.emit(List.of());
+                int currentCalls = calls.get();
+
+                assertAll(
+                        () -> assertFalse(bounded.get(), "the contributor never reached the re-entry bound"),
+                        () -> assertEquals(workingBefore, staleAfterMove, "the unreadable source keeps its tip"),
+                        () -> assertTrue(failingRetryCalls < REENTRY_BOUND,
+                                () -> "a retry that still fails calls the contributor one pass at most: "
+                                        + failingRetryCalls),
+                        () -> assertEquals(workingBefore, staleAfterFailingRetry,
+                                "a retry that still fails keeps the index stale"),
+                        () -> assertTrue(recoveringRetryCalls > 0 && recoveringRetryCalls < REENTRY_BOUND,
+                                () -> "the next operation retries in one pass: " + recoveringRetryCalls),
+                        () -> assertEquals(broken, recovered, "the retry indexes the restored source"),
+                        () -> assertEquals(0, currentCalls, "the outer refresh cleared the stale mark"));
             }
         }
 

@@ -91,10 +91,10 @@ final class AnchorEngine {
     static final String ANCHOR_IN_CALLBACK = "anchor: refused inside a callback that holds a lock of the clone";
 
     /** The detail, after the notes reference, of a kept proof whose push failed again. */
-    private static final String KEPT_NOT_PUSHED = ": a kept proof was not pushed";
+    static final String KEPT_NOT_PUSHED = ": a kept proof was not pushed";
 
     /** The detail, after the notes reference, of a kept proof whose publication failed before its push. */
-    private static final String KEPT_NOT_PUBLISHED = ": a kept proof was not published";
+    static final String KEPT_NOT_PUBLISHED = ": a kept proof was not published";
 
     /** The prefix of a detail of the anchoring that names the class of an exception. */
     private static final String DETAIL = "anchor: ";

@@ -394,6 +394,69 @@ class AnchorInterleavingTest {
         }
     }
 
+    /**
+     * The deadlock of finding 230fcc: the due check of another thread holds the anchoring lock and waits for the
+     * transport lock the step holds, and the step calls {@code anchor()}. Without the refusal before the anchoring lock
+     * is requested, the step waited for the anchoring lock and neither thread ended.
+     */
+    @Test
+    @DisplayName("GDR-STORE-16: anchor() from a step while a due check waits for the transport lock is refused at once")
+    void stepAnchoringDuringDueCheckIsRefused(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var key = document(repository, commit(repository, StoreReferences.MAIN));
+        var deadline = Deadline.in(TIMEOUT_SECONDS);
+        var stepEntered = new CountDownLatch(1);
+        var dueCheckParked = new CountDownLatch(1);
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> nested = new AtomicReference<>();
+        AtomicReference<@Nullable SaveResult> saved = new AtomicReference<>();
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> anchored = new AtomicReference<>();
+        var fixture = open(remote);
+        // a deadlocked due check holds the anchoring lock, so the fixture is closed only when both threads ended
+        var bothEnded = new AtomicBoolean();
+
+        try {
+            var writer = fixture.writer();
+            var author = draft(writer, key);
+            var save = new Thread(() -> saved.set(writer.save(author, CLAIMS, key, Map.of(), word(), attempt -> {
+                // the step holds the shared side and the transport lock of its save
+                stepEntered.countDown();
+                try {
+                    if (dueCheckParked.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        nested.set(writer.anchor());
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new SaveStep.Edits(List.of());
+            })), "anchoring-step");
+            // the due check takes the anchoring lock and then waits for the transport lock the step holds
+            var dueCheck = new Thread(() -> anchored.set(writer.anchor()), "due-check");
+            save.setDaemon(true);
+            dueCheck.setDaemon(true);
+
+            save.start();
+            assertTrue(stepEntered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the step runs");
+            dueCheck.start();
+            ThreadStates.awaitParkedOrEnded(dueCheck, TIMEOUT_SECONDS);
+            dueCheckParked.countDown();
+            TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
+            TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
+            boolean ended = !save.isAlive() && !dueCheck.isAlive();
+            bothEnded.set(ended);
+
+            assertAll(
+                    () -> assertTrue(ended, "both threads end within the deadline, so nothing deadlocked"),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.ANCHOR_IN_CALLBACK),
+                            nested.get(), "the anchor() of the step is refused"),
+                    () -> assertInstanceOf(SaveResult.Saved.class, saved.get(), "the save completes"),
+                    () -> assertTrue(Objects.requireNonNull(anchored.get()).isOk(), "the due check completes"));
+        } finally {
+            if (bothEnded.get()) {
+                fixture.close();
+            }
+        }
+    }
+
     @Test
     @DisplayName("GDR-STORE-16, GDR-STORE-17: a save during the tag push and the note push waits; nothing is lost")
     void saveDuringPushesWaitsAndLosesNothing(@Remote LocalRemote remote) throws Exception {
