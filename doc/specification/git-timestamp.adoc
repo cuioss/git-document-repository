@@ -7,9 +7,29 @@
 `git-timestamp` (module `de.cuioss.git.document.timestamp`, not yet created, optional) provides the anchor provider
 `rfc3161` of `git-store` (xref:git-store.adoc#GDR-STORE-15[GDR-STORE-15]): proofs from an external RFC 3161 timestamp
 authority, for organisations that need a proof independent of their own operation. It is the alternative to the own
-timestamp `signed` of `git-store`. It depends on `git-store`; its RFC 3161 client library is open and needs the
-owner's approval. Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion
-Stores, The Anchor].
+timestamp `signed` of `git-store`. It depends on `git-store` and adds no third-party dependency (see the decision
+below). Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
+Anchor].
+
+*Decision (2026-11-24):* RFC 3161 is implemented by an own dependency-free DER/CMS reader and writer in
+`git-timestamp`, on the JDK alone: the signature check, the certificates and the certification path come from
+`java.security` (link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/Signature.html[Java SE
+21, `Signature`];
+link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/cert/CertPathValidator.html[Java SE 21,
+`CertPathValidator`]), the transport from `java.net.http`
+(link:https://docs.oracle.com/en/java/javase/21/docs/api/java.net.http/java/net/http/HttpClient.html[Java SE 21,
+`HttpClient`]). This is the choice `git-store` made for SSHSIG
+(xref:git-store.adoc#GDR-STORE-12[GDR-STORE-12]). The module adds no dependency, and Bouncy Castle is not used
+(xref:general.adoc#GDR-GEN-1[GDR-GEN-1]).
+
+The alternative considered and rejected was Bouncy Castle, whose time-stamp protocol API ships in `bcpkix`
+(`org.bouncycastle:bcpkix-jdk18on`, named "Bouncy Castle PKIX, CMS, EAC, TSP, PKCS, OCSP, CMP, and CRMF APIs" in its
+POM). Reason: it brings three artifacts instead of none. `bcpkix-jdk18on` 1.87 declares a compile dependency on
+`bcutil-jdk18on` 1.87, and that one declares a compile dependency on `bcprov-jdk18on` 1.87
+(link:https://repo1.maven.org/maven2/org/bouncycastle/bcpkix-jdk18on/1.87/bcpkix-jdk18on-1.87.pom[`bcpkix-jdk18on`
+1.87 POM]; link:https://repo1.maven.org/maven2/org/bouncycastle/bcutil-jdk18on/1.87/bcutil-jdk18on-1.87.pom[`bcutil-jdk18on`
+1.87 POM]; both checked on 2026-11-24). The module needs one request and the verification of one token, which the JDK
+classes above cover with a small own DER/CMS reader and writer.
 
 [#GDR-TSA-1]
 == GDR-TSA-1: RFC 3161 Anchor Provider
@@ -29,9 +49,16 @@ xref:general.adoc#GDR-GEN-3[GDR-GEN-3]: an unreachable authority returns unavail
 |Configuration |Semantics
 
 |`timestamp.url` |required; HTTPS URL of the timestamp authority
-|`timestamp.trust` |required; certificate(s) of the authority for verification
-|`timestamp.credentials` |optional; for authorities that require authentication
+|`timestamp.trust` |required; a non-empty list of paths to PEM files, each holding one or more X.509 certificates of
+the authority for verification; each file is read without following a symbolic link and refused above a size limit
+|`timestamp.credentials` |optional; a single bearer token for authorities that require authentication, sent as the
+header `Authorization: Bearer <token>`
 |===
+
+The forms of `timestamp.trust` and `timestamp.credentials` were decided by the owner on 2026-11-24. The bearer token of
+`timestamp.credentials` is held in memory only and never appears in a result detail, a log message, an exception
+message or a `toString` (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); without `timestamp.credentials` no `Authorization`
+header is sent.
 
 An authority run inside the organisation counts as independent only when it lies under a responsibility other than
 the Git administration and the application's operation; otherwise it proves no more than `signed`.

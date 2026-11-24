@@ -153,7 +153,10 @@ On 2026-11-23 the owner decided that `git-forms` uses no third-party template en
 language, so the template adds no dependency (xref:git-forms.adoc[`git-forms`]); the alternatives considered were a
 logic-less Mustache library such as `com.samskivert:jmustache` and a full engine such as Pebble or FreeMarker, which
 were not checked against Maven Central because neither was chosen, and the owner gave no reasons, so none are
-recorded. Every other dependency below is open and needs the owner's approval before it is added:
+recorded. On 2026-11-24 the owner decided that `git-timestamp` adds no dependency for RFC 3161: like SSHSIG in
+`git-store`, the RFC 3161 support is an own DER/CMS reader and writer on the JDK, and Bouncy Castle is not used
+(alternative and reason: xref:git-timestamp.adoc[`git-timestamp`]). Every other dependency below is open and needs the
+owner's approval before it is added:
 
 [cols="1,3"]
 |===
@@ -173,7 +176,9 @@ is an own encoder of `git-store` and Ed25519 comes from the JDK, JGit's `org.ecl
 |`git-forms` |`git-store`, `cui-java-tools` for `CuiLogger`, Lombok (scope `provided`); in test scope `git-testing`,
 `cui-test-juli-logger`, `cui-test-generator` and JUnit 5 (each declared); `org.snakeyaml:snakeyaml-engine` and
 `dev.harrel:json-schema` (each declared, decided); no template engine (decided 2026-11-23)
-|`git-timestamp` |an RFC 3161 client library (open)
+|`git-timestamp` |no dependency for RFC 3161 (decided 2026-11-24): the time-stamp request and the verification of the
+token are an own DER/CMS reader and writer of `git-timestamp` on the JDK (`java.security`, `java.net.http`), Bouncy
+Castle is not adopted (xref:git-timestamp.adoc[`git-timestamp`])
 |`git-directory` |none beyond those of `git-forms`
 |===
 
