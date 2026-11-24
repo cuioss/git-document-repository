@@ -141,16 +141,6 @@ public final class DocumentTransitions {
     }
 
     /**
-     * The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git.
-     *
-     * @param outcome the outcome
-     * @return the name of its constant
-     */
-    static String name(FormsResult.Outcome outcome) {
-        return TransitionOutcomes.name(outcome);
-    }
-
-    /**
      * What a kind brings to its transitions: the kind, its schema, its workflow and its template.
      *
      * @param kind     the kind of document

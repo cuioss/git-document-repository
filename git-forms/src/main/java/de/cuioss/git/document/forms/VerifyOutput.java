@@ -242,7 +242,7 @@ public final class VerifyOutput {
     }
 
     private static int failed(PrintStream err, FormsResult<?> result) {
-        err.println(DocumentTransitions.name(result.outcome()) + " " + result.detail());
+        err.println(TransitionOutcomes.name(result.outcome()) + " " + result.detail());
         return FAILED;
     }
 }
