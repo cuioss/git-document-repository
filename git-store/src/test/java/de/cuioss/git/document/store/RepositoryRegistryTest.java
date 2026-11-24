@@ -402,6 +402,54 @@ class RepositoryRegistryTest {
         }
 
         @Test
+        @DisplayName("GDR-NFR-3: a remote without a slash before its query or fragment renders without either")
+        void rendersWithoutQueryAndFragmentAfterTheHost() {
+            var token = credential();
+            var anchor = credential();
+            var expected = "remote=" + ORIGIN + ",";
+            var withQuery = repository(alias(), ORIGIN + "?token=" + token);
+            var withFragment = repository(alias(), ORIGIN + "#" + anchor);
+
+            assertAll(Stream.of(withQuery, withFragment).<Executable>map(repository -> () -> {
+                var rendered = repository.toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains(expected), () -> "scheme and host: " + rendered),
+                        () -> assertFalse(rendered.contains(token), "no query"),
+                        () -> assertFalse(rendered.contains(anchor), "no fragment"));
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a question mark in a password does not decide the cut, no part of it is rendered")
+        void questionMarkInPasswordRendersNoSecret() {
+            var user = credential();
+            var before = credential();
+            var after = credential();
+            var path = word();
+            var repository = repository(alias(),
+                    "https://" + user + ":" + before + "?" + after + "@git.example/" + path + ".git");
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=https://git.example/" + path + ".git,"),
+                            () -> "scheme, host and path: " + rendered),
+                    () -> assertFalse(rendered.contains(user), "no user"),
+                    () -> assertFalse(rendered.contains(before), "no part of the password before the question mark"),
+                    () -> assertFalse(rendered.contains(after), "no part of the password after the question mark"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an encoded delimiter belongs to the path and stays")
+        void encodedDelimiterStays() {
+            var path = word();
+            var repository = repository(alias(), ORIGIN + "/" + path + "%3F" + path + ".git");
+
+            assertTrue(repository.toString().contains("remote=" + ORIGIN + "/" + path + "%3F" + path + ".git,"),
+                    repository::toString);
+        }
+
+        @Test
         @DisplayName("GDR-NFR-3: a repository renders the port of its remote and none of user, password and query")
         void rendersPortWithoutSecrets() {
             var user = credential();

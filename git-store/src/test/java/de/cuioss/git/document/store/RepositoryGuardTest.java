@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -114,8 +115,8 @@ class RepositoryGuardTest {
         var overlapped = new AtomicBoolean();
         var laterRan = new AtomicBoolean();
 
-        // A registers the lock and pauses before taking it
-        Thread first = Thread.ofPlatform().start(() -> guard.draft(ref, () -> {
+        // the workers run as futures, so a failure inside one is rethrown on this thread after the joins
+        var firstSave = new FutureTask<>(() -> guard.draft(ref, () -> {
             registered.countDown();
             await(resume);
         }, () -> {
@@ -125,29 +126,42 @@ class RepositoryGuardTest {
             inside.decrementAndGet();
             return null;
         }));
-        assertTrue(registered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the first save registered its lock");
-
-        // B takes and releases the lock while A holds a registration but not the lock
-        guard.draft(ref, () -> {
-            enter(inside, overlapped);
-            inside.decrementAndGet();
-            return null;
-        });
-        assertEquals(1, guard.draftLocks(), "the lock A registered survives B's release");
-
-        resume.countDown();
-        assertTrue(holding.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the first save holds the lock");
-
-        // C must wait for A: it meets the same lock A holds, not a new one
-        Thread later = Thread.ofPlatform().start(() -> guard.draft(ref, () -> {
+        var laterSave = new FutureTask<>(() -> guard.draft(ref, () -> {
             enter(inside, overlapped);
             laterRan.set(true);
             inside.decrementAndGet();
             return null;
         }));
-        ThreadStates.awaitParkedOrEnded(later, TIMEOUT_SECONDS);
-        boolean ranWhileHeld = laterRan.get();
-        releaseHolder.countDown();
+        Thread first;
+        Thread later;
+        boolean ranWhileHeld;
+        try {
+            // A registers the lock and pauses before taking it
+            first = Thread.ofPlatform().start(firstSave);
+            assertTrue(registered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the first save registered its lock");
+
+            // B takes and releases the lock while A holds a registration but not the lock
+            guard.draft(ref, () -> {
+                enter(inside, overlapped);
+                inside.decrementAndGet();
+                return null;
+            });
+            assertEquals(1, guard.draftLocks(), "the lock A registered survives B's release");
+
+            resume.countDown();
+            assertTrue(holding.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the first save holds the lock");
+
+            // C must wait for A: it meets the same lock A holds, not a new one
+            later = Thread.ofPlatform().start(laterSave);
+            ThreadStates.awaitParkedOrEnded(later, TIMEOUT_SECONDS);
+            ranWhileHeld = laterRan.get();
+        } finally {
+            // a failed assertion above leaves no worker waiting for its latch until the timeout
+            resume.countDown();
+            releaseHolder.countDown();
+        }
+        firstSave.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        laterSave.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
         first.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
         later.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
 

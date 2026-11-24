@@ -34,6 +34,7 @@ import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -572,7 +573,8 @@ class AnchorEngineTest {
                 fixture.anchors().errorNext(new AssertionError(word())).errorNext(new StackOverflowError());
 
                 var failed = fixture.anchor();
-                var exhausted = assertThrows(StackOverflowError.class, () -> fixture.writer().anchor(),
+                var writer = fixture.writer();
+                var exhausted = assertThrows(StackOverflowError.class, writer::anchor,
                         "a VirtualMachineError is not isolated");
                 var anchored = fixture.anchor();
 
@@ -586,6 +588,50 @@ class AnchorEngineTest {
                         () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
                                 AssertionError.class.getName()));
             }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a proof whose base64 note exceeds the blob bound is refused, never kept or published")
+        void oversizedProofIsRefused(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().sizedNext(AnchorEngine.PROOF_LIMIT + 1);
+                var notesRef = StoreReferences.anchorNotes(fixture.anchors().id());
+
+                var refused = fixture.anchor();
+                var noteAfterRefusal = remote.repository().exactRef(notesRef);
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(ExplicitSave.BLOB_LIMIT,
+                                Base64.getEncoder().encode(new byte[AnchorEngine.PROOF_LIMIT]).length,
+                                "the largest accepted proof fills the blob bound with its base64 form"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), refused,
+                                "the oversized proof leaves the subject pending"),
+                        () -> assertNull(noteAfterRefusal, "no note was published"),
+                        () -> assertEquals(2, fixture.anchors().calls().size(),
+                                "nothing was kept: the next due check asks the provider again"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors the subject with a proof of a fitting size"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: anchor() of a closed writer without a provider is REFUSED, of an open one empty")
+        void closedWriterWithoutProviderRefuses(@Remote LocalRemote remote) {
+            var fixture = open(remote, null, null, NO_RETRY);
+
+            var open = fixture.writer().anchor();
+            fixture.close();
+            var closed = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), value(open),
+                            "an open writer without a provider anchors nothing"),
+                    () -> assertEquals(StoreOutcome.REFUSED, closed.outcome(), "a closed writer refuses"),
+                    () -> assertEquals(AnchorEngine.CLOSED, closed.detail(), "naming the close"));
         }
 
         @Test

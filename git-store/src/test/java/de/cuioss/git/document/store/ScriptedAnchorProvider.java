@@ -122,6 +122,17 @@ final class ScriptedAnchorProvider implements AnchorProvider {
     }
 
     /**
+     * Scripts the next call to succeed with a proof of a given size, of zero bytes.
+     *
+     * @param size the size of the proof in bytes
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider sizedNext(int size) {
+        script.add(() -> StoreResult.ok(new byte[size]));
+        return this;
+    }
+
+    /**
      * Scripts the next call to throw an {@link IllegalStateException}.
      *
      * @return this double

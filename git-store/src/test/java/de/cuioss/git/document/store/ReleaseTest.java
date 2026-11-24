@@ -39,8 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogRecord;
@@ -916,7 +914,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a tag the remote refuses because it holds it at the release commit completes the release")
-        void refusedTagAtTheReleaseCommitCompletes(@Remote LocalRemote remote) throws Exception {
+        void refusedTagAtTheReleaseCommitCompletes(@Remote LocalRemote remote) {
             var key = document();
             fork(remote.repository(), key);
             var tag = StoreReferences.releaseTag(key, 1);
@@ -942,7 +940,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a tag the remote holds at another commit leaves the release INCOMPLETE, never moved")
-        void refusedTagAtAnotherCommitIsIncomplete(@Remote LocalRemote remote) throws Exception {
+        void refusedTagAtAnotherCommitIsIncomplete(@Remote LocalRemote remote) {
             var key = document();
             var forked = fork(remote.repository(), key);
             var tag = StoreReferences.releaseTag(key, 1);
@@ -968,7 +966,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a gitlink among the paths is MALFORMED naming the class of the path; nothing pushed")
-        void gitlinkIsMalformed(@Remote LocalRemote remote) throws Exception {
+        void gitlinkIsMalformed(@Remote LocalRemote remote) {
             var key = document();
             var base = files(word());
             var start = commit(remote.repository(), StoreReferences.MAIN, base);
@@ -996,7 +994,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a fetched blob above 16 MiB ends the release with a defined outcome; nothing pushed")
-        void oversizedBlobEndsTheRelease(@Remote LocalRemote remote) throws Exception {
+        void oversizedBlobEndsTheRelease(@Remote LocalRemote remote) {
             var key = document();
             var base = files(word());
             var start = commit(remote.repository(), StoreReferences.MAIN, base);
@@ -1082,7 +1080,7 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: a numbered entry main left alone since the previous release is released as v2")
-        void numberedEntryUnchangedOnMainReleases(@Remote LocalRemote remote) throws Exception {
+        void numberedEntryUnchangedOnMainReleases(@Remote LocalRemote remote) {
             var collection = collection(Kind.NUMBERED);
             var key = entry(collection);
             var path = collection.name() + "/" + key.id() + ".json";
@@ -1109,44 +1107,34 @@ class ReleaseTest {
 
         @Test
         @DisplayName("GDR-STORE-6: two concurrent releases of one document through two clones count v1 and v2")
-        void concurrentReleasesCountVersions(@Remote LocalRemote remote) throws Exception {
+        void concurrentReleasesCountVersions(@Remote LocalRemote remote) {
             var key = document();
             fork(remote.repository(), key);
             var author = Author.of(pseudonym());
-            var executor = Executors.newFixedThreadPool(2);
-            var start = new CountDownLatch(1);
 
             try (var one = open(remote); var two = open(remote)) {
-                var first = executor.submit(() -> {
-                    start.await();
-                    return one.release(author, key);
-                });
-                var second = executor.submit(() -> {
-                    start.await();
-                    return two.release(author, key);
-                });
-                start.countDown();
-                var results = List.of(first.get(PARK_SECONDS * 3, TimeUnit.SECONDS),
-                        second.get(PARK_SECONDS * 3, TimeUnit.SECONDS));
+                // the interleaving is forced, not raced: the first writer pauses right before its push of main, the
+                // second releases in full meanwhile, then the first resumes with a lease main no longer matches
+                List<StoreResult<Release>> interleaved = new ArrayList<>();
+                one.operations().beforePushTo(StoreReferences.MAIN,
+                        input -> interleaved.add(two.release(author, key)));
 
-                // the second may release v2, or complete the first one's v1 when it fetched between the push of main
-                // and the push of the tag: either way both complete, the versions count from 1 without a gap and every
-                // tag on the remote points at the commit its release names
-                List<Release> releases = results.stream().map(ReleaseTest::value).toList();
-                List<Integer> versions = releases.stream().map(Release::version).distinct().sorted().toList();
+                var first = value(one.release(author, key));
+
+                var second = value(interleaved.getFirst());
+                long mainPushes = one.operations().pushes().stream()
+                        .filter(push -> StoreReferences.MAIN.equals(push.remoteRef())).count();
                 assertAll(
-                        () -> assertEquals(1, versions.getFirst(), "v1 first"),
-                        () -> assertEquals(versions.size(), versions.getLast(), "no gap in the versions"),
+                        () -> assertEquals(1, second.version(), "the writer that published first released v1"),
+                        () -> assertEquals(2, first.version(), "the paused writer retried and released v2"),
+                        () -> assertEquals(2, mainPushes, "its first push of main lost the lease, the retry won"),
                         () -> {
-                            for (Release release : releases) {
+                            for (Release release : List.of(first, second)) {
                                 assertEquals(ObjectId.fromString(release.commitId()),
                                         tip(remote.repository(), release.tag()), "the tag on its release commit");
                             }
                         },
                         () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 3)), "no v3"));
-            } finally {
-                executor.shutdownNow();
-                assertTrue(executor.awaitTermination(PARK_SECONDS, TimeUnit.SECONDS), "the writers ended");
             }
         }
     }

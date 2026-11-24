@@ -646,7 +646,7 @@ class SaveStepTest {
 
     @Test
     @DisplayName("GDR-STORE-3: an Error of a step ends the save FAILED; a VirtualMachineError propagates")
-    void errorOfStepIsIsolated(@Remote LocalRemote remote) throws Exception {
+    void errorOfStepIsIsolated(@Remote LocalRemote remote) {
         var key = key();
         var target = StoreReferences.target(key);
         var tipId = commit(remote.repository(), target, Map.of(word(), content()));
@@ -670,6 +670,66 @@ class SaveStepTest {
                             "a VirtualMachineError is not isolated"),
                     () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
                     () -> assertNothingLeaks(String.valueOf(result), List.of(secret)));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-3: the view reports no mode for a gitlink of the tip, and the executable and link modes")
+    void viewReportsNoModeForGitlink(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var gitlink = word();
+        var executable = word();
+        var link = word();
+        try (ObjectInserter inserter = remote.repository().newObjectInserter()) {
+            DirCache index = DirCache.newInCore();
+            DirCacheBuilder builder = index.builder();
+            var submodule = new DirCacheEntry(gitlink);
+            submodule.setFileMode(FileMode.GITLINK);
+            // a gitlink names a commit of another repository, which this repository does not hold
+            submodule.setObjectId(new ObjectInserter.Formatter().idFor(Constants.OBJ_COMMIT, bytes(content())));
+            builder.add(submodule);
+            var script = new DirCacheEntry(executable);
+            script.setFileMode(FileMode.EXECUTABLE_FILE);
+            script.setObjectId(inserter.insert(Constants.OBJ_BLOB, bytes(content())));
+            builder.add(script);
+            var symlink = new DirCacheEntry(link);
+            symlink.setFileMode(FileMode.SYMLINK);
+            symlink.setObjectId(inserter.insert(Constants.OBJ_BLOB, bytes(word())));
+            builder.add(symlink);
+            builder.finish();
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(pseudonym(), "");
+            commit.setTreeId(index.writeTree(inserter));
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = remote.repository().updateRef(target);
+            update.setNewObjectId(id);
+            assertEquals(RefUpdate.Result.NEW, update.update(), "the fixture branch is written");
+        }
+        var author = Author.of(pseudonym());
+        Map<String, Optional<TreeEdit.Mode>> modes = new TreeMap<>();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+
+            var result = fixture.save(author, key, attempt -> {
+                modes.put(gitlink, attempt.mode(gitlink));
+                modes.put(executable, attempt.mode(executable));
+                modes.put(link, attempt.mode(link));
+                return new SaveStep.Refusal();
+            });
+
+            assertAll(
+                    () -> assertInstanceOf(SaveResult.NotSaved.class, result, "the step refused"),
+                    () -> assertEquals(Optional.empty(), modes.get(gitlink), "a gitlink has no file mode"),
+                    () -> assertEquals(Optional.of(TreeEdit.Mode.EXECUTABLE_FILE), modes.get(executable),
+                            "an executable file stays executable"),
+                    () -> assertEquals(Optional.of(TreeEdit.Mode.SYMLINK), modes.get(link),
+                            "a symbolic link stays one"));
         }
     }
 

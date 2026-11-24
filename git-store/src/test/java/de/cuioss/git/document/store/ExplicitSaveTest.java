@@ -35,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -381,7 +382,7 @@ class ExplicitSaveTest {
 
         @Test
         @DisplayName("GDR-STORE-3: a fetched blob above 16 MiB read by the step ends the save with a defined outcome")
-        void oversizedFetchedBlobEndsTheSave(@Remote LocalRemote remote) throws Exception {
+        void oversizedFetchedBlobEndsTheSave(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
             var large = word() + "-large";
@@ -989,8 +990,9 @@ class ExplicitSaveTest {
 
             try (var fixture = open(remote)) {
                 var draft = fixture.draft(author, key, puts(files(word() + "x")));
-                fixture.operations().failPush(GitOutcome.LEASE_REFUSED, GitOutcome.LEASE_REFUSED,
-                        GitOutcome.LEASE_REFUSED);
+                // one lost lease per configured attempt, so the budget the writer is opened with is the one exhausted
+                fixture.operations().failPush(
+                        Collections.nCopies(ATTEMPTS, GitOutcome.LEASE_REFUSED).toArray(GitOutcome[]::new));
 
                 var result = fixture.save(author, key, Map.of());
 

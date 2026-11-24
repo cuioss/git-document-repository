@@ -384,7 +384,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: an unreadable working branch keeps its entries, the other sources are fresh")
-        void unreadableSourceKeepsItsEntries(@Remote LocalRemote remote) throws Exception {
+        void unreadableSourceKeepsItsEntries(@Remote LocalRemote remote) {
             var repository = remote.repository();
             var layout = layout(repository);
             var other = value(DocumentKey.of(layout.documents(), Ulid.next()));
@@ -907,7 +907,7 @@ class StoreIndexTest {
 
         @Test
         @DisplayName("GDR-STORE-9: a fetched blob above 16 MiB keeps the source's previous entries, never read whole")
-        void oversizedBlobKeepsPreviousEntries(@Remote LocalRemote remote) throws Exception {
+        void oversizedBlobKeepsPreviousEntries(@Remote LocalRemote remote) {
             var repository = remote.repository();
             var layout = layout(repository);
             var events = new StoreEvents(updates -> {

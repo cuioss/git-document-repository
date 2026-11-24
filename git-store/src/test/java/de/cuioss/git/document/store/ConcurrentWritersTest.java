@@ -87,8 +87,18 @@ class ConcurrentWritersTest {
     /** The number of concurrent writers of the scenario. */
     private static final int WRITERS = 10;
 
-    /** {@code save.max-attempts} of the scenario: one lost lease per other writer and one more. */
-    private static final int ATTEMPTS = 10;
+    /**
+     * The margin of lost attempts per other writer: after the first-push barrier a writer can lose more than one
+     * attempt to the same winner, for example once to the lease and once more to the remote reference lock it still
+     * holds while its push completes (GDR-CORE-7), so one loss per other writer is not a bound.
+     */
+    private static final int LOSSES_PER_OTHER_WRITER = 3;
+
+    /**
+     * {@code save.max-attempts} of the scenario, sized from the number of writers: up to
+     * {@value #LOSSES_PER_OTHER_WRITER} lost attempts per other writer, and the attempt that wins.
+     */
+    private static final int ATTEMPTS = (WRITERS - 1) * LOSSES_PER_OTHER_WRITER + 1;
 
     /** The time a scenario may take before it counts as hanging. */
     private static final long TIMEOUT_SECONDS = 120;
