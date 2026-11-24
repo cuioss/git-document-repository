@@ -1,0 +1,29 @@
+= Log Messages for git-timestamp
+:toc: left
+:toclevels: 2
+
+== Overview
+
+The log-message catalogue of `git-timestamp`
+(xref:../../doc/specification/general.adoc#GDR-GEN-4[GDR-GEN-4]). Every message at level INFO, WARN or ERROR carries a
+stable identifier of the form `GIT_TIMESTAMP-<identifier>`, rendered by `LogRecord#resolveIdentifierString()` without
+leading zeros; the identifiers follow the CUI `LogRecord` ranges (INFO 1-99,
+WARN 100-199, ERROR 200-299). The messages are declared in
+`de.cuioss.git.document.timestamp.GitTimestampLogMessages`.
+
+No message carries anything xref:../../doc/specification/general.adoc#GDR-NFR-3[GDR-NFR-3] forbids: a message never
+names the bearer token of `timestamp.credentials`, the user information of a URL, the body of a response or the content
+of a certificate file.
+Debug and trace messages carry no identifier and are not listed.
+
+== INFO Level (1-99)
+
+`git-timestamp` logs no message at level INFO.
+
+== WARN Level (100-199)
+
+`git-timestamp` logs no message at level WARN.
+
+== ERROR Level (200-299)
+
+`git-timestamp` logs no message at level ERROR: an unexpected failure is returned as an outcome of the result.
