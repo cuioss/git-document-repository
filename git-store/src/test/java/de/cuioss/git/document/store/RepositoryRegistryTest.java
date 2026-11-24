@@ -25,8 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.URI;
 import java.time.Period;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -39,6 +41,10 @@ import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import de.cuioss.test.juli.LogAsserts;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -49,12 +55,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 /**
  * The repository registry (GDR-STORE-1): a valid registry under an HTTPS origin and under the local-only policy, every
  * refusal of {@link RepositoryRegistry#of(List, RemotePolicy)} with a detail naming the alias or the position and never
- * the remote (GDR-NFR-3), the lookup by alias and the retention period.
+ * the remote (GDR-NFR-3), the lookup by alias and the retention period, and the rendering of a remote as scheme, host,
+ * port and path without user, password, query and fragment (GDR-NFR-3).
  * <p>
  * Aliases, confidentiality classes and path segments are generated; the scheme {@code https}, the HTTPS origin
- * {@value #ORIGIN} and the user information of a remote are URL vocabulary and kept as literals.
+ * {@value #ORIGIN}, the user information, the query key {@code token} and the separators of a remote are URL vocabulary
+ * and kept as literals.
  */
 @EnableGeneratorController
+@EnableTestLogger
 @DisplayName("RepositoryRegistry (GDR-STORE-1)")
 class RepositoryRegistryTest {
 
@@ -368,6 +377,81 @@ class RepositoryRegistryTest {
                             "the remote is rendered without user information"),
                     () -> assertFalse(rendered.contains(user), "no user"),
                     () -> assertFalse(rendered.contains(password), "no password"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a repository renders its remote without query and fragment")
+        void rendersWithoutQueryAndFragment() {
+            var token = credential();
+            var anchor = credential();
+            var path = word();
+            var expected = "remote=" + ORIGIN + "/" + path + ".git,";
+            var withQuery = repository(alias(), ORIGIN + "/" + path + ".git?token=" + token);
+            var withFragment = repository(alias(), ORIGIN + "/" + path + ".git#" + anchor);
+            var withBoth = repository(alias(), ORIGIN + "/" + path + ".git?token=" + token + "#" + anchor);
+
+            assertAll(Stream.of(withQuery, withFragment, withBoth).<Executable>map(repository -> () -> {
+                var rendered = repository.toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains(expected), () -> "scheme, host and path: " + rendered),
+                        () -> assertFalse(rendered.contains(token), "no query"),
+                        () -> assertFalse(rendered.contains(anchor), "no fragment"),
+                        () -> assertFalse(rendered.contains("?"), "no query separator"),
+                        () -> assertFalse(rendered.contains("#"), "no fragment separator"));
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a repository renders the port of its remote and none of user, password and query")
+        void rendersPortWithoutSecrets() {
+            var user = credential();
+            var password = credential();
+            var token = credential();
+            var port = Generators.integers(1, 65_535).next();
+            var path = word();
+            var repository = repository(alias(),
+                    "https://" + user + ":" + password + "@git.example:" + port + "/" + path + ".git?token=" + token);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=https://git.example:" + port + "/" + path + ".git,"),
+                            () -> "scheme, host, port and path: " + rendered),
+                    () -> assertFalse(rendered.contains(user), "no user"),
+                    () -> assertFalse(rendered.contains(password), "no password"),
+                    () -> assertFalse(rendered.contains(token), "no query"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: the record of a refused start carries no user, password or query of a remote")
+        void startRefusedRecordCarriesNoSecret() {
+            var user = credential();
+            var password = credential();
+            var token = credential();
+            Map<String, Object> repository = new LinkedHashMap<>();
+            repository.put("alias", alias());
+            repository.put("remote", "https://" + user + ":" + password + "@git.example/" + word() + ".git?token="
+                    + token);
+            repository.put("confidentiality", word());
+            Map<String, Object> tree = new LinkedHashMap<>();
+            tree.put("save", Map.of("max-attempts", 1));
+            tree.put("drafts", Map.of("expiry", "P1D"));
+            tree.put("fetch", Map.of("interval", "PT1M"));
+            tree.put("repositories", List.of(repository));
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            var records = TestLoggerFactory.getTestHandler().getRecords();
+            assertAll(
+                    () -> assertEquals(StoreOutcome.MALFORMED, result.outcome(), "the start is refused"),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString()),
+                    () -> assertTrue(records.stream().map(logRecord -> String.valueOf(logRecord.getMessage()))
+                                    .noneMatch(message -> message.contains(user) || message.contains(password)
+                                            || message.contains(token)),
+                            "no log record carries a user, a password or a query"),
+                    () -> assertTrue(records.stream().allMatch(logRecord -> logRecord.getThrown() == null),
+                            "no throwable is attached"));
         }
 
         @Test

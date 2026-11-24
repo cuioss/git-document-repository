@@ -92,17 +92,33 @@ qualified binary name of the service
 _Deploying service providers on the class path_). The module `de.cuioss.git.document.store` declares `uses` for each
 of the three interfaces. `StoreProviders.load(configuration)` finds the candidates with `ServiceLoader.load` for each
 interface and hands them to
-`StoreProviders.select(configuration, signing, anchors, persons)`, which picks the provider whose id is
+`StoreProviders.select(configuration, signing, anchors, persons)`. The `AnchorProvider` candidates are instantiated only
+when `anchor.provider` names an id other than `signed` (<<GDR-STORE-15>>); a start that anchors nothing, or that anchors
+with the built-in provider `signed`, instantiates none, so a broken anchor provider on the class path cannot stop it.
+`select` picks the provider whose id is
 `signing.key-source`, the one whose id is `directory.persons.provider`, and, when `anchor.provider` is present, the one
 with that id; without `anchor.provider` no anchor provider is selected. A configured id that no candidate carries, or
 that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with the id of <key>` or
 `<interface>: more than one provider with the id of <key>`, where `<key>` is the configuration key the id is read from;
 the detail never carries the configured id, a configured value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). Two candidates
-with an id nobody configured do not stop the start. A `ServiceConfigurationError` while loading is `MALFORMED` naming
-the interface; only the interface and the class name of the error are logged (DEBUG), never the message of the error
-or of its cause, which a failing provider may fill with a credential. A selection is logged as
-`GIT_STORE-1` with the three ids, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
+with an id nobody configured do not stop the start. A `ServiceConfigurationError` or a `LinkageError` while loading is
+`MALFORMED` naming the interface; only the interface and the class name of the error are logged (DEBUG), never the
+message of the error or of its cause, which a failing provider may fill with a credential. The id of every candidate
+the selection consults is read once and guarded: a candidate whose `id()` throws a `RuntimeException` or a
+`LinkageError`, or returns `null`, ends the selection as `MALFORMED` with the detail `<interface>: a provider id cannot
+be read`, and only the class of the candidate and of the throwable are logged (DEBUG). Under
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3] a provider that fails while naming itself is an expected non-success of the
+start, not an exception; a `LinkageError` is handled like a `RuntimeException` because a provider whose classes cannot
+be linked fails first when one of its methods is called. A selection is logged as `GIT_STORE-1` with the three ids the
+providers were matched by, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
 `git-store/doc/LogMessages.adoc` (xref:general.adoc#GDR-GEN-4[GDR-GEN-4]).
+
+The tests of the provider selection (`StoreProvidersTest`) run on the class path only, so they exercise the lookup
+through `META-INF/services` and not through the `provides` directive of a provider module: `git-testing` requires
+`org.junit.jupiter.api` transitively, and on the module path Surefire would place `org.junit.platform.commons` in a named
+module while its launcher stays in the unnamed module, which fails with `IllegalAccessError` (the failure recorded in
+`git-store/pom.xml` and `git-testing/pom.xml`). The module-mode lookup is that of `ServiceLoader` itself and is not
+exercised by a test of `git-store`.
 
 [#GDR-STORE-1]
 == GDR-STORE-1: Repository Registry
@@ -121,7 +137,12 @@ repositories:
 ----
 
 A repository is the record `StoreRepository` (alias, remote, confidentiality, optional retention as a
-`java.time.Period`); its `toString()` renders the remote without user information. `RepositoryRegistry.of(repositories,
+`java.time.Period`); its `toString()` renders the remote as scheme, host, port and path only: the user, the password,
+the query and the fragment are never rendered (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), so a token carried in a query
+such as `?token=…` reaches no log record. JGit 7.8.0 `URIish` knows no query and no fragment and keeps both in its
+path, so the rendering cuts the path at its first `?` or `#`; a remote `URIish` cannot parse is rendered as
+`(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
+`RepositoryRegistry.of(repositories,
 policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
 `RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
 server, or on a single server local bare repositories
@@ -647,6 +668,11 @@ canonical: two equal values, and an unchanged value encoded again, yield byte-id
 cannot read is `MALFORMED`, never an exception, and its detail names what could not be read (a line number or a key)
 without repeating the content.
 
+`git-store` has no implementation of `Codec`, so the interface has no behaviour of its own to test. `CodecTest` is the
+documented contract test of the interface: it carries the one implementation in `git-store`, a canonical test codec,
+and checks what every implementation owes, the byte-identical round trip, the identical encoding of equal values and a
+`MALFORMED` refusal whose detail does not repeat the content; it exercises no other code of `git-store`.
+
 [#GDR-STORE-12]
 == GDR-STORE-12: Commit Signature
 
@@ -822,6 +848,11 @@ yields the time the proof establishes, no proof (a subject without a stored proo
 `refs/notes/anchors/<id>`; the id is of the form `[a-z0-9-]+`, so that name is a valid reference name by construction
 (<<store-configuration>>).
 
+The anchor provider candidates are instantiated lazily: `StoreProviders.load` instantiates them only when
+`anchor.provider` names an id other than the built-in `signed`. Without `anchor.provider`, or with `signed`, no
+`AnchorProvider` found through `ServiceLoader` is instantiated, so a provider that cannot be loaded does not stop a
+start that does not need it.
+
 [#GDR-STORE-16]
 == GDR-STORE-16: Anchored Subjects and Checkpoints
 
@@ -892,7 +923,12 @@ previous <SHA-256 of the previous proof, lowercase hex, or "none" for sequence 1
 The proof is the statement followed by an armored SSH signature over it with the namespace `git-document-anchor`
 (https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). The anchor key comes from
 `anchor.signed.key-source` and `anchor.signed.key`, like the commit-signing key; it should lie under a responsibility
-other than the Git administration, for example the security team's KMS. The log record lets the operator's log
+other than the Git administration, for example the security team's KMS. Whether the anchor key equals the
+commit-signing key is decided at provider selection by comparing the two public keys, each read once from its key
+source: equal public keys stop the start as `MALFORMED` with `anchor.signed.key equals the commit-signing key`,
+whatever key source or spelling of the key reference names them. This comparison is authoritative; the configuration
+check of the two references (<<store-configuration>>) is an early string check that refuses only identical
+references. The log record lets the operator's log
 pipeline keep a copy outside Git. A single proof can be checked with a stock OpenSSH installation:
 `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
 (https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
@@ -1048,8 +1084,9 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
   `timestamp.*` of xref:git-timestamp.adoc[`git-timestamp`]). An absent `repositories` is an empty registry.
 * An anchor key equal to the commit-signing key is refused (<<GDR-STORE-18>>): the start compares the effective key
   source (`anchor.signed.key-source`, an absent one taken as the default `file`) with `signing.key-source`, and
-  `anchor.signed.key` with `signing.key`, and refuses when both are equal. Comparing the public keys themselves needs
-  the key source and is left to the provider `signed`.
+  `anchor.signed.key` with `signing.key`, and refuses when both are equal. This is an early string check only; the
+  authoritative check is the comparison of the two public keys at provider selection (<<GDR-STORE-18>>), which also
+  refuses the same key under another spelling of its reference, such as `/k` and `/./k`.
 
 The first refusal is returned and logged once as `GIT_STORE-100`. Its outcome is `MALFORMED`, or the passed-on
 `REFUSED_BY_POLICY` of the registry; its detail names the dotted key or the alias, never the value:

@@ -41,9 +41,14 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 /**
- * The contract of {@link Codec} (GDR-STORE-11), asserted with a canonical test codec: a round trip is byte-identical,
- * equal values encode identically whatever their insertion order, and a content the codec cannot read is
- * {@link StoreOutcome#MALFORMED} with a detail that does not repeat the content.
+ * The documented contract test of {@link Codec} (GDR-STORE-11), asserted with a canonical test codec: a round trip is
+ * byte-identical, equal values encode identically whatever their insertion order, and a content the codec cannot read
+ * is {@link StoreOutcome#MALFORMED} with a detail that does not repeat the content. Every implementation owes this
+ * contract.
+ * <p>
+ * No code of {@code git-store} is exercised: {@code git-store} ships no implementation of {@link Codec}, and the
+ * interface has no behaviour of its own, so the test codec of this class is the only implementation the contract can
+ * be checked against here.
  */
 @EnableGeneratorController
 @DisplayName("Codec (GDR-STORE-11)")

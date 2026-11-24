@@ -17,6 +17,7 @@ package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -38,6 +39,7 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Objects;
 import java.util.ServiceConfigurationError;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
@@ -73,7 +75,10 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code GIT_STORE-100}, a success logged as {@code GIT_STORE-1}, {@link StoreProviders#load(StoreConfiguration)}
  * finding the test providers registered under {@code META-INF/services} and, beside them, the shipped signing key
  * source {@code file} through the class-path provider-configuration file of {@code git-store}, and GDR-NFR-3: neither
- * a configured id nor the message of a failing provider reaches a detail or a log record.
+ * a configured id nor the message of a failing provider reaches a detail or a log record. A candidate whose id cannot
+ * be read ends the selection as {@link StoreOutcome#MALFORMED} naming the interface (GDR-GEN-3), and
+ * {@link StoreProviders#load(StoreConfiguration)} instantiates the anchor providers only for an {@code anchor.provider}
+ * other than {@code signed} (GDR-STORE-15).
  * <p>
  * The provider ids are generated; the ids of the registered test providers are fixed by their registration.
  */
@@ -268,6 +273,69 @@ class StoreProvidersTest {
         }
 
         @Test
+        @DisplayName("GDR-GEN-3, GDR-NFR-3: a signing key source whose id() throws is MALFORMED, its message not logged")
+        void throwingSigningKeySourceId() {
+            var secret = secret();
+            var signingId = id();
+            var personsId = id();
+            var failing = new ThrowingIdSigningKeySource(new IllegalStateException("password=" + secret));
+
+            var result = assertDoesNotThrow(() -> StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId), failing), List.of(),
+                    List.of(new TestPersonDirectory(personsId))), "the selection throws nothing");
+
+            assertRefused("SigningKeySource: a provider id cannot be read", result);
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG, ThrowingIdSigningKeySource.class.getName()
+                    + " of " + SigningKeySource.class.getName() + " failed with "
+                    + IllegalStateException.class.getName());
+            assertSecretAbsent(secret, result);
+        }
+
+        @Test
+        @DisplayName("GDR-GEN-3: a person directory whose id() throws a LinkageError is MALFORMED naming the interface")
+        void linkageErrorOfPersonDirectoryId() {
+            var signingId = id();
+            var personsId = id();
+            var failing = new ThrowingIdPersonDirectory(new NoClassDefFoundError(secret()));
+
+            var result = assertDoesNotThrow(() -> StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new TestSigningKeySource(signingId)), List.of(),
+                    List.of(failing, new TestPersonDirectory(personsId))), "the selection throws nothing");
+
+            assertRefused("PersonDirectory: a provider id cannot be read", result);
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                    "failed with " + NoClassDefFoundError.class.getName());
+        }
+
+        @Test
+        @DisplayName("GDR-GEN-3: a configured anchor provider candidate whose id() throws is MALFORMED naming the interface")
+        void throwingAnchorProviderId() {
+            var signingId = id();
+            var personsId = id();
+            var anchorId = id();
+            var failing = new ThrowingIdAnchorProvider(new IllegalArgumentException(secret()));
+
+            var result = assertDoesNotThrow(() -> StoreProviders.select(configuration(signingId, personsId, anchorId),
+                    List.of(new TestSigningKeySource(signingId)), List.of(new TestAnchorProvider(anchorId), failing),
+                    List.of(new TestPersonDirectory(personsId))), "the selection throws nothing");
+
+            assertRefused("AnchorProvider: a provider id cannot be read", result);
+        }
+
+        @Test
+        @DisplayName("GDR-GEN-3: a candidate whose id() returns null is MALFORMED naming the interface")
+        void nullSigningKeySourceId() {
+            var signingId = id();
+            var personsId = id();
+
+            var result = StoreProviders.select(configuration(signingId, personsId, null),
+                    List.of(new NullIdSigningKeySource(), new TestSigningKeySource(signingId)), List.of(),
+                    List.of(new TestPersonDirectory(personsId)));
+
+            assertRefused("SigningKeySource: a provider id cannot be read", result);
+        }
+
+        @Test
         @DisplayName("the signing key source and the person directory are required components")
         void requiresSigningAndPersons() {
             var signing = new TestSigningKeySource();
@@ -364,6 +432,40 @@ class StoreProvidersTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-18: the commit-signing key under another spelling of its reference stops the start at selection")
+        void sameKeyUnderAnotherSpelling() {
+            var name = Generators.letterStrings(8, 16).next();
+            var plain = "/" + name;
+            var dotted = "/./" + name;
+            var configuration = new StoreConfiguration(EMPTY_REGISTRY, new Save(1), new Drafts(Period.ofDays(1)),
+                    new Fetch(Duration.ofMinutes(1)), new Signing(COMMIT_SOURCE, plain, null),
+                    new Anchor(SignedAnchorProvider.PROVIDER_ID, true, Anchor.DEFAULT_CHECKPOINT_INTERVAL,
+                            Anchor.DEFAULT_RETRY_INTERVAL, new Anchor.Signed(COMMIT_SOURCE, dotted, null,
+                                    Anchor.Signed.DEFAULT_MAX_CLOCK_SKEW)),
+                    new Directory(TestPersonDirectory.ID), new Commit(Commit.DEFAULT_EMAIL));
+
+            var result = StoreProviders.select(configuration,
+                    List.of(new SpelledSource(COMMIT_SOURCE, TestKeys.ed25519(), Set.of(plain, dotted))), List.of(),
+                    List.of(new TestPersonDirectory()));
+
+            assertRefused("anchor.signed.key equals the commit-signing key", result);
+            assertSecretAbsentFromLog(name);
+        }
+
+        @Test
+        @DisplayName("GDR-GEN-3: a candidate anchor provider whose id() throws is MALFORMED under anchor.provider signed")
+        void throwingCandidateUnderSigned() {
+            var result = assertDoesNotThrow(() -> StoreProviders.select(
+                    configuration(ANCHOR_SOURCE, anchorReference, null),
+                    List.of(new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference),
+                            new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519(), anchorReference)),
+                    List.of(new ThrowingIdAnchorProvider(new IllegalStateException(secret()))),
+                    List.of(new TestPersonDirectory())), "the selection throws nothing");
+
+            assertRefused("AnchorProvider: a provider id cannot be read", result);
+        }
+
+        @Test
         @DisplayName("GDR-STORE-18: a candidate anchor provider with the id signed is a duplicate")
         void duplicateSigned() {
             var result = StoreProviders.select(configuration(ANCHOR_SOURCE, anchorReference, null),
@@ -457,6 +559,90 @@ class StoreProvidersTest {
         }
     }
 
+    /** A signing key source under a chosen id over one generated key, which answers for every reference of a set. */
+    private record SpelledSource(String id, TestKeys.Ed25519 key, Set<String> references) implements SigningKeySource {
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return references.contains(keyReference) ? StoreResult.ok(key.sign(data))
+                    : StoreResult.of(StoreOutcome.REFUSED, KeyedSource.UNEXPECTED_REFERENCE);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return references.contains(keyReference) ? StoreResult.ok(key.publicKeyLine())
+                    : StoreResult.of(StoreOutcome.REFUSED, KeyedSource.UNEXPECTED_REFERENCE);
+        }
+    }
+
+    /** Throws an unchecked throwable, a {@link RuntimeException} or an {@link Error}. */
+    private static String fail(Throwable failure) {
+        if (failure instanceof RuntimeException runtime) {
+            throw runtime;
+        }
+        throw (Error) failure;
+    }
+
+    /** A signing key source whose {@code id()} throws. */
+    private static final class ThrowingIdSigningKeySource extends TestSigningKeySource {
+
+        private final Throwable failure;
+
+        ThrowingIdSigningKeySource(Throwable failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public String id() {
+            return fail(failure);
+        }
+    }
+
+    /** A signing key source whose {@code id()} returns {@code null}, against its contract. */
+    private static final class NullIdSigningKeySource extends TestSigningKeySource {
+
+        @Override
+        public String id() {
+            return nullValue();
+        }
+    }
+
+    /** A person directory whose {@code id()} throws. */
+    private static final class ThrowingIdPersonDirectory extends TestPersonDirectory {
+
+        private final Throwable failure;
+
+        ThrowingIdPersonDirectory(Throwable failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public String id() {
+            return fail(failure);
+        }
+    }
+
+    /** An anchor provider whose {@code id()} throws. */
+    private static final class ThrowingIdAnchorProvider extends TestAnchorProvider {
+
+        private final Throwable failure;
+
+        ThrowingIdAnchorProvider(Throwable failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public String id() {
+            return fail(failure);
+        }
+    }
+
+    /** Returns {@code null} where the signature forbids it, for a provider that breaks its contract. */
+    @SuppressWarnings("unchecked")
+    private static <T> T nullValue() {
+        return (T) null;
+    }
+
     /** A signing key source that cannot be reached, with a secret in its detail. */
     private record UnreachableSource(String id) implements SigningKeySource {
 
@@ -540,6 +726,46 @@ class StoreProvidersTest {
             LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
                     SigningKeySource.class.getName() + " failed with " + ServiceConfigurationError.class.getName());
             assertSecretAbsent(secret, result);
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: an anchor provider that cannot be loaded does not stop a start without anchor.provider")
+        void brokenAnchorProviderWithoutAnchoring(@TempDir Path services) throws Exception {
+            var configuration = configuration(TestSigningKeySource.ID, TestPersonDirectory.ID, null);
+
+            var result = loadWithBrokenAnchorProvider(services, configuration);
+
+            assertNull(providers(result).anchor(), "nothing is anchored");
+            assertNotLogged(Level.WARNING, GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString());
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: an anchor provider that cannot be loaded stops a start that names another provider")
+        void brokenAnchorProviderWithAnchoring(@TempDir Path services) throws Exception {
+            var configuration = configuration(TestSigningKeySource.ID, TestPersonDirectory.ID, TestAnchorProvider.ID);
+
+            var result = loadWithBrokenAnchorProvider(services, configuration);
+
+            assertRefused("AnchorProvider: a provider cannot be loaded", result);
+        }
+
+        /**
+         * Loads the providers with the anchor provider registration replaced by a class that does not exist, so
+         * {@code ServiceLoader} fails as soon as it instantiates an anchor provider.
+         */
+        private StoreResult<StoreProviders> loadWithBrokenAnchorProvider(Path services,
+                StoreConfiguration configuration) throws IOException {
+            var resource = "META-INF/services/" + AnchorProvider.class.getName();
+            var file = Files.writeString(services.resolve("services"),
+                    StoreProvidersTest.class.getPackageName() + ".MissingAnchorProvider\n");
+            var thread = Thread.currentThread();
+            var original = thread.getContextClassLoader();
+            thread.setContextClassLoader(new ServicesOverride(original, resource, file.toUri().toURL()));
+            try {
+                return StoreProviders.load(configuration);
+            } finally {
+                thread.setContextClassLoader(original);
+            }
         }
     }
 
