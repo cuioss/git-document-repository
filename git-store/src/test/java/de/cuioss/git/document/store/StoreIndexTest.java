@@ -344,6 +344,124 @@ class StoreIndexTest {
         return new Fixture(writer, operations, index, recorder);
     }
 
+    /**
+     * Writes a commit whose tree holds one file of the document at a blob id the repository lacks, onto a reference: a
+     * source whose documents cannot be read.
+     */
+    private static ObjectId brokenCommit(Repository repository, String ref, String path, ObjectId parent) {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            DirCache index = DirCache.newInCore();
+            DirCacheBuilder builder = index.builder();
+            var entry = new DirCacheEntry(path);
+            entry.setFileMode(FileMode.REGULAR_FILE);
+            entry.setObjectId(ObjectId.fromString(Generators.strings("0123456789abcdef", 40, 40).next()));
+            builder.add(entry);
+            builder.finish();
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(pseudonym(), "");
+            commit.setTreeId(index.writeTree(inserter));
+            commit.setParentIds(parent);
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(ref);
+            update.setNewObjectId(id);
+            update.setForceUpdate(true);
+            var result = update.update();
+            assertTrue(result == RefUpdate.Result.NEW || result == RefUpdate.Result.FORCED
+                    || result == RefUpdate.Result.FAST_FORWARD, () -> "the fixture reference is written: " + result);
+            return id;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Nested
+    @DisplayName("Per-source refresh (GDR-STORE-9)")
+    class PerSource {
+
+        @Test
+        @DisplayName("GDR-STORE-9: an unreadable working branch keeps its entries, the other sources are fresh")
+        void unreadableSourceKeepsItsEntries(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var other = value(DocumentKey.of(layout.documents(), Ulid.next()));
+            var otherBranch = StoreReferences.target(other);
+            var otherTip = commit(repository, otherBranch,
+                    merged(layout.main(), Map.of(path(other, ".json"), content())), layout.mainTip());
+            var recorder = new Recorder();
+            var events = new StoreEvents(updates -> {
+                // no listeners in this test
+            });
+            Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+            contributors.put(layout.documents(), recorder);
+            contributors.put(layout.numbered(), recorder);
+            String alias = word();
+
+            try (var index = value(StoreIndex.open(alias, repository, events, contributors))) {
+                var workingBefore = index.entries(layout.workingBranch(), layout.documents());
+                var workingCommit = index.commitId(layout.workingBranch());
+                var broken = brokenCommit(repository, layout.workingBranch(), path(layout.working(), ".json"),
+                        ObjectId.fromString(workingCommit.orElseThrow()));
+                Map<String, String> mainNow = merged(layout.main(), Map.of(path(layout.released(), ".json"),
+                        content()));
+                var mainTip = commit(repository, StoreReferences.MAIN, mainNow, layout.mainTip());
+                var otherText = content();
+                var otherMoved = commit(repository, otherBranch,
+                        merged(layout.main(), Map.of(path(other, ".json"), otherText)), otherTip);
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingCommit.orElseThrow(),
+                        broken.name())));
+
+                assertAll(
+                        () -> assertEquals(workingBefore, index.entries(layout.workingBranch(), layout.documents()),
+                                "the unreadable source keeps its previous entries"),
+                        () -> assertEquals(workingCommit, index.commitId(layout.workingBranch()),
+                                "at its previous commit"),
+                        () -> assertEquals(Optional.of(mainTip.name()), index.commitId(StoreReferences.MAIN),
+                                "main is published fresh"),
+                        () -> assertEquals(entry(filesOf(layout.released(), mainNow)),
+                                index.entries(StoreReferences.MAIN, layout.documents()).get(layout.released()),
+                                "with its new entry"),
+                        () -> assertEquals(Optional.of(otherMoved.name()), index.commitId(otherBranch),
+                                "the other working branch is published fresh"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString()),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, "working branch"),
+                        () -> assertNothingLeaks(null, List.of(layout.workingBranch(), layout.working().id(),
+                                otherText)));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: a new source that cannot be read stays out of the index, the others are indexed")
+        void unreadableNewSourceStaysOut(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var other = value(DocumentKey.of(layout.documents(), Ulid.next()));
+            var otherBranch = StoreReferences.target(other);
+            brokenCommit(repository, otherBranch, path(other, ".json"), layout.mainTip());
+            var recorder = new Recorder();
+            var events = new StoreEvents(updates -> {
+                // no listeners in this test
+            });
+            Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+            contributors.put(layout.documents(), recorder);
+            contributors.put(layout.numbered(), recorder);
+
+            try (var index = value(StoreIndex.open(word(), repository, events, contributors))) {
+                assertAll(
+                        () -> assertFalse(index.sources().contains(otherBranch), "the unreadable source is left out"),
+                        () -> assertTrue(index.sources().containsAll(Set.of(StoreReferences.MAIN,
+                                layout.workingBranch(), layout.collectionBranch())), "every other source"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString()));
+            }
+        }
+    }
+
     /** Writes a draft of one file of the document and saves it. */
     private static String save(StoreWriter writer, Author author, DocumentKey key, String path, String text) {
         value(writer.draft(author, key, List.of(new TreeEdit.Put(path, text.getBytes(StandardCharsets.UTF_8))),

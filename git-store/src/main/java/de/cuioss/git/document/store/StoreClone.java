@@ -42,6 +42,10 @@ import org.jspecify.annotations.Nullable;
  * release and the draft expiry, the fetch and its schedule, the notification seam and the listener dispatch. The
  * writer is the public face of the store and delegates every operation here; the behaviour, the locks and their order
  * are those its documentation states. {@link CloneOpening} opens the clone and builds these parts.
+ * <p>
+ * The two scheduled runners, the periodic fetch and the due check of the anchoring off the caller's thread, isolate
+ * every {@link Throwable} and log it by its class name only, so a schedule never ends (the rule of the scheduled
+ * runners, {@link StoreEvents}).
  */
 // S6539 counts the parts this class delegates to; it is the one place that wires the parts of the clone, so its
 // coupling is its purpose, and splitting it would only move the wiring
@@ -265,15 +269,20 @@ final class StoreClone {
         }
     }
 
-    /** One due check off the caller's thread: a failure is logged and never escapes to the executor. */
+    /**
+     * One due check off the caller's thread: every failure, a {@link Throwable} of any kind (the rule of the scheduled
+     * runners, {@link StoreEvents}), is logged by its class name only and never escapes to the executor, so the
+     * schedule never ends.
+     */
     private void safeDueCheck() {
         try {
             anchors.dueCheck();
         }
-        // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15)
+        // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15); a scheduled runner
+        // isolates every Throwable
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, alias(), e.getClass().getSimpleName());
+        catch (Throwable e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, alias(), e.getClass().getName());
         }
     }
 
@@ -308,7 +317,10 @@ final class StoreClone {
                 executor.scheduleWithFixedDelay(this::periodicFetch, interval, interval, TimeUnit.NANOSECONDS));
     }
 
-    /** One run of the periodic fetch: a failure is logged and the schedule goes on. */
+    /**
+     * One run of the periodic fetch: a failure is logged and the schedule goes on, also for a {@link Throwable} of any
+     * kind (the rule of the scheduled runners, {@link StoreEvents}), logged by its class name only.
+     */
     private void periodicFetch() {
         try {
             var fetched = fetch();
@@ -317,10 +329,10 @@ final class StoreClone {
                         StoreResult.name(fetched.outcome()));
             }
         }
-        // an unchecked failure of one fetch must not end the schedule (GDR-STORE-9)
+        // a failure of one fetch must not end the schedule (GDR-STORE-9); a scheduled runner isolates every Throwable
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getSimpleName());
+        catch (Throwable e) {
+            LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, alias(), e.getClass().getName());
         }
     }
 

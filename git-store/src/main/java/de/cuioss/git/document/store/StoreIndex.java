@@ -65,17 +65,24 @@ import org.jspecify.annotations.Nullable;
  * between the indexed commit and the new tip ({@link RepositoryReader#changes}); a new source is read in full, and a
  * source whose branch is gone is dropped. Only when the changed paths cannot be read, for example because the indexed
  * commit is no longer in the clone, the source is read in full. A document whose contributor returns {@code null} or
- * throws is left out; a throwing contributor is logged ({@code GIT_STORE-108}) with the class of the exception only, and
- * the refresh goes on.
+ * fails is left out; a contributor failure isolated by the observer rule of {@link StoreEvents} (a
+ * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}) is logged
+ * ({@code GIT_STORE-108}) with the class name of the throwable only, and the refresh goes on.
+ * <p>
+ * Each source is read in isolation: a source that cannot be read, for example because a blob of its tip is missing
+ * from the clone, keeps the entries it was indexed with before (a new source stays out of the index), is logged
+ * ({@code GIT_STORE-113}) with the alias and the class of the source ({@code main}, {@code working branch} or
+ * {@code collection branch}), never its reference name, and the other sources are published fresh.
  * <p>
  * Refreshes are serialised by one lock of the index and always rebuild from the tips read under that lock, so a refresh
  * started after a save and one started after a fetch can never publish out of order. The published index is an
  * immutable value swapped atomically: a reader sees either the index before or the index after a refresh, never a
  * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, so
- * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the clone keeps the previous
- * index and marks it stale; the next operation of the writer retries the refresh, also a fetch or save that moved no
- * reference, until one succeeds. A snapshot calls the contributors under the same lock, so no contributor is called
- * by two threads at once.
+ * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the references of the clone
+ * keeps the previous index, and one that could not read a source keeps that source's previous entries; either marks
+ * the index stale, and the next operation of the writer retries the refresh, also a fetch or save that moved no
+ * reference, until one reads every source. A snapshot calls the contributors under the same lock, so no contributor
+ * is called by two threads at once.
  * <p>
  * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
  * one.
@@ -120,7 +127,7 @@ public final class StoreIndex<E> implements AutoCloseable {
                 refresh();
             } catch (IOException e) {
                 stale = true;
-                LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getSimpleName());
+                LOGGER.debug("The index of %s was not refreshed: %s", alias, e.getClass().getName());
             }
         }
     };
@@ -289,34 +296,53 @@ public final class StoreIndex<E> implements AutoCloseable {
     /**
      * Reads the tips of the source branches under the lock of the index and publishes the index of those tips: a
      * source whose tip did not move is kept, one whose tip moved re-reads its changed documents, a new one is read in
-     * full, and a gone one is dropped.
+     * full, and a gone one is dropped. Each source is read in isolation: one that cannot be read keeps its previous
+     * entries, or stays out when it is new, is logged by its class and marks the index stale; the others are
+     * published fresh.
+     *
+     * @throws IOException when the references of the clone cannot be read; the previous index stays published
      */
     private void refresh() throws IOException {
         lock.lock();
         try {
             Map<String, Source<E>> before = current.get();
             Map<String, Source<E>> next = new HashMap<>();
-            try (RevWalk walk = new RevWalk(repository)) {
-                for (Ref ref : repository.getRefDatabase().getRefsByPrefix(StoreReferences.HEADS)) {
-                    @Nullable Scope scope = scope(ref.getName());
-                    @Nullable ObjectId tip = ref.getObjectId();
-                    if (scope == null || tip == null) {
-                        continue;
-                    }
-                    @Nullable Source<E> indexed = before.get(ref.getName());
-                    if (indexed != null && indexed.commit().equals(tip)) {
+            boolean unread = false;
+            for (Ref ref : repository.getRefDatabase().getRefsByPrefix(StoreReferences.HEADS)) {
+                @Nullable Scope scope = scope(ref.getName());
+                @Nullable ObjectId tip = ref.getObjectId();
+                if (scope == null || tip == null) {
+                    continue;
+                }
+                @Nullable Source<E> indexed = before.get(ref.getName());
+                if (indexed != null && indexed.commit().equals(tip)) {
+                    next.put(ref.getName(), indexed);
+                    continue;
+                }
+                try {
+                    next.put(ref.getName(), read(ref.getName(), scope, indexed, tip));
+                } catch (IOException e) {
+                    unread = true;
+                    LOGGER.warn(GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD, alias, sourceClass(ref.getName()),
+                            e.getClass().getName());
+                    if (indexed != null) {
                         next.put(ref.getName(), indexed);
-                    } else {
-                        RevCommit commit = walk.parseCommit(tip);
-                        next.put(ref.getName(), read(ref.getName(), scope, indexed, commit));
                     }
                 }
             }
             current.set(Map.copyOf(next));
-            stale = false;
+            stale = unread;
         } finally {
             lock.unlock();
         }
+    }
+
+    /** The class of a source for the log, never its reference name: {@code main}, a collection or a working branch. */
+    private static String sourceClass(String ref) {
+        if (StoreReferences.MAIN.equals(ref)) {
+            return "main";
+        }
+        return ref.indexOf('/', StoreReferences.HEADS.length()) < 0 ? "collection branch" : "working branch";
     }
 
     /**
@@ -348,8 +374,12 @@ public final class StoreIndex<E> implements AutoCloseable {
      * Reads one source at a commit: only the changed documents when the source was indexed before and the changed
      * paths can be read, otherwise every document.
      */
-    private Source<E> read(String source, Scope scope, @Nullable Source<E> indexed, RevCommit commit)
+    private Source<E> read(String source, Scope scope, @Nullable Source<E> indexed, ObjectId tip)
             throws IOException {
+        RevCommit commit;
+        try (RevWalk walk = new RevWalk(repository)) {
+            commit = walk.parseCommit(tip);
+        }
         if (indexed != null) {
             var changes = reader.changes(repository, indexed.commit().name(), commit.name());
             if (changes.isOk()) {
@@ -422,8 +452,8 @@ public final class StoreIndex<E> implements AutoCloseable {
     }
 
     /**
-     * Calls the contributor of one document with its files. A {@link RuntimeException} of the contributor leaves the
-     * document out and is logged with the class of the exception only, no throwable attached.
+     * Calls the contributor of one document with its files. A failure the observer rule of {@link StoreEvents} isolates
+     * leaves the document out and is logged with the class name of the throwable only, no throwable attached.
      */
     private @Nullable E contribute(DocumentKey key, String source, Map<String, ObjectId> blobs) throws IOException {
         Map<String, byte[]> contents = new LinkedHashMap<>();
@@ -435,11 +465,13 @@ public final class StoreIndex<E> implements AutoCloseable {
         try {
             return contributor.contribute(new IndexContributor.Document(key, source, contents));
         }
-        // a failing contributor leaves its document out and never fails the refresh (GDR-STORE-9)
+        // a failing contributor leaves its document out and never fails the refresh (GDR-STORE-9); the observer rule
+        // of StoreEvents isolates every Error but a VirtualMachineError
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
+        catch (RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
             LOGGER.warn(GitStoreLogMessages.WARN.CONTRIBUTOR_FAILED, alias, key.collection().name(),
-                    e.getClass().getSimpleName());
+                    e.getClass().getName());
             return null;
         }
     }

@@ -39,6 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogRecord;
@@ -400,7 +402,8 @@ class ReleaseTest {
 
                 var secondCommit = ObjectId.fromString(second.commitId());
                 assertAll(
-                        () -> assertEquals(new Release(StoreReferences.releaseTag(key, 1), first.commitId(), 1), first,
+                        () -> assertEquals(new Release(StoreReferences.releaseTag(key, 1), first.commitId(), 1, false),
+                                first,
                                 "the first release is v1"),
                         () -> assertEquals(List.of(forked.main(), forked.working()),
                                 parents(remote.repository(), firstCommit), "main tip and working tip"),
@@ -763,7 +766,8 @@ class ReleaseTest {
                                 parents(remote.repository(), mainTip), "main moved to the release commit"),
                         () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
                                 GitStoreLogMessages.WARN.RELEASE_INCOMPLETE.resolveIdentifierString()),
-                        () -> assertEquals(new Release(tag, mainTip.name(), 1), repeated, "the tag on that commit"),
+                        () -> assertEquals(new Release(tag, mainTip.name(), 1, false), repeated,
+                                "the tag on that commit, the working branch unchanged since"),
                         () -> assertEquals(mainTip, tip(remote.repository(), StoreReferences.MAIN),
                                 "no second merge"),
                         () -> assertEquals(mainTip, tip(remote.repository(), tag), "the tag on the remote"),
@@ -794,7 +798,7 @@ class ReleaseTest {
 
                 assertAll(
                         () -> assertEquals(StoreOutcome.INCOMPLETE, incomplete.outcome(), "first incomplete"),
-                        () -> assertEquals(StoreResult.ok(new Release(tag, mainTip.name(), 1)), repeated,
+                        () -> assertEquals(StoreResult.ok(new Release(tag, mainTip.name(), 1, false)), repeated,
                                 "the tag pushed without signing"),
                         () -> assertEquals(mainTip, tip(remote.repository(), tag), "the tag on the remote"),
                         () -> assertEquals(publicKeyCalls, source.publicKeyCalls(), "the source was not asked"));
@@ -821,6 +825,8 @@ class ReleaseTest {
                                 "main is unchanged"),
                         () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)),
                                 "no tag on the remote"),
+                        () -> assertNull(tip(fixture.writer().repository(), StoreReferences.releaseTag(key, 1)),
+                                "the local tag of the attempt is deleted again"),
                         () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
                                 GitStoreLogMessages.WARN.RELEASE_NOT_COMPLETED.resolveIdentifierString()));
             }
@@ -895,6 +901,228 @@ class ReleaseTest {
         }
     }
 
+    /** Sets a reference of a fixture repository from within a push action, failing the test on an I/O error. */
+    private static void setRefQuietly(Repository repository, String ref, ObjectId id) {
+        try {
+            setRef(repository, ref, id);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Nested
+    @DisplayName("Refused tags, gitlinks, repairs and numbered conflicts (GDR-STORE-6)")
+    class Outcomes {
+
+        @Test
+        @DisplayName("GDR-STORE-6: a tag the remote refuses because it holds it at the release commit completes the release")
+        void refusedTagAtTheReleaseCommitCompletes(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            fork(remote.repository(), key);
+            var tag = StoreReferences.releaseTag(key, 1);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.operations().beforePushTo(tag, input -> setRefQuietly(remote.repository(), tag,
+                        ObjectId.fromString(input.localRef())));
+
+                var release = value(fixture.release(author, key));
+
+                var commit = ObjectId.fromString(release.commitId());
+                assertAll(
+                        () -> assertEquals(new Release(tag, commit.name(), 1, false), release, "complete, v1"),
+                        () -> assertEquals(commit, tip(remote.repository(), StoreReferences.MAIN), "main pushed"),
+                        () -> assertEquals(commit, tip(remote.repository(), tag), "the tag the remote holds"),
+                        () -> assertEquals(commit, tip(fixture.writer().repository(), tag), "the local tag"),
+                        () -> assertTrue(logTexts().stream().noneMatch(text -> text.contains(
+                                        GitStoreLogMessages.WARN.RELEASE_INCOMPLETE.resolveIdentifierString())),
+                                "not logged as incomplete"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a tag the remote holds at another commit leaves the release INCOMPLETE, never moved")
+        void refusedTagAtAnotherCommitIsIncomplete(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var tag = StoreReferences.releaseTag(key, 1);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.operations().beforePushTo(tag,
+                        input -> setRefQuietly(remote.repository(), tag, forked.main()));
+
+                var result = fixture.release(author, key);
+
+                assertAll(
+                        () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                tag + ": not pushed (LEASE_REFUSED)"), result, "incomplete"),
+                        () -> assertEquals(forked.main(), tip(remote.repository(), tag), "the remote tag is not moved"),
+                        () -> assertEquals(List.of(forked.main(), forked.working()),
+                                parents(remote.repository(), requiredTip(remote.repository(), StoreReferences.MAIN)),
+                                "main moved to the release commit"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.RELEASE_INCOMPLETE.resolveIdentifierString()));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a gitlink among the paths is MALFORMED naming the class of the path; nothing pushed")
+        void gitlinkIsMalformed(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var base = files(word());
+            var start = commit(remote.repository(), StoreReferences.MAIN, base);
+            var link = key.collection().name() + "/" + key.id() + "-" + word();
+            var working = merged(base, files(link));
+            commit(remote.repository(), StoreReferences.target(key), working, Map.of(link, FileMode.GITLINK), word(),
+                    start);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var result = fixture.release(author, key);
+
+                assertAll(
+                        () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, DocumentRelease.GITLINK), result,
+                                "malformed, a defined outcome"),
+                        () -> assertEquals("entry: a gitlink path cannot be released", result.detail(),
+                                "the specified detail"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),
+                        () -> assertEquals(start, tip(remote.repository(), StoreReferences.MAIN), "main unchanged"),
+                        () -> assertNull(tip(fixture.writer().repository(), StoreReferences.releaseTag(key, 1)),
+                                "no local tag"),
+                        () -> assertNothingLeaks(result.detail(), List.of(link, author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a repair after INCOMPLETE reports that the working branch moved on")
+        void repairReportsTheMovedBranch(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var forked = fork(remote.repository(), key);
+            var tag = StoreReferences.releaseTag(key, 1);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.operations().failPushTo(tag, GitOutcome.UNREACHABLE);
+                var incomplete = fixture.release(author, key);
+                var mainTip = requiredTip(remote.repository(), StoreReferences.MAIN);
+                commit(remote.repository(), StoreReferences.target(key),
+                        merged(tree(remote.repository(), forked.working()), files(word() + "w")), forked.working());
+
+                var repaired = value(fixture.release(author, key));
+
+                assertAll(
+                        () -> assertEquals(StoreOutcome.INCOMPLETE, incomplete.outcome(), "first incomplete"),
+                        () -> assertEquals(new Release(tag, mainTip.name(), 1, true), repaired,
+                                "the tag on the released commit; the working branch moved on since"),
+                        () -> assertEquals(mainTip, tip(remote.repository(), tag), "the tag on the remote"),
+                        () -> assertEquals(mainTip, tip(remote.repository(), StoreReferences.MAIN), "no merge"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a numbered entry main changed since the previous release is CONFLICT; nothing pushed")
+        void numberedEntryChangedOnMainConflicts(@Remote LocalRemote remote) throws Exception {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var path = collection.name() + "/" + key.id() + ".json";
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var start = commit(remote.repository(), StoreReferences.MAIN, base);
+            var released = commit(remote.repository(), target, merged(base, files(path)), start);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var first = value(fixture.release(author, key));
+                var firstCommit = ObjectId.fromString(first.commitId());
+                var changedOnMain = commit(remote.repository(), StoreReferences.MAIN,
+                        merged(tree(remote.repository(), firstCommit), files(path)), firstCommit);
+                commit(remote.repository(), target, merged(base, files(path)), released);
+
+                var result = fixture.release(author, key);
+
+                assertAll(
+                        () -> assertEquals(new StoreResult<>(new StoreResult.PassedOn(GitOutcome.CONFLICT), null,
+                                        target + ": 1 paths changed on main since the previous release"), result,
+                                "a conflict naming the number of paths only"),
+                        () -> assertEquals(changedOnMain, tip(remote.repository(), StoreReferences.MAIN),
+                                "main is unchanged"),
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 2)), "no v2"),
+                        () -> assertNothingLeaks(result.detail(), List.of(path, author.pseudonym())));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: a numbered entry main left alone since the previous release is released as v2")
+        void numberedEntryUnchangedOnMainReleases(@Remote LocalRemote remote) throws Exception {
+            var collection = collection(Kind.NUMBERED);
+            var key = entry(collection);
+            var path = collection.name() + "/" + key.id() + ".json";
+            var target = StoreReferences.target(key);
+            var base = files(word());
+            var start = commit(remote.repository(), StoreReferences.MAIN, base);
+            var released = commit(remote.repository(), target, merged(base, files(path)), start);
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                value(fixture.release(author, key));
+                var next = merged(base, files(path));
+                commit(remote.repository(), target, next, released);
+
+                var second = value(fixture.release(author, key));
+
+                assertAll(
+                        () -> assertEquals(2, second.version(), "v2"),
+                        () -> assertEquals(next.get(path),
+                                tree(remote.repository(), ObjectId.fromString(second.commitId())).get(path),
+                                "the entry copied onto main"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-6: two concurrent releases of one document through two clones count v1 and v2")
+        void concurrentReleasesCountVersions(@Remote LocalRemote remote) throws Exception {
+            var key = document();
+            fork(remote.repository(), key);
+            var author = Author.of(pseudonym());
+            var executor = Executors.newFixedThreadPool(2);
+            var start = new CountDownLatch(1);
+
+            try (var one = open(remote); var two = open(remote)) {
+                var first = executor.submit(() -> {
+                    start.await();
+                    return one.release(author, key);
+                });
+                var second = executor.submit(() -> {
+                    start.await();
+                    return two.release(author, key);
+                });
+                start.countDown();
+                var results = List.of(first.get(PARK_SECONDS * 3, TimeUnit.SECONDS),
+                        second.get(PARK_SECONDS * 3, TimeUnit.SECONDS));
+
+                // the second may release v2, or complete the first one's v1 when it fetched between the push of main
+                // and the push of the tag: either way both complete, the versions count from 1 without a gap and every
+                // tag on the remote points at the commit its release names
+                List<Release> releases = results.stream().map(ReleaseTest::value).toList();
+                List<Integer> versions = releases.stream().map(Release::version).distinct().sorted().toList();
+                assertAll(
+                        () -> assertEquals(1, versions.getFirst(), "v1 first"),
+                        () -> assertEquals(versions.size(), versions.getLast(), "no gap in the versions"),
+                        () -> {
+                            for (Release release : releases) {
+                                assertEquals(ObjectId.fromString(release.commitId()),
+                                        tip(remote.repository(), release.tag()), "the tag on its release commit");
+                            }
+                        },
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 3)), "no v3"));
+            } finally {
+                executor.shutdownNow();
+                assertTrue(executor.awaitTermination(PARK_SECONDS, TimeUnit.SECONDS), "the writers ended");
+            }
+        }
+    }
+
     @Nested
     @DisplayName("Release record (GDR-STORE-6)")
     class Records {
@@ -909,10 +1137,10 @@ class ReleaseTest {
 
             assertAll(
                     () -> assertThrows(IllegalArgumentException.class, () -> new Release(StoreReferences.MAIN, commit,
-                            1), "not a tag"),
-                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, notACommit, 1),
+                            1, false), "not a tag"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, notACommit, 1, false),
                             "not a commit id"),
-                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, commit, 0),
+                    () -> assertThrows(IllegalArgumentException.class, () -> new Release(tag, commit, 0, false),
                             "version 0"),
                     () -> assertNotEquals(StoreReferences.releaseTag(key, 1), StoreReferences.releaseTag(key, 2),
                             "one tag per version"));

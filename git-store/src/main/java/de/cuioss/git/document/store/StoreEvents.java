@@ -36,8 +36,15 @@ import org.jspecify.annotations.Nullable;
  * while the transport lock is held. An operation that moved nothing emits no update: it only tells the registered
  * observers so ({@link Observer#unchanged}), and the listener dispatch is not called. The registered observers, the
  * indexes ({@link StoreIndex}), are called first, in the order of their registration, and the listener dispatch
- * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A {@link RuntimeException}
- * of one observer is logged by its class only and never fails the operation or keeps the next observer from its call.
+ * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A failure of one observer
+ * is isolated by the observer rule of {@link #rethrowIfFatal(Throwable)}: logged by its class only, it never fails the
+ * operation or keeps the next observer from its call.
+ * <p>
+ * The observer rule is the one isolation rule of the store's callbacks (GDR-STORE-10): an observer, a
+ * {@link CommitListener}, an {@link IndexContributor}, a {@link SaveStep} and an {@link AnchorProvider} call isolate a
+ * {@link RuntimeException} and every {@link Error} except a {@link VirtualMachineError}, which leaves the JVM in no
+ * state to go on and propagates. The two scheduled runners of a writer, the periodic fetch and the due check of the
+ * anchoring off the caller's thread, isolate every {@link Throwable}, so a schedule never ends.
  * <p>
  * The events of two operations may reach an observer in either order, since each is emitted by its own thread once its
  * locks are free: an observer derives its state from the Git state the event points at, never from the old id of an
@@ -170,14 +177,29 @@ final class StoreEvents {
         call(() -> listeners.moved(moved));
     }
 
+    /**
+     * The observer rule of the store's callbacks: a call site catches {@link RuntimeException} and {@link Error} and
+     * calls this first, which rethrows a {@link VirtualMachineError}, so the site isolates exactly a
+     * {@link RuntimeException} and every other {@link Error}.
+     *
+     * @param failure the throwable a callback threw
+     * @throws VirtualMachineError the failure itself, when it is one
+     */
+    static void rethrowIfFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) {
+            throw fatal;
+        }
+    }
+
     private static void call(Runnable call) {
         try {
             call.run();
         }
         // a failing observer never fails the operation that emitted the events (GDR-STORE-9, GDR-STORE-10)
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.debug("An observer of the store events threw %s", e.getClass().getSimpleName());
+        catch (RuntimeException | Error e) {
+            rethrowIfFatal(e);
+            LOGGER.debug("An observer of the store events threw %s", e.getClass().getName());
         }
     }
 }

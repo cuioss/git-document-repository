@@ -271,7 +271,9 @@ public final class StoreWriter implements AutoCloseable {
      * attempt, the first and each re-application onto a new tip, after the conflict check; it sees the tip and the tree
      * the draft's changes produce on it through a read-only {@link SaveStep.Attempt}. Its {@link SaveStep.Edits} are
      * written into the same single save commit, whose only parent stays the tip, an edit on a path the draft also
-     * changed replacing the draft's edit. A draft without changes writes no commit and calls no step.
+     * changed replacing the draft's edit. A draft without changes writes no commit and calls no step. The step runs
+     * under the locks of the save, so every other operation of the clone waits for it: it is expected to return within
+     * milliseconds, and one that calls {@link #expireDrafts} gets {@link StoreOutcome#REFUSED} instead of a deadlock.
      *
      * @param author          the author, whose pseudonym names the draft reference, the commit's author and the
      *                        trailer {@code Actor}
@@ -285,9 +287,9 @@ public final class StoreWriter implements AutoCloseable {
      *         {@link SaveResult.NotSaved} with
      *         {@link StoreOutcome#REFUSED} and the detail {@code <target>: step: refused} for a {@link SaveStep.Refusal},
      *         or with the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} and the detail
-     *         {@code <target>: step: <simple class name of the exception>} for a step that threw a
-     *         {@link RuntimeException}, without a further attempt; in both cases nothing is pushed, and draft and target
-     *         branch stay unchanged
+     *         {@code <target>: step: <class name of the throwable>} ({@link Class#getName()}) for a step that threw a
+     *         {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}, without a further
+     *         attempt; in both cases nothing is pushed, and draft and target branch stay unchanged
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
@@ -308,21 +310,27 @@ public final class StoreWriter implements AutoCloseable {
      * <p>
      * The release runs under the shared side of the clone's maintenance lock, each attempt, from the fetch to the push
      * of the tag, under its transport lock. When {@code main} moved on the remote and the tag is missing there, a
-     * repeated release creates and pushes the missing tag on the release commit instead of merging again. A release
-     * tag on the remote is never moved or deleted.
+     * repeated release creates and pushes the missing tag on the release commit instead of merging again, and reports
+     * in {@link Release#branchMovedOn()} whether the working or collection branch moved on since that commit. A tag
+     * push the remote refuses is checked by a fetch of that tag: when the remote holds it at the released commit
+     * already, the release is complete. A release tag on the remote is never moved or deleted; a local tag whose push of
+     * {@code main} failed for any reason but a lost lease is deleted again. A numbered release copies the entry's paths
+     * onto {@code main} only when {@code main} did not change them since the previous release.
      *
      * @param author the user who releases, author of the release commit and its trailer {@code Actor}
      * @param claims the claims of that user's authentication, written as identity trailers
      * @param key    the document or numbered entry
      * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} with the detail
-     *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed;
-     *         {@link StoreOutcome#MALFORMED} for content without release or a pseudonym outside
-     *         {@code [A-Za-z0-9-]+}; {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} for a signing key
-     *         source that refuses or cannot be reached, or {@link StoreOutcome#REFUSED} for a key of another type than
-     *         Ed25519, nothing pushed; the passed-on
+     *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed or the remote holds
+     *         the tag at another commit; {@link StoreOutcome#MALFORMED} for content without release, a pseudonym
+     *         outside {@code [A-Za-z0-9-]+} or a gitlink among the paths the release would write (detail
+     *         {@code entry: a gitlink path cannot be released}); {@link StoreOutcome#REFUSED} or
+     *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that refuses or cannot be reached, or
+     *         {@link StoreOutcome#REFUSED} for a key of another type than Ed25519, nothing pushed; the passed-on
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing working or collection branch,
      *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} with the number of conflicting paths for a
-     *         conflicting merge, {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
+     *         conflicting merge or with the number of entry paths {@code main} changed since the previous release,
+     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
      *         {@code main} or after every attempt lost its lease, or the passed-on outcome that ended the release, for
      *         example {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE}; no detail names a path, a content or
      *         a pseudonym
@@ -338,11 +346,19 @@ public final class StoreWriter implements AutoCloseable {
      * {@code drafts.expiry} (UTC) is deleted by compare-and-delete expecting that tip, so a draft changed meanwhile is
      * kept; then a garbage collection runs. Both run under the exclusive side of the clone's maintenance lock, so no
      * draft write or save of this writer runs meanwhile.
+     * <p>
+     * The exclusive side cannot be taken by a thread that holds the shared side: a call from a {@link SaveStep} or
+     * another callback that runs under the locks of an operation of the clone is refused instead of waiting for
+     * itself.
      *
      * @param now the current time
-     * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none; or
-     *         the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} of a failed read, delete or garbage
-     *         collection
+     * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none;
+     *         {@link StoreOutcome#REFUSED} with the detail
+     *         {@code maintenance: re-entered from a callback that holds the shared lock} for a call from a thread that
+     *         holds the shared side of the maintenance lock; or the passed-on
+     *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} when another garbage collection holds
+     *         {@code gc.pid}, or {@link de.cuioss.git.document.core.GitOutcome#FAILED} of a failed read, delete or
+     *         garbage collection
      * @throws NullPointerException if {@code now} is {@code null}
      */
     public StoreResult<List<String>> expireDrafts(Instant now) {
@@ -449,10 +465,12 @@ public final class StoreWriter implements AutoCloseable {
      * and the indexes over this writer were refreshed. The subscription starts at the tip the branch has in the clone
      * now, or at the tip of every branch of the clone when the branch does not exist yet; every commit reachable from
      * the branch and not from that start is delivered once, whatever order the events of concurrent operations arrive
-     * in. What the subscription delivered is kept in memory only, so nothing older than the subscription is delivered,
-     * also not by a new writer over the same clone. A listener that throws a
-     * {@link RuntimeException} is logged ({@code GIT_STORE-109}) with the alias, the branch and the class of the
-     * exception and never fails the save, release or fetch.
+     * in. The subscription is registered before its start is read, so a commit an operation moved the branch to while
+     * the listener subscribes is never missed. What the subscription delivered is kept in memory only, so nothing older
+     * than the subscription is delivered, also not by a new writer over the same clone. A listener that throws a
+     * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} is logged
+     * ({@code GIT_STORE-109}) with the alias, the branch and the class name of the throwable, never fails the save,
+     * release or fetch and never keeps the next listener from its call.
      *
      * @param branch   the branch, by its full name ({@code refs/heads/main}) or its name below {@code refs/heads/}
      * @param listener the listener

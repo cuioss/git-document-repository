@@ -62,14 +62,23 @@ provider selection `StoreProviders` through `ServiceLoader`, the signing key sou
 an unencrypted OpenSSH Ed25519 key), and the `LogRecord` holder `GitStoreLogMessages`; and the
 write path: `StoreWriter` (`open` with the declared collections, a name declared twice refused as `MALFORMED`, and the
 active `SigningKeySource`; drafts, listing, explicit save with lease, retried only on a lost lease, and the
-optional per-attempt `SaveStep` taking the `IdentityClaims` of the user,
-`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, draft expiry with garbage collection, `fetch` and
-`fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with
+optional per-attempt `SaveStep` taking the `IdentityClaims` of the user, whose `SaveStep.Attempt` view reports the
+`mode` of a path, a save keeping the file mode of every draft put,
+`release` of a document with its tag taking the `IdentityClaims` and returning `Release` (with `branchMovedOn` for a
+repair of an incomplete release; a tag the remote already holds at the release commit completes it, a gitlink path is
+`MALFORMED`, a numbered entry `main` changed since the previous release is `CONFLICT`, a failed push of `main` leaves no
+local tag), draft expiry with garbage collection (`REFUSED` when re-entered from a callback holding the shared lock), `fetch` and
+`fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`
+registered before its start is read) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
-every fetch, save and release, with `snapshot` of a tag or commit) over the consumer's `IndexContributor` per
-collection, over the package-private `DraftReferences`, `ExplicitSave`, `DocumentRelease`, `DocumentPaths`,
-`DraftExpiry`, `StoreEvents`, `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
+every fetch, save and release, each source read in isolation, with `snapshot` of a tag or commit) over the consumer's
+`IndexContributor` per collection, over the package-private `StoreClone` (the opened clone with its parts, to which
+`StoreWriter` delegates) and `CloneOpening` (opens the clone and builds those parts), `DraftReferences`,
+`ExplicitSave`, `DocumentRelease`, `DocumentPaths`, `DraftExpiry`, `StoreEvents` (the notification seam and the one
+isolation rule of the store's callbacks: a listener, contributor, step or anchor provider isolates a
+`RuntimeException` and every `Error` but a `VirtualMachineError`, the two scheduled runners every `Throwable`),
+`ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
 commit is signed in the SSH signature format (GDR-STORE-12) through the package-private `SshSignatures` (an own
 SSHSIG encoder, no dependency), `SourceSigner` and `CommitSignatures`, and carries the identity trailers of
 `IdentityTrailers` (GDR-STORE-13); draft commits are neither. The signature verification (GDR-STORE-14) is

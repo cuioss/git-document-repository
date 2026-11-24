@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -240,6 +241,81 @@ class AnchorVerificationTest {
             value(writer.anchor());
             commit(remote, StoreReferences.MAIN, clock.instant(), tip(remote, StoreReferences.MAIN));
             clock.advance(INTERVAL);
+        }
+    }
+
+    /** A provider of the id {@code signed} whose verification throws, and whose id may throw. */
+    private static AnchorProvider failing(AnchorProvider delegate, Error verifyError, boolean idFails) {
+        return new AnchorProvider() {
+
+            @Override
+            public String id() {
+                if (idFails) {
+                    throw new AssertionError(word());
+                }
+                return delegate.id();
+            }
+
+            @Override
+            public StoreResult<byte[]> obtain(String repository, ObjectId subject, Instant commitTime,
+                    byte[] previous) {
+                return delegate.obtain(repository, subject, commitTime, previous);
+            }
+
+            @Override
+            public StoreResult<Instant> verify(ObjectId subject, byte[] proof, byte[] previous) {
+                throw verifyError;
+            }
+        };
+    }
+
+    @Nested
+    @DisplayName("A failing provider (GDR-STORE-17)")
+    class FailingProvider {
+
+        @Test
+        @DisplayName("GDR-STORE-17: an Error of the provider's verify rejects each proof and never escapes")
+        void errorOfVerifyRejectsTheProof(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 2);
+            }
+            var provider = failing(SignedAnchorProvider.verifier(anchorSigners()), new AssertionError(word()), false);
+
+            var report = value(AnchorVerification.verifyAnchors(repository, provider));
+
+            assertAll(
+                    () -> assertEquals(2, report.proofs(), "both proofs were verified"),
+                    () -> assertEquals(2, report.findings().size(), "each rejected"),
+                    () -> assertTrue(report.findings().stream().allMatch(finding ->
+                                    finding.kind() == AnchorVerification.Kind.PROOF_REJECTED
+                                            && finding.outcome() == StoreOutcome.SIGNATURE_INVALID),
+                            "as an invalid signature"),
+                    () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                            AssertionError.class.getName()));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: an Error of the provider's id ends the verification FAILED; a VM error propagates")
+        void errorOfIdFailsAndVirtualMachineErrorPropagates(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+            try (var writer = open(remote)) {
+                checkpoints(writer, repository, 1);
+            }
+            var verifier = SignedAnchorProvider.verifier(anchorSigners());
+            var unnamed = failing(verifier, new AssertionError(word()), true);
+            var exhausted = failing(verifier, new StackOverflowError(), false);
+
+            var failed = AnchorVerification.verifyAnchors(repository, unnamed);
+
+            assertAll(
+                    () -> assertEquals(new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null,
+                            "anchors: " + AssertionError.class.getSimpleName()), failed, "a result, not an Error"),
+                    () -> assertThrows(StackOverflowError.class,
+                            () -> AnchorVerification.verifyAnchors(repository, exhausted),
+                            "a VirtualMachineError is not isolated"));
         }
     }
 

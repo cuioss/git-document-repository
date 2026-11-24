@@ -22,6 +22,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -52,6 +53,7 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
     private final Deque<GitOutcome> pushScript = new ArrayDeque<>();
     private final Deque<Runnable> beforePush = new ArrayDeque<>();
     private final Map<String, Deque<GitOutcome>> pushScriptByRef = new HashMap<>();
+    private final Map<String, Deque<Consumer<PushInput>>> beforePushByRef = new HashMap<>();
     private final List<CloneInput> clones = new ArrayList<>();
     private final List<FetchInput> fetches = new ArrayList<>();
     private final List<PushInput> pushes = new ArrayList<>();
@@ -99,6 +101,20 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
      */
     synchronized ScriptedRepositoryOperations beforeNextPush(Runnable action) {
         beforePush.add(action);
+        return this;
+    }
+
+    /**
+     * Runs an action with the input of the next push to one remote reference, right before it reaches the delegate,
+     * once; such an action is taken before one of {@link #beforeNextPush(Runnable)}, and the push of every other
+     * reference is unaffected.
+     *
+     * @param remoteRef the full name of the remote reference, for example a release tag
+     * @param action    the action, given the input of the push
+     * @return this double
+     */
+    synchronized ScriptedRepositoryOperations beforePushTo(String remoteRef, Consumer<PushInput> action) {
+        beforePushByRef.computeIfAbsent(remoteRef, ref -> new ArrayDeque<>()).add(action);
         return this;
     }
 
@@ -157,15 +173,23 @@ final class ScriptedRepositoryOperations implements RepositoryOperations {
     @Override
     public GitResult<RefUpdate> push(PushInput input) {
         GitOutcome scripted;
-        Runnable action;
+        @Nullable Runnable action = null;
+        @Nullable Consumer<PushInput> refAction = null;
         synchronized (this) {
             pushes.add(input);
             Deque<GitOutcome> byRef = pushScriptByRef.get(input.remoteRef());
             scripted = byRef == null || byRef.isEmpty() ? pushScript.poll() : byRef.poll();
-            action = scripted == null ? beforePush.poll() : null;
+            if (scripted == null) {
+                Deque<Consumer<PushInput>> actions = beforePushByRef.get(input.remoteRef());
+                refAction = actions == null ? null : actions.poll();
+                action = refAction == null ? beforePush.poll() : null;
+            }
         }
         if (scripted != null) {
             return GitResult.of(scripted, SCRIPTED);
+        }
+        if (refAction != null) {
+            refAction.accept(input);
         }
         if (action != null) {
             action.run();

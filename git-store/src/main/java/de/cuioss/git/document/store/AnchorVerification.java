@@ -68,6 +68,12 @@ import org.jspecify.annotations.Nullable;
  * ends the verification as a failure, never as a clean report. The verification changes no reference and writes no
  * object. A finished verification is logged once as
  * {@code GIT_STORE-10} with the provider id and the counts only.
+ * <p>
+ * The provider is pluggable code and its calls follow the observer rule of the store's callbacks: a
+ * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} of its {@code verify} rejects
+ * that proof ({@link Kind#PROOF_REJECTED}) and the verification goes on; one of its {@code id} ends the verification
+ * with the passed-on {@link GitOutcome#FAILED}; either is logged by its class name only, and a
+ * {@link VirtualMachineError} propagates.
  *
  * @since 0.1
  */
@@ -213,10 +219,12 @@ public final class AnchorVerification {
                 return StoreResult.ok(new Report(checkpoints.size(), subjects.size(), proofs, findings));
             }
         }
-        // an unexpected failure reading the repository ends the verification as a result, never as an exception,
-        // naming the class of the failure only (GDR-STORE-17, GDR-NFR-3)
+        // an unexpected failure reading the repository, or of the provider naming itself, ends the verification as a
+        // result, never as an exception, naming the class of the failure only (GDR-STORE-17, GDR-NFR-3); the observer
+        // rule of StoreEvents isolates every Error but a VirtualMachineError
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (IOException | RuntimeException e) {
+        catch (IOException | RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
             return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null,
                     "anchors: " + e.getClass().getSimpleName());
         }
@@ -305,16 +313,22 @@ public final class AnchorVerification {
         return proof == null ? raw : proof;
     }
 
-    /** The outcome of the provider for one proof; an exception of the provider rejects the proof. */
+    /**
+     * The outcome of the provider for one proof; a failure of the provider the observer rule of {@link StoreEvents}
+     * isolates (a {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}) rejects the
+     * proof, logged by its class name only.
+     */
     private static StoreOutcome verify(AnchorProvider provider, ObjectId subject, byte[] proof, byte[] previous) {
         try {
             var verified = provider.verify(subject, proof.clone(), previous.clone());
             return verified.outcome() instanceof StoreOutcome outcome ? outcome : StoreOutcome.SIGNATURE_INVALID;
         }
-        // a provider is pluggable code; its failure rejects the proof and never ends the verification
+        // a provider is pluggable code; its failure rejects the proof and never ends the verification; the observer
+        // rule of StoreEvents isolates every Error but a VirtualMachineError
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.debug("The anchor provider threw %s", e.getClass().getSimpleName());
+        catch (RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
+            LOGGER.debug("The anchor provider threw %s", e.getClass().getName());
             return StoreOutcome.SIGNATURE_INVALID;
         }
     }

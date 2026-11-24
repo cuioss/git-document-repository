@@ -105,6 +105,19 @@ class LogMessagesCatalogueTest {
     }
 
     @Test
+    @DisplayName("GDR-GEN-4: the unreadable index source GIT_STORE-113 of GDR-STORE-9 is declared and catalogued")
+    void unreadSourceIsCatalogued() throws Exception {
+        var unread = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD;
+
+        var documented = documented(new TreeMap<>());
+
+        assertAll(
+                () -> assertEquals("GIT_STORE-113", unread.resolveIdentifierString(), "the identifier"),
+                () -> assertEquals("Kept the previous index entries of repository %s for a %s that could not be read: %s",
+                        documented.get(unread.resolveIdentifierString()), "the catalogued template"));
+    }
+
+    @Test
     @DisplayName("GDR-GEN-4: the finished verification GIT_STORE-6 of GDR-STORE-14 is declared and catalogued")
     void signaturesVerifiedIsCatalogued() throws Exception {
         var verified = GitStoreLogMessages.INFO.SIGNATURES_VERIFIED;

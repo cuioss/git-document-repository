@@ -31,9 +31,17 @@ import org.jspecify.annotations.Nullable;
  * every document of that collection it reads, with the key, the source reference the document was read from and the
  * document's files ({@link DocumentPaths}); the index keeps only the value the contributor returns, never the files.
  * A contributor that returns {@code null} leaves the document out of the index; one that throws a
- * {@link RuntimeException} leaves it out as well, the failure being logged with the class of the exception only, and
- * the index reads the next document. A contributor is called on the thread that refreshes the index, one document after
- * the other, and must not block on the store.
+ * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} leaves it out as well, the
+ * failure being logged with the class name of the throwable only, and the index reads the next document; a
+ * {@link VirtualMachineError} propagates.
+ * <p>
+ * A contributor is called on the thread that refreshes the index, one document after the other, under the lock of the
+ * index, after the operation that moved the references released the locks of the clone. Every refresh, snapshot and
+ * open of the index waits while it runs, and the save, release or fetch that triggered the refresh returns to its
+ * caller only afterwards, so a contributor is expected to return within milliseconds per document: it decodes the
+ * files it is given and calls no remote service. It must not block on the store; a call into the writer that would
+ * wait for a lock the calling thread holds, such as {@link StoreWriter#expireDrafts} from a thread under the shared
+ * side of the clone's maintenance lock, is refused with {@link StoreOutcome#REFUSED} instead of a deadlock.
  *
  * @param <E> the type of the entry value
  * @since 0.1

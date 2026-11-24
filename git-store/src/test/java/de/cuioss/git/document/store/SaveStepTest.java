@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.LogRecord;
 
 
@@ -528,6 +530,149 @@ class SaveStepTest {
         }
     }
 
+    /** The modes of the files of a commit, path to mode. */
+    private static Map<String, FileMode> modes(Repository repository, ObjectId id) throws IOException {
+        Map<String, FileMode> modes = new TreeMap<>();
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.addTree(parse(repository, id).getTree());
+            walk.setRecursive(true);
+            while (walk.next()) {
+                modes.put(walk.getPathString(), walk.getFileMode(0));
+            }
+        }
+        return modes;
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-3: the step sees the mode of an executable file and a symbolic link the draft puts")
+    void stepSeesTheDraftModes(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var regular = word();
+        commit(remote.repository(), target, Map.of(regular, content()));
+        var executable = word() + ".sh";
+        var link = word() + "l";
+        var script = content();
+        var linkTarget = word();
+        var author = Author.of(pseudonym());
+        Map<String, Optional<TreeEdit.Mode>> seen = new TreeMap<>();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, List.of(new TreeEdit.Put(executable, bytes(script),
+                    TreeEdit.Mode.EXECUTABLE_FILE), new TreeEdit.Put(link, bytes(linkTarget), TreeEdit.Mode.SYMLINK)));
+
+            var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, attempt -> {
+                seen.put(executable, attempt.mode(executable));
+                seen.put(link, attempt.mode(link));
+                seen.put(regular, attempt.mode(regular));
+                seen.put(word() + "absent", attempt.mode(word() + "absent"));
+                return new SaveStep.Edits(List.of());
+            }));
+
+            var commit = ObjectId.fromString(saved.commitId());
+            var modes = modes(remote.repository(), commit);
+            var files = tree(remote.repository(), commit);
+            assertAll(
+                    () -> assertEquals(Optional.of(TreeEdit.Mode.EXECUTABLE_FILE), seen.get(executable),
+                            "the step sees the executable"),
+                    () -> assertEquals(Optional.of(TreeEdit.Mode.SYMLINK), seen.get(link), "and the link"),
+                    () -> assertEquals(Optional.of(TreeEdit.Mode.REGULAR_FILE), seen.get(regular),
+                            "and the regular file of the tip"),
+                    () -> assertEquals(4, seen.size(), "four paths asked"),
+                    () -> assertEquals(1, seen.values().stream().filter(Optional::isEmpty).count(), "an absent path has no mode"),
+                    () -> assertEquals(FileMode.EXECUTABLE_FILE, modes.get(executable), "saved executable"),
+                    () -> assertEquals(FileMode.SYMLINK, modes.get(link), "saved as a link"),
+                    () -> assertEquals(script, files.get(executable), "the script content"),
+                    () -> assertEquals(linkTarget, files.get(link), "the link target"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-3: a step calling expireDrafts gets REFUSED within a deadline instead of a deadlock")
+    void stepReenteringExpiryIsRefused(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        commit(remote.repository(), target, Map.of(word(), content()));
+        var author = Author.of(pseudonym());
+        List<StoreResult<List<String>>> expiries = new ArrayList<>();
+        var executor = Executors.newSingleThreadExecutor();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+            var future = executor.submit(() -> fixture.save(author, key, attempt -> {
+                expiries.add(fixture.writer().expireDrafts(Instant.now()));
+                return new SaveStep.Edits(List.of());
+            }));
+
+            var result = future.get(30, TimeUnit.SECONDS);
+
+            assertAll(
+                    () -> assertInstanceOf(SaveResult.Saved.class, result, "the save itself completes"),
+                    () -> assertEquals(List.of(StoreResult.of(StoreOutcome.REFUSED,
+                                    "maintenance: re-entered from a callback that holds the shared lock")), expiries,
+                            "the re-entered expiry is refused"),
+                    () -> assertEquals(RepositoryGuard.REENTERED, expiries.getFirst().detail(), "the guard's detail"));
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS), "the save ended");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-3: a step throwing an anonymous exception class is named by its full class name")
+    void anonymousExceptionIsNamed(@Remote LocalRemote remote) {
+        var key = key();
+        var target = StoreReferences.target(key);
+        commit(remote.repository(), target, Map.of(word(), content()));
+        var author = Author.of(pseudonym());
+        var secret = content();
+        RuntimeException anonymous = new IllegalStateException(secret) {
+        };
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+
+            var result = fixture.save(author, key, attempt -> {
+                throw anonymous;
+            });
+
+            assertAll(
+                    () -> assertEquals("", anonymous.getClass().getSimpleName(), "the class has no simple name"),
+                    () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.FAILED),
+                            target + ": step: " + anonymous.getClass().getName()), result, "named by getName()"),
+                    () -> assertNothingLeaks(String.valueOf(result), List.of(secret)));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-3: an Error of a step ends the save FAILED; a VirtualMachineError propagates")
+    void errorOfStepIsIsolated(@Remote LocalRemote remote) throws Exception {
+        var key = key();
+        var target = StoreReferences.target(key);
+        var tipId = commit(remote.repository(), target, Map.of(word(), content()));
+        var author = Author.of(pseudonym());
+        var secret = content();
+
+        try (var fixture = open(remote)) {
+            fixture.draft(author, key, puts(Map.of(word(), content())));
+
+            var result = fixture.save(author, key, attempt -> {
+                throw new AssertionError(secret);
+            });
+            SaveStep exhausted = attempt -> {
+                throw new StackOverflowError();
+            };
+
+            assertAll(
+                    () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.FAILED),
+                            target + ": step: " + AssertionError.class.getName()), result, "isolated, FAILED"),
+                    () -> assertThrows(StackOverflowError.class, () -> fixture.save(author, key, exhausted),
+                            "a VirtualMachineError is not isolated"),
+                    () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
+                    () -> assertNothingLeaks(String.valueOf(result), List.of(secret)));
+        }
+    }
+
     @Test
     @DisplayName("GDR-STORE-3: a throwing step ends FAILED after one attempt, naming the class only, without throwable")
     void throwingStepFailsAfterOneAttempt(@Remote LocalRemote remote) {
@@ -552,7 +697,8 @@ class SaveStepTest {
             var notSaved = assertInstanceOf(SaveResult.NotSaved.class, result);
             assertAll(
                     () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.FAILED),
-                            target + ": step: StepBrokeException"), result, "failed, naming the class only"),
+                                    target + ": step: " + StepBrokeException.class.getName()), result,
+                            "failed, naming the class only"),
                     () -> assertEquals(1, calls[0], "the step ran once"),
                     () -> assertEquals(1, fixture.operations().fetches().size(), "exactly one attempt"),
                     () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"),

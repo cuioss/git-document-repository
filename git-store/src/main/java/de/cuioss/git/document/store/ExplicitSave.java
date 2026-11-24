@@ -107,10 +107,16 @@ import org.jspecify.annotations.Nullable;
  * of the edits counting as changed, so a step put that would replace a directory of the base, or turn a file into a
  * directory, is a conflict as well, while a step edit disjoint from the base's files, such as a counter, stays valid;
  * its refusal
- * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} it throws with the passed-on
- * {@link GitOutcome#FAILED} naming the class of the exception only, without a further attempt. In both cases nothing is
- * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step. The step's
- * edits are written into the one signed, trailer-carrying save commit; there is no second commit path.
+ * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} or an {@link Error} other than a
+ * {@link VirtualMachineError} it throws (the observer rule of {@link StoreEvents}) with the passed-on
+ * {@link GitOutcome#FAILED} naming the class of the throwable by {@link Class#getName()} only, without a further
+ * attempt. In both cases nothing is written or pushed, and draft and target branch stay as they are. A draft without
+ * changes calls no step. The step's edits are written into the one signed, trailer-carrying save commit; there is no
+ * second commit path. The step runs under the locks of the save: one that calls back into the writer gets
+ * {@link StoreOutcome#REFUSED} for a draft expiry ({@link RepositoryGuard#exclusive}) instead of a deadlock.
+ * <p>
+ * Every put of the draft keeps the mode the draft holds the path in: an executable file stays executable and a
+ * symbolic link stays one ({@link TreeEdit.Mode}); the step's view reports that mode ({@link SaveStep.Attempt#mode}).
  * <p>
  * The save is a cooperative compare-and-swap against the remote: a lease refusal, which {@code git-core} also reports
  * for a push that lost a race on the remote reference after the advertisement, starts the next attempt from the fetch,
@@ -389,19 +395,22 @@ final class ExplicitSave {
     }
 
     /**
-     * Calls the per-attempt step. A refusal ends the save with {@link StoreOutcome#REFUSED}; a
-     * {@link RuntimeException} with the passed-on {@link GitOutcome#FAILED}, naming its class only and attaching no
-     * throwable to a log record.
+     * Calls the per-attempt step. A refusal ends the save with {@link StoreOutcome#REFUSED}; a failure the observer
+     * rule of {@link StoreEvents} isolates (a {@link RuntimeException} or an {@link Error} other than a
+     * {@link VirtualMachineError}) with the passed-on {@link GitOutcome#FAILED}, naming its class by
+     * {@link Class#getName()} only and attaching no throwable to a log record.
      */
     private static Stepped step(Request request, SaveStep step, AttemptView view) {
         SaveStep.Outcome outcome;
         try {
             outcome = Objects.requireNonNull(step.apply(view), "the step returned no outcome");
         }
-        // a step that throws ends the save as a result, never as an exception (GDR-STORE-3)
+        // a step that throws ends the save as a result, never as an exception (GDR-STORE-3); the observer rule of
+        // StoreEvents isolates every Error but a VirtualMachineError
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            String type = e.getClass().getSimpleName();
+        catch (RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
+            String type = e.getClass().getName();
             LOGGER.debug("The save step of the save onto %s threw %s", request.target(), type);
             return new Stepped(null, notSaved(GitOutcome.FAILED, request.target() + STEP_FAILED + type));
         }
@@ -667,7 +676,11 @@ final class ExplicitSave {
         }
     }
 
-    /** The edits of the save: the content of every added or modified path of the draft, a delete of every other. */
+    /**
+     * The edits of the save: the content of every added or modified path of the draft with the mode the draft holds it
+     * in, so an executable file or a symbolic link stays one ({@link DocumentRelease#mode}), and a delete of every
+     * other.
+     */
     private static List<TreeEdit> edits(Repository repository, List<PathChange> changed, RevTree draftTree)
             throws IOException {
         List<TreeEdit> edits = new ArrayList<>(changed.size());
@@ -676,9 +689,10 @@ final class ExplicitSave {
                 edits.add(new TreeEdit.Delete(change.path()));
             } else {
                 try (TreeWalk found = TreeWalk.forPath(repository, change.path(), draftTree)) {
-                    ObjectId blob = Objects.requireNonNull(found, "a changed path exists on the draft").getObjectId(0);
+                    TreeWalk entry = Objects.requireNonNull(found, "a changed path exists on the draft");
+                    ObjectId blob = entry.getObjectId(0);
                     byte[] content = repository.open(blob, Constants.OBJ_BLOB).getBytes(Integer.MAX_VALUE);
-                    edits.add(new TreeEdit.Put(change.path(), content));
+                    edits.add(new TreeEdit.Put(change.path(), content, DocumentRelease.mode(entry.getRawMode(0))));
                 }
             }
         }
@@ -848,6 +862,26 @@ final class ExplicitSave {
                 return Optional.empty();
             }
             return tipContent(path);
+        }
+
+        @Override
+        public Optional<TreeEdit.Mode> mode(String path) {
+            Objects.requireNonNull(path, "path");
+            TreeEdit edit = edits.get(path);
+            if (edit instanceof TreeEdit.Put put) {
+                return Optional.of(put.mode());
+            }
+            if (edit != null || replaced(path) || becameDirectory(path) || base == null || path.isEmpty()) {
+                return Optional.empty();
+            }
+            try (TreeWalk found = TreeWalk.forPath(repository, path, base.getTree())) {
+                if (found == null || FileMode.TREE.equals(found.getRawMode(0))) {
+                    return Optional.empty();
+                }
+                return Optional.of(DocumentRelease.mode(found.getRawMode(0)));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
         }
 
         @Override

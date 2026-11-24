@@ -41,7 +41,10 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * Every subscription derives what is new from the Git state, never from the old id of an event. Its <em>start</em> is
  * fixed when it subscribes: the tip the branch has in the clone, or, for a branch the clone does not hold yet, the tip
- * of every branch of the clone. Its <em>delivered tips</em> are the new ids it has walked, an ancestor of a later one
+ * of every branch of the clone. The subscription is registered before its start is read, under its own lock, so an
+ * event emitted while it subscribes reaches it and waits until the start is fixed: a commit a save moved the branch to
+ * after the start was read is delivered, one it moved to before is part of the start and not delivered again. Its
+ * <em>delivered tips</em> are the new ids it has walked, an ancestor of a later one
  * dropped. When an event moves the branch to a new id, the dispatch walks the commits reachable from that id and from
  * neither the start nor a delivered tip, oldest first ({@code RevSort.TOPO} with {@code RevSort.REVERSE}, JGit 7.8.0),
  * and calls the listener with each. Every commit reachable from the branch that was not reachable from the start
@@ -58,10 +61,12 @@ import org.jspecify.annotations.Nullable;
  * by the thread that holds it, which drains the queue before it lets go of it. Two listeners that save onto each other's
  * branch on two threads therefore never deadlock. {@link CommitListener.Subscription#close} takes the lock, so it waits
  * for a delivery in progress and no call starts after it returned; called from within a listener of another
- * subscription it does not wait, so it cannot deadlock either, and only stops the calls not yet started. A
- * {@link RuntimeException} of a listener is caught, logged as {@code GIT_STORE-109} with the alias, the branch and the
- * class of the exception, no throwable attached, and never fails the trigger; the commit counts as delivered. A walk
- * that fails to read the clone delivers nothing and keeps the delivered tips.
+ * subscription it does not wait, so it cannot deadlock either, and only stops the calls not yet started. A failure of
+ * a listener isolated by the observer rule of {@link StoreEvents} (a {@link RuntimeException} or an {@link Error} other
+ * than a {@link VirtualMachineError}) is caught, logged as {@code GIT_STORE-109} with the alias, the branch and the
+ * class name of the throwable ({@link Class#getName()}), no throwable attached, and never fails the trigger nor keeps
+ * the next listener from its call; the commit counts as delivered. A walk that fails to read the clone delivers
+ * nothing and keeps the delivered tips.
  */
 final class ListenerDispatch implements StoreEvents.Observer {
 
@@ -88,7 +93,8 @@ final class ListenerDispatch implements StoreEvents.Observer {
 
     /**
      * Subscribes a listener to a branch, starting at the tip the branch has in the clone now, or at the tips of every
-     * branch when the clone does not hold it.
+     * branch when the clone does not hold it. The subscription is registered first and its start read after, both
+     * under its lock, so an event emitted meanwhile is delivered against that start once it is fixed.
      *
      * @param branch   the full name of the branch
      * @param listener the listener
@@ -98,8 +104,42 @@ final class ListenerDispatch implements StoreEvents.Observer {
     CommitListener.Subscription subscribe(String branch, CommitListener listener) {
         Objects.requireNonNull(branch, "branch");
         Objects.requireNonNull(listener, "listener");
-        var subscription = new Subscription(branch, listener, start(branch));
-        subscriptions.add(subscription);
+        return subscribe(branch, listener, () -> {
+            // no pause after the start outside the tests
+        });
+    }
+
+    /**
+     * Subscribes a listener like {@link #subscribe(String, CommitListener)}, with a pause point after the start was
+     * read and before {@code subscribe} returns, through which a test moves the branch and emits its event in the
+     * window where a subscription that registered only after reading its start would miss the commit.
+     *
+     * @param branch   the full name of the branch
+     * @param listener the listener
+     * @param pause    run after the registration and the read of the start, with the subscription's lock held
+     * @return the subscription
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    CommitListener.Subscription subscribe(String branch, CommitListener listener, Runnable pause) {
+        Objects.requireNonNull(branch, "branch");
+        Objects.requireNonNull(listener, "listener");
+        Objects.requireNonNull(pause, "pause");
+        var subscription = new Subscription(branch, listener);
+        // a new lock no other thread knows yet: taking it never waits
+        subscription.lock.lock();
+        boolean started = false;
+        try {
+            subscriptions.add(subscription);
+            subscription.start = start(branch);
+            pause.run();
+            started = true;
+        } finally {
+            if (!started) {
+                subscriptions.remove(subscription);
+            }
+            subscription.lock.unlock();
+        }
+        subscription.drainWhileFree();
         return subscription;
     }
 
@@ -135,7 +175,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
             }
             return List.copyOf(tips);
         } catch (IOException e) {
-            LOGGER.debug("The start of a subscription was not read: %s", e.getClass().getSimpleName());
+            LOGGER.debug("The start of a subscription was not read: %s", e.getClass().getName());
             return List.of();
         }
     }
@@ -177,8 +217,10 @@ final class ListenerDispatch implements StoreEvents.Observer {
 
         private final String branch;
         private final CommitListener listener;
-        private final List<ObjectId> start;
         private final ReentrantLock lock = new ReentrantLock();
+
+        /** The start, fixed once by {@link #subscribe} under {@link #lock} before any walk; guarded by it. */
+        private List<ObjectId> start = List.of();
 
         /** The new ids still to walk, queued by any thread without waiting. */
         private final Queue<ObjectId> pending = new ConcurrentLinkedQueue<>();
@@ -188,10 +230,9 @@ final class ListenerDispatch implements StoreEvents.Observer {
 
         private volatile boolean closed;
 
-        Subscription(String branch, CommitListener listener, List<ObjectId> start) {
+        Subscription(String branch, CommitListener listener) {
             this.branch = branch;
             this.listener = listener;
-            this.start = start;
         }
 
         /**
@@ -245,7 +286,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
             try {
                 commits = commits(newId);
             } catch (IOException e) {
-                LOGGER.debug("The new commits of %s were not read: %s", branch, e.getClass().getSimpleName());
+                LOGGER.debug("The new commits of %s were not read: %s", branch, e.getClass().getName());
                 return;
             }
             for (ObjectId commit : commits) {
@@ -264,10 +305,12 @@ final class ListenerDispatch implements StoreEvents.Observer {
             try {
                 listener.committed(branch, commit.name());
             }
-            // a failing listener never fails the save, release or fetch that triggered it (GDR-STORE-10)
+            // a failing listener never fails the save, release or fetch that triggered it (GDR-STORE-10); the observer
+            // rule of StoreEvents isolates every Error but a VirtualMachineError
             // cui-rewrite:disable InvalidExceptionUsageRecipe
-            catch (RuntimeException e) {
-                LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getSimpleName());
+            catch (RuntimeException | Error e) {
+                StoreEvents.rethrowIfFatal(e);
+                LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getName());
             } finally {
                 leaveCallback();
             }
@@ -304,7 +347,7 @@ final class ListenerDispatch implements StoreEvents.Observer {
                     }
                 }
             } catch (IOException e) {
-                LOGGER.debug("The delivered tips of %s were not compared: %s", branch, e.getClass().getSimpleName());
+                LOGGER.debug("The delivered tips of %s were not compared: %s", branch, e.getClass().getName());
                 delivered.stream().filter(known -> !next.contains(known)).forEach(next::add);
             }
             return List.copyOf(next);

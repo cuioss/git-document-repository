@@ -26,9 +26,10 @@ package de.cuioss.git.document.store;
  * the store, and after the index was refreshed, or on the thread of a concurrent trigger of the same subscription that
  * was delivering already; the calls of one subscription never overlap. A listener may call the store, a save included:
  * the commits that call adds are delivered after the listener returned, and listeners that save onto each other's
- * branches never deadlock. A {@link RuntimeException} of the listener is logged with its class only and never
- * fails the save, release or fetch; the commit counts as delivered. The store keeps no progress of a listener: what
- * must not be lost has to be derivable from the Git state at start.
+ * branches never deadlock. A {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} of
+ * the listener is logged with its class name only, never fails the save, release or fetch and never keeps the next
+ * listener from its call; the commit counts as delivered. The store keeps no progress of a listener: what must not be
+ * lost has to be derivable from the Git state at start.
  *
  * @since 0.1
  */

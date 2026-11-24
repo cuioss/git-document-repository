@@ -98,10 +98,12 @@ fetch mirrors the remote branch into the clone.
 `gc.pid` (xref:../../doc/specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]): the repository alias. The expiry
 ends in the passed-on `CONFLICT`, which may be retried.
 |GIT_STORE-105 |GIT_STORE |Released repository %s onto main, but the tag %s is missing for commit %s
-|Logged when a release moved `main` on the remote but the push of its tag failed
+|Logged when a release moved `main` on the remote but the push of its tag failed, or the remote refused it and holds
+the tag at another commit
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]): the repository alias, the full name of the
 missing release tag and the full id of the release commit. The release is `INCOMPLETE`; a repeated release of the
-document creates the missing tag on that commit instead of merging again.
+document creates the missing tag on that commit instead of merging again. A refused tag push whose tag the remote
+already holds at the release commit completes the release and is not logged here.
 |GIT_STORE-106 |GIT_STORE |Did not complete the release of repository %s, reference %s: %s
 |Logged when a release ended with nothing of it on the remote
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]), for example a missing branch, a conflicting
@@ -110,18 +112,21 @@ branch of the document or entry and the name of the outcome, never a path or a c
 |GIT_STORE-107 |GIT_STORE |The periodic fetch of repository %s failed: %s
 |Logged when a fetch started by `StoreWriter.fetchPeriodically` failed
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias and the name of the
-outcome, or the simple class name of an exception, never its message or a credential. The schedule goes on, and the
-next run fetches again.
+outcome, or the class name (`Class.getName()`) of any throwable the run threw, never its message or a credential. The
+schedule goes on, and the next run fetches again.
 |GIT_STORE-108 |GIT_STORE |Left a document of repository %s, collection %s out of the index: the contributor threw %s
-|Logged when an index contributor threw while the index read a document
+|Logged when an index contributor threw a `RuntimeException` or an `Error` other than a `VirtualMachineError` while
+the index read a document
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias, the name of the
-collection and the simple class name of the exception, never its message, the id, a path or a content. The document is
-left out of the index, and the refresh goes on with the next document.
+collection and the class name (`Class.getName()`) of the throwable, never its message, the id, a path or a content. The
+document is left out of the index, and the refresh goes on with the next document.
 |GIT_STORE-109 |GIT_STORE |A commit listener of repository %s, branch %s threw %s
-|Logged when a commit listener threw while it was called with a new commit of its branch
+|Logged when a commit listener threw a `RuntimeException` or an `Error` other than a `VirtualMachineError` while it was
+called with a new commit of its branch
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-10[GDR-STORE-10]): the repository alias, the full name of the
-branch and the simple class name of the exception, never its message; no throwable is attached. The save, release or
-fetch that triggered the call is unaffected, and the commit counts as delivered.
+branch and the class name (`Class.getName()`) of the throwable, never its message; no throwable is attached. The save,
+release or fetch that triggered the call is unaffected, the next listener is still called, and the commit counts as
+delivered.
 |GIT_STORE-110 |GIT_STORE |Did not sign the commit of repository %s, reference %s: %s
 |Logged when a save or release was refused because its commit could not be signed
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-12[GDR-STORE-12]): the signing key source refused or could not
@@ -133,14 +138,22 @@ attached. Nothing of the save or release is on the remote.
 |Logged when a due check of the anchoring ended with subjects still pending
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-15[GDR-STORE-15]): the fetch failed, the anchor provider refused
 or could not be reached, or the note of a proof was not pushed. It names the repository alias and the name of the
-outcome, never a reference name, a proof or the detail of the provider; no throwable is attached. The save, release or
-fetch that triggered the due check is unaffected, and the next due check retries.
+outcome, or the class name (`Class.getName()`) of any throwable a due check off the caller's thread threw, never a
+reference name, a proof or the detail of the provider; no throwable is attached. The save, release or fetch that
+triggered the due check is unaffected, the schedule goes on, and the next due check retries.
 |GIT_STORE-112 |GIT_STORE |Did not push an anchoring reference of repository %s, kept for the next due check: %s
 |Logged when the push of a checkpoint tag or of the notes reference of an anchor proof failed
 (xref:../../doc/specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16],
 xref:../../doc/specification/git-store.adoc#GDR-STORE-17[GDR-STORE-17]): the repository alias and the name of the
 outcome. The checkpoint commit or the proof is kept under a local-only reference below `refs/anchoring/`, and the next
 due check pushes it instead of making a new checkpoint or requesting a new proof.
+|GIT_STORE-113 |GIT_STORE |Kept the previous index entries of repository %s for a %s that could not be read: %s
+|Logged when a refresh of the index could not read one of its sources, for example because a blob of its tip is
+missing from the clone (xref:../../doc/specification/git-store.adoc#GDR-STORE-9[GDR-STORE-9]): the repository alias,
+the class of the source (`main`, `working branch` or `collection branch`), never its reference name, which may carry a
+document id, and the class name (`Class.getName()`) of the exception, never its message. The source keeps the entries
+it was indexed with (a new source stays out of the index), the other sources are published fresh, and the next
+operation of the writer retries the refresh.
 |===
 
 == ERROR Level (200-299)

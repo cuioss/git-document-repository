@@ -124,6 +124,21 @@ final class ScriptedAnchorProvider implements AnchorProvider {
     }
 
     /**
+     * Scripts the next call to throw an {@link Error}, such as an {@link AssertionError} of a broken provider or a
+     * {@link StackOverflowError}, a {@link VirtualMachineError}.
+     *
+     * @param error the error to throw
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider errorNext(Error error) {
+        Objects.requireNonNull(error, "error");
+        script.add(() -> {
+            throw error;
+        });
+        return this;
+    }
+
+    /**
      * Makes every further call answer with an outcome until {@link #recover()}.
      *
      * @param outcome the outcome, a non-success

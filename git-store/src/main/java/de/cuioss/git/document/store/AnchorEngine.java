@@ -210,7 +210,11 @@ final class AnchorEngine {
         return Optional.of(new AnchorNotes.Tip(published.value(), proof.proof()));
     }
 
-    /** Asks the provider for one proof; an exception of the provider leaves the subject pending like a refusal. */
+    /**
+     * Asks the provider for one proof; a failure of the provider the observer rule of {@link StoreEvents} isolates (a
+     * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}) leaves the subject pending
+     * like a refusal, logged by its class name only.
+     */
     private StoreResult<byte[]> obtain(AnchorProvider active, Subject subject, byte[] previous) {
         try {
             var obtained = active.obtain(clone.alias(), subject.id(), subject.time(), previous.clone());
@@ -219,10 +223,12 @@ final class AnchorEngine {
             }
             return obtained;
         }
-        // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15)
+        // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15); the
+        // observer rule of StoreEvents isolates every Error but a VirtualMachineError
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.debug("The anchor provider threw %s", e.getClass().getSimpleName());
+        catch (RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
+            LOGGER.debug("The anchor provider threw %s", e.getClass().getName());
             return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider failed");
         }
     }

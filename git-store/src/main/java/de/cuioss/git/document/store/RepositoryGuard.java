@@ -38,7 +38,9 @@ import java.util.function.Supplier;
  * pushes of a release attempt (GDR-STORE-6), so two operations of the clone never interleave their transport and no
  * pruning fetch deletes the local tag of a release before its push. The order is fixed: the shared side of the
  * maintenance lock, then, for a save, the draft lock, then the transport lock per attempt; a release takes no draft
- * lock, and the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
+ * lock, and the expiry takes the exclusive side only, so no cycle arises. A thread that holds the shared side and asks
+ * for the exclusive side, a callback re-entering the writer, is refused ({@link #exclusive}) instead of waiting for
+ * itself. The locks are in-process only.
  * <p>
  * The transport lock also serialises the writes and pushes of the anchoring (GDR-STORE-16, GDR-STORE-17): the fetch of
  * a due check, the checkpoint commit with its local tag and the tag push, and each anchor note with the push of its
@@ -58,6 +60,12 @@ final class RepositoryGuard {
      * bounded by the number of clone paths the JVM opens, one entry per clone, which the configuration fixes at start.
      */
     private static final ConcurrentMap<Path, RepositoryGuard> GUARDS = new ConcurrentHashMap<>();
+
+    /**
+     * The detail of an exclusive request from a thread that holds the shared side of the maintenance lock: a callback
+     * that re-entered the writer.
+     */
+    static final String REENTERED = "maintenance: re-entered from a callback that holds the shared lock";
 
     private final ReentrantReadWriteLock maintenance = new ReentrantReadWriteLock();
     private final ReentrantLock transport = new ReentrantLock();
@@ -117,12 +125,23 @@ final class RepositoryGuard {
     /**
      * Runs an action under the exclusive side of the maintenance lock: the deletes and the garbage collection of the
      * draft expiry.
+     * <p>
+     * The shared side cannot be upgraded: a thread that holds it and asked for the exclusive side would wait for itself
+     * forever. A request from such a thread, a {@link SaveStep} or an {@link IndexContributor} that calls back into the
+     * writer under the locks of the operation that called it, is refused before the lock is requested: it reads the
+     * calling thread's own hold count of the shared side, a fact of that thread alone, so no other thread can change it
+     * between the check and the request.
      *
      * @param action the action
-     * @param <T>    the result type
-     * @return the result of the action
+     * @param <V>    the value type of the result
+     * @return the result of the action; {@link StoreOutcome#REFUSED} with the detail {@value #REENTERED} when the
+     *         calling thread holds the shared side of the maintenance lock
      */
-    <T> T exclusive(Supplier<T> action) {
+    <V> StoreResult<V> exclusive(Supplier<StoreResult<V>> action) {
+        Objects.requireNonNull(action, "action");
+        if (maintenance.getReadHoldCount() > 0) {
+            return StoreResult.of(StoreOutcome.REFUSED, REENTERED);
+        }
         return locked(maintenance.writeLock(), action);
     }
 

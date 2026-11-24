@@ -278,7 +278,12 @@ the size.
 The aspect modules of the document store (`git-store` and the modules above it) change nothing in `pm-mcp-core`: it
 uses `git-core` only, so a changed outcome of `git-store`, such as `MALFORMED` instead of the passed-on `NOT_FOUND`
 for a save whose expected blob id is no full object id
-(xref:../specification/git-store.adoc#GDR-STORE-5[GDR-STORE-5]), does not reach it.
+(xref:../specification/git-store.adoc#GDR-STORE-5[GDR-STORE-5]), or the changed outcomes of a release (`OK` for a tag
+the remote already holds at the release commit, `MALFORMED` for a gitlink among its paths, the passed-on `CONFLICT`
+for a numbered entry `main` changed since the previous release,
+xref:../specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]) and `REFUSED` for a draft expiry re-entered from a
+callback (xref:../specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]), does not reach it; the client maps none of
+them.
 
 [CAUTION]
 ====

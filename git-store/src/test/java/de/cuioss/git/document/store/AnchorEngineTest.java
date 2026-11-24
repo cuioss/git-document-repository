@@ -561,6 +561,31 @@ class AnchorEngineTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-15: an Error of the provider leaves the subject pending; a VirtualMachineError propagates")
+        void errorOfProviderIsIsolated(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().errorNext(new AssertionError(word())).errorNext(new StackOverflowError());
+
+                var failed = fixture.anchor();
+                var exhausted = assertThrows(StackOverflowError.class, () -> fixture.writer().anchor(),
+                        "a VirtualMachineError is not isolated");
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), failed,
+                                "an AssertionError of the provider leaves the subject pending"),
+                        () -> assertInstanceOf(VirtualMachineError.class, exhausted, "a JVM error"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors it"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                                AssertionError.class.getName()));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-15: a provider that blocks delays no save, release or fetch")
         void blockingProviderDelaysNothing(@Remote LocalRemote remote) throws Exception {
             var key = forked(remote.repository());

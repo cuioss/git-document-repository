@@ -339,6 +339,46 @@ class ExplicitSaveTest {
     class Save {
 
         @Test
+        @DisplayName("GDR-STORE-3: an executable file and a symbolic link of the draft are saved with their modes")
+        void savesTheDraftModes(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var regular = word() + "r";
+            commit(remote.repository(), target, files(regular));
+            var executable = word() + ".sh";
+            var link = word() + "l";
+            var script = text() + "-x";
+            var linkTarget = word() + "-t";
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, List.of(
+                        new TreeEdit.Put(executable, script.getBytes(StandardCharsets.UTF_8),
+                                TreeEdit.Mode.EXECUTABLE_FILE),
+                        new TreeEdit.Put(link, linkTarget.getBytes(StandardCharsets.UTF_8), TreeEdit.Mode.SYMLINK)));
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                var commit = ObjectId.fromString(saved.commitId());
+                Map<String, FileMode> modes = new TreeMap<>();
+                try (TreeWalk walk = new TreeWalk(remote.repository())) {
+                    walk.addTree(parse(remote.repository(), commit).getTree());
+                    walk.setRecursive(true);
+                    while (walk.next()) {
+                        modes.put(walk.getPathString(), walk.getFileMode(0));
+                    }
+                }
+                var files = tree(remote.repository(), commit);
+                assertAll(
+                        () -> assertEquals(FileMode.EXECUTABLE_FILE, modes.get(executable), "executable, 100755"),
+                        () -> assertEquals(FileMode.SYMLINK, modes.get(link), "a symbolic link, 120000"),
+                        () -> assertEquals(FileMode.REGULAR_FILE, modes.get(regular), "the tip's file unchanged"),
+                        () -> assertEquals(script, files.get(executable), "the content of the executable"),
+                        () -> assertEquals(linkTarget, files.get(link), "the target of the link"));
+            }
+        }
+
+        @Test
         @DisplayName("GDR-STORE-3: a save is one commit on the remote tip, the draft deleted and never pushed")
         void savesOneCommitOnRemoteTip(@Remote LocalRemote remote) throws Exception {
             commit(remote.repository(), StoreReferences.MAIN, files(word()));

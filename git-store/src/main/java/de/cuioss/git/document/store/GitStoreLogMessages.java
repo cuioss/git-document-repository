@@ -272,5 +272,17 @@ public final class GitStoreLogMessages {
                 .prefix(PREFIX)
                 .identifier(112)
                 .build();
+
+        /**
+         * A refresh of the index could not read one source; it keeps the previous entries of that source, the other
+         * sources are published fresh, and the next operation of the writer retries it (GDR-STORE-9): the repository
+         * alias, the class of the source ({@code main}, {@code working branch} or {@code collection branch}), never
+         * its reference name, and the class name of the exception, never its message.
+         */
+        public static final LogRecord INDEX_SOURCE_UNREAD = LogRecordModel.builder()
+                .template("Kept the previous index entries of repository %s for a %s that could not be read: %s")
+                .prefix(PREFIX)
+                .identifier(113)
+                .build();
     }
 }
