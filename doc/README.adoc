@@ -147,12 +147,17 @@ xref:specification/git-forms.adoc#GDR-FORMS-2[GDR-FORMS-2], xref:specification/g
 xref:specification/git-forms.adoc#GDR-FORMS-4[GDR-FORMS-4], xref:specification/git-forms.adoc#GDR-FORMS-5[GDR-FORMS-5]
 and xref:specification/git-forms.adoc#GDR-FORMS-7[GDR-FORMS-7]; its other requirements,
 xref:specification/git-forms.adoc#GDR-FORMS-6[GDR-FORMS-6], xref:specification/git-forms.adoc#GDR-FORMS-8[GDR-FORMS-8]
-and xref:specification/git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9], are planned.
+and xref:specification/git-forms.adoc#GDR-FORMS-9[GDR-FORMS-9], are planned. The module
+`git-timestamp` implements xref:specification/git-timestamp.adoc#GDR-TSA-1[GDR-TSA-1] and
+xref:specification/git-timestamp.adoc#GDR-TSA-2[GDR-TSA-2], the anchor provider `rfc3161` and the verification of its
+tokens, and the part of xref:specification/general.adoc#GDR-NFR-3[GDR-NFR-3] its configuration, transport and
+verification touch is covered by its tests.
 xref:specification/git-core.adoc#GDR-CORE-1[GDR-CORE-1] is met with one limit: the JVM-wide process start of JGit's
 `SystemReader` is closed only when the embedding application installs `RefusingFS.systemReader`, the recommended
 setup. For xref:specification/general.adoc#GDR-NFR-4[GDR-NFR-4], `git-core` ships its native-image metadata, covering its
 worktrees package, and `git-store` relies on it; `git-forms` ships the resource metadata its JSON Schema validator needs
-and no reflection metadata; this repository does not verify the requirement yet. Every other requirement is planned.
+and no reflection metadata; `git-timestamp` ships none, because it uses no reflection, resource or resource bundle of
+its own; this repository does not verify the requirement yet. Every other requirement is planned.
 
 [cols="1,3"]
 |===

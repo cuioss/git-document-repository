@@ -68,7 +68,7 @@ running numbers
 |`git-timestamp` (optional)
 |RFC 3161 timestamps as anchor provider (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion
 Stores, The Anchor])
-|planned
+|implemented: anchor provider `rfc3161` and its verification
 
 |`git-directory` (optional)
 |Directory of persons, catalogs of roles and teams, catalogs an application declares

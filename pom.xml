@@ -75,6 +75,7 @@
         <module>git-forms</module>
         <module>git-store</module>
         <module>git-testing</module>
+        <module>git-timestamp</module>
     </modules>
     <build>
         <plugins>
