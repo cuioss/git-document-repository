@@ -133,6 +133,12 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   provider `signed` and the verifier; it ran beside PLAN-13 and PLAN-20 (the overlap realised is the state lists only). Its public
   `AnchorProvider.obtain` gained a `commitTime` parameter (PLAN-17 implements this SPI). Its analysis found one major (the verifier does not
   check the checkpoint chain) and eleven minor defects; routed to PLAN-22 deliverable 4 on the operator's word.
+- PLAN-24 — `git-core` and `git-testing` hardening, the container plan of the epic for those modules (staged 2026-11-24 under the standing routing
+  rule, WS-01): PLAN-20's one major and four minor defects and its test, fixture and document residue. **Held back from `next` until the operator
+  releases it**; later `git-core` and `git-testing` leftovers fold into it until it is launched. It declares `AGENTS.md`, `general.adoc` and the
+  `git-core` and `git-testing` directories, so the gate puts it to the operator against any plan in flight that declares them.
+- PLAN-14 — gained deliverable 5 on 2026-11-24 (PLAN-23's `git-forms` leftovers: the pointer-string amplification of `DataNode`, the unbounded
+  `holdsRequired` chain, the hexadecimal digit drift and the residue), five deliverables, below ten; it stays blocked on PLAN-13.
 - PLAN-17 — Emitted on 2026-11-24 beside PLAN-13 (PLAN-11 shipped, so its dependency is met); the operator accepted the 4 to 5 shared files with
   PLAN-13 (`AGENTS.md`, `doc/README.adoc`, `general.adoc`, `pom.xml`, `module-structure.adoc` against the live plan) and the two shared with
   PLAN-22 (`AGENTS.md`, `general.adoc`). Opens with the owner decision on the RFC 3161 library.
@@ -490,6 +496,58 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   (4 to 5 shared files): emit; PLAN-22 released from its hold, and its two-file overlap with PLAN-13 and with PLAN-17: emit both; the layer-3
   findings of `git-store` (PLAN-10's ten minors and PLAN-11's major and eleven minors) folded into PLAN-22 as deliverable 4 (the fold added no file
   surface; two claims stamped through `corpus set-verdict`). PLAN-20's git-core findings were not folded: not routed. Nothing is recorded as launched.
+- 2026-11-24 — **STANDING ROUTING RULE (the operator's, binding for every later `analyze`, `handle-open` and `lessons` pass of this epic).** A
+  defect, test gap, documentation gap or leftover that a landing analysis finds (layer 1 to 3) is routed without asking, in this order:
+  (1) into the **staged plan that fits by content** (the same module or the same surface, not yet launched; a launched or running plan's
+  spec is frozen and never takes a fold), as a new deliverable of that plan, in the same edit as its Expected Surface and with the claims
+  stamped through `corpus set-verdict` (the same-act rule of the Fold disposition); (2) only when no staged plan fits, or the fitting plan
+  already holds **more than 10 deliverables**, into a **follow-up container plan for the corresponding module or modules**: one container per
+  module (or module group), staged with `queue --add-row`, held back from `next` until the operator releases it, and the later findings of
+  that module fold into it until it is launched. The orchestrator records the routing as an Open Defect entry that names the plan and the
+  deliverable, and asks the operator only where the rule leaves a real fork (a fix that changes a documented behaviour, an owner decision, a
+  finding that touches two modules). The rule replaces the former "NOT YET ROUTED, to be placed on the operator's word" step; staging a fix
+  plan for a finding still never launches or emits it. The scope-bloat guard (about six deliverables) is not changed by this rule for a plan
+  that is emitted: a folded plan above six records its proceed-or-split rationale as a decision. *Applied on 2026-11-24:* PLAN-10's and
+  PLAN-11's `git-store` findings went into PLAN-22 (deliverable 4, four deliverables), PLAN-23's `git-forms` findings into PLAN-14
+  (deliverable 5, five deliverables), PLAN-20's `git-core` and `git-testing` findings into the new container plan PLAN-24 (no staged plan edits
+  those modules).
+- 2026-11-24 — PLAN-17 and PLAN-22 confirmed running on the operator's word ("both are running"; both plan directories observed, `plan_marshall_plan_id`
+  stamped). PLAN-13, PLAN-17 and PLAN-22 are in flight, so `parallelization_scope=3` is full.
+- 2026-11-24 — PLAN-24 (`git-core` and `git-testing` hardening, WS-01, two deliverables) staged under the routing rule, held back from `next`;
+  PLAN-14 gained deliverable 5 (the PLAN-23 findings L3-1 to L3-6 and L2-1 to L2-4), adding no file surface; its claims are stamped
+  (PLAN-24 claims 0 to 3 `corroborated` at `f7eda4e`).
+
+- 2026-11-24 — **plan-marshall lessons and tooling findings moved** to the `lessons-routing` inbox of `/home/oliver/git/plan-marshall`, on the operator's word:
+  76 lessons with a `plan-marshall:*` or a domain-bundle (`pm-*`) component became `candidate-lesson` messages (`libraries-initial-implementation-001` to
+  `-074` for `plan-marshall:*`, `-076` and `-077` for the two `pm-dev-java` lessons; sender `libraries-initial-implementation`, one per lesson with its body,
+  recurrences included) and were retired here (`remove`, verdict `superseded`, the tombstone names the message); the epic's tooling findings that are no
+  lessons went as one `finding` (`-075`). The mapping is `lessons-moved.md`; lesson ids cited in this epic and in `landings/` for those components
+  (`2026-11-18-*` to `2026-11-24-07-*`) resolve through it. The destination epic was open (phase `orchestrating`), its inbox read 121 live messages, 0 invalid,
+  after the writes. Remaining local lessons: 8 `git-store`, 1 `git-core` (this repository's own modules).
+- 2026-11-24 — **STANDING RULE: everything about plan-marshall leaves this epic for the plan-marshall repository (the operator's).** Any lesson, candidate lesson,
+  tooling finding or leftover whose subject is plan-marshall itself, that is a component `plan-marshall:*` or a domain bundle of its marketplace (`pm-dev-java`,
+  `pm-dev-java-cui`, `pm-dev-frontend`, `pm-dev-frontend-cui`, `pm-dev-oci`, `pm-dev-python`, `pm-documents`, `pm-plugin-development`, `pm-requirements` and any other
+  `pm-*`), is NOT kept in this repository's lessons store, specs or Open Defects. It is filed into the `lessons-routing` inbox of `/home/oliver/git/plan-marshall`
+  (`inbox write --slug lessons-routing --sender-type orchestrator --sender-id libraries-initial-implementation`, run from that repository, `--kind candidate-lesson`
+  for a lesson body, `--kind finding` for a tooling observation), after reading that epic's phase (a closed or unreadable one is not written to and the item is held
+  and reported to the operator). The local copy is retired only after the write returned success (`manage-lessons remove --coverage-verdict superseded`, the reason
+  names the message), and the move is recorded in `lessons-moved.md` and the decision log. It applies at every drain of this epic's inbox (a `candidate-lesson` or
+  `finding` message of a plan whose subject is plan-marshall takes the move instead of Promote or an Open Defect; the message's own disposition line says so), at every
+  landing analysis (a tooling gap the analysis finds goes as a `finding`, with the evidence kept in the landing report), and at every `lessons` sweep. A lesson whose
+  subject is this repository's modules (`git-core`, `git-store`, `git-forms`, ...) stays here, and so does a plan-marshall finding that is also a defect of this
+  repository (it is split: the defect stays, the tooling part moves). The inbox files sit as untracked files in the plan-marshall ledger worktree until that
+  repository lands its ledger; this orchestrator never touches that repository's git state.
+- 2026-11-24 — **Change request (priority: high) filed** into the plan-marshall `lessons-routing` inbox as `libraries-initial-implementation-078` (a `finding`; the envelope has no
+  priority field, so the title and the first line carry it): the `plan-orchestrator` skill and `manage-lessons` should apply the standing rule above themselves: a configured and validated
+  framework home, one ownership predicate (`plan-marshall:*` and every installed marketplace bundle), a `forwarded` disposition in the `analyze` drain, forwarding of tooling gaps found in
+  a landing analysis, the same predicate in the `lessons` sweep, a `relocated` verdict of `manage-lessons remove` that names the destination, idempotence on `source_lesson` and
+  `source_repo`, and a `lessons-moved.md` record. Until it ships the rule is applied by hand by this orchestrator. The inbox read 122 live messages, 0 invalid, after the write.
+
+- 2026-11-24 — **Second change request (priority: high) filed** into the plan-marshall `lessons-routing` inbox as `libraries-initial-implementation-079` (a `finding`): the
+  `plan-orchestrator` should apply the standing routing rule itself (a fit predicate over `corpus surfaces`, `deliverables_total` and the queue status; a `corpus fold` write that
+  appends a deliverable, extends the Expected Surface and stamps claims in one act and refuses a frozen plan; a container-plan template with a held-back field on the queue row and a
+  configured deliverable bound of 10; `analyze` Step 4 and `handle-open` reading an epic-level `routing_rule`; the question kept for a real fork). Until it ships the rule is applied by
+  hand here. The inbox read 123 live messages, 0 invalid, after the write.
 
 ## Open Defects
 
@@ -559,8 +617,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   kind schema); data depth times the in-place chain per level can still overflow the stack; a hexadecimal integer of 831 to 1000 digits is
   read but cannot be encoded (the reader counts digits in the source radix, the encoder in decimal); a caller-built shared-subtree value is
   walked as a tree (a hang); two registry aliases for one repository pass the duplicate-collection check; and the hostile in-memory value ends in
-  an `IllegalArgumentException`, not a result. — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (a candidate: a
-  `git-forms` hardening plan after PLAN-13, or into PLAN-13 itself).
+  an `IllegalArgumentException`, not a result. — routed to PLAN-14 (deliverable 5) under the routing rule on 2026-11-24 (PLAN-13 is running, so its spec is frozen; PLAN-14 is the next
+  staged plan on `git-forms/`); open until PLAN-14 ships.
 - PLAN-10 defects in `git-store` (`landings/PLAN-10.md`; ten minor, no blocker or major, with the layer-2 test gap L2-1 and the layer-1 residue
   L1-1 to L1-3): `AllowedSigners.read` has no size or line bound and `from` calls `Path.of` outside a try (an `OutOfMemoryError`, an
   `InvalidPathException` instead of a result, GDR-GEN-3); `SignatureVerification` strips every `gpgsig` header but verifies only the first
@@ -585,8 +643,8 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   resolves through the ancestor); `storedOrigin` refuses a `//server/share/repo.git` path; `isBranchName` refuses any `refs/` prefix beyond git;
   no test pins the `HEAD` refusal of decision D3(d), the `rollBack` wiring is unobserved, the `Integer.MAX_VALUE` overflow fix has no test that can
   fail (the Done-when clause and deliverable 3(c) contradict), the hermetic fixture has one user, `AGENTS.md` omits `READ_FILE_LIMIT_BYTES`.
-  — NOT YET ROUTED: reported to the operator, to be placed on the operator's word (the files are in `git-core` and `git-testing`, which PLAN-22
-  leaves read-only; a candidate is a third collection plan or the fix of the next plan that opens `git-core`).
+  — routed to PLAN-24 (deliverables 1 and 2), the new container plan for `git-core` and `git-testing`, under the routing rule on 2026-11-24
+  (no staged plan edits those modules); open until PLAN-24 ships.
 - Incomplete landings (PLAN-11 `plan-11-store-anchoring-signed-012.md` and PLAN-20 `plan-20-leftover-fixes-2-021.md`: both miss `effort` and the three review
   numbers (`unknown`: no finalize step records them); PLAN-11's `review-gate` re-read is undecidable (CodeRabbit "Minor comments: 1") and its Sonar read is
   undecidable (`head_revision_unavailable`, analysis revision `4db53c7`); PLAN-20's `review-gate` re-read is decidable (0 unresolved threads, 13 review-body

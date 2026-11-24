@@ -2,9 +2,9 @@
   "id": "PLAN-17",
   "slug": "timestamp-rfc3161",
   "workstream": "WS-05",
-  "status": "staged",
+  "status": "running",
   "lane": "plan-marshall",
-  "plan_marshall_plan_id": "",
+  "plan_marshall_plan_id": "plan-17-timestamp-rfc3161",
   "pr": "",
   "landing": "",
   "seq": 17
