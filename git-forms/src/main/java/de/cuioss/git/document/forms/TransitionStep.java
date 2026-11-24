@@ -16,7 +16,6 @@
 package de.cuioss.git.document.forms;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,15 +34,21 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The step reads the current state from the file of the document or entry on the tip the attempt commits on (a missing
  * file or a file without {@value #STATE} is in the initial state of the workflow) and refuses the attempt when it is not
- * the {@code from} of the transition. It writes {@value #STATE} into that file of the attempt's tree, joins the data
- * with its parts, validates them without {@code required}, and checks {@code required} when the transition leaves the
- * initial state or has the mechanism {@code release}. On success it returns the edit of the file and, for a kind with a
+ * the {@code from} of the transition. It writes that file as the merge of {@link StateMerge}: the file on the tip, with
+ * the value of the draft for every top-level key the draft changed against the file it started from, the base the step
+ * is created with, and {@value #STATE} set to the {@code to} of the transition; so a transition that changes only the
+ * state writes the tip's content with the new state and never restores an untouched field from the draft's copy. The
+ * merge is computed per attempt, so a re-applied attempt on a new tip merges again. The step then joins the data with
+ * its parts, validates them without {@code required}, and checks {@code required} when the transition leaves the initial
+ * state or has the mechanism {@code release}. On success it returns the edit of the file and, for a kind with a
  * template, the output regenerated from exactly these data and the fragments of the attempt, so the output is never
  * merged. On a refusal it captures the outcome and the findings for {@link DocumentTransitions}, because a
  * {@link SaveStep.Refusal} carries no text; each attempt starts with a fresh capture, so a re-applied attempt never
  * reports the findings of an earlier one.
  * <p>
- * A step serves one save and is called on the saving thread only.
+ * The step records whether the store ran it: a save whose draft changes nothing calls no step, and
+ * {@link DocumentTransitions} then applies the same checks through {@link #check(Attempt)} to the saved commit before
+ * it releases anything. A step serves one save and is called on the saving thread only.
  */
 final class TransitionStep implements SaveStep {
 
@@ -56,11 +61,12 @@ final class TransitionStep implements SaveStep {
     private final SchemaValidator validator;
     private final YamlDocumentCodec codec;
     private final OutputCheck output;
-    private final boolean hasTemplate;
     private final String unit;
     private final String documentPath;
+    private final Map<String, @Nullable Object> base;
 
     private @Nullable Captured captured;
+    private boolean ran;
 
     /**
      * Creates the step of one save.
@@ -69,45 +75,96 @@ final class TransitionStep implements SaveStep {
      * @param initialState the initial state of the workflow
      * @param schema       the schema of the kind
      * @param output       the output of the kind, which reads the data and regenerates the output
-     * @param hasTemplate  whether the kind has a template
      * @param unit         the ULID of the document or the running number of the entry
      * @param documentPath the path of {@value DocumentLayout#DOCUMENT_FILE} or of the entry file
+     * @param base         the decoded file the draft started from, empty when there was none (see {@link StateMerge})
      */
-    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output,
-            boolean hasTemplate, String unit, String documentPath) {
+    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output, String unit,
+            String documentPath, Map<String, @Nullable Object> base) {
         this.transition = transition;
         this.initialState = initialState;
         this.schema = schema;
         this.validator = new SchemaValidator();
         this.codec = new YamlDocumentCodec(schema);
         this.output = output;
-        this.hasTemplate = hasTemplate;
         this.unit = unit;
         this.documentPath = documentPath;
+        this.base = base;
     }
 
     @Override
     public Outcome apply(Attempt attempt) {
+        ran = true;
+        return check(attempt);
+    }
+
+    /**
+     * Applies the checks of the step to a view of files, the attempt of a save or a saved commit: the state, the merge
+     * of the file, the validation, {@code required} and the regenerated output.
+     *
+     * @param attempt the files; for a saved commit the tip and the produced tree are both that commit
+     * @return the edits the step makes, or a refusal whose outcome and findings {@link #captured()} returns
+     */
+    Outcome check(Attempt attempt) {
         captured = null;
-        FormsResult<String> current = readState(codec, attempt.tipContent(documentPath), documentPath, initialState);
+        Optional<byte[]> tipContent = attempt.tipContent(documentPath);
+        FormsResult<String> current = readState(codec, tipContent, documentPath, initialState);
         if (!current.isOk()) {
             return refuse(current.outcome(), Objects.requireNonNull(current.detail()), null);
         }
         if (!transition.from().equals(current.value())) {
             return refuse(FormsOutcome.TRANSITION_REFUSED, DocumentTransitions.NOT_IN_CURRENT_STATE, null);
         }
-        Optional<byte[]> content = attempt.content(documentPath);
-        if (content.isEmpty()) {
-            return refuse(passedOnMalformed(), documentPath + ": missing file", null);
+        FormsResult<byte[]> written = merged(tipContent, attempt.content(documentPath));
+        if (!written.isOk()) {
+            return refuse(written.outcome(), Objects.requireNonNull(written.detail()), null);
         }
-        StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(content.get());
-        if (!decoded.isOk()) {
-            return refuse(passedOnMalformed(), documentPath + ": " + decoded.detail(), null);
+        byte[] content = Objects.requireNonNull(written.value());
+        return checkedEdits(new Overlay(attempt, documentPath, content), content);
+    }
+
+    /**
+     * Whether the store ran the step during its save.
+     *
+     * @return {@code true} once {@link #apply(Attempt)} was called
+     */
+    boolean ran() {
+        return ran;
+    }
+
+    /**
+     * Returns the refusal the last attempt captured.
+     *
+     * @return the outcome, the detail and the findings of the refusal, or empty when the last attempt was not refused
+     *         or the step never ran
+     */
+    Optional<Captured> captured() {
+        return Optional.ofNullable(captured);
+    }
+
+    /** The file the attempt writes: the merge of the tip's file, the draft's file and the base, with the state. */
+    private FormsResult<byte[]> merged(Optional<byte[]> tipContent, Optional<byte[]> draftContent) {
+        if (draftContent.isEmpty()) {
+            return malformed(documentPath + ": missing file");
         }
-        Map<String, @Nullable Object> document = new LinkedHashMap<>(Objects.requireNonNull(decoded.value()));
-        document.put(STATE, transition.to());
-        byte[] written = codec.encode(document);
-        OutputCheck.DocumentFiles files = new Overlay(attempt, documentPath, written);
+        StoreResult<Map<String, @Nullable Object>> draft = codec.decode(draftContent.get());
+        if (!draft.isOk()) {
+            return malformed(documentPath + ": " + draft.detail());
+        }
+        @Nullable Map<String, @Nullable Object> tip = null;
+        if (tipContent.isPresent()) {
+            StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(tipContent.get());
+            if (!decoded.isOk()) {
+                return malformed(documentPath + ": " + decoded.detail());
+            }
+            tip = decoded.value();
+        }
+        return FormsResult.ok(codec.encode(StateMerge.merge(tip, Objects.requireNonNull(draft.value()), base,
+                transition.to())));
+    }
+
+    /** Validates the data of the files and returns the edits of the file and the regenerated output. */
+    private Outcome checkedEdits(OutputCheck.DocumentFiles files, byte[] written) {
         FormsResult<Map<String, @Nullable Object>> data = output.data(files, unit);
         if (!data.isOk()) {
             return refuse(data.outcome(), Objects.requireNonNull(data.detail()), null);
@@ -125,7 +182,7 @@ final class TransitionStep implements SaveStep {
         }
         List<TreeEdit> edits = new ArrayList<>();
         edits.add(new TreeEdit.Put(documentPath, written));
-        if (hasTemplate) {
+        if (output.generates()) {
             FormsResult<byte[]> generated = output.generate(files, unit);
             if (!generated.isOk()) {
                 return refuse(generated.outcome(), Objects.requireNonNull(generated.detail()), null);
@@ -134,16 +191,6 @@ final class TransitionStep implements SaveStep {
             edits.add(new TreeEdit.Put(outputPath, Objects.requireNonNull(generated.value())));
         }
         return new Edits(edits);
-    }
-
-    /**
-     * Returns the refusal the last attempt captured.
-     *
-     * @return the outcome, the detail and the findings of the refusal, or empty when the last attempt was not refused
-     *         or the step never ran
-     */
-    Optional<Captured> captured() {
-        return Optional.ofNullable(captured);
     }
 
     /** Whether the transition checks {@code required}: it leaves the initial state, or it releases (GDR-FORMS-2). */
@@ -157,8 +204,8 @@ final class TransitionStep implements SaveStep {
         return new Refusal();
     }
 
-    private static FormsResult.Outcome passedOnMalformed() {
-        return new FormsResult.PassedOn(StoreOutcome.MALFORMED);
+    private static <T> FormsResult<T> malformed(String detail) {
+        return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, detail));
     }
 
     /**
@@ -179,14 +226,14 @@ final class TransitionStep implements SaveStep {
         }
         StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(content.get());
         if (!decoded.isOk()) {
-            return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, path + ": " + decoded.detail()));
+            return malformed(path + ": " + decoded.detail());
         }
         Map<String, @Nullable Object> data = Objects.requireNonNull(decoded.value());
         if (!data.containsKey(STATE)) {
             return FormsResult.ok(initialState);
         }
         if (!(data.get(STATE) instanceof String state)) {
-            return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, path + ": " + STATE + ": not a string"));
+            return malformed(path + ": " + STATE + ": not a string");
         }
         return FormsResult.ok(state);
     }

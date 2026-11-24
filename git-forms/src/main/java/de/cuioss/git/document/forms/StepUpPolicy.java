@@ -90,6 +90,8 @@ public record StepUpPolicy(Set<String> amr, Set<String> acr, Duration maxAge) {
         String claimedAcr = claims.acr();
         boolean multiFactor = claims.amr().stream().anyMatch(amr::contains)
                 || claimedAcr != null && acr.contains(claimedAcr);
-        return multiFactor && !claims.authTime().plus(maxAge).isBefore(now);
+        // The age is compared rather than added to the instant, which could leave the range of Instant for a large
+        // maxAge; the difference of two instants always fits a Duration.
+        return multiFactor && Duration.between(claims.authTime(), now).compareTo(maxAge) <= 0;
     }
 }

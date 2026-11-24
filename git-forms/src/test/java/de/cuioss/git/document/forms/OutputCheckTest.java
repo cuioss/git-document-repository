@@ -23,10 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 
 
@@ -293,6 +295,59 @@ class OutputCheckTest {
 
         assertEquals(new FormsResult.PassedOn(new StoreResult.PassedOn(
                 GitOutcome.NOT_FOUND)), result.outcome(), "the Git outcome of the snapshot");
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: the fragments of a unit end at its directory, also for units whose names are prefixes")
+    void prefixUnits(@InMemory Repository repository) throws Exception {
+        Map<String, byte[]> files = new TreeMap<>();
+        List<String> outputs = new ArrayList<>();
+        for (String ulid : List.of("a", "a-b", "a0")) {
+            var document = new Document(ulid, word(), word(), word(), word());
+            files.putAll(document.files(document.output()));
+            outputs.add(document.outputPath());
+        }
+        commit(repository, files);
+
+        var result = check(perDocument()).check(repository, BRANCH);
+
+        assertEquals(FormsResult.ok(outputs.stream().sorted().toList()), result,
+                "each output generated from its own fragment only");
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: a generated output larger than the file bound is MALFORMED, naming the path and bound")
+    void outputTooLarge() {
+        // A fragment of 1 MiB in UTF-8 but half as many characters, so the byte bound is reached first.
+        var large = "é".repeat(512 * 1024);
+        var document = new Document(word(), word(), word(), word(), large);
+        var oversized = generate(document, 20);
+        var smaller = generate(document, 10);
+
+        assertAll(
+                () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, document.outputPath()
+                        + ": too large, more than " + OutputCheck.MAX_FILE_BYTES + " bytes")), oversized,
+                        "the output path and the bound"),
+                () -> assertTrue(smaller.isOk(), "a smaller expansion still generates"));
+    }
+
+    /** Generates the output of a document whose template inserts its fragment a number of times. */
+    private static FormsResult<byte[]> generate(Document document, int copies) {
+        var template = DocumentTemplateTest.template("= {{title}}\n" + "{{>summary}}\n".repeat(copies));
+        Map<String, byte[]> files = document.files(null);
+        OutputCheck.DocumentFiles view = new OutputCheck.DocumentFiles() {
+
+            @Override
+            public Optional<byte[]> content(String path) {
+                return Optional.ofNullable(files.get(path));
+            }
+
+            @Override
+            public List<String> paths(String directory) {
+                return files.keySet().stream().filter(path -> path.startsWith(directory + "/")).sorted().toList();
+            }
+        };
+        return new OutputCheck(perDocument(), schema(), template).generate(view, document.ulid());
     }
 
     @Test

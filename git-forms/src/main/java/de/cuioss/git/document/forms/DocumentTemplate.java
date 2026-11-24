@@ -67,6 +67,11 @@ import org.jspecify.annotations.Nullable;
  * {@link #render(Map, Map)} is deterministic: equal data and fragments give byte-identical output, whatever the
  * insertion order of the maps, because a value is found by its key and a sequence keeps its order; nothing depends on
  * the locale, the time zone or the platform. The output has line feed line ends only and ends in exactly one line feed.
+ * The work of one rendering is bounded: it stops at once, as the passed-on {@link StoreOutcome#MALFORMED}, when it
+ * would perform more than {@value #MAX_RENDER_OPERATIONS} operations (a visit of a node or an item of a section) or
+ * write more than {@value #MAX_OUTPUT_CHARS} characters; the detail names the limit, never content of the template, the
+ * data or the fragments (GDR-NFR-3). Sections nested over the same sequence, whose work grows with the length of the
+ * sequence to the power of the nesting even without output, reach the first limit.
  * A template is immutable and may serve every thread.
  *
  * @since 0.1
@@ -78,6 +83,20 @@ public final class DocumentTemplate {
 
     /** The deepest nesting of sections a template may hold: the nesting limit of the data model. */
     public static final int MAX_NESTING = DataNode.MAX_DEPTH;
+
+    /**
+     * The most operations one rendering performs: every visit of a node and every item a section renders counts one.
+     * It bounds the work of sections nested over the same sequence, which grows with the length of the sequence to the
+     * power of the nesting, whatever the output.
+     */
+    public static final int MAX_RENDER_OPERATIONS = 1_000_000;
+
+    /**
+     * The most characters one rendering writes: {@link OutputCheck#MAX_FILE_BYTES}, a lower bound of the UTF-8 size of
+     * the output, so that the work of a rendering stops early; the size of the finished output in bytes is checked
+     * where it is generated.
+     */
+    public static final int MAX_OUTPUT_CHARS = OutputCheck.MAX_FILE_BYTES;
 
     private static final String OPEN = "{{";
     private static final String CLOSE = "}}";
@@ -124,12 +143,14 @@ public final class DocumentTemplate {
      *
      * @param data      the data of the document, a mapping of the JSON data model
      * @param fragments the narrative fragments by name
-     * @return the output, with line feed line ends and exactly one trailing line feed
+     * @return {@link FormsOutcome#OK} with the output, with line feed line ends and exactly one trailing line feed; the
+     *         passed-on {@link StoreOutcome#MALFORMED} when the rendering reaches {@link #MAX_RENDER_OPERATIONS} or
+     *         {@link #MAX_OUTPUT_CHARS}, its detail naming the limit and no content
      * @throws NullPointerException     if an argument, a fragment name or a fragment is {@code null}
      * @throws IllegalArgumentException if the data holds a value outside the JSON data model or is nested deeper than
      *                                  its nesting limit
      */
-    public String render(Map<String, ?> data, Map<String, String> fragments) {
+    public FormsResult<String> render(Map<String, ?> data, Map<String, String> fragments) {
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(fragments, "fragments");
         fragments.forEach((name, fragment) -> {
@@ -137,58 +158,16 @@ public final class DocumentTemplate {
             Objects.requireNonNull(fragment, "fragment");
         });
         DataNode.requireDataModel(data);
-        var out = new StringBuilder();
-        List<@Nullable Object> context = new ArrayList<>();
-        context.add(data);
-        render(nodes, context, fragments, out);
-        String rendered = lineFeeds(out.toString());
-        return withoutTrailingLineFeeds(rendered) + "\n";
-    }
-
-    private static void render(List<Node> nodes, List<@Nullable Object> context, Map<String, String> fragments,
-            StringBuilder out) {
-        for (Node node : nodes) {
-            switch (node) {
-                case Text(String text) -> out.append(text);
-                case Variable(String name) -> out.append(scalar(lookup(name, context)));
-                case Fragment(String name) -> {
-                    String content = fragments.get(name);
-                    if (content != null) {
-                        out.append(withoutTrailingLineFeeds(lineFeeds(content)));
-                    }
-                }
-                case Section section -> section(section, context, fragments, out);
-            }
+        var rendering = new Rendering(fragments);
+        rendering.context.add(data);
+        try {
+            rendering.render(nodes);
+        } catch (LimitReached limit) {
+            return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                    "template: rendering stopped, " + limit.getMessage()));
         }
-    }
-
-    private static void section(Section section, List<@Nullable Object> context, Map<String, String> fragments,
-            StringBuilder out) {
-        @Nullable Object value = lookup(section.name(), context);
-        boolean present = isPresent(value);
-        if (section.inverted()) {
-            if (!present) {
-                render(section.children(), context, fragments, out);
-            }
-            return;
-        }
-        if (!present) {
-            return;
-        }
-        if (value instanceof List<?> items) {
-            for (Object item : items) {
-                within(section, item, context, fragments, out);
-            }
-        } else {
-            within(section, value, context, fragments, out);
-        }
-    }
-
-    private static void within(Section section, @Nullable Object value, List<@Nullable Object> context,
-            Map<String, String> fragments, StringBuilder out) {
-        context.add(value);
-        render(section.children(), context, fragments, out);
-        context.removeLast();
+        String rendered = lineFeeds(rendering.out.toString());
+        return FormsResult.ok(withoutTrailingLineFeeds(rendered) + "\n");
     }
 
     /** Whether a section renders for a value: present, not {@code false} and not an empty sequence. */
@@ -296,6 +275,93 @@ public final class DocumentTemplate {
 
         Refusal(int line, String problem) {
             super("line " + line + ": " + problem, null, false, false);
+        }
+    }
+
+    /** A rendering limit that was reached; its message names the limit, never content. */
+    private static final class LimitReached extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        LimitReached(String limit) {
+            super(limit, null, false, false);
+        }
+    }
+
+    /**
+     * The state of one call of {@link DocumentTemplate#render(Map, Map)}: the fragments, the stack of current values,
+     * the output and the two limits the whole call shares; used once.
+     */
+    private static final class Rendering {
+
+        private final Map<String, String> fragments;
+        private final List<@Nullable Object> context = new ArrayList<>();
+        private final StringBuilder out = new StringBuilder();
+        private long operations;
+
+        Rendering(Map<String, String> fragments) {
+            this.fragments = fragments;
+        }
+
+        void render(List<Node> nodes) {
+            for (Node node : nodes) {
+                count();
+                switch (node) {
+                    case Text(String text) -> append(text);
+                    case Variable(String name) -> append(scalar(lookup(name, context)));
+                    case Fragment(String name) -> {
+                        String content = fragments.get(name);
+                        if (content != null) {
+                            append(withoutTrailingLineFeeds(lineFeeds(content)));
+                        }
+                    }
+                    case Section section -> section(section);
+                }
+            }
+        }
+
+        private void section(Section section) {
+            @Nullable Object value = lookup(section.name(), context);
+            boolean present = isPresent(value);
+            if (section.inverted()) {
+                if (!present) {
+                    render(section.children());
+                }
+                return;
+            }
+            if (!present) {
+                return;
+            }
+            if (value instanceof List<?> items) {
+                for (Object item : items) {
+                    count();
+                    within(section, item);
+                }
+            } else {
+                within(section, value);
+            }
+        }
+
+        private void within(Section section, @Nullable Object value) {
+            context.add(value);
+            render(section.children());
+            context.removeLast();
+        }
+
+        /** Counts one operation, a node visit or a section item, against {@link #MAX_RENDER_OPERATIONS}. */
+        private void count() {
+            operations++;
+            if (operations > MAX_RENDER_OPERATIONS) {
+                throw new LimitReached("more than " + MAX_RENDER_OPERATIONS + " operations");
+            }
+        }
+
+        /** Appends text, unless the output would grow beyond {@link #MAX_OUTPUT_CHARS}. */
+        private void append(String text) {
+            if (text.length() > MAX_OUTPUT_CHARS - out.length()) {
+                throw new LimitReached("output larger than " + MAX_OUTPUT_CHARS + " characters");
+            }
+            out.append(text);
         }
     }
 

@@ -168,6 +168,24 @@ class WorkflowTest {
                     () -> assertEquals(List.of(), withoutDeadlines.transitions(), "no transitions"));
         }
 
+        @Test
+        @DisplayName("GDR-FORMS-5: an ordinary date-based and time-based duration still parse")
+        void ordinaryDurations() {
+            var state = name();
+
+            var workflow = workflow("""
+                    states: [%1$s]
+                    transitions: []
+                    deadlines:
+                      - { state: %1$s, within: PT36H }
+                      - { state: %1$s, review-interval: P30D }
+                    """.formatted(state));
+
+            assertEquals(List.of(new Deadline(state, new Deadline.Within(Duration.ofHours(36))),
+                            new Deadline(state, new Deadline.ReviewInterval(Period.ofDays(30)))), workflow.deadlines(),
+                    "both durations");
+        }
+
         static Stream<Arguments> refused() {
             String a = name();
             String b = name();
@@ -215,6 +233,16 @@ class WorkflowTest {
                             "deadlines[0].review-interval: not a positive ISO 8601 duration"),
                     Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a + ", within: PT0S }]",
                             "deadlines[0].within: not a positive ISO 8601 duration"),
+                    Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a + ", within: P306783379W }]",
+                            "deadlines[0].within: not a positive ISO 8601 duration"),
+                    Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a
+                            + ", within: P1W2147483647D }]", "deadlines[0].within: not a positive ISO 8601 duration"),
+                    Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a
+                            + ", review-interval: P306783379W }]",
+                            "deadlines[0].review-interval: not a positive ISO 8601 duration"),
+                    Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a
+                            + ", review-interval: P1W2147483647D }]",
+                            "deadlines[0].review-interval: not a positive ISO 8601 duration"),
                     Arguments.of(states + "transitions: []\ndeadlines: [{ state: " + a + ", field: \"\" }]",
                             "deadlines[0].field: not a non-blank string"));
         }

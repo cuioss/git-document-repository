@@ -61,7 +61,7 @@ provider selection `StoreProviders` through `ServiceLoader`, the signing key sou
 an unencrypted OpenSSH Ed25519 key), and the `LogRecord` holder `GitStoreLogMessages`; and the
 write path: `StoreWriter` (`open` with the active `SigningKeySource`; drafts, listing, explicit save with lease and the
 optional per-attempt `SaveStep` taking the `IdentityClaims` of the user,
-`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, draft expiry with garbage collection, `fetch` and
+`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, optionally pinned to the commit id a save returned, draft expiry with garbage collection, `fetch` and
 `fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
@@ -103,7 +103,8 @@ a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to 
 `Workflow` with `Transition`, `Mechanism` and `Deadline` (GDR-FORMS-5, deadlines read but not evaluated),
 `StepUpPolicy` (the step-up setting the application passes in, GDR-FORMS-7) and `DocumentTransitions` (the transition
 operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`), over the
-package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt);
+package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt)
+and `StateMerge` (the merge of the document file onto the tip);
 its tests run on the class path as well.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.

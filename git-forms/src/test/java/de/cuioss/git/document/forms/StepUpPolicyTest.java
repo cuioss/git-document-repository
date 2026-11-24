@@ -150,6 +150,15 @@ class StepUpPolicyTest {
     }
 
     @Test
+    @DisplayName("GDR-FORMS-7: the largest step-up.max-age is compared without leaving the range of Instant")
+    void largestMaxAge() {
+        var policy = StepUpPolicy.of(Duration.ofSeconds(Long.MAX_VALUE));
+
+        assertTrue(policy.holds(claims(Instant.EPOCH, null, List.of(StepUpPolicy.MFA)), Instant.EPOCH),
+                "holds instead of throwing");
+    }
+
+    @Test
     @DisplayName("GDR-FORMS-7: a recent auth_time does not make up for a missing multi-factor value")
     void recentWithoutMultiFactorRefused() {
         assertFalse(StepUpPolicy.of(MAX_AGE).holds(claims(NOW, null, List.of("pwd")), NOW), "pwd at the instant");

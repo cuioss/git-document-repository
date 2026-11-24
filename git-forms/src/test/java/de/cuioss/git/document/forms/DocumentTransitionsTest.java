@@ -45,9 +45,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.core.TreeEdit;
@@ -704,6 +706,304 @@ class DocumentTransitionsTest {
                             directory(key) + DocumentLayout.DOCUMENT_FILE), "the saved state stays"),
                     () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
                     () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
+        }
+    }
+
+    /** A workflow with self-loops on {@code release} and {@code save} from the state {@code approved}. */
+    static Workflow selfLoopWorkflow() {
+        return Objects.requireNonNull(Workflow.parse("workflows/loops.yaml", bytes("""
+                states: [draft, review, approved]
+                transitions:
+                  - { name: edit,      from: draft,    to: draft,    mechanism: intermediate-save }
+                  - { name: submit,    from: draft,    to: review,   mechanism: save }
+                  - { name: rework,    from: review,   to: draft,    mechanism: save }
+                  - { name: approve,   from: review,   to: approved, mechanism: release }
+                  - { name: republish, from: approved, to: approved, mechanism: release }
+                  - { name: resave,    from: approved, to: approved, mechanism: save }
+                """)).value());
+    }
+
+    private Fixture openSelfLoops(LocalRemote remote) {
+        return open(temp, remote, perDocumentDefinition(selfLoopWorkflow()), new TestSigning(Integer.MAX_VALUE));
+    }
+
+    /** The parents of a commit. */
+    static List<ObjectId> parents(Repository repository, @Nullable ObjectId commit) {
+        try (RevWalk walk = new RevWalk(repository)) {
+            return List.of(walk.parseCommit(Objects.requireNonNull(commit, "a commit")).getParents()).stream()
+                    .map(ObjectId::copy).toList();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The content of {@code document.yaml} with every field of the map. */
+    static byte[] fields(Map<String, @Nullable Object> fields) {
+        return new YamlDocumentCodec(schema()).encode(new LinkedHashMap<>(fields));
+    }
+
+    /** The decoded {@code document.yaml} of a document on a reference of the remote. */
+    static Map<String, @Nullable Object> decoded(LocalRemote remote, String ref, DocumentKey key) {
+        String content = Objects.requireNonNull(files(remote.repository(), ref).get(directory(key)
+                + DocumentLayout.DOCUMENT_FILE), "the file of the document");
+        return value(new YamlDocumentCodec(schema()).decode(bytes(content)));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: an unchanged self-loop release of invalid data is refused as INVALID; nothing released")
+    void selfLoopReleaseOfInvalidDataIsRefused(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var working = commit(remote.repository(), target,
+                Map.of(directory(key) + DocumentLayout.DOCUMENT_FILE, data("x".repeat(41), "owner", "approved")), main);
+        try (var fixture = openSelfLoops(remote)) {
+            value(fixture.writer().fetch());
+
+            var result = fixture.perform(Author.of("p-author"), MFA, key, "republish", List.of());
+
+            assertAll(
+                    () -> assertEquals(FormsOutcome.INVALID, result.outcome(), "the validation of the saved commit"),
+                    () -> assertInstanceOf(DocumentTransitions.Result.Refused.class, result, "findings as data"),
+                    () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"),
+                    () -> assertEquals(working, tip(remote.repository(), target), "nothing written"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: an unchanged self-loop release without a required field is MANDATORY_FIELDS_MISSING")
+    void selfLoopReleaseWithoutRequiredFieldIsRefused(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        commit(remote.repository(), StoreReferences.target(key),
+                Map.of(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", null, "approved")), main);
+        try (var fixture = openSelfLoops(remote)) {
+            value(fixture.writer().fetch());
+
+            var result = fixture.perform(Author.of("p-author"), MFA, key, "republish", List.of());
+
+            assertAll(
+                    () -> assertEquals(new DocumentTransitions.Result.Refused(
+                            new ValidationResult.MandatoryFieldsMissing(List.of("/owner"))), result, "the pointer"),
+                    () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: an unchanged self-loop release of a valid document releases once, writing no commit")
+    void selfLoopReleaseOfValidDocument(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        try (var fixture = openSelfLoops(remote)) {
+            perform(fixture, key, "edit", "submit", "approve");
+            var saved = tip(remote.repository(), target);
+
+            var republished = performed(fixture.perform(Author.of("p-author"), MFA, key, "republish", List.of()));
+
+            var release = ObjectId.fromString(republished.commitId());
+            assertAll(
+                    () -> assertEquals(2, Objects.requireNonNull(republished.release()).version(), "v2"),
+                    () -> assertEquals(saved, tip(remote.repository(), target), "no commit before the release"),
+                    () -> assertEquals(saved, parents(remote.repository(), release).get(1),
+                            "the saved commit released"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: an unchanged self-loop with a stale output writes the regenerated output and releases it")
+    void selfLoopWithStaleOutputIsRewritten(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var stale = commit(remote.repository(), target, Map.of(
+                directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", "approved"),
+                directory(key) + "narrative/summary.adoc", bytes("A summary.\n"),
+                directory(key) + DocumentLayout.OUTPUT_FILE, bytes("stale\n")), main);
+        try (var fixture = openSelfLoops(remote)) {
+            value(fixture.writer().fetch());
+
+            var republished = performed(fixture.perform(Author.of("p-author"), MFA, key, "republish", List.of()));
+
+            var rewritten = tip(remote.repository(), target);
+            assertAll(
+                    () -> assertNotEquals(stale, rewritten, "the regenerated output written"),
+                    () -> assertEquals(List.of(stale), parents(remote.repository(), rewritten), "one commit"),
+                    () -> assertEquals(FormsOutcome.OK, new OutputCheck(perDocument(), schema(), template())
+                            .check(remote.repository(), target).outcome(), "the output matches its data"),
+                    () -> assertEquals(rewritten, parents(remote.repository(),
+                            ObjectId.fromString(republished.commitId())).get(1), "the rewritten commit released"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a self-loop save that changes data runs the step once and writes one commit")
+    void changedSelfLoopSaveIsOneCommit(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        try (var fixture = openSelfLoops(remote)) {
+            perform(fixture, key, "edit", "submit", "approve");
+            var before = tip(remote.repository(), target);
+
+            var saved = performed(fixture.perform(Author.of("p-author"), PASSWORD, key, "resave",
+                    List.of(new TreeEdit.Put(directory(key) + DocumentLayout.DOCUMENT_FILE, data("Second", "owner",
+                            null)))));
+
+            var after = tip(remote.repository(), target);
+            assertAll(
+                    () -> assertEquals(Objects.requireNonNull(after).name(), saved.commitId(), "the save commit"),
+                    () -> assertEquals(List.of(before), parents(remote.repository(), after), "one commit"),
+                    () -> assertTrue(Objects.requireNonNull(files(remote.repository(), target)
+                                    .get(directory(key) + DocumentLayout.OUTPUT_FILE)).startsWith("= Second\n"),
+                            "the output regenerated by the step"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a state-only transition keeps a title another writer changed on the tip")
+    void stateOnlyTransitionKeepsConcurrentChange(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        var first = commit(remote.repository(), target, Map.of(document, data("First", "owner", "review")), main);
+        try (var fixture = open(remote)) {
+            value(fixture.writer().fetch());
+            commit(remote.repository(), target, Map.of(document, data("Changed", "owner", "review")), first);
+
+            performed(fixture.perform(Author.of("p-author"), PASSWORD, key, "rework", List.of()));
+
+            assertEquals(Map.of("title", "Changed", "owner", "owner", "state", "draft"),
+                    decoded(remote, target, key), "the concurrent title and the new state");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: an intermediate-save edit is kept by the state transition, a concurrent change too")
+    void draftEditAndConcurrentChangeAreKept(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        var first = commit(remote.repository(), target, Map.of(document, data("First", "owner", "draft")), main);
+        var author = Author.of("p-author");
+        try (var fixture = open(remote)) {
+            value(fixture.writer().fetch());
+            performed(fixture.perform(author, PASSWORD, key, "edit",
+                    List.of(new TreeEdit.Put(document, data("First", "other", "draft")))));
+            commit(remote.repository(), target, Map.of(document, data("Changed", "owner", "draft")), first);
+
+            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
+
+            assertEquals(Map.of("title", "Changed", "owner", "other", "state", "review"),
+                    decoded(remote, target, key), "the draft's owner, the tip's title");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a field the draft changed wins over the tip's change of the same field")
+    void draftChangeWins(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        var first = commit(remote.repository(), target, Map.of(document, data("First", "owner", "draft")), main);
+        var author = Author.of("p-author");
+        try (var fixture = open(remote)) {
+            value(fixture.writer().fetch());
+            performed(fixture.perform(author, PASSWORD, key, "edit",
+                    List.of(new TreeEdit.Put(document, data("Mine", "owner", "draft")))));
+            commit(remote.repository(), target, Map.of(document, data("Theirs", "owner", "draft")), first);
+
+            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
+
+            assertEquals("Mine", decoded(remote, target, key).get("title"), "the draft changed the title");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a key the draft deleted is removed from the tip's file")
+    void draftDeletionRemovesTheKey(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        Map<String, @Nullable Object> withNote = new LinkedHashMap<>();
+        withNote.put("title", "First");
+        withNote.put("owner", "owner");
+        withNote.put("note", "remove me");
+        withNote.put("state", "draft");
+        var first = commit(remote.repository(), target, Map.of(document, fields(withNote)), main);
+        var author = Author.of("p-author");
+        try (var fixture = open(remote)) {
+            value(fixture.writer().fetch());
+            performed(fixture.perform(author, PASSWORD, key, "edit",
+                    List.of(new TreeEdit.Put(document, data("First", "owner", "draft")))));
+            Map<String, @Nullable Object> moved = new LinkedHashMap<>(withNote);
+            moved.put("title", "Changed");
+            commit(remote.repository(), target, Map.of(document, fields(moved)), first);
+
+            performed(fixture.perform(author, PASSWORD, key, "submit", List.of()));
+
+            assertEquals(Map.of("title", "Changed", "owner", "owner", "state", "review"),
+                    decoded(remote, target, key), "the note removed, the tip's title kept");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: the release commit merges exactly the commit the transition saved")
+    void releaseMergesTheSavedCommit(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        try (var fixture = open(remote)) {
+            var approved = perform(fixture, key, TO_FIRST_RELEASE);
+
+            var release = ObjectId.fromString(approved.commitId());
+            assertAll(
+                    () -> assertEquals(tip(remote.repository(), target), parents(remote.repository(), release).get(1),
+                            "the save commit is the second parent"),
+                    () -> assertEquals(approved.commitId(), Objects.requireNonNull(approved.release()).commitId(),
+                            "the result carries the release commit"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a branch that moves between the save and the release refuses the release")
+    void movedBranchRefusesTheRelease(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        commit(remote.repository(), target, Map.of(document, data("First", "owner", "review")), main);
+        AtomicBoolean moved = new AtomicBoolean();
+        ObjectId[] saved = new ObjectId[1];
+        try (var fixture = open(remote)) {
+            value(fixture.writer().fetch());
+            // another writer saves the document right after this save pushed, before the release fetches
+            try (var subscription = fixture.writer().subscribe(target, (branch, commitId) -> {
+                if (moved.compareAndSet(false, true)) {
+                    saved[0] = ObjectId.fromString(commitId);
+                    commit(remote.repository(), target, Map.of(document, data("Other", "owner", "draft")),
+                            saved[0]);
+                }
+            })) {
+                var result = fixture.perform(Author.of("p-author"), MFA, key, "approve", List.of());
+
+                var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result);
+                assertAll(
+                        () -> assertEquals(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.CONFLICT)),
+                                notPerformed.outcome(), "the refusal of the store, passed on"),
+                        () -> assertEquals(target + ": no longer points to the saved commit", notPerformed.reason(),
+                                "the branch named, no data"),
+                        () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"),
+                        () -> assertEquals(List.of(saved[0]), parents(remote.repository(),
+                                tip(remote.repository(), target)), "the saved commit stays under the other save"));
+            }
         }
     }
 

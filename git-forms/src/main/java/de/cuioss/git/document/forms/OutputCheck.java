@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -138,7 +139,7 @@ public final class OutputCheck {
         if (!snapshot.isOk()) {
             return FormsResult.passOn(StoreResult.passOn(snapshot));
         }
-        Map<String, String> blobs = new TreeMap<>();
+        NavigableMap<String, String> blobs = new TreeMap<>();
         for (SnapshotFile file : Objects.requireNonNull(snapshot.value()).files()) {
             blobs.put(file.path(), file.blobId());
         }
@@ -175,7 +176,9 @@ public final class OutputCheck {
      * @param unit  the ULID of a document of a per-document kind, or the running number of an entry
      * @return {@link FormsOutcome#OK} with the UTF-8 content of the output; {@link FormsOutcome#INVALID} for a unit
      *         that is no name segment; the passed-on {@link StoreOutcome#MALFORMED} for data, a part or a fragment that
-     *         is missing or cannot be read
+     *         is missing or cannot be read, for a rendering that reached a limit of {@link DocumentTemplate}, and for
+     *         an output larger than {@value #MAX_FILE_BYTES} bytes, which the check could not read back, its detail
+     *         naming the output path and the bound
      * @throws IllegalStateException if the kind has no template
      */
     FormsResult<byte[]> generate(DocumentFiles files, String unit) {
@@ -191,8 +194,25 @@ public final class OutputCheck {
         if (!fragments.isOk()) {
             return new FormsResult<>(fragments.outcome(), null, fragments.detail());
         }
-        String output = active.render(Objects.requireNonNull(data.value()), Objects.requireNonNull(fragments.value()));
-        return FormsResult.ok(output.getBytes(StandardCharsets.UTF_8));
+        FormsResult<String> output = active.render(Objects.requireNonNull(data.value()),
+                Objects.requireNonNull(fragments.value()));
+        if (!output.isOk()) {
+            return new FormsResult<>(output.outcome(), null, output.detail());
+        }
+        byte[] bytes = Objects.requireNonNull(output.value()).getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_FILE_BYTES) {
+            return malformed(Objects.requireNonNull(outputPath(unit).value()), tooLarge());
+        }
+        return FormsResult.ok(bytes);
+    }
+
+    /**
+     * Whether the kind generates an output: exactly when it has a template.
+     *
+     * @return whether {@link #generate(DocumentFiles, String)} may be called
+     */
+    boolean generates() {
+        return template != null;
     }
 
     /**
@@ -299,6 +319,11 @@ public final class OutputCheck {
         return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, path + ": " + problem));
     }
 
+    /** The problem of a file larger than {@link #MAX_FILE_BYTES}, the same for a read file and a generated output. */
+    private static String tooLarge() {
+        return "too large, more than " + MAX_FILE_BYTES + " bytes";
+    }
+
     /**
      * The checked and the mismatching output paths of a commit.
      *
@@ -339,10 +364,10 @@ public final class OutputCheck {
     /** The files of a snapshot, read through an object reader. */
     private static final class SnapshotFiles implements DocumentFiles {
 
-        private final Map<String, String> blobs;
+        private final NavigableMap<String, String> blobs;
         private final ObjectReader reader;
 
-        SnapshotFiles(Map<String, String> blobs, ObjectReader reader) {
+        SnapshotFiles(NavigableMap<String, String> blobs, ObjectReader reader) {
             this.blobs = blobs;
             this.reader = reader;
         }
@@ -357,7 +382,7 @@ public final class OutputCheck {
                 ObjectLoader loader = reader.open(ObjectId.fromString(blobId), Constants.OBJ_BLOB);
                 // JGit 7.8.0 ObjectLoader.getBytes(int) returns a cached object whole, so the size is checked first.
                 if (loader.getSize() > MAX_FILE_BYTES) {
-                    throw new Unreadable(path, "too large, more than " + MAX_FILE_BYTES + " bytes");
+                    throw new Unreadable(path, tooLarge());
                 }
                 return Optional.of(loader.getBytes(MAX_FILE_BYTES));
             } catch (IOException e) {
@@ -368,7 +393,8 @@ public final class OutputCheck {
         @Override
         public List<String> paths(String directory) {
             String prefix = directory + "/";
-            return blobs.keySet().stream().filter(path -> path.startsWith(prefix)).sorted().toList();
+            // The keys of a sorted map that start with a prefix follow each other from the prefix on.
+            return blobs.tailMap(prefix, true).keySet().stream().takeWhile(path -> path.startsWith(prefix)).toList();
         }
     }
 

@@ -18,6 +18,7 @@ package de.cuioss.git.document.forms;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,7 @@ import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.IdentityClaims;
 import de.cuioss.git.document.store.Release;
 import de.cuioss.git.document.store.SaveResult;
+import de.cuioss.git.document.store.SaveStep;
 import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreResult;
@@ -45,7 +47,9 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.treewalk.TreeWalk;
 import org.jspecify.annotations.Nullable;
 
@@ -66,13 +70,24 @@ import org.jspecify.annotations.Nullable;
  * <li>{@code save} writes the caller's edits together with the file of the document or entry carrying the transition's
  * {@code to} as {@value TransitionStep#STATE} as a draft, so the save always has a change, and saves that draft through
  * {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, de.cuioss.git.document.store.SaveStep)}
- * with a {@link TransitionStep}. On every attempt the step checks the state on the remote tip, writes the state,
- * validates the data, checks {@code required} when the transition leaves the initial state or releases (GDR-FORMS-2),
- * and regenerates the output from the data of that attempt (GDR-FORMS-4).</li>
+ * with a {@link TransitionStep}. On every attempt the step checks the state on the remote tip, writes the file of the
+ * document or entry as the merge of {@link StateMerge} (the tip's file with the keys the draft changed against the file
+ * it started from, and the state), validates the data, checks {@code required} when the transition leaves the initial
+ * state or releases (GDR-FORMS-2), and regenerates the output from the data of that attempt (GDR-FORMS-4). The file
+ * the draft started from is read before the save: the file at the merge base of the draft and the branch of the key,
+ * else the file on that branch. When the caller edits that file in the call, its content is explicit whole-file intent
+ * and is the draft's file of the merge; a caller who needs a concurrent change of it detected passes
+ * {@link Change#expectedBlobIds()} (GDR-STORE-4).</li>
  * <li>{@code release} is the same single save, whose commit carries the state and the regenerated output, followed by
- * {@link StoreWriter#release}. A release that fails after the save is passed on and leaves the saved state in place;
- * no compensating write is made.</li>
+ * {@link StoreWriter#release(Author, IdentityClaims, DocumentKey, String)}, pinned to the commit the transition saved,
+ * so the release publishes exactly that commit. A release that fails after the save is passed on and leaves the saved
+ * state in place; a branch that moved after the save refuses the release with the passed-on outcome of the store, the
+ * saved state stays in place, and no compensating write is made.</li>
  * </ul>
+ * A save whose draft changes nothing, such as a self-loop from {@code approved} to {@code approved} that writes identical
+ * content, runs no step in the store. Its saved commit is then verified before anything is released: the checks of the
+ * step are applied to the files of that commit, a refusal ends the transition as a refusal of the step would, and an
+ * output that is stale on that commit is rewritten through a second draft and save, whose commit is the one released.
  * The draft written before a save stays when the save does not succeed, as every draft of the user does.
  * <p>
  * The current state is read through the bare clone of the writer, which the caller opens on the git directory it
@@ -178,47 +193,189 @@ public final class DocumentTransitions {
             return report(mechanism, drafted.isOk() ? new Result.Performed(Objects.requireNonNull(drafted.value()), null)
                     : passOn(drafted));
         }
-        return report(mechanism, save(author, claims, key, allowed, change, documentPath));
+        return report(mechanism, save(new Call(author, claims, key, allowed, change, documentPath)));
     }
 
     /**
-     * The save of a transition on {@code save} or {@code release}: the draft with the state, the save with the step,
-     * and for {@code release} the release after it.
+     * The save of a transition on {@code save} or {@code release}: the base of the merge, the draft with the state,
+     * the save with the step, the verification of an unchanged save, and for {@code release} the release after it.
      */
-    private Result save(Author author, IdentityClaims claims, DocumentKey key, Transition transition, Change change,
-            String documentPath) {
-        Result drafted = draftWithState(author, key, transition, change, documentPath);
+    private Result save(Call call) {
+        StoreResult<String> draftRef = StoreReferences.draft(call.author().pseudonym(), call.key());
+        if (!draftRef.isOk()) {
+            return passOn(draftRef);
+        }
+        String draft = Objects.requireNonNull(draftRef.value());
+        FormsResult<Map<String, @Nullable Object>> base;
+        try {
+            base = base(draft, call.key(), call.documentPath());
+        } catch (ReadFailure e) {
+            return readFailed(e);
+        }
+        if (!base.isOk()) {
+            return notPerformed(base);
+        }
+        Result drafted = draftWithState(call, draft);
         if (drafted != null) {
             return drafted;
         }
-        var step = new TransitionStep(transition, initialState(), definition.schema(), output,
-                definition.template() != null, key.id(), documentPath);
-        SaveResult saved = writer.save(author, claims, key, change.expectedBlobIds(), change.message(), step);
+        var step = step(call, Objects.requireNonNull(base.value()));
+        SaveResult saved = writer.save(call.author(), call.claims(), call.key(), call.change().expectedBlobIds(),
+                call.change().message(), step);
         return switch (saved) {
-            case SaveResult.Saved(String commitId) -> transition.mechanism() == Mechanism.RELEASE
-                    ? release(author, claims, key)
-                    : new Result.Performed(commitId, null);
+            case SaveResult.Saved(String commitId) -> afterSave(call, step, commitId);
             case SaveResult.Conflicting(List<String> paths) -> new Result.Conflicting(paths);
             case SaveResult.NotSaved notSaved -> refused(step, notSaved);
         };
     }
 
     /**
-     * Writes the caller's edits and the file of the document or entry with the state {@code to} as a draft.
+     * Continues after a save: a save that did not run the step was unchanged and is verified first, then the
+     * transition is performed with the saved commit, released for {@code release}.
+     */
+    private Result afterSave(Call call, TransitionStep step, String commitId) {
+        String saved = commitId;
+        if (!step.ran()) {
+            Result verified = verifySaved(call, commitId);
+            if (!(verified instanceof Result.Performed performed)) {
+                return verified;
+            }
+            saved = performed.commitId();
+        }
+        return call.transition().mechanism() == Mechanism.RELEASE ? release(call, saved)
+                : new Result.Performed(saved, null);
+    }
+
+    /**
+     * Verifies the commit of a save that did not run the step, because its draft changed nothing (a self-loop such as
+     * {@code approved} to {@code approved} writes identical content): the checks of the step are applied to the saved
+     * commit through a {@link SavedCommit} view. A refusal ends the transition as the refusal of a step would, before
+     * anything is released or written. When the step's edits equal the files of the saved commit, the commit stands;
+     * otherwise its output is stale, and the edits are written through a second draft and save with a fresh step, whose
+     * commit the transition continues with. That second draft changes the stale paths against the saved commit, so its
+     * save always runs the step.
+     *
+     * @return {@link Result.Performed} with the commit the transition continues with, or the result that ends it
+     */
+    private Result verifySaved(Call call, String commitId) {
+        var view = new SavedCommit(commitId);
+        var check = step(call, Map.of());
+        SaveStep.Outcome outcome;
+        List<TreeEdit> stale = new ArrayList<>();
+        try {
+            // the tip and the produced tree are both the saved commit, so the merge takes its file whatever the base
+            outcome = check.check(view);
+            if (outcome instanceof SaveStep.Edits(List<TreeEdit> edits)) {
+                stale.addAll(stale(view, edits));
+            }
+        } catch (ReadFailure e) {
+            return readFailed(e);
+        }
+        if (!(outcome instanceof SaveStep.Edits)) {
+            return fromCapture(check);
+        }
+        if (stale.isEmpty()) {
+            return new Result.Performed(commitId, null);
+        }
+        return rewrite(call, view, stale);
+    }
+
+    /** Writes the regenerated edits of a stale saved commit through a second draft and save with a fresh step. */
+    private Result rewrite(Call call, SavedCommit view, List<TreeEdit> stale) {
+        StoreResult<Map<String, @Nullable Object>> saved;
+        try {
+            saved = codec.decode(view.content(call.documentPath()).orElseThrow());
+        } catch (ReadFailure e) {
+            return readFailed(e);
+        }
+        StoreResult<String> drafted = writer.draft(call.author(), call.key(), stale, call.change().message());
+        if (!drafted.isOk()) {
+            return passOn(drafted);
+        }
+        var step = step(call, Objects.requireNonNull(saved.value(), "the verification decoded the saved file"));
+        SaveResult result = writer.save(call.author(), call.claims(), call.key(), Map.of(), call.change().message(),
+                step);
+        return switch (result) {
+            case SaveResult.Saved(String commitId) -> new Result.Performed(commitId, null);
+            case SaveResult.Conflicting(List<String> paths) -> new Result.Conflicting(paths);
+            case SaveResult.NotSaved notSaved -> refused(step, notSaved);
+        };
+    }
+
+    /** The edits whose content differs from the file the saved commit holds at their path. */
+    private static List<TreeEdit> stale(SavedCommit view, List<TreeEdit> edits) {
+        List<TreeEdit> stale = new ArrayList<>();
+        for (TreeEdit edit : edits) {
+            if (edit instanceof TreeEdit.Put put
+                    && !Arrays.equals(view.content(put.path()).orElse(null), put.content())) {
+                stale.add(put);
+            }
+        }
+        return stale;
+    }
+
+    /** The step of a save of the call, merging the file against a base. */
+    private TransitionStep step(Call call, Map<String, @Nullable Object> base) {
+        return new TransitionStep(call.transition(), initialState(), definition.schema(), output, call.key().id(),
+                call.documentPath(), base);
+    }
+
+    /**
+     * The decoded file the draft started from, the base of the merge of {@link StateMerge}: the file at the merge base
+     * of the draft and the branch of the key ({@code RevFilter.MERGE_BASE} of JGit 7.8.0) when the draft exists and
+     * they have a common commit, else the file on that branch, so that a draft that does not exist yet has changed
+     * nothing; empty when there is no file.
+     *
+     * @throws ReadFailure for an I/O failure while reading the clone
+     */
+    private FormsResult<Map<String, @Nullable Object>> base(String draft, DocumentKey key, String documentPath) {
+        String branch = branchOf(key);
+        @Nullable ObjectId mergeBase = exists(draft) ? mergeBase(draft, branch) : null;
+        Optional<byte[]> content = mergeBase == null ? read(branch, documentPath) : read(mergeBase, documentPath);
+        if (content.isEmpty()) {
+            return FormsResult.ok(Map.of());
+        }
+        StoreResult<Map<String, @Nullable Object>> decoded = codec.decode(content.get());
+        if (!decoded.isOk()) {
+            return FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, documentPath + ": " + decoded.detail()));
+        }
+        return FormsResult.ok(Objects.requireNonNull(decoded.value()));
+    }
+
+    /**
+     * The merge base of two references, or {@code null} when one is absent or they have no common commit.
+     *
+     * @throws ReadFailure for an I/O failure while reading the clone
+     */
+    private @Nullable ObjectId mergeBase(String first, String second) {
+        try (RevWalk walk = new RevWalk(repository)) {
+            Ref one = repository.exactRef(first);
+            Ref other = repository.exactRef(second);
+            if (one == null || other == null || one.getObjectId() == null || other.getObjectId() == null) {
+                return null;
+            }
+            walk.setRevFilter(RevFilter.MERGE_BASE);
+            walk.markStart(walk.parseCommit(one.getObjectId()));
+            walk.markStart(walk.parseCommit(other.getObjectId()));
+            RevCommit found = walk.next();
+            return found == null ? null : found.copy();
+        } catch (IOException e) {
+            throw new ReadFailure(e);
+        }
+    }
+
+    /**
+     * Writes the caller's edits and the file of the document or entry with the state {@code to} as a draft, so the
+     * draft always has a change; the step makes the final content of that file on every attempt.
      *
      * @return {@code null} when the draft was written, otherwise the result that ends the transition
      */
-    private @Nullable Result draftWithState(Author author, DocumentKey key, Transition transition, Change change,
-            String documentPath) {
-        StoreResult<String> draftRef = StoreReferences.draft(author.pseudonym(), key);
-        if (!draftRef.isOk()) {
-            return passOn(draftRef);
-        }
-        EditSplit split = EditSplit.of(change.edits(), documentPath);
+    private @Nullable Result draftWithState(Call call, String draftRef) {
+        String documentPath = call.documentPath();
+        EditSplit split = EditSplit.of(call.change().edits(), documentPath);
         Optional<byte[]> content;
         try {
-            content = split.edited ? split.content
-                    : draftContent(Objects.requireNonNull(draftRef.value()), key, documentPath);
+            content = split.edited ? split.content : draftContent(draftRef, call.key(), documentPath);
         } catch (ReadFailure e) {
             return readFailed(e);
         }
@@ -232,9 +389,9 @@ public final class DocumentTransitions {
             }
             document.putAll(Objects.requireNonNull(decoded.value()));
         }
-        document.put(TransitionStep.STATE, transition.to());
+        document.put(TransitionStep.STATE, call.transition().to());
         edits.add(new TreeEdit.Put(documentPath, codec.encode(document)));
-        StoreResult<String> drafted = writer.draft(author, key, edits, change.message());
+        StoreResult<String> drafted = writer.draft(call.author(), call.key(), edits, call.change().message());
         return drafted.isOk() ? null : passOn(drafted);
     }
 
@@ -272,9 +429,13 @@ public final class DocumentTransitions {
         }
     }
 
-    /** The release after the save of a transition on {@code release}; a failure leaves the saved state in place. */
-    private Result release(Author author, IdentityClaims claims, DocumentKey key) {
-        StoreResult<Release> released = writer.release(author, claims, key);
+    /**
+     * The release after the save of a transition on {@code release}, pinned to the commit the transition saved, so it
+     * publishes exactly that commit. A failure leaves the saved state in place, and so does a branch that moved after
+     * the save, which the store refuses with the passed-on outcome it returns; no compensating write is made.
+     */
+    private Result release(Call call, String savedCommitId) {
+        StoreResult<Release> released = writer.release(call.author(), call.claims(), call.key(), savedCommitId);
         if (!released.isOk()) {
             return passOn(released);
         }
@@ -284,16 +445,80 @@ public final class DocumentTransitions {
 
     /** Maps a save that did not succeed: a refusal of the step to what the step captured, anything else passed on. */
     private static Result refused(TransitionStep step, SaveResult.NotSaved notSaved) {
-        Optional<TransitionStep.Captured> captured = step.captured();
-        if (notSaved.outcome() != StoreOutcome.REFUSED || captured.isEmpty()) {
+        if (notSaved.outcome() != StoreOutcome.REFUSED || step.captured().isEmpty()) {
             return new Result.NotPerformed(new FormsResult.PassedOn(notSaved.outcome()), notSaved.reason());
         }
-        TransitionStep.Captured refusal = captured.get();
+        return fromCapture(step);
+    }
+
+    /** The result of a refusal the step captured: the findings of a validation, or its outcome and detail. */
+    private static Result fromCapture(TransitionStep step) {
+        TransitionStep.Captured refusal = step.captured().orElseThrow();
         ValidationResult findings = refusal.findings();
         if (findings != null) {
             return new Result.Refused(findings);
         }
         return new Result.NotPerformed(refusal.outcome(), refusal.detail());
+    }
+
+    /**
+     * The input of one transition on {@code save} or {@code release}.
+     *
+     * @param author       the author
+     * @param claims       the claims of the author's authentication
+     * @param key          the document or entry
+     * @param transition   the transition
+     * @param change       the caller's edits, expected blob ids and message
+     * @param documentPath the path of the file of the document or entry
+     */
+    private record Call(Author author, IdentityClaims claims, DocumentKey key, Transition transition, Change change,
+    String documentPath) {
+    }
+
+    /**
+     * A saved commit read as the attempt of a save: its tip and its produced tree are both the commit, so the checks of
+     * the step apply to what the commit holds.
+     */
+    private final class SavedCommit implements SaveStep.Attempt {
+
+        private final String commitId;
+
+        SavedCommit(String commitId) {
+            this.commitId = commitId;
+        }
+
+        @Override
+        public String tip() {
+            return commitId;
+        }
+
+        @Override
+        public Optional<byte[]> tipContent(String path) {
+            return read(ObjectId.fromString(commitId), path);
+        }
+
+        @Override
+        public Optional<byte[]> content(String path) {
+            return tipContent(path);
+        }
+
+        @Override
+        public List<String> paths(String directory) {
+            String prefix = directory.isEmpty() ? "" : directory + "/";
+            List<String> paths = new ArrayList<>();
+            try (RevWalk walk = new RevWalk(repository); TreeWalk tree = new TreeWalk(repository)) {
+                tree.addTree(walk.parseCommit(ObjectId.fromString(commitId)).getTree());
+                tree.setRecursive(true);
+                while (tree.next()) {
+                    if (tree.getPathString().startsWith(prefix)) {
+                        paths.add(tree.getPathString());
+                    }
+                }
+            } catch (IOException e) {
+                throw new ReadFailure(e);
+            }
+            return paths.stream().sorted().toList();
+        }
     }
 
     private void requireCollection(DocumentKey key) {
@@ -337,24 +562,34 @@ public final class DocumentTransitions {
      * @throws ReadFailure for an I/O failure, and for a file larger than {@link OutputCheck#MAX_FILE_BYTES}
      */
     private Optional<byte[]> read(String ref, String path) {
+        Ref found;
         try {
-            Ref found = repository.exactRef(ref);
-            ObjectId commit = found == null ? null : found.getObjectId();
-            if (commit == null) {
+            found = repository.exactRef(ref);
+        } catch (IOException e) {
+            throw new ReadFailure(e);
+        }
+        ObjectId commit = found == null ? null : found.getObjectId();
+        return commit == null ? Optional.empty() : read(commit, path);
+    }
+
+    /**
+     * Reads a file of a commit.
+     *
+     * @return the content, or empty when the file is absent
+     * @throws ReadFailure for an I/O failure, and for a file larger than {@link OutputCheck#MAX_FILE_BYTES}
+     */
+    private Optional<byte[]> read(ObjectId commit, String path) {
+        try (RevWalk walk = new RevWalk(repository);
+             TreeWalk file = TreeWalk.forPath(repository, path, walk.parseCommit(commit).getTree())) {
+            if (file == null || FileMode.TREE.equals(file.getRawMode(0))) {
                 return Optional.empty();
             }
-            try (RevWalk walk = new RevWalk(repository);
-                 TreeWalk file = TreeWalk.forPath(repository, path, walk.parseCommit(commit).getTree())) {
-                if (file == null || FileMode.TREE.equals(file.getRawMode(0))) {
-                    return Optional.empty();
-                }
-                ObjectLoader loader = repository.open(file.getObjectId(0), Constants.OBJ_BLOB);
-                // JGit 7.8.0 ObjectLoader.getBytes(int) returns a cached object whole, so the size is checked first.
-                if (loader.getSize() > OutputCheck.MAX_FILE_BYTES) {
-                    throw new ReadFailure(new IOException("too large"));
-                }
-                return Optional.of(loader.getBytes(OutputCheck.MAX_FILE_BYTES));
+            ObjectLoader loader = repository.open(file.getObjectId(0), Constants.OBJ_BLOB);
+            // JGit 7.8.0 ObjectLoader.getBytes(int) returns a cached object whole, so the size is checked first.
+            if (loader.getSize() > OutputCheck.MAX_FILE_BYTES) {
+                throw new ReadFailure(new IOException("too large"));
             }
+            return Optional.of(loader.getBytes(OutputCheck.MAX_FILE_BYTES));
         } catch (IOException e) {
             throw new ReadFailure(e);
         }
@@ -429,7 +664,9 @@ public final class DocumentTransitions {
      *
      * @param edits           the edits of the document; for {@code intermediate-save} the draft's edits, for
      *                        {@code save} and {@code release} written as a draft before the save, together with the
-     *                        state
+     *                        state; an edit of the file of the document or entry is whole-file intent, merged onto
+     *                        the tip key by key against the file the draft started from, so a concurrent change of that
+     *                        file is detected only through {@code expectedBlobIds}
      * @param expectedBlobIds the full blob id the caller loaded per repository-relative path, checked by a save
      *                        (GDR-STORE-4); the zero id expects the path to be absent; empty for no check
      * @param message         the message of the draft and the save commit

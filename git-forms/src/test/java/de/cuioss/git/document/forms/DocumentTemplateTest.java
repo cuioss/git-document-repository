@@ -71,7 +71,14 @@ class DocumentTemplateTest {
     }
 
     private static String render(String template, Map<String, ?> data) {
-        return template(template).render(data, Map.of());
+        return rendered(template(template), data, Map.of());
+    }
+
+    /** Renders and asserts that the rendering succeeded; the output. */
+    static String rendered(DocumentTemplate template, Map<String, ?> data, Map<String, String> fragments) {
+        var result = template.render(data, fragments);
+        assertTrue(result.isOk(), () -> "the template renders: " + result.detail());
+        return Objects.requireNonNull(result.value(), "a success carries the output");
     }
 
     @Nested
@@ -89,7 +96,7 @@ class DocumentTemplateTest {
                     {{>summary}}
                     """);
 
-            var output = template.render(Map.of("title", title), Map.of("summary", summary + "\n\n"));
+            var output = rendered(template, Map.of("title", title), Map.of("summary", summary + "\n\n"));
 
             assertEquals("= " + title + "\n\n" + summary + "\n", output,
                     "the value and the fragment, without the trailing line feeds of the fragment");
@@ -160,10 +167,10 @@ class DocumentTemplateTest {
         void commentsAndEscaping() {
             var markup = "*" + word() + "* <b>&amp;</b>";
 
-            var output = template("""
+            var output = rendered(template("""
                     {{! a comment line }}
                     {{text}}{{>absent}}
-                    """).render(Map.of("text", markup), Map.of());
+                    """), Map.of("text", markup), Map.of());
 
             assertEquals(markup + "\n", output, "the value is inserted as it is");
         }
@@ -175,8 +182,8 @@ class DocumentTemplateTest {
             var template = DocumentTemplate.parse(PATH, "a\r\nb\r{{v}}\n\n\n".getBytes(StandardCharsets.UTF_8));
             var parsed = Objects.requireNonNull(template.value());
 
-            var output = parsed.render(Map.of("v", value + "\r\nx"), Map.of());
-            var empty = template("").render(Map.of(), Map.of());
+            var output = rendered(parsed, Map.of("v", value + "\r\nx"), Map.of());
+            var empty = rendered(template(""), Map.of(), Map.of());
 
             assertAll(
                     () -> assertEquals("a\nb\n" + value + "\nx\n", output, "line feeds only, one at the end"),
@@ -204,8 +211,8 @@ class DocumentTemplateTest {
             Map<String, Object> data = Map.of("title", word(), "tags", List.of(Map.of("name", word(), "score", 3L)));
             Map<String, String> fragments = Map.of("summary", word(), "detail", word());
 
-            var first = template.render(data, fragments).getBytes(StandardCharsets.UTF_8);
-            var second = template(TEMPLATE).render(data, fragments).getBytes(StandardCharsets.UTF_8);
+            var first = rendered(template, data, fragments).getBytes(StandardCharsets.UTF_8);
+            var second = rendered(template(TEMPLATE), data, fragments).getBytes(StandardCharsets.UTF_8);
 
             assertArrayEquals(first, second, "the same bytes");
         }
@@ -219,10 +226,10 @@ class DocumentTemplateTest {
             List<Map.Entry<String, String>> fragmentEntries = new ArrayList<>(
                     List.of(Map.entry("summary", word()), Map.entry("detail", word())));
 
-            var forward = template.render(ordered(entries), ordered(fragmentEntries));
+            var forward = rendered(template, ordered(entries), ordered(fragmentEntries));
             Collections.reverse(entries);
             Collections.reverse(fragmentEntries);
-            var reversed = template.render(ordered(entries), ordered(fragmentEntries));
+            var reversed = rendered(template, ordered(entries), ordered(fragmentEntries));
 
             assertEquals(forward, reversed, "the same output");
         }
@@ -292,7 +299,7 @@ class DocumentTemplateTest {
         @MethodSource("acceptedNames")
         @DisplayName("GDR-FORMS-4: a name of one or more segments of [A-Za-z0-9_-] separated by single dots is read")
         void acceptedName(String name) {
-            var output = template("{{#" + name + "}}x{{/" + name + "}}").render(Map.of(), Map.of());
+            var output = rendered(template("{{#" + name + "}}x{{/" + name + "}}"), Map.of(), Map.of());
 
             assertEquals("\n", output, "an absent section renders nothing");
         }
@@ -306,7 +313,76 @@ class DocumentTemplateTest {
         void deepestNesting() {
             var text = "{{#a}}".repeat(DocumentTemplate.MAX_NESTING) + "x" + "{{/a}}".repeat(DocumentTemplate.MAX_NESTING);
 
-            assertEquals("\n", template(text).render(Map.of(), Map.of()), "an absent section renders nothing");
+            assertEquals("\n", rendered(template(text), Map.of(), Map.of()), "an absent section renders nothing");
+        }
+    }
+
+    @Nested
+    @DisplayName("Limits of a rendering")
+    class Limits {
+
+        private static final int LEVELS = 40;
+
+        private static String nested(String body) {
+            return "{{#items}}".repeat(LEVELS) + body + "{{/items}}".repeat(LEVELS);
+        }
+
+        @ParameterizedTest(name = "innermost body [{0}]")
+        @MethodSource("bodies")
+        @DisplayName("GDR-FORMS-4: sections nested over the same two items stop at the operation limit, never content")
+        void exponentialNesting(String body) {
+            var template = template(nested(body));
+
+            var result = template.render(Map.of("items", List.of(0L, 1L)), Map.of());
+
+            assertAll(
+                    () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                            "template: rendering stopped, more than " + DocumentTemplate.MAX_RENDER_OPERATIONS
+                                    + " operations")), result, "the limit is named"),
+                    () -> assertFalse(Objects.requireNonNull(result.detail()).contains("items"),
+                            "no content of the template or the data"));
+        }
+
+        static Stream<String> bodies() {
+            return Stream.of("", "{{.}}");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: a deep nesting over a single item still renders")
+        void deepNestingOverOneItem() {
+            var output = rendered(template(nested("{{.}}")), Map.of("items", List.of(7L)), Map.of());
+
+            assertEquals("7\n", output, "one combination");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: a list of ordinary size still renders")
+        void ordinaryList() {
+            List<Long> items = new ArrayList<>();
+            for (long index = 0; index < 10_000; index++) {
+                items.add(index);
+            }
+
+            var output = rendered(template("{{#items}}{{.}},{{/items}}"), Map.of("items", items), Map.of());
+
+            assertTrue(output.startsWith("0,1,2,") && output.endsWith("9999,\n"), "every item");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: an output larger than the character limit stops, naming the limit")
+        void outputLimit() {
+            var fragment = "x".repeat(1024 * 1024);
+            var template = template("{{#items}}{{>big}}{{/items}}");
+            List<Long> items = new ArrayList<>();
+            for (long index = 0; index <= DocumentTemplate.MAX_OUTPUT_CHARS / fragment.length(); index++) {
+                items.add(index);
+            }
+
+            var result = template.render(Map.of("items", items), Map.of("big", fragment));
+
+            assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                    "template: rendering stopped, output larger than " + DocumentTemplate.MAX_OUTPUT_CHARS
+                            + " characters")), result, "the limit is named");
         }
 
         @Test

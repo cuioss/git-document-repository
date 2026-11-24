@@ -237,7 +237,12 @@ public final class Workflow {
         return new Deadline(state, rule);
     }
 
-    /** A positive ISO 8601 duration, a {@link Period} or, with a time part, a {@link Duration}. */
+    /**
+     * A positive ISO 8601 duration, a {@link Period} or, with a time part, a {@link Duration}. A text whose arithmetic
+     * overflows is refused like any other: on Java 21, {@link Period#parse(CharSequence)} throws an
+     * {@link ArithmeticException}, not a {@link DateTimeParseException}, when it converts weeks to days or adds them to
+     * the days ({@code P306783379W}, {@code P1W2147483647D}).
+     */
     private static TemporalAmount duration(Map<String, @Nullable Object> keys, String key, String path) {
         String text = string(keys, key, path);
         String problem = path + "." + key + ": not a positive ISO 8601 duration";
@@ -248,15 +253,22 @@ public final class Workflow {
             }
             return period;
         } catch (DateTimeParseException notAPeriod) {
-            try {
-                Duration duration = Duration.parse(text);
-                if (duration.isNegative() || duration.isZero()) {
-                    throw new Malformed(problem);
-                }
-                return duration;
-            } catch (DateTimeParseException notADuration) {
+            return timeBased(text, problem);
+        } catch (ArithmeticException overflow) {
+            throw new Malformed(problem);
+        }
+    }
+
+    /** A positive ISO 8601 duration with a time part, or the refusal {@code problem}. */
+    private static Duration timeBased(String text, String problem) {
+        try {
+            Duration duration = Duration.parse(text);
+            if (duration.isNegative() || duration.isZero()) {
                 throw new Malformed(problem);
             }
+            return duration;
+        } catch (DateTimeParseException | ArithmeticException notADuration) {
+            throw new Malformed(problem);
         }
     }
 
