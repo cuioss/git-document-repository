@@ -29,8 +29,9 @@ released together and consumed separately.
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners; signing and its verification; anchoring: checkpoints, proofs as notes, the provider `signed`, anchor verification | `git-core` |
 | `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec | `git-store` |
+| `git-timestamp` | The RFC 3161 anchor provider `rfc3161`: obtaining timestamp tokens from an external authority and verifying them against `timestamp.trust`, on an own DER/CMS reader and writer (optional) | `git-store` |
 
-Planned but not yet created: `git-timestamp`, `git-directory` (see
+Planned but not yet created: `git-directory` (see
 `doc/concepts/module-structure.adoc` for the order and the dependency graph).
 
 **Current state:** `git-testing` exports `de.cuioss.git.document.testing` with the transport-credential generator
@@ -97,22 +98,33 @@ and `CounterCodec`, over the package-private `DataNode` (the validator's `JsonNo
 `SchemaResources` (the schema resources of a file and the resolution of references), `SchemaChecks` (the refusals of
 a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to the same value), `MandatoryFields` and
 `EvaluatedLocations` (the check of `required`) and
-`YamlWriter` (the canonical emitter); its tests run on the class path as well.
+`YamlWriter` (the canonical emitter); its tests run on the class path as well. `git-timestamp` exports
+`de.cuioss.git.document.timestamp` with the anchor provider `Rfc3161AnchorProvider` (id `rfc3161`, built by
+`Rfc3161AnchorProvider.from` from the section `timestamp` of the shared configuration map and passed to
+`StoreProviders.select` as a candidate; the instance `ServiceLoader` creates is unconfigured and never reaches the
+network) and the `LogRecord` holder `GitTimestampLogMessages`, over the package-private `TimestampConfiguration`
+(`timestamp.url`, `timestamp.trust`, `timestamp.credentials`), `TimestampTransport` (HTTPS on `java.net.http`, no
+redirects, bounded reply), `TimeStampRequests` (the `TimeStampReq` and the reading of the reply), `TimeStampTokens`
+(the verification of a token: CMS signature, ESS signing certificate, `id-kp-timeStamping`, PKIX path to
+`timestamp.trust` without revocation checking) and `Der` (the bounded DER reader and writer); it adds no dependency.
+Its tests run on the class path against an in-process authority on the JDK `HttpsServer` and the `git-testing`
+fixtures.
 Add an `exports` directive together with the first
 public class of a package: javac rejects exporting a package that contains only `package-info.java`.
 
 The build guards GDR-GEN-1 (`doc/specification/general.adoc`) with the `maven-enforcer-plugin` that `cui-parent-pom`
 already binds: the execution `module-layering` of the root `pom.xml` bans every reactor dependency outside the module
-graph (`git-store` appends the edge `git-core`, `git-forms` the edge `git-store`), the execution `consumer-isolation` of
+graph (`git-store` appends the edge `git-core`, `git-forms` and `git-timestamp` each the edge `git-store`), the execution `consumer-isolation` of
 `git-core/pom.xml` bans every compile or runtime artifact outside the closure a consumer of `git-core` alone receives,
 and the execution `direct-dependency-isolation` of `git-core/pom.xml` bans every declared compile or runtime dependency
 outside JSpecify, JGit and `cui-java-tools`, whatever its `optional` flag (the transitive path of `consumer-isolation`
 filters optional dependencies).
-`DomainTermAbsenceTest` in each module (`git-core`, `git-testing`, `git-store` and `git-forms`) asserts that no public type carries
+`DomainTermAbsenceTest` in each module (`git-core`, `git-testing`, `git-store`, `git-forms` and `git-timestamp`) asserts that no public type carries
 a domain term. `git-core` ships native-image metadata (`reflect-config.json`, `resource-config.json` under
 `META-INF/native-image/de.cuioss/git-core/`, checked by `NativeImageMetadataTest`) for the one JGit translation class
 and bundle it reaches (`JGitText`), its worktrees package included; `git-store` ships none and relies on that of `git-core`; `git-forms` ships
-`resource-config.json` only, for the bundle and the meta-schema its JSON Schema validator loads (GDR-NFR-4).
+`resource-config.json` only, for the bundle and the meta-schema its JSON Schema validator loads; `git-timestamp` ships
+none, since its code uses no reflection, resource or resource bundle of its own (GDR-NFR-4).
 
 ## Build
 

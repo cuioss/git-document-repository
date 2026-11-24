@@ -43,6 +43,10 @@ expiry), release with tag, in-memory index with contributors, fetch and snapshot
 |`git-forms`
 |Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema
 validation, data layout, YAML codec in schema order. Depends on `git-store` only.
+
+|`git-timestamp`
+|The RFC 3161 anchor provider `rfc3161`: timestamp tokens from an external timestamp authority and their verification
+against the configured trusted certificates, on the JDK alone. Optional; depends on `git-store` only.
 |===
 
 `git-core` holds the repository part taken over from its first client: hardening, remote policy, identity, results,
@@ -60,14 +64,17 @@ per-branch post-commit listeners; the commit signature, the identity trailers an
 holds the layer of schema-driven documents on top of the store: its own outcome list, result and log messages, the
 kinds of documents loaded from configuration alone, validation against the JSON Schema of a kind (Draft 2020-12), the
 file layout of a document and the YAML codec that writes its data in schema order; generated output, workflow and
-links follow. The other aspect modules (`git-timestamp`, `git-directory`) follow as the document store needs them.
+links follow. `git-timestamp` holds the anchor provider `rfc3161` of the store: it obtains an RFC 3161 timestamp token
+for a release or checkpoint commit from the configured authority and verifies a stored token, with its own DER/CMS
+reader and writer on the JDK and no further dependency. The remaining aspect module, `git-directory`, follows as the
+document store needs it.
 
 The build guards the layering and the consumer closure of `git-core`: a module that declares a dependency on another module outside the module graph fails
 the build, and so does a compile or runtime artifact outside the closure a consumer of `git-core` alone receives or a
 direct compile or runtime dependency of `git-core` outside JSpecify, JGit and `cui-java-tools`, optional or not.
 `git-core` ships the GraalVM native-image metadata for what its code paths reach of JGit: one class and one
-translation bundle, JGit's `JGitText`; `git-store` relies on it, and
-`git-forms` ships the resource metadata of its JSON Schema validator (see
+translation bundle, JGit's `JGitText`; `git-store` relies on it, `git-timestamp` ships none because it needs none,
+and `git-forms` ships the resource metadata of its JSON Schema validator (see
 link:doc/specification/general.adoc[General Requirements], GDR-GEN-1 and GDR-NFR-4).
 
 === Maven Coordinates
