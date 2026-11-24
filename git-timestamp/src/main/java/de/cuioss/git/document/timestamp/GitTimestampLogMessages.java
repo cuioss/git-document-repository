@@ -86,6 +86,16 @@ public final class GitTimestampLogMessages {
                 .identifier(101)
                 .build();
 
+        /**
+         * A stored timestamp token was rejected on verification: the object id, the outcome
+         * ({@code SIGNATURE_INVALID} or {@code IMPRINT_MISMATCH}) and the fixed detail of the broken rule.
+         */
+        public static final LogRecord PROOF_REJECTED = LogRecordModel.builder()
+                .template("Rejected the timestamp proof of object %s: %s, %s")
+                .prefix(PREFIX)
+                .identifier(102)
+                .build();
+
         private WARN() {
             // holder of constants
         }

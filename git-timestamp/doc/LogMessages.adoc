@@ -39,6 +39,12 @@ repository alias, the object id and the fixed detail of the outcome `UNAVAILABLE
 |Logged when the timestamp authority refused or answered with an error (a status other than granted, another HTTP
 status than 200, another media type, an unreadable reply, a nonce or imprint other than requested): the repository
 alias, the object id and the fixed detail of the outcome `REFUSED`. The subject stays pending.
+|GIT_TIMESTAMP-102 |GIT_TIMESTAMP |Rejected the timestamp proof of object %s: %s, %s
+|Logged when the provider `rfc3161` rejected a stored timestamp token on verification
+(xref:../../doc/specification/git-timestamp.adoc#GDR-TSA-2[GDR-TSA-2]): the object id, the outcome
+(`SIGNATURE_INVALID` for a token that cannot be read, a signature that does not verify or a signer certificate that is
+not a timestamping certificate or has no valid path to `timestamp.trust`; `IMPRINT_MISMATCH` for a token about another
+object) and the fixed detail of the broken rule.
 |===
 
 == ERROR Level (200-299)

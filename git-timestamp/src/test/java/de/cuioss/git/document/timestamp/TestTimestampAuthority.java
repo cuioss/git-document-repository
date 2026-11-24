@@ -80,7 +80,11 @@ final class TestTimestampAuthority implements AutoCloseable {
         /** The HTTP status 500. */
         HTTP_ERROR,
         /** A granted reply with the media type {@code application/octet-stream}. */
-        WRONG_CONTENT_TYPE
+        WRONG_CONTENT_TYPE,
+        /** A granted token signed by a timestamping certificate of a CA outside {@code timestamp.trust}. */
+        UNTRUSTED_SIGNER,
+        /** A granted token signed by a certificate of the trusted CA without {@code id-kp-timeStamping}. */
+        SIGNER_WITHOUT_TIME_STAMPING
     }
 
     /**
@@ -98,6 +102,8 @@ final class TestTimestampAuthority implements AutoCloseable {
 
     private final HttpsServer server;
     private final TestCertificates.Issued signer;
+    private final TestCertificates.Issued untrustedSigner;
+    private final TestCertificates.Issued signerWithoutTimeStamping;
     private final AtomicReference<Answer> answer = new AtomicReference<>(Answer.GRANT);
     private final List<Received> received = new CopyOnWriteArrayList<>();
     private final AtomicLong calls = new AtomicLong();
@@ -105,16 +111,20 @@ final class TestTimestampAuthority implements AutoCloseable {
     private final SecureRandom random = new SecureRandom();
 
     /**
-     * Starts the authority.
+     * Starts the authority. Besides the given signer it issues the signers of the scripted answers
+     * {@link Answer#UNTRUSTED_SIGNER}, under a CA of its own, and {@link Answer#SIGNER_WITHOUT_TIME_STAMPING}, under
+     * the given CA.
      *
      * @param tls    the TLS certificate of the loopback address
-     * @param ca     the CA of the TLS certificate
+     * @param ca     the CA of the TLS certificate, which also issues the signer without the timestamping purpose
      * @param signer the signer of the tokens
      * @throws IOException if the server cannot be bound
      */
     TestTimestampAuthority(TestCertificates.Issued tls, TestCertificates.Issued ca, TestCertificates.Issued signer)
             throws IOException {
         this.signer = Objects.requireNonNull(signer, "signer");
+        this.untrustedSigner = TestCertificates.signer(TestCertificates.ca("untrusted ca"), "untrusted tsa", true);
+        this.signerWithoutTimeStamping = TestCertificates.signer(ca, "tsa without time stamping", false);
         this.server = HttpsServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.setHttpsConfigurator(new HttpsConfigurator(TestCertificates.serverContext(tls, ca)));
         server.createContext(PATH, this::handle);
@@ -232,7 +242,12 @@ final class TestTimestampAuthority implements AutoCloseable {
                 Der.integer(serials.getAndIncrement()),
                 Der.generalizedTime(Instant.now()),
                 Der.integer(nonce));
-        byte[] token = token(tstInfo, request.certReq());
+        TestCertificates.Issued by = switch (current) {
+            case UNTRUSTED_SIGNER -> untrustedSigner;
+            case SIGNER_WITHOUT_TIME_STAMPING -> signerWithoutTimeStamping;
+            default -> signer;
+        };
+        byte[] token = token(by, tstInfo, request.certReq());
         return Der.sequence(Der.sequence(Der.integer(TimeStampRequests.GRANTED)), token);
     }
 
