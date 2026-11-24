@@ -26,7 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -196,6 +198,73 @@ class TimestampConfigurationTest {
 
         assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", result.detail(), "detail");
         assertEquals(StoreOutcome.MALFORMED, result.outcome(), "outcome");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a binary PKCS #7 file followed by an incomplete BEGIN marker is MALFORMED")
+    void shouldRefusePkcs7WithIncompleteMarker() throws Exception {
+        var certificate = TestCertificates.ca("pkcs7").certificate();
+        byte[] pkcs7 = CertificateFactory.getInstance("X.509").generateCertPath(List.of(certificate))
+                .getEncoded("PKCS7");
+        byte[] content = Der.concat(pkcs7, "\n-----BEGIN CERTIFICATE-----\n".getBytes(US_ASCII));
+        var file = Files.write(directory.resolve("bundle.p7b"), content);
+
+        var result = TimestampConfiguration.from(configuration(section(URL, List.of(file.toString()))));
+
+        assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", result.detail(), "detail");
+        assertEquals(StoreOutcome.MALFORMED, result.outcome(), "outcome");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a block without its END, a body that is no base64 or no certificate is MALFORMED")
+    void shouldRefuseIncompleteOrInvalidBlocks() throws Exception {
+        String notCertificate = Base64.getEncoder().encodeToString(Der.sequence(Der.integer(1)));
+        String withoutEnd = caPem + "-----BEGIN CERTIFICATE-----\n" + caPem.lines().skip(1).findFirst().orElseThrow()
+                + "\n";
+        String nested = "-----BEGIN CERTIFICATE-----\n" + caPem;
+        var cases = Map.of(
+                "without-end.pem", withoutEnd,
+                "not-base64.pem", "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n",
+                "not-certificate.pem",
+                "-----BEGIN CERTIFICATE-----\n" + notCertificate + "\n-----END CERTIFICATE-----\n",
+                "empty-body.pem", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
+                "nested.pem", nested,
+                "only-text.pem", "no certificate here\n");
+
+        for (var entry : cases.entrySet()) {
+            var file = file(entry.getKey(), entry.getValue());
+
+            var result = TimestampConfiguration.from(configuration(section(URL, List.of(file.toString()))));
+
+            assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", result.detail(), entry::getKey);
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: a PEM file with a byte outside ASCII is MALFORMED")
+    void shouldRefuseNonAsciiByte() throws Exception {
+        byte[] content = Der.concat("Zertifikat f".getBytes(US_ASCII), new byte[]{(byte) 0xC3, (byte) 0xBC},
+                "r die Pr\n".getBytes(US_ASCII), caPem.getBytes(US_ASCII));
+        var file = Files.write(directory.resolve("umlaut.pem"), content);
+
+        var result = TimestampConfiguration.from(configuration(section(URL, List.of(file.toString()))));
+
+        assertEquals(TimestampConfiguration.KEY_TRUST + "[0] is malformed", result.detail(), "detail");
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-1: explanatory text around and between blocks and CRLF line ends are accepted")
+    void shouldAcceptExplanatoryTextAndCrlf() throws Exception {
+        String explained = "Subject: trust one\n" + caPem + "between the blocks\n\n" + caPem + "trailing text";
+        String crlf = twoCertificatesPem.replace("\n", "\r\n");
+        var one = file("explained.pem", explained);
+        var two = file("crlf.pem", crlf);
+
+        var result = TimestampConfiguration.from(configuration(section(URL, List.of(one.toString(),
+                two.toString()))));
+
+        assertTrue(result.isOk(), () -> "read: " + result.detail());
+        assertEquals(4, result.value().trust().size(), "two blocks in each file");
     }
 
     @Test

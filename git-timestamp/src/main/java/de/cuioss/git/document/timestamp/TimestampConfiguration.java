@@ -20,8 +20,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -29,11 +32,12 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -51,9 +55,9 @@ import org.jspecify.annotations.Nullable;
  * application hands to {@code StoreConfiguration.from} of {@code git-store}.
  * <ul>
  * <li>{@value #KEY_URL} is required: an absolute {@code https} URL with a host and without user information.</li>
- * <li>{@value #KEY_TRUST} is required: a non-empty list of paths to PEM files, each holding one or more X.509
- * certificates. A file is read without following a symbolic link, and at most {@value #MAX_TRUST_FILE_BYTES} octets
- * and one more are read from it.</li>
+ * <li>{@value #KEY_TRUST} is required: a non-empty list of paths to PEM files, each an ASCII text holding one or more
+ * complete {@code CERTIFICATE} blocks of one X.509 certificate each (RFC 7468, 5.1). A file is read without following
+ * a symbolic link, and at most {@value #MAX_TRUST_FILE_BYTES} octets and one more are read from it.</li>
  * <li>{@value #KEY_CREDENTIALS} is optional: a single bearer token, sent as {@code Authorization: Bearer <token>}. It
  * must be a {@code token68} of <a href="https://www.rfc-editor.org/rfc/rfc6750#section-2.1">RFC 6750, 2.1</a>, so it
  * can never break the header.</li>
@@ -85,8 +89,14 @@ final class TimestampConfiguration {
     /** The largest TCP port. */
     private static final int MAX_PORT = 0xFFFF;
 
-    /** The encapsulation boundary of a PEM certificate (RFC 7468, 2 and 5.1). */
-    private static final String PEM_CERTIFICATE = "-----BEGIN CERTIFICATE-----";
+    /** The pre-encapsulation boundary of a PEM certificate (RFC 7468, 2 and 5.1). */
+    private static final String PEM_BEGIN = "-----BEGIN CERTIFICATE-----";
+
+    /** The post-encapsulation boundary of a PEM certificate (RFC 7468, 2 and 5.1). */
+    private static final String PEM_END = "-----END CERTIFICATE-----";
+
+    /** A line break of a PEM text: CRLF, LF or CR (RFC 7468, 3, {@code eol}). */
+    private static final Pattern LINE_BREAK = Pattern.compile("\r\n|\n|\r");
 
     private static final String IS_MISSING = " is missing";
     private static final String IS_MALFORMED = " is malformed";
@@ -212,22 +222,79 @@ final class TimestampConfiguration {
         if (content.length == 0 || content.length > MAX_TRUST_FILE_BYTES) {
             return Optional.empty();
         }
-        // the contract is PEM: CertificateFactory also reads binary DER and PKCS #7, which are refused here
-        if (!new String(content, StandardCharsets.US_ASCII).contains(PEM_CERTIFICATE)) {
+        return pemCertificates(content, factory);
+    }
+
+    /**
+     * Reads the complete {@code CERTIFICATE} blocks of a PEM text (RFC 7468, 2 and 5.1). The text must be ASCII
+     * throughout; every block runs from a line {@value #PEM_BEGIN} to the next line {@value #PEM_END}, its body is
+     * base64 over any number of lines and is exactly one X.509 certificate. Text outside the blocks is ignored. The
+     * file is parsed here and not handed to {@link CertificateFactory#generateCertificates}, which also reads binary
+     * DER and PKCS #7 and so would accept a file that is no PEM text.
+     *
+     * @param content the content of the file
+     * @param factory the factory of X.509 certificates
+     * @return the certificates in the order of the blocks, or empty for a non-ASCII text, a block without its end, a
+     *         body that is no base64 or no certificate, or a text without any complete block
+     */
+    private static Optional<List<X509Certificate>> pemCertificates(byte[] content, CertificateFactory factory) {
+        String text;
+        try {
+            text = StandardCharsets.US_ASCII.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(content)).toString();
+        } catch (CharacterCodingException e) {
             return Optional.empty();
         }
         List<X509Certificate> certificates = new ArrayList<>();
-        try {
-            for (Certificate certificate : factory.generateCertificates(new ByteArrayInputStream(content))) {
-                if (!(certificate instanceof X509Certificate x509)) {
+        @Nullable StringBuilder body = null;
+        for (String line : LINE_BREAK.split(text, -1)) {
+            String marker = line.strip();
+            if (body == null) {
+                if (PEM_BEGIN.equals(marker)) {
+                    body = new StringBuilder();
+                }
+            } else if (PEM_END.equals(marker)) {
+                var certificate = certificate(body.toString(), factory);
+                if (certificate.isEmpty()) {
                     return Optional.empty();
                 }
-                certificates.add(x509);
+                certificates.add(certificate.get());
+                body = null;
+            } else if (PEM_BEGIN.equals(marker)) {
+                return Optional.empty();
+            } else {
+                body.append(marker);
+            }
+        }
+        if (body != null || certificates.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(certificates);
+    }
+
+    /**
+     * Reads the base64 body of one PEM block as exactly one X.509 certificate.
+     *
+     * @param body    the body, the line breaks removed
+     * @param factory the factory of X.509 certificates
+     * @return the certificate, or empty for a body that is no base64, no certificate or more than one certificate
+     */
+    private static Optional<X509Certificate> certificate(String body, CertificateFactory factory) {
+        byte[] encoded;
+        try {
+            encoded = Base64.getDecoder().decode(body);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+        try {
+            if (factory.generateCertificate(new ByteArrayInputStream(encoded)) instanceof X509Certificate x509
+                    && Arrays.equals(encoded, x509.getEncoded())) {
+                return Optional.of(x509);
             }
         } catch (CertificateException e) {
             return Optional.empty();
         }
-        return certificates.isEmpty() ? Optional.empty() : Optional.of(certificates);
+        return Optional.empty();
     }
 
     private static StoreResult<String> credentials(Map<?, ?> section) {

@@ -43,6 +43,12 @@ class DerTest {
 
     private static final HexFormat HEX = HexFormat.of();
 
+    /**
+     * The largest second arc under the first arc 2 whose combined first subidentifier {@code 2 * 40 + second}
+     * (X.690, 8.19.4) is still {@link Long#MAX_VALUE}, the largest subidentifier the reader accepts.
+     */
+    private static final long LARGEST_SECOND_ARC_UNDER_2 = Long.MAX_VALUE - 80;
+
     @ParameterizedTest
     @ValueSource(longs = {0, 1, 127, 128, 255, 256, -1, -128, -129, Long.MAX_VALUE, Long.MIN_VALUE})
     @DisplayName("Should round-trip an INTEGER in its minimal encoding")
@@ -75,6 +81,49 @@ class DerTest {
     @DisplayName("Should round-trip an OBJECT IDENTIFIER")
     void shouldRoundTripOid(String oid) throws Exception {
         assertEquals(oid, Der.parse(Der.oid(oid)).oid(), "dotted form");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"2.999.1", "1.39", "2.0"})
+    @DisplayName("Should round-trip a first subidentifier of one or more octets")
+    void shouldRoundTripFirstSubidentifier(String oid) throws Exception {
+        assertEquals(oid, Der.parse(Der.oid(oid)).oid(), "dotted form");
+    }
+
+    @Test
+    @DisplayName("Should round-trip the largest first subidentifier the reader accepts")
+    void shouldRoundTripFirstSubidentifierAtReaderLimit() throws Exception {
+        String boundary = "2." + LARGEST_SECOND_ARC_UNDER_2;
+
+        assertAll(
+                () -> assertEquals(boundary, Der.parse(Der.oid(boundary)).oid(), "boundary"),
+                () -> assertEquals(boundary + ".5", Der.parse(Der.oid(boundary + ".5")).oid(), "boundary and arc"));
+    }
+
+    @Test
+    @DisplayName("Should refuse in the writer the first subidentifier one above the reader's limit")
+    void shouldRefuseFirstSubidentifierAboveReaderLimit() {
+        String above = "2." + (LARGEST_SECOND_ARC_UNDER_2 + 1);
+
+        var thrown = assertThrows(IllegalArgumentException.class, () -> Der.oid(above));
+
+        assertEquals("not an object identifier: " + above, thrown.getMessage(), "message");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"2.9223372036854775807", "1.40", "3.0", "-1.0", "0.-1", "1.2.-3"})
+    @DisplayName("Should refuse in the writer an object identifier the reader refuses")
+    void shouldRefuseOidOutsideReaderRange(String oid) {
+        var thrown = assertThrows(IllegalArgumentException.class, () -> Der.oid(oid));
+
+        assertEquals("not an object identifier: " + oid, thrown.getMessage(), "message");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1", "1.x", "a.1", "1.2.z"})
+    @DisplayName("Should still refuse a single arc or a non-numeric arc")
+    void shouldRefuseSingleOrNonNumericArc(String oid) {
+        assertThrows(IllegalArgumentException.class, () -> Der.oid(oid));
     }
 
     @Test

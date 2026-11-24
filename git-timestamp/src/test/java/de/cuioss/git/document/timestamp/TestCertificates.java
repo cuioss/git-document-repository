@@ -20,6 +20,7 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.net.URI;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -41,8 +42,9 @@ import javax.net.ssl.TrustManagerFactory;
 
 /**
  * Test-side certificates, made with the module's own DER writer at run time, so no test resource with a private key is
- * committed: a self-signed CA, a timestamping certificate (extended key usage {@code id-kp-timeStamping}, critical, as
- * RFC 3161, 2.3 requires) or a signer without it, and the TLS server certificate of the in-process test authority for
+ * committed: a self-signed CA, an intermediate CA, a timestamping certificate (extended key usage
+ * {@code id-kp-timeStamping}, critical, as RFC 3161, 2.3 requires), also with an Authority Information Access URI, or a
+ * signer without it, and the TLS server certificate of the in-process test authority for
  * the loopback address, with the key store and the {@link SSLContext}s of server and client.
  * <p>
  * The keys are EC on the curve P-256, the signatures ECDSA with SHA-256.
@@ -64,6 +66,8 @@ final class TestCertificates {
     private static final String KEY_USAGE = "2.5.29.15";
     private static final String EXTENDED_KEY_USAGE = "2.5.29.37";
     private static final String SUBJECT_ALT_NAME = "2.5.29.17";
+    private static final String AUTHORITY_INFO_ACCESS = "1.3.6.1.5.5.7.1.1";
+    private static final String ID_AD_CA_ISSUERS = "1.3.6.1.5.5.7.48.2";
     private static final char[] STORE_PASSWORD = "test-store".toCharArray();
     private static final AtomicLong SERIALS = new AtomicLong(1);
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -104,11 +108,25 @@ final class TestCertificates {
      * @return the intermediate CA
      */
     static Issued intermediate(Issued issuer, String name) {
+        Instant now = Instant.now();
+        return intermediate(issuer, name, now.minus(Duration.ofDays(1)), now.plus(Duration.ofDays(30)));
+    }
+
+    /**
+     * Issues an intermediate CA certificate under a CA with a given validity.
+     *
+     * @param issuer    the issuing CA
+     * @param name      the common name
+     * @param notBefore the start of the validity
+     * @param notAfter  the end of the validity
+     * @return the intermediate CA
+     */
+    static Issued intermediate(Issued issuer, String name, Instant notBefore, Instant notAfter) {
         KeyPair keys = keyPair();
         byte[] extensions = Der.sequence(
                 extension(BASIC_CONSTRAINTS, true, Der.sequence(Der.bool(true))),
                 extension(KEY_USAGE, true, Der.tlv(Der.BIT_STRING, new byte[]{1, 0x06})));
-        return new Issued(keys, sign(name(issuer), name(name), keys, issuer.keys(), extensions));
+        return new Issued(keys, sign(name(issuer), name(name), keys, issuer.keys(), extensions, notBefore, notAfter));
     }
 
     /**
@@ -145,6 +163,27 @@ final class TestCertificates {
         }
         return new Issued(keys, sign(name(issuer), name(name), keys, issuer.keys(),
                 Der.sequence(extensions.toArray(byte[][]::new))));
+    }
+
+    /**
+     * Issues a timestamp signer certificate that names the certificate of its issuer in the Authority Information
+     * Access extension: one {@code AccessDescription} of the method {@code id-ad-caIssuers} with a
+     * {@code uniformResourceIdentifier} (RFC 5280, 4.2.2.1).
+     *
+     * @param issuer    the issuing CA
+     * @param name      the common name
+     * @param caIssuers the URI under which the certificate of the issuer is served
+     * @return the signer, with the critical extended key usage {@code id-kp-timeStamping}
+     */
+    static Issued signer(Issued issuer, String name, URI caIssuers) {
+        KeyPair keys = keyPair();
+        byte[] location = Der.tlv(Der.contextPrimitive(6), caIssuers.toString().getBytes(US_ASCII));
+        byte[] extensions = Der.sequence(
+                extension(KEY_USAGE, true, Der.tlv(Der.BIT_STRING, new byte[]{6, (byte) 0xC0})),
+                extension(EXTENDED_KEY_USAGE, true, Der.sequence(Der.oid(ID_KP_TIME_STAMPING))),
+                extension(AUTHORITY_INFO_ACCESS, false,
+                        Der.sequence(Der.sequence(Der.oid(ID_AD_CA_ISSUERS), location))));
+        return new Issued(keys, sign(name(issuer), name(name), keys, issuer.keys(), extensions));
     }
 
     /**
@@ -269,13 +308,19 @@ final class TestCertificates {
     private static X509Certificate sign(byte[] issuer, byte[] subject, KeyPair subjectKeys, KeyPair issuerKeys,
             byte[] extensions) {
         Instant now = Instant.now();
+        return sign(issuer, subject, subjectKeys, issuerKeys, extensions, now.minus(Duration.ofDays(1)),
+                now.plus(Duration.ofDays(30)));
+    }
+
+    private static X509Certificate sign(byte[] issuer, byte[] subject, KeyPair subjectKeys, KeyPair issuerKeys,
+            byte[] extensions, Instant notBefore, Instant notAfter) {
         byte[] algorithm = Der.sequence(Der.oid(ECDSA_WITH_SHA256));
         byte[] tbs = Der.sequence(
                 Der.explicit(0, Der.integer(2)),
                 Der.integer(BigInteger.valueOf(SERIALS.getAndIncrement())),
                 algorithm,
                 issuer,
-                Der.sequence(Der.utcTime(now.minus(Duration.ofDays(1))), Der.utcTime(now.plus(Duration.ofDays(30)))),
+                Der.sequence(Der.utcTime(notBefore), Der.utcTime(notAfter)),
                 subject,
                 subjectKeys.getPublic().getEncoded(),
                 Der.explicit(3, extensions));

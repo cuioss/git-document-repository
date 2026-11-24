@@ -22,19 +22,13 @@ import java.security.InvalidAlgorithmParameterException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.Signature;
-import java.security.cert.CertPathBuilder;
-import java.security.cert.CertPathBuilderException;
 import java.security.cert.CertPathValidator;
 import java.security.cert.CertPathValidatorException;
-import java.security.cert.CertStore;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.CertificateParsingException;
-import java.security.cert.CollectionCertStoreParameters;
-import java.security.cert.PKIXBuilderParameters;
-import java.security.cert.PKIXCertPathBuilderResult;
+import java.security.cert.PKIXParameters;
 import java.security.cert.TrustAnchor;
-import java.security.cert.X509CertSelector;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import javax.security.auth.x500.X500Principal;
 
 
 import de.cuioss.git.document.store.StoreOutcome;
@@ -74,7 +69,7 @@ import org.jspecify.annotations.Nullable;
  * attributes independently. The first certificate identifier of every present attribute names the signer certificate
  * by hash (RFC 2634, 5.4; RFC 5035, 3). The signer certificate is looked up among the certificates the token carries
  * and those of {@code timestamp.trust}: it must match every such hash and the {@code sid} of the {@code SignerInfo}
- * (RFC 5652, 5.3).</li>
+ * (RFC 5652, 5.3), whose issuer is compared as a distinguished name, not by its octets (RFC 5652, 10.2.4).</li>
  * <li>The signature verifies with {@link Signature} over the DER of the signed attributes under the explicit SET OF tag
  * (RFC 5652, 5.4), with ECDSA or RSA PKCS #1 v1.5 and SHA-256, SHA-384 or SHA-512
  * (<a href="https://www.rfc-editor.org/rfc/rfc5754">RFC 5754</a>, 2, 3.2 and 3.3); any other algorithm is
@@ -85,10 +80,14 @@ import org.jspecify.annotations.Nullable;
  * independently, and these are the key usages consistent with {@code id-kp-timeStamping}).</li>
  * <li>The signer certificate is one of {@code timestamp.trust} and valid at the time the token states, or has a
  * certification path to a certificate of {@code timestamp.trust} at that time
- * (<a href="https://www.rfc-editor.org/rfc/rfc5280#section-6">RFC 5280, 6</a>): {@link CertPathBuilder} of the type
- * PKIX builds it to the exact signer from the certificates the token carries, and {@link CertPathValidator} of the type
- * PKIX validates it. Revocation checking is off: the module reaches no network for a
- * verification, and a revocation status of the time of stamping is not part of the token.</li>
+ * (<a href="https://www.rfc-editor.org/rfc/rfc5280#section-6">RFC 5280, 6</a>): the module assembles the candidate
+ * paths itself from the exact signer through the certificates the token carries, by issuer and subject name, so two
+ * intermediates of one subject name are both tried, and {@link CertPathValidator} of the type PKIX validates each.
+ * {@code CertPathBuilder} is not used, because its PKIX implementation in OpenJDK (checked in OpenJDK 21) retrieves
+ * missing issuers over the Authority Information Access extension when the JVM enables it; no such retrieval takes
+ * place. Revocation checking is
+ * off: the module reaches no network for a verification, and a revocation status of the time of stamping is not part
+ * of the token.</li>
  * </ol>
  * A token that cannot be read, or that breaks any rule, is {@link StoreOutcome#SIGNATURE_INVALID} with a fixed detail
  * that names the rule, never a value of the token. The imprint is not compared here: the provider compares it with the
@@ -463,32 +462,113 @@ final class TimeStampTokens {
                 throw new Rejected(UNTRUSTED);
             }
         }
+        Set<TrustAnchor> anchors = new HashSet<>();
+        for (X509Certificate certificate : trust) {
+            anchors.add(new TrustAnchor(certificate, null));
+        }
+        PKIXParameters parameters;
         try {
-            Set<TrustAnchor> anchors = new HashSet<>();
-            for (X509Certificate certificate : trust) {
-                anchors.add(new TrustAnchor(certificate, null));
-            }
-            // the exact signer is the target; the carried certificates are the candidates of the path, so two
-            // intermediates of one subject name are both tried
-            var target = new X509CertSelector();
-            target.setCertificate(signer);
-            List<X509Certificate> candidates = new ArrayList<>(carried);
-            candidates.add(signer);
-            var parameters = new PKIXBuilderParameters(anchors, target);
-            parameters.addCertStore(CertStore.getInstance("Collection",
-                    new CollectionCertStoreParameters(candidates)));
-            // no network is reached for a verification; the token holds no revocation status of its time
-            parameters.setRevocationEnabled(false);
-            parameters.setDate(date);
-            var built = (PKIXCertPathBuilderResult) CertPathBuilder.getInstance("PKIX").build(parameters);
-            CertPathValidator.getInstance("PKIX").validate(built.getCertPath(), parameters);
-        } catch (CertPathBuilderException | CertPathValidatorException | InvalidAlgorithmParameterException e) {
+            parameters = new PKIXParameters(anchors);
+        } catch (InvalidAlgorithmParameterException e) {
+            // only an empty set of anchors is refused, and timestamp.trust is never empty
             throw new Rejected(UNTRUSTED);
-        } catch (NoSuchAlgorithmException e) {
-            // every Java SE implementation must support the PKIX CertPathBuilder and CertPathValidator and the
-            // Collection CertStore ("Java Security Standard Algorithm Names"), so this is a broken platform, not an
-            // outcome
-            throw new IllegalStateException("PKIX is not available", e);
+        }
+        // no network is reached for a verification; the token holds no revocation status of its time
+        parameters.setRevocationEnabled(false);
+        parameters.setDate(date);
+        if (!new PathSearch(carried, trust, parameters).search(signer)) {
+            throw new Rejected(UNTRUSTED);
+        }
+    }
+
+    /**
+     * The search of a certification path from the signer to {@code timestamp.trust}, assembled in process from the
+     * certificates the token carries. {@code CertPathBuilder} is not used: the PKIX builder of OpenJDK fetches a
+     * missing issuer from the {@code caIssuers} URI of the Authority Information Access extension when the JVM runs
+     * with {@code com.sun.security.enableAIAcaIssuers=true}, a flag {@code sun.security.provider.certpath.Builder}
+     * reads once into a static final field (checked in OpenJDK 21), so it cannot be switched off for one call; newer
+     * updates fetch only from a URI {@code com.sun.security.allowedAIALocations} admits (observed in OpenJDK 25.0.3),
+     * which an application may set as well. {@link CertPathValidator} validates each candidate and fetches nothing.
+     * <p>
+     * The search runs depth-first from the signer: each step follows a carried certificate whose subject is the issuer
+     * of the last certificate, every such certificate is tried, a certificate already on the path is not added again,
+     * and a path holds at most {@value #MAX_PATH_LENGTH} certificates. A path whose last certificate is issued under
+     * the name of a trusted certificate is validated, and the first that validates is accepted. At most
+     * {@value #MAX_CANDIDATES} paths are examined, so a token cannot make the search unbounded.
+     */
+    private static final class PathSearch {
+
+        /** The largest number of certificates of a path, the anchor not counted. */
+        static final int MAX_PATH_LENGTH = 16;
+
+        /** The largest number of paths examined for one token. */
+        static final int MAX_CANDIDATES = 256;
+
+        private final List<X509Certificate> carried;
+        private final Set<X500Principal> anchorNames = new HashSet<>();
+        private final PKIXParameters parameters;
+        private final CertPathValidator validator;
+        private final CertificateFactory factory = x509Factory();
+        private final List<X509Certificate> path = new ArrayList<>();
+        private int examined;
+
+        PathSearch(List<X509Certificate> carried, List<X509Certificate> trust, PKIXParameters parameters) {
+            this.carried = carried;
+            this.parameters = parameters;
+            for (X509Certificate certificate : trust) {
+                anchorNames.add(certificate.getSubjectX500Principal());
+            }
+            try {
+                this.validator = CertPathValidator.getInstance("PKIX");
+            } catch (NoSuchAlgorithmException e) {
+                // every Java SE implementation must support the PKIX CertPathValidator ("Java Security Standard
+                // Algorithm Names"), so this is a broken platform, not an outcome
+                throw new IllegalStateException("PKIX is not available", e);
+            }
+        }
+
+        /**
+         * Searches a valid path that starts with the signer.
+         *
+         * @param signer the signer certificate
+         * @return whether a path validates against the trust anchors
+         */
+        boolean search(X509Certificate signer) {
+            path.add(signer);
+            return extend();
+        }
+
+        private boolean extend() {
+            if (examined >= MAX_CANDIDATES) {
+                return false;
+            }
+            examined++;
+            X500Principal issuer = path.getLast().getIssuerX500Principal();
+            if (anchorNames.contains(issuer) && validates()) {
+                return true;
+            }
+            if (path.size() >= MAX_PATH_LENGTH) {
+                return false;
+            }
+            for (X509Certificate next : carried) {
+                if (next.getSubjectX500Principal().equals(issuer) && !path.contains(next)) {
+                    path.add(next);
+                    if (extend()) {
+                        return true;
+                    }
+                    path.removeLast();
+                }
+            }
+            return false;
+        }
+
+        private boolean validates() {
+            try {
+                validator.validate(factory.generateCertPath(List.copyOf(path)), parameters);
+                return true;
+            } catch (CertificateException | CertPathValidatorException | InvalidAlgorithmParameterException e) {
+                return false;
+            }
         }
     }
 
@@ -576,16 +656,17 @@ final class TimeStampTokens {
         }
 
         /**
-         * Tells whether the {@code sid} names a certificate: {@code IssuerAndSerialNumber} by issuer and serial number,
-         * or {@code [0] SubjectKeyIdentifier} by the subject key identifier extension (RFC 5652, 5.3 and 10.2.4).
+         * Tells whether the {@code sid} names a certificate: {@code IssuerAndSerialNumber} by issuer distinguished name
+         * and serial number, or {@code [0] SubjectKeyIdentifier} by the subject key identifier extension (RFC 5652, 5.3
+         * and 10.2.4). The issuer is compared as a name, by {@link X500Principal#equals}, which compares the canonical
+         * form, so an equal name in another string encoding matches; a malformed name matches nothing.
          */
         boolean identifies(X509Certificate certificate) {
             try {
                 if (sid.tag() == Der.TAG_SEQUENCE) {
                     List<Der.Element> parts = sid.children();
                     return parts.size() == 2
-                            && Arrays.equals(parts.getFirst().encoded(),
-                            certificate.getIssuerX500Principal().getEncoded())
+                            && sameName(parts.getFirst().encoded(), certificate.getIssuerX500Principal())
                             && certificate.getSerialNumber().equals(parts.get(1).integer());
                 }
                 if (sid.tag() == Der.contextPrimitive(0)) {
@@ -596,6 +677,14 @@ final class TimeStampTokens {
                 }
                 return false;
             } catch (Der.DerException e) {
+                return false;
+            }
+        }
+
+        private static boolean sameName(byte[] encoded, X500Principal name) {
+            try {
+                return new X500Principal(encoded).equals(name);
+            } catch (IllegalArgumentException e) {
                 return false;
             }
         }

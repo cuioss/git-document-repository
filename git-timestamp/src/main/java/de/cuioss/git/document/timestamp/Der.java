@@ -295,11 +295,13 @@ final class Der {
     }
 
     /**
-     * Encodes an OBJECT IDENTIFIER from its dotted form.
+     * Encodes an OBJECT IDENTIFIER from its dotted form. The first two arcs are encoded as the one subidentifier
+     * {@code first * 40 + second} (X.690, 8.19.4), which must not exceed {@link Long#MAX_VALUE}, the largest
+     * subidentifier the reader {@code Element.oid()} accepts.
      *
      * @param dotted the dotted form, at least two arcs
      * @return the encoding
-     * @throws IllegalArgumentException if the form is not an object identifier
+     * @throws IllegalArgumentException if the form is not an object identifier the reader accepts
      */
     static byte[] oid(String dotted) {
         String[] arcs = dotted.split("\\.");
@@ -308,7 +310,8 @@ final class Der {
         }
         long first = Long.parseLong(arcs[0]);
         long second = Long.parseLong(arcs[1]);
-        if (first > 2 || first < 0 || second < 0 || first < 2 && second >= 40) {
+        if (first > 2 || first < 0 || second < 0 || first < 2 && second >= 40
+                || second > Long.MAX_VALUE - first * 40) {
             throw new IllegalArgumentException("not an object identifier: " + dotted);
         }
         var out = new ByteArrayOutputStream();

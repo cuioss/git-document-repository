@@ -18,6 +18,10 @@ package de.cuioss.git.document.timestamp;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -44,7 +48,9 @@ import org.jspecify.annotations.Nullable;
  * A reply ({@code TimeStampResp}, RFC 3161, 2.4.2) is read for its {@code PKIStatusInfo} and its
  * {@code TimeStampToken}, a CMS {@code ContentInfo} of {@code SignedData}
  * (<a href="https://www.rfc-editor.org/rfc/rfc5652">RFC 5652</a>) encapsulating a {@code TSTInfo}. The token is
- * granted only with the status {@code granted} (0) or {@code grantedWithMods} (1).
+ * granted only with the status {@code granted} (0) or {@code grantedWithMods} (1). The {@code statusString} must be
+ * well-formed UTF-8, a {@code failInfo} must set defined bits only, and every {@code Extension} of the {@code TSTInfo}
+ * must have the shape of RFC 5280, 4.1.
  */
 final class TimeStampRequests {
 
@@ -80,6 +86,13 @@ final class TimeStampRequests {
 
     /** The prefix of the detail of a defined status that grants no token; the status number, 2 to 5, follows. */
     static final String STATUS_PREFIX = "rfc3161: the authority refused with status ";
+
+    /**
+     * The bits of {@code PKIFailureInfo} RFC 3161, 2.4.2 defines, bit {@code n} at {@code 1L << n}: 0, 2, 5, 14, 15,
+     * 16, 17 and 25.
+     */
+    private static final long DEFINED_FAIL_INFO = 1L | (1L << 2) | (1L << 5) | (1L << 14) | (1L << 15) | (1L << 16)
+            | (1L << 17) | (1L << 25);
 
     private TimeStampRequests() {
         // static helpers only
@@ -194,18 +207,58 @@ final class TimeStampRequests {
                 throw new Der.DerException("status string empty");
             }
             for (Der.Element text : texts) {
-                text.expect(Der.UTF8_STRING);
+                checkUtf8(text.expect(Der.UTF8_STRING).content());
             }
             index++;
         }
         if (index < fields.size() && fields.get(index).tag() == Der.BIT_STRING) {
-            fields.get(index).checkBitString();
+            checkFailInfo(fields.get(index));
             index++;
         }
         if (index != fields.size()) {
             throw new Der.DerException("status info with an unknown, duplicate or misplaced field");
         }
         return status;
+    }
+
+    /**
+     * Checks that the content of a UTF8String is well-formed UTF-8; the text itself is not used.
+     *
+     * @param content the content octets
+     * @throws Der.DerException if the octets are no well-formed UTF-8
+     */
+    private static void checkUtf8(byte[] content) throws Der.DerException {
+        try {
+            StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(content));
+        } catch (CharacterCodingException e) {
+            throw new Der.DerException("status string not UTF-8");
+        }
+    }
+
+    /**
+     * Checks a {@code PKIFailureInfo}: a BIT STRING of DER whose set bits are all defined. RFC 3161, 2.4.2, after the
+     * definition of {@code PKIFailureInfo}: "Compliant clients MUST generate an error if values it does not understand
+     * are present." The defined bits are {@code badAlg} (0), {@code badRequest} (2), {@code badDataFormat} (5),
+     * {@code timeNotAvailable} (14), {@code unacceptedPolicy} (15), {@code unacceptedExtension} (16),
+     * {@code addInfoNotAvailable} (17) and {@code systemFailure} (25), bit 0 being the most significant bit of the
+     * first content octet after the octet of unused bits (X.690, 8.6.2).
+     *
+     * @param failInfo the element
+     * @throws Der.DerException if the element is no such BIT STRING or a bit outside the defined set is set
+     */
+    private static void checkFailInfo(Der.Element failInfo) throws Der.DerException {
+        failInfo.checkBitString();
+        byte[] content = failInfo.content();
+        for (int octet = 1; octet < content.length; octet++) {
+            for (int bit = 0; bit < Byte.SIZE; bit++) {
+                int number = (octet - 1) * Byte.SIZE + bit;
+                boolean set = (content[octet] & (0x80 >>> bit)) != 0;
+                if (set && (number >= Long.SIZE || (DEFINED_FAIL_INFO & (1L << number)) == 0)) {
+                    throw new Der.DerException("fail info with an undefined bit");
+                }
+            }
+        }
     }
 
     /**
@@ -446,8 +499,26 @@ final class TimeStampRequests {
                 throw new Der.DerException("extensions empty");
             }
             for (Der.Element extension : list) {
-                extension.expect(Der.TAG_SEQUENCE);
+                extension(extension);
             }
+        }
+
+        /**
+         * Checks the shape of one {@code Extension ::= SEQUENCE { extnID OBJECT IDENTIFIER, critical BOOLEAN DEFAULT
+         * FALSE, extnValue OCTET STRING }} (RFC 5280, 4.1, from which RFC 3161, 2.4.2 takes {@code Extensions}): the
+         * identifier, the optional BOOLEAN and the OCTET STRING in that order and nothing else. The value is not
+         * interpreted.
+         */
+        private static void extension(Der.Element extension) throws Der.DerException {
+            List<Der.Element> parts = extension.children(Der.TAG_SEQUENCE);
+            if (parts.size() < 2 || parts.size() > 3) {
+                throw new Der.DerException("extension malformed");
+            }
+            parts.getFirst().oid();
+            if (parts.size() == 3) {
+                parts.get(1).bool();
+            }
+            parts.getLast().octets();
         }
 
         /**

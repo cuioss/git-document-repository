@@ -50,8 +50,8 @@ xref:general.adoc#GDR-GEN-3[GDR-GEN-3]: an unreachable authority returns unavail
 |Configuration |Semantics
 
 |`timestamp.url` |required; HTTPS URL of the timestamp authority
-|`timestamp.trust` |required; a non-empty list of paths to PEM files, each holding one or more X.509 certificates of
-the authority for verification; each file is read without following a symbolic link and refused above a size limit
+|`timestamp.trust` |required; a non-empty list of paths to PEM files, each an ASCII text holding one or more complete
+`CERTIFICATE` blocks with the X.509 certificates of the authority for verification; each file is read without following a symbolic link and refused above a size limit
 |`timestamp.credentials` |optional; a single bearer token for authorities that require authentication, sent as the
 header `Authorization: Bearer <token>`
 |===
@@ -85,10 +85,13 @@ reply), `TimeStampTokens` (the verification of <<GDR-TSA-2>>) and `Der`, the bou
   `select` passes the configured instance in place of the loaded one, since two candidates with one id are refused.
 * *The configuration.* `timestamp.url` must be an absolute `https` URL with a host, without user information and, when
   it names a port, with a port of at most 65535. Each file of `timestamp.trust` is read without following a symbolic
-  link (`LinkOption.NOFOLLOW_LINKS`), only when it is a regular file of at most 1 MiB, and must be PEM: it must carry at
-  least one `-----BEGIN CERTIFICATE-----` block (link:https://www.rfc-editor.org/rfc/rfc7468#section-5.1[RFC 7468,
-  5.1]) and every certificate it holds must be an X.509 certificate. A binary DER or PKCS #7 file, which
-  `CertificateFactory` would otherwise read as well, is refused. A refusal names the entry by its index
+  link (`LinkOption.NOFOLLOW_LINKS`), only when it is a regular file of at most 1 MiB, and must be PEM text: it must be
+  ASCII throughout and carry at least one complete `CERTIFICATE` block, from a line `-----BEGIN CERTIFICATE-----` to
+  the next line `-----END CERTIFICATE-----` (link:https://www.rfc-editor.org/rfc/rfc7468#section-5.1[RFC 7468, 5.1]).
+  The file is refused for a `BEGIN` line without its `END` line, and for a block whose base64 body does not decode or
+  is not exactly one X.509 certificate; text outside the blocks is ignored. The module parses the blocks itself and
+  hands each decoded body to `CertificateFactory.generateCertificate`, so a binary DER or PKCS #7 file, which
+  `CertificateFactory.generateCertificates` would read as well, is refused. A refusal names the entry by its index
   (`timestamp.trust[<n>] is malformed`). `timestamp.credentials` must be a `token68` of
   link:https://www.rfc-editor.org/rfc/rfc6750#section-2.1[RFC 6750, 2.1], so it cannot break the header.
 * *The request.* A `TimeStampReq` of version 1 with the `messageImprint` SHA-256 over the object id as lowercase
@@ -102,20 +105,38 @@ reply), `TimeStampTokens` (the verification of <<GDR-TSA-2>>) and `Der`, the bou
   link:https://www.rfc-editor.org/rfc/rfc3161#section-3.4[RFC 3161, 3.4], and at most 1 MiB of it is read. The request
   timeout of `HttpRequest.Builder` covers only the wait for the response headers ("If the response is not received
   within the specified timeout", its Javadoc in OpenJDK 21 and 25), so the body is closed when the deadline passes and
-  a stalled body is `UNAVAILABLE`. With `timestamp.credentials` the header `Authorization: Bearer <token>` is sent;
+  a stalled body is `UNAVAILABLE`. The close is scheduled on a single daemon thread the transport owns, not on the
+  common pool, so a saturated pool cannot delay it; it is cancelled once the read ends, exactly one of the close and
+  the end of the read settles the read, and a read that ends after the deadline is `UNAVAILABLE` even when the close
+  has not run. An interrupt of the waiting thread, during the wait for the headers or during the body read (which
+  `ResponseSubscribers.HttpResponseInputStream` of OpenJDK 21 reports as an `IOException` caused by the
+  `InterruptedException`), is `UNAVAILABLE` with the detail `rfc3161: interrupted while waiting for the authority`,
+  and the interrupt flag stays set; every other I/O failure, the close at the deadline included, is
+  `rfc3161: authority unreachable`. With `timestamp.credentials` the header `Authorization: Bearer <token>` is sent;
   without it no `Authorization` header is sent.
 * *No credentialed request under header logging.* The JDK client writes the complete request headers, `Authorization`
   included and not redacted, to its logger `jdk.httpclient.HttpClient` when the system property
   `jdk.httpclient.HttpClient.log` names the item `headers` or `all` (checked in the sources of
   `jdk.internal.net.http.common.Log` and `Http1Request` of OpenJDK 21 (`jdk21u`) and 25.0.3). A request that carries
-  the bearer token is therefore refused before the authority is contacted when the property, read on every request,
-  names either item: `REFUSED` with the detail
+  the bearer token is therefore refused before the authority is contacted when the setting names either item:
+  `REFUSED` with the detail
   `rfc3161: credentialed requests are refused while HTTP client header logging is enabled`, logged as
-  `GIT_TIMESTAMP-101`. A request without a token is sent as usual. The JDK reads the property once, when its logging is
-  first initialised; the check reads it on every request, so a property set later refuses more than needed, and a
-  property cleared after the JDK read it is not seen: an application that enables the client's header logging must
-  leave the property set.
-* *The reply.* The token is granted only with the `PKIStatus` `granted` (0) or `grantedWithMods` (1); the token must
+  `GIT_TIMESTAMP-101`. A request without a token is sent as usual. The check reads the setting on every credentialed
+  request as a JVM start would read it: `Log` takes it through `sun.net.NetProperties`, which returns the system
+  property when it is set, even to another value, and otherwise the default of `conf/net.properties` under
+  `java.home` (OpenJDK 21); a missing or unreadable file gives no default. The JDK reads the setting once, in the
+  static initialiser of `Log`, and exposes the flags it derives through no public API, so the check cannot see a
+  later change: a setting enabled later refuses more than needed, and a setting cleared after the JDK read it lets a
+  credentialed request through while headers are still logged. An application that enables the client's header
+  logging must leave the setting in place.
+* *The reply.* The token is granted only with the `PKIStatus` `granted` (0) or `grantedWithMods` (1). The reply is
+  unreadable, and `REFUSED` as such, when an element of its `statusString` is no well-formed UTF-8 (`PKIFreeText`, a
+  `SEQUENCE OF UTF8String`, link:https://www.rfc-editor.org/rfc/rfc4210#section-5.1.1[RFC 4210, 5.1.1]), when its
+  `failInfo` sets a bit other than the eight RFC 3161, 2.4.2 defines (0, 2, 5, 14, 15, 16, 17 and 25; "Compliant
+  clients MUST generate an error if values it does not understand are present"), whatever the status, or when an
+  `Extension` of the `TSTInfo` is not the object identifier `extnID`, an optional `critical` BOOLEAN and the OCTET
+  STRING `extnValue` in that order (link:https://www.rfc-editor.org/rfc/rfc5280#section-4.1[RFC 5280, 4.1]); the value
+  of an extension is not interpreted. The token must
   repeat the nonce and the imprint of the request (RFC 3161, 2.4.2), and it must verify against `timestamp.trust` by
   every rule of <<GDR-TSA-2>> before `obtain` returns it: the anchoring engine of `git-store` publishes a proof it is
   handed without verifying it and does not ask again for a subject that has one, so a proof that would not verify
@@ -134,11 +155,15 @@ reply), `TimeStampTokens` (the verification of <<GDR-TSA-2>>) and `Der`, the bou
 
 Tests: `Rfc3161ObtainTest` (the request, the fresh nonce, the bearer header and its absence, every refusal including a
 reply of one octet above 1 MiB beside one of exactly 1 MiB, a token that does not verify, the defined and undefined
-`PKIStatus` values and the fields of `PKIStatusInfo` and `TSTInfo`, a body stalled past the deadline, the unreachable
-authority, the unconfigured instance and the `provides` directive), `TimestampConfigurationTest` (the keys
-and refusals of the section `timestamp`), `DerTest` (the bounds of the DER
+`PKIStatus` values and the fields of `PKIStatusInfo` and `TSTInfo`, a body stalled past the deadline, proved stalled
+inside the body by the test authority, also with the common pool saturated, a read that ends after the deadline while
+the scheduled close never runs, an interrupt of the body read, a request of another version than 1 refused by the test
+authority, the unreachable authority, the unconfigured instance and the `provides` directive),
+`TimestampConfigurationTest` (the keys and refusals of the section `timestamp`), `DerTest` (the bounds of the DER
 reader) and `TimestampSecretsTest` (GDR-NFR-3, including no credentialed request under the values `headers` and `all`
-of `jdk.httpclient.HttpClient.log`, and a request sent under `errors` and without the property). They run against an in-process authority on the JDK `HttpsServer`
+of `jdk.httpclient.HttpClient.log`, as a system property and as a default of a `net.properties` the test supplies, a
+system property `errors` beating a `headers` default, a missing or unreadable `net.properties`, and a request sent
+under `errors` and without the property). They run against an in-process authority on the JDK `HttpsServer`
 bound to the loopback address, with certificates generated at run time, so no test needs network access and no
 private key is committed.
 
@@ -174,7 +199,11 @@ link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/
   evaluated independently (link:https://www.rfc-editor.org/rfc/rfc5035#section-2[RFC 5035, 2], the new text of RFC 2634, 5.4). The first
   certificate identifier of each names the signer certificate by hash; the certificate is looked up among the
   certificates the token carries and those of `timestamp.trust`, and must match every such hash and the `sid` of the
-  `SignerInfo` (issuer and serial number, or subject key identifier). Further certificate identifiers of an attribute
+  `SignerInfo` (issuer and serial number, or subject key identifier). The issuer of the `sid` is compared as a
+  distinguished name, by `X500Principal.equals` over the canonical form
+  (link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/security/auth/x500/X500Principal.html[Java
+  SE 21, `X500Principal`]), not by its octets, so an equal name in another string encoding matches (RFC 5652, 5.3 and
+  10.2.4); a malformed name matches no certificate. Further certificate identifiers of an attribute
   are not evaluated: trust comes only from `timestamp.trust`, so ignoring them cannot widen it.
 . The signature verifies over the DER of the signed attributes under the explicit SET OF tag (RFC 5652, 5.4), with
   ECDSA or RSA PKCS #1 v1.5 and SHA-256, SHA-384 or SHA-512, the hash of the signature algorithm equal to the digest
@@ -188,10 +217,21 @@ link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/
   restricted by it.
 . The signer certificate is one of `timestamp.trust` and valid at the time the token states, or has a certification
   path to a certificate of `timestamp.trust` at that time
-  (link:https://www.rfc-editor.org/rfc/rfc5280#section-6[RFC 5280, 6]): `CertPathBuilder` of the type PKIX builds it
-  to the exact signer certificate from the certificates the token carries, so two intermediates of one subject name
-  are both tried, and `CertPathValidator` of the type PKIX validates it. Revocation checking is off: a verification
-  reaches no network, and the token holds no revocation status of the time of stamping.
+  (link:https://www.rfc-editor.org/rfc/rfc5280#section-6[RFC 5280, 6]). The module assembles the candidate paths
+  itself: depth-first from the exact signer certificate, each step follows a certificate the token carries whose
+  subject is the issuer name of the last certificate, every such certificate is tried, so two intermediates of one
+  subject name are both tried, a certificate is not added twice to one path, a path holds at most 16 certificates and
+  at most 256 paths are examined. A path whose last certificate is issued under the name of a certificate of
+  `timestamp.trust` is validated by `CertPathValidator` of the type PKIX at the time of the token, and the first that
+  validates is accepted; no candidate that validates is `SIGNATURE_INVALID` as an untrusted signer. `CertPathBuilder`
+  is not used: its PKIX implementation in OpenJDK fetches a missing issuer from the `caIssuers` URI of the Authority
+  Information Access extension of a certificate when the JVM runs with `com.sun.security.enableAIAcaIssuers=true`, a
+  flag `sun.security.provider.certpath.Builder` reads once into a static final field (checked in OpenJDK 21), so it
+  cannot be switched off for one call, and the certificates of a token are untrusted input. Newer OpenJDK updates
+  additionally deny every such URI unless the property `com.sun.security.allowedAIALocations` admits it (observed in
+  OpenJDK 25.0.3, whose builder fetches once both properties allow it); an application may set either. No AIA
+  retrieval takes place. Revocation checking is off: a verification reaches no network, and the token holds no revocation status of
+  the time of stamping.
 
 A token that cannot be read, or that breaks any of these rules, is `SIGNATURE_INVALID` with a fixed detail naming the
 rule, never a value of the token. A token that passes them and whose imprint is not SHA-256 over the lowercase hex of
@@ -207,8 +247,15 @@ Tests: `Rfc3161VerifyTest` (a token of the authority verifies with its `genTime`
 whose signer certificate is neither carried nor trusted, two certificates fields, CRLs before certificates, two
 `signingCertificateV2` attributes or two signing certificate attributes naming different certificates, a truncated
 token, random octets and no octets are `SIGNATURE_INVALID`; a token without its certificate verifies when
-`timestamp.trust` holds the signer, a token with both signing certificate attributes verifies, and a path is built past
-an intermediate of the same subject name) and `Rfc3161AnchoringTest`, end to end with `anchor.provider = rfc3161`: `StoreProviders.select` with the
+`timestamp.trust` holds the signer, a token with both signing certificate attributes verifies, a path is built through
+one carried intermediate and past an intermediate of the same subject name, while a missing intermediate, a cyclic set
+of carried certificates and an intermediate expired at the token's time are untrusted; a `sid` whose issuer repeats the
+name as `PrintableString` verifies, another name and a malformed one are an unknown signer; and, in a JVM of its own
+started with `-Dcom.sun.security.enableAIAcaIssuers=true` and with `com.sun.security.allowedAIALocations` admitting
+the URI (`AiaRetrievalProbe`), a token whose intermediate is only
+reachable over the AIA URI of its signer is untrusted and the loopback HTTP server serving the intermediate sees no
+request, while a plain `CertPathBuilder` over the same certificates in that JVM, the control, does make it see one)
+and `Rfc3161AnchoringTest`, end to end with `anchor.provider = rfc3161`: `StoreProviders.select` with the
 configured provider, a release onto a `git-testing` local remote, `StoreWriter.anchor()` and
 `AnchorVerification.verifyAnchors` reporting a complete anchoring with every proof verified, and an unreachable
 authority that leaves the release commit pending without failing the release.

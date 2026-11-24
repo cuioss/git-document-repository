@@ -18,6 +18,7 @@ package de.cuioss.git.document.timestamp;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -64,6 +65,7 @@ import org.junit.jupiter.api.io.TempDir;
 class TimestampSecretsTest {
 
     private static final String REPOSITORY = "documents";
+    private static final ClosingFixtures FIXTURES = new ClosingFixtures();
 
     private static TestTimestampAuthority authority;
     private static HttpClient client;
@@ -77,8 +79,10 @@ class TimestampSecretsTest {
     static void startAuthority() throws IOException {
         var ca = TestCertificates.ca("test ca");
         var tls = TestCertificates.tls(ca);
-        authority = new TestTimestampAuthority(tls, ca, TestCertificates.signer(ca, "test tsa", true));
-        client = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca)).build();
+        authority = FIXTURES.add(new TestTimestampAuthority(tls, ca, TestCertificates.signer(ca, "test tsa", true)),
+                TestTimestampAuthority::close);
+        var builder = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca));
+        client = FIXTURES.add(builder.build(), HttpClient::close);
         trust = Files.writeString(directory.resolve("ca.pem"), TestCertificates.pem(ca.certificate()), US_ASCII);
         // the JDK client reads jdk.httpclient.HttpClient.log once, when its logging is first initialised; one exchange
         // without the property initialises it here, so a test that sets the property never turns logging on for the
@@ -89,8 +93,7 @@ class TimestampSecretsTest {
 
     @AfterAll
     static void stopAuthority() {
-        authority.close();
-        client.close();
+        FIXTURES.closeAll();
     }
 
     private static String secret() {
@@ -234,6 +237,89 @@ class TimestampSecretsTest {
         assertNoneCarries(texts, List.of(token));
         assertTrue(logTexts().stream().anyMatch(text -> text.startsWith("GIT_TIMESTAMP-101:")
                 && text.contains(TimestampTransport.HEADER_LOGGING)), () -> "refusal logged: " + logTexts());
+    }
+
+    /** Creates a {@code java.home} whose {@code conf/net.properties} holds a default of the client log property. */
+    private static Path javaHome(String defaultValue) throws IOException {
+        Path home = directory.resolve(secret());
+        Files.createDirectories(home.resolve("conf"));
+        Files.writeString(home.resolve("conf").resolve("net.properties"),
+                "# defaults\n" + TimestampTransport.CLIENT_LOG_PROPERTY + "=" + defaultValue + "\n", US_ASCII);
+        return home;
+    }
+
+    /** Posts a request under a value of the system property, restoring the property after. */
+    private static StoreResult<byte[]> postWithClientLog(TimestampTransport transport, @Nullable String value) {
+        String previous = System.getProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+        try {
+            if (value == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, value);
+            }
+            return transport.post(TimeStampRequests.request(subject(), new SecureRandom()).encoded());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(TimestampTransport.CLIENT_LOG_PROPERTY);
+            } else {
+                System.setProperty(TimestampTransport.CLIENT_LOG_PROPERTY, previous);
+            }
+        }
+    }
+
+    private static TimestampTransport transport(@Nullable String token, @Nullable Path javaHome) {
+        return new TimestampTransport(authority.url(), token, client, TimestampTransport.REQUEST_TIMEOUT, javaHome);
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: a header logging default of net.properties refuses a credentialed request")
+    void shouldRefuseCredentialedRequestUnderNetPropertiesDefault() throws Exception {
+        String token = secret();
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        long before = authority.calls();
+
+        List<StoreResult<byte[]>> refused = new ArrayList<>();
+        for (String value : List.of("headers", "all", "HEADERS", "errors, headers")) {
+            refused.add(postWithClientLog(transport(token, javaHome(value)), null));
+        }
+        long afterRefusals = authority.calls();
+        var overridden = postWithClientLog(transport(token, javaHome("headers")), "errors");
+        var uncredentialed = postWithClientLog(transport(null, javaHome("headers")), null);
+
+        assertAll(
+                () -> assertEquals(List.of(TimestampTransport.HEADER_LOGGING, TimestampTransport.HEADER_LOGGING,
+                                TimestampTransport.HEADER_LOGGING, TimestampTransport.HEADER_LOGGING),
+                        refused.stream().map(StoreResult::detail).toList(), "headers, all, HEADERS, a list"),
+                () -> assertEquals(before, afterRefusals, "the authority is not contacted"),
+                () -> assertTrue(overridden.isOk(), () -> "a system property errors wins: " + overridden.detail()),
+                () -> assertTrue(uncredentialed.isOk(), () -> "sent without a token: " + uncredentialed.detail()));
+        List<String> texts = new ArrayList<>(logTexts());
+        refused.forEach(result -> texts.add(String.valueOf(result.detail())));
+        texts.add(String.valueOf(overridden.detail()));
+        assertNoneCarries(texts, List.of(token));
+    }
+
+    @Test
+    @DisplayName("GDR-NFR-3: an absent or unreadable net.properties holds no default")
+    void shouldAllowWithoutReadableNetProperties() throws Exception {
+        String token = secret();
+        authority.answer(TestTimestampAuthority.Answer.GRANT);
+        Path withoutFile = Files.createDirectories(directory.resolve(secret()));
+        Path unreadable = directory.resolve(secret());
+        // a directory in place of the file cannot be read as properties
+        Files.createDirectories(unreadable.resolve("conf").resolve("net.properties"));
+
+        var absent = postWithClientLog(transport(token, withoutFile), null);
+        var directoryInstead = postWithClientLog(transport(token, unreadable), null);
+        var noHome = postWithClientLog(transport(token, null), null);
+
+        assertAll(
+                () -> assertTrue(absent.isOk(), () -> "no net.properties: " + absent.detail()),
+                () -> assertTrue(directoryInstead.isOk(),
+                        () -> "unreadable net.properties: " + directoryInstead.detail()),
+                () -> assertTrue(noHome.isOk(), () -> "no java.home: " + noHome.detail()),
+                () -> assertNull(TimestampTransport.effectiveClientLog(null, withoutFile), "no value"),
+                () -> assertNull(TimestampTransport.effectiveClientLog(null, unreadable), "no value either"));
     }
 
     @Test

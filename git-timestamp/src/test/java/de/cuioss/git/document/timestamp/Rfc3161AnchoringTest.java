@@ -91,6 +91,8 @@ class Rfc3161AnchoringTest {
     private static final IdentityClaims CLAIMS = new IdentityClaims("https://issuer.example/realms/test",
             Instant.parse("2026-03-01T08:15:30Z"), "urn:example:acr:mfa", List.of("pwd", "otp"));
 
+    private static final ClosingFixtures FIXTURES = new ClosingFixtures();
+
     private static TestTimestampAuthority authority;
     private static HttpClient client;
 
@@ -106,15 +108,16 @@ class Rfc3161AnchoringTest {
     static void startAuthority() throws IOException {
         var ca = TestCertificates.ca("test ca");
         var tls = TestCertificates.tls(ca);
-        authority = new TestTimestampAuthority(tls, ca, TestCertificates.signer(ca, "test tsa", true));
-        client = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca)).build();
+        authority = FIXTURES.add(new TestTimestampAuthority(tls, ca, TestCertificates.signer(ca, "test tsa", true)),
+                TestTimestampAuthority::close);
+        var builder = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca));
+        client = FIXTURES.add(builder.build(), HttpClient::close);
         trust = Files.writeString(certificates.resolve("ca.pem"), TestCertificates.pem(ca.certificate()), US_ASCII);
     }
 
     @AfterAll
     static void stopAuthority() {
-        authority.close();
-        client.close();
+        FIXTURES.closeAll();
     }
 
     private static String word() {

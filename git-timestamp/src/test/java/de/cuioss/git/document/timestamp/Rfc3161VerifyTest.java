@@ -16,6 +16,7 @@
 package de.cuioss.git.document.timestamp;
 
 import static java.nio.charset.StandardCharsets.US_ASCII;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -26,11 +27,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 
 import de.cuioss.git.document.store.StoreOutcome;
@@ -57,6 +61,10 @@ import org.junit.jupiter.api.io.TempDir;
 class Rfc3161VerifyTest {
 
     private static final String REPOSITORY = "documents";
+    private static final ClosingFixtures FIXTURES = new ClosingFixtures();
+    private static final String COMMON_NAME = "2.5.4.3";
+    private static final int PRINTABLE_STRING = 0x13;
+    private static final long CHILD_TIMEOUT_SECONDS = 120;
 
     private static TestCertificates.Issued ca;
     private static TestCertificates.Issued signer;
@@ -71,14 +79,14 @@ class Rfc3161VerifyTest {
         ca = TestCertificates.ca("test ca");
         var tls = TestCertificates.tls(ca);
         signer = TestCertificates.signer(ca, "test tsa", true);
-        authority = new TestTimestampAuthority(tls, ca, signer);
-        client = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca)).build();
+        authority = FIXTURES.add(new TestTimestampAuthority(tls, ca, signer), TestTimestampAuthority::close);
+        var builder = TimestampTransport.clientBuilder().sslContext(TestCertificates.clientContext(ca));
+        client = FIXTURES.add(builder.build(), HttpClient::close);
     }
 
     @AfterAll
     static void stopAuthority() {
-        authority.close();
-        client.close();
+        FIXTURES.closeAll();
     }
 
     @BeforeEach
@@ -233,6 +241,135 @@ class Rfc3161VerifyTest {
         var result = provider().verify(subject, token, new byte[0]);
 
         assertTrue(result.isOk(), () -> "verified: " + result.detail());
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: a signer certified through one carried intermediate verifies, without it it is untrusted")
+    void shouldBuildPathThroughCarriedIntermediate() throws Exception {
+        var subject = subject();
+        var issuing = TestCertificates.intermediate(ca, "single intermediate");
+        var below = TestCertificates.signer(issuing, "tsa below single intermediate", true);
+        List<byte[]> ess = List.of(TestTimestampAuthority.signingCertificateV2(below));
+        byte[] withIntermediate = TestTimestampAuthority.token(below, tstInfo(subject), ess,
+                List.of(TestTimestampAuthority.certificatesField(issuing, below)));
+        byte[] withoutIntermediate = TestTimestampAuthority.token(below, tstInfo(subject), ess,
+                List.of(TestTimestampAuthority.certificatesField(below)));
+        var provider = provider();
+
+        var withResult = provider.verify(subject, withIntermediate, new byte[0]);
+        var withoutResult = provider.verify(subject, withoutIntermediate, new byte[0]);
+
+        assertAll(
+                () -> assertTrue(withResult.isOk(), () -> "with the intermediate: " + withResult.detail()),
+                () -> assertEquals(StoreOutcome.SIGNATURE_INVALID, withoutResult.outcome(), "without it"),
+                () -> assertEquals(TimeStampTokens.UNTRUSTED, withoutResult.detail(), "detail without it"));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: a cyclic set of carried certificates ends the path search as untrusted")
+    void shouldEndPathSearchOnCycle() throws Exception {
+        var subject = subject();
+        // x is issued under the name y, y under the name x: following issuers from the signer returns to x
+        var outsideY = TestCertificates.intermediate(ca, "cycle y");
+        var x = TestCertificates.intermediate(outsideY, "cycle x");
+        var y = TestCertificates.intermediate(x, "cycle y");
+        var below = TestCertificates.signer(x, "tsa below cycle", true);
+        byte[] token = TestTimestampAuthority.token(below, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificateV2(below)),
+                List.of(TestTimestampAuthority.certificatesField(x, y, below)));
+
+        var result = provider().verify(subject, token, new byte[0]);
+
+        assertRejected(StoreOutcome.SIGNATURE_INVALID, TimeStampTokens.UNTRUSTED, result);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: a path through an intermediate expired at the token's time is untrusted")
+    void shouldRejectPathThroughExpiredIntermediate() throws Exception {
+        var subject = subject();
+        Instant now = Instant.now();
+        var expired = TestCertificates.intermediate(ca, "expired intermediate", now.minus(Duration.ofDays(10)),
+                now.minus(Duration.ofDays(5)));
+        var below = TestCertificates.signer(expired, "tsa below expired intermediate", true);
+        byte[] token = TestTimestampAuthority.token(below, tstInfo(subject),
+                List.of(TestTimestampAuthority.signingCertificateV2(below)),
+                List.of(TestTimestampAuthority.certificatesField(expired, below)));
+
+        var result = provider().verify(subject, token, new byte[0]);
+
+        assertRejected(StoreOutcome.SIGNATURE_INVALID, TimeStampTokens.UNTRUSTED, result);
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: no issuer is retrieved over AIA even when the JVM enables it; CertPathBuilder would")
+    void shouldRetrieveNoIssuerOverAia() throws Exception {
+        // the PKIX builder of OpenJDK reads the property once per JVM, so the case runs in a JVM of its own
+        Path report = directory.resolve(Generators.letterStrings(12, 20).next() + ".properties");
+        Path output = directory.resolve(Generators.letterStrings(12, 20).next() + ".log");
+        Path java = Path.of(System.getProperty("java.home"), "bin", "java");
+        Process child = new ProcessBuilder(java.toString(), "-D" + AiaRetrievalProbe.ENABLE_AIA + "=true",
+                "-cp", System.getProperty("java.class.path"), AiaRetrievalProbe.class.getName(), report.toString())
+                .redirectErrorStream(true)
+                .redirectOutput(output.toFile())
+                .start();
+        boolean ended;
+        try {
+            ended = child.waitFor(CHILD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } finally {
+            child.destroyForcibly();
+        }
+
+        assertTrue(ended, "the child JVM ends in time");
+        assertEquals(0, child.exitValue(), () -> "the child JVM succeeds: " + readQuietly(output));
+        var properties = new Properties();
+        try (var reader = Files.newBufferedReader(report)) {
+            properties.load(reader);
+        }
+        assertAll(
+                () -> assertEquals("true", properties.getProperty(AiaRetrievalProbe.CONTROL_BUILT),
+                        "the control builds a path over AIA"),
+                () -> assertTrue(Integer.parseInt(properties.getProperty(AiaRetrievalProbe.CONTROL_REQUESTS)) > 0,
+                        "the control made the server see a request"),
+                () -> assertEquals(TimeStampTokens.UNTRUSTED, properties.getProperty(AiaRetrievalProbe.VERIFY_DETAIL),
+                        "the token whose intermediate is only reachable over AIA is untrusted"),
+                () -> assertEquals("0", properties.getProperty(AiaRetrievalProbe.VERIFY_REQUESTS),
+                        "the verification made no request"));
+    }
+
+    private static String readQuietly(Path file) {
+        try {
+            return Files.readString(file);
+        } catch (IOException e) {
+            return "(the output cannot be read: " + e.getMessage() + ")";
+        }
+    }
+
+    private static byte[] name(int stringTag, String commonName) {
+        byte[] value = Der.tlv(stringTag, commonName.getBytes(UTF_8));
+        return Der.sequence(Der.setOf(Der.sequence(Der.oid(COMMON_NAME), value)));
+    }
+
+    @Test
+    @DisplayName("GDR-TSA-2: the sid names the issuer by its name, whatever its string encoding (RFC 5652, 10.2.4)")
+    void shouldIdentifySignerByIssuerName() throws Exception {
+        var subject = subject();
+        // the test certificates encode the common name as UTF8String; the sid repeats it as PrintableString
+        byte[] printable = TestTimestampAuthority.tokenWithSidIssuer(signer, tstInfo(subject),
+                name(PRINTABLE_STRING, "test ca"));
+        byte[] other = TestTimestampAuthority.tokenWithSidIssuer(signer, tstInfo(subject),
+                name(PRINTABLE_STRING, "other ca"));
+        byte[] malformed = TestTimestampAuthority.tokenWithSidIssuer(signer, tstInfo(subject),
+                Der.sequence(Der.integer(1)));
+        var provider = provider();
+
+        var printableResult = provider.verify(subject, printable, new byte[0]);
+        var otherResult = provider.verify(subject, other, new byte[0]);
+        var malformedResult = provider.verify(subject, malformed, new byte[0]);
+
+        assertAll(
+                () -> assertTrue(printableResult.isOk(), () -> "PrintableString issuer: " + printableResult.detail()),
+                () -> assertEquals(TimeStampTokens.SIGNER_UNKNOWN, otherResult.detail(), "another issuer name"),
+                () -> assertEquals(TimeStampTokens.SIGNER_UNKNOWN, malformedResult.detail(), "a malformed name"));
     }
 
     @Test

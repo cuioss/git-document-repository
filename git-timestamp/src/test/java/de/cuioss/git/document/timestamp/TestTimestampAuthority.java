@@ -26,6 +26,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.CertificateEncodingException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,6 +124,7 @@ final class TestTimestampAuthority implements AutoCloseable {
     private final AtomicReference<byte @Nullable []> raw = new AtomicReference<>();
     private final AtomicBoolean stall = new AtomicBoolean();
     private final CountDownLatch closing = new CountDownLatch(1);
+    private final AtomicReference<CountDownLatch> stalledBody = new AtomicReference<>(new CountDownLatch(1));
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
@@ -199,12 +201,28 @@ final class TestTimestampAuthority implements AutoCloseable {
         stall.set(stalled);
     }
 
-    /** Forgets the recorded requests, the raw reply and sets the answer back to {@link Answer#GRANT}. */
+    /**
+     * Waits until a stalled raw reply ({@link #rawReply(byte[], boolean)}) has flushed its first body octet, so the
+     * client is reading the body rather than waiting for the connection or the headers.
+     *
+     * @param timeout the longest wait
+     * @return whether the first body octet was flushed since the last {@link #reset()}
+     * @throws InterruptedException if the wait is interrupted
+     */
+    boolean awaitStalledBody(Duration timeout) throws InterruptedException {
+        return stalledBody.get().await(timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Forgets the recorded requests, the raw reply and the signal of a stalled body, and sets the answer back to
+     * {@link Answer#GRANT}.
+     */
     void reset() {
         received.clear();
         answer.set(Answer.GRANT);
         raw.set(null);
         stall.set(false);
+        stalledBody.set(new CountDownLatch(1));
     }
 
     @Override
@@ -255,6 +273,7 @@ final class TestTimestampAuthority implements AutoCloseable {
             }
             out.write(body, 0, 1);
             out.flush();
+            stalledBody.get().countDown();
             try {
                 if (closing.await(10, TimeUnit.SECONDS)) {
                     return;
@@ -281,6 +300,10 @@ final class TestTimestampAuthority implements AutoCloseable {
         // malformed and answered with HTTP 400
         if (fields.size() < 2) {
             throw new Der.DerException("request too short");
+        }
+        // RFC 3161, 2.4.1: version INTEGER { v1(1) }; integer() refuses a first field that is no INTEGER
+        if (!BigInteger.ONE.equals(fields.getFirst().integer())) {
+            throw new Der.DerException("request of another version than 1");
         }
         List<Der.Element> imprint = fields.get(1).children(Der.TAG_SEQUENCE);
         if (imprint.size() != 2) {
@@ -387,6 +410,25 @@ final class TestTimestampAuthority implements AutoCloseable {
      * @return the DER of the {@code TimeStampToken}
      */
     static byte[] token(TestCertificates.Issued by, byte[] tstInfo, List<byte[]> essAttributes, List<byte[]> middle) {
+        return token(by, tstInfo, essAttributes, middle, by.certificate().getIssuerX500Principal().getEncoded());
+    }
+
+    /**
+     * Builds a token whose {@code sid} names the issuer of the signer with given octets, the serial number being the
+     * signer's; the signer certificate is carried in {@code certificates [0]}.
+     *
+     * @param by        the signer
+     * @param tstInfo   the DER of the {@code TSTInfo}
+     * @param sidIssuer the octets written as the issuer of the {@code IssuerAndSerialNumber}, which need not be a
+     *                  valid name
+     * @return the DER of the {@code TimeStampToken}
+     */
+    static byte[] tokenWithSidIssuer(TestCertificates.Issued by, byte[] tstInfo, byte[] sidIssuer) {
+        return token(by, tstInfo, List.of(signingCertificateV2(by)), List.of(certificatesField(by)), sidIssuer);
+    }
+
+    private static byte[] token(TestCertificates.Issued by, byte[] tstInfo, List<byte[]> essAttributes,
+            List<byte[]> middle, byte[] sidIssuer) {
         byte[] sha256 = Der.sequence(Der.oid(TimeStampRequests.SHA_256));
         List<byte[]> attributeList = new ArrayList<>();
         attributeList.add(Der.sequence(Der.oid(CONTENT_TYPE), Der.setOf(Der.oid(TimeStampRequests.ID_CT_TST_INFO))));
@@ -399,8 +441,7 @@ final class TestTimestampAuthority implements AutoCloseable {
         byte[] signature = TestCertificates.signature(by.keys(), Der.setOf(attributes));
         byte[] signerInfo = Der.sequence(
                 Der.integer(1),
-                Der.sequence(by.certificate().getIssuerX500Principal().getEncoded(),
-                        Der.integer(by.certificate().getSerialNumber())),
+                Der.sequence(sidIssuer, Der.integer(by.certificate().getSerialNumber())),
                 sha256,
                 Der.taggedSetOf(Der.contextConstructed(0), attributes),
                 Der.sequence(Der.oid(TestCertificates.ECDSA_WITH_SHA256)),

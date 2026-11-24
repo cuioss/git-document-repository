@@ -17,14 +17,21 @@ package de.cuioss.git.document.timestamp;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.Properties;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -41,10 +48,18 @@ import org.jspecify.annotations.Nullable;
  * The transport runs on {@link HttpClient} of {@code java.net.http}: redirects are never followed, the connection
  * times out after {@link #CONNECT_TIMEOUT}, one deadline of {@link #REQUEST_TIMEOUT} runs from sending the request to
  * the end of the reply body, and at most {@value #MAX_REPLY_BYTES} octets of a reply are read. When a bearer token is
- * configured, it is sent as {@code Authorization: Bearer <token>}, unless the system property
- * {@value #CLIENT_LOG_PROPERTY}, read on every request, makes the client log request headers: then the request is
- * refused without contacting the authority. Without a token no {@code Authorization} header is sent. No detail and no
- * {@link #toString()} carries the token, the URL or the body of a reply (GDR-NFR-3).
+ * configured, it is sent as {@code Authorization: Bearer <token>}, unless the setting {@value #CLIENT_LOG_PROPERTY}
+ * makes the client log request headers: then the request is refused without contacting the authority. The setting is
+ * read on every credentialed request as a JVM start would read it, the system property when it is set and otherwise
+ * the default of {@code conf/net.properties} under {@code java.home}. The JDK caches its logging flags when its
+ * logging class initialises and exposes them through no public API, so a change of the setting after that is not seen:
+ * a property cleared after the client began to log headers lets the request through. Without a token no
+ * {@code Authorization} header is sent. No detail and no {@link #toString()} carries the token, the URL or the body of
+ * a reply (GDR-NFR-3).
+ * <p>
+ * The body of a reply is read within the deadline; a close at the deadline, scheduled on a daemon thread the transport
+ * owns, ends a read the authority stalls. An interrupt of the waiting thread, in the header wait or in the body read,
+ * gives {@value #INTERRUPTED} with the interrupt flag kept.
  */
 final class TimestampTransport {
 
@@ -87,10 +102,17 @@ final class TimestampTransport {
 
     private static final int HTTP_OK = 200;
 
+    /** How long the idle thread of the deadline scheduler waits for another close before it ends. */
+    private static final Duration DEADLINE_THREAD_KEEP_ALIVE = Duration.ofSeconds(60);
+
+    /** The scheduler of the close of a body at its deadline, owned by the transport. */
+    private static final ScheduledThreadPoolExecutor DEADLINES = deadlineScheduler();
+
     private final URI url;
     private final @Nullable String bearer;
     private final HttpClient client;
     private final Duration timeout;
+    private final @Nullable Path javaHome;
 
     /**
      * Creates the transport on a client of {@link #clientBuilder()}.
@@ -122,10 +144,32 @@ final class TimestampTransport {
      * @param timeout the deadline from sending the request to the end of the reply body, positive
      */
     TimestampTransport(URI url, @Nullable String bearer, HttpClient client, Duration timeout) {
+        this(url, bearer, client, timeout, javaHomeOfJvm());
+    }
+
+    /**
+     * Creates the transport with a given {@code java.home}, for the tests to supply their own
+     * {@code conf/net.properties}.
+     *
+     * @param url      the URL of the authority
+     * @param bearer   the bearer token, or {@code null} for none
+     * @param client   the client
+     * @param timeout  the deadline from sending the request to the end of the reply body, positive
+     * @param javaHome the directory whose {@code conf/net.properties} holds the defaults of the networking
+     *                 properties, or {@code null} for none
+     */
+    TimestampTransport(URI url, @Nullable String bearer, HttpClient client, Duration timeout,
+            @Nullable Path javaHome) {
         this.url = Objects.requireNonNull(url, "url");
         this.bearer = bearer;
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
+        this.javaHome = javaHome;
+    }
+
+    private static @Nullable Path javaHomeOfJvm() {
+        String home = System.getProperty("java.home");
+        return home == null ? null : Path.of(home);
     }
 
     /**
@@ -155,7 +199,8 @@ final class TimestampTransport {
         // the JDK HttpClient writes the complete request headers, Authorization included and not redacted, to its
         // logger when jdk.httpclient.HttpClient.log names headers or all (Log and Http1Request of java.net.http,
         // OpenJDK 21 and 25); a bearer token must never reach a log (GDR-NFR-3)
-        if (bearer != null && headerLoggingEnabled(System.getProperty(CLIENT_LOG_PROPERTY))) {
+        if (bearer != null
+                && headerLoggingEnabled(effectiveClientLog(System.getProperty(CLIENT_LOG_PROPERTY), javaHome))) {
             return StoreResult.of(StoreOutcome.REFUSED, HEADER_LOGGING);
         }
         var builder = HttpRequest.newBuilder(url)
@@ -175,9 +220,15 @@ final class TimestampTransport {
                 if (!isReply(response.headers().firstValue("Content-Type").orElse(""))) {
                     return StoreResult.of(StoreOutcome.REFUSED, WRONG_CONTENT_TYPE);
                 }
-                return readBody(body, deadline);
+                return readBody(body, deadline, DEADLINES);
             }
         } catch (IOException e) {
+            if (interruption(e)) {
+                // ResponseSubscribers.HttpResponseInputStream turns an interrupt of the blocking body read into an
+                // IOException caused by the InterruptedException (OpenJDK 21); the interrupt is the caller's
+                Thread.currentThread().interrupt();
+                return StoreResult.of(StoreOutcome.UNAVAILABLE, INTERRUPTED);
+            }
             return StoreResult.of(StoreOutcome.UNAVAILABLE, UNREACHABLE);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -190,38 +241,91 @@ final class TimestampTransport {
      * the wait for the response headers only (its Javadoc in OpenJDK 21 and 25: "If the response is not received
      * within the specified timeout"), and a body read through {@link HttpResponse.BodyHandlers#ofInputStream()} blocks
      * as long as the authority stalls; so the body is closed when the deadline passes, which ends the blocked read.
+     * <p>
+     * The close is scheduled on the given scheduler, in production the transport's own single daemon thread, so a busy
+     * common pool cannot delay it, and it is cancelled once the read ends. Exactly one side settles the read: the close,
+     * or the end of the read; and a read that ends after the deadline is not accepted even when the close has not run.
      *
-     * @param body     the body
-     * @param deadline the deadline in {@link System#nanoTime()}
+     * @param body      the body
+     * @param deadline  the deadline in {@link System#nanoTime()}
+     * @param scheduler the scheduler of the close at the deadline
      * @return the reply, {@value #REPLY_TOO_LARGE} or {@value #UNREACHABLE} for a body not complete in time
      * @throws IOException if the body cannot be read
      */
-    private static StoreResult<byte[]> readBody(InputStream body, long deadline) throws IOException {
+    static StoreResult<byte[]> readBody(InputStream body, long deadline, ScheduledExecutorService scheduler)
+            throws IOException {
         long remaining = deadline - System.nanoTime();
         if (remaining <= 0) {
             return StoreResult.of(StoreOutcome.UNAVAILABLE, UNREACHABLE);
         }
         var settled = new AtomicBoolean();
-        CompletableFuture.runAsync(() -> {
+        ScheduledFuture<?> close = scheduler.schedule(() -> {
             if (settled.compareAndSet(false, true)) {
                 closeQuietly(body);
             }
-        }, CompletableFuture.delayedExecutor(remaining, TimeUnit.NANOSECONDS));
+        }, remaining, TimeUnit.NANOSECONDS);
         byte[] reply;
         try {
             reply = body.readNBytes(MAX_REPLY_BYTES + 1);
-        } catch (IOException e) {
-            settled.set(true);
-            throw e;
+        } finally {
+            close.cancel(false);
         }
-        if (!settled.compareAndSet(false, true)) {
-            // the deadline closed the body while it was read
+        if (!settled.compareAndSet(false, true) || System.nanoTime() - deadline > 0) {
+            // the deadline closed the body while it was read, or passed before the read ended
             return StoreResult.of(StoreOutcome.UNAVAILABLE, UNREACHABLE);
         }
         if (reply.length > MAX_REPLY_BYTES) {
             return StoreResult.of(StoreOutcome.REFUSED, REPLY_TOO_LARGE);
         }
         return StoreResult.ok(reply);
+    }
+
+    private static ScheduledThreadPoolExecutor deadlineScheduler() {
+        var scheduler = new ScheduledThreadPoolExecutor(1, task -> {
+            var thread = new Thread(task, "rfc3161-deadline");
+            thread.setDaemon(true);
+            return thread;
+        });
+        scheduler.setRemoveOnCancelPolicy(true);
+        // the single thread ends when idle; a pending close keeps it, since a worker leaves only an empty queue
+        scheduler.setKeepAliveTime(DEADLINE_THREAD_KEEP_ALIVE.toNanos(), TimeUnit.NANOSECONDS);
+        scheduler.allowCoreThreadTimeOut(true);
+        return scheduler;
+    }
+
+    /**
+     * Tells whether an I/O failure is an interrupt of the waiting thread: an {@link InterruptedIOException} other than
+     * a socket timeout, or an exception caused by an {@link InterruptedException}.
+     */
+    private static boolean interruption(IOException failure) {
+        if (failure instanceof InterruptedIOException) {
+            return !(failure instanceof SocketTimeoutException);
+        }
+        return failure.getCause() instanceof InterruptedException;
+    }
+
+    /**
+     * Returns the value of {@value #CLIENT_LOG_PROPERTY} the JDK {@link HttpClient} reads when it initialises its
+     * logging: {@code jdk.internal.net.http.common.Log} takes it through {@code sun.net.NetProperties}, which returns
+     * the system property when it is set and otherwise the default of {@code conf/net.properties} under
+     * {@code java.home} (OpenJDK 21). A missing or unreadable file gives no default.
+     *
+     * @param systemValue the system property, or {@code null} when it is not set
+     * @param javaHome    the {@code java.home} directory, or {@code null} for none
+     * @return the effective value, or {@code null} for none
+     */
+    static @Nullable String effectiveClientLog(@Nullable String systemValue, @Nullable Path javaHome) {
+        if (systemValue != null || javaHome == null) {
+            return systemValue;
+        }
+        var defaults = new Properties();
+        try (InputStream in = Files.newInputStream(javaHome.resolve("conf").resolve("net.properties"))) {
+            defaults.load(in);
+        } catch (IOException | IllegalArgumentException e) {
+            // a file the JDK cannot read either holds no default
+            return null;
+        }
+        return defaults.getProperty(CLIENT_LOG_PROPERTY);
     }
 
     private static void closeQuietly(InputStream body) {
