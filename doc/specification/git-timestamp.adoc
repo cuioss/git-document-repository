@@ -4,9 +4,10 @@
 :toc-title: Table of Contents
 :source-highlighter: highlight.js
 
-`git-timestamp` (module `de.cuioss.git.document.timestamp`, not yet created, optional) provides the anchor provider
-`rfc3161` of `git-store` (xref:git-store.adoc#GDR-STORE-15[GDR-STORE-15]): proofs from an external RFC 3161 timestamp
-authority, for organisations that need a proof independent of their own operation. It is the alternative to the own
+`git-timestamp` (module `de.cuioss.git.document.timestamp`, optional) provides the anchor provider `rfc3161` of
+`git-store` (xref:git-store.adoc#GDR-STORE-15[GDR-STORE-15]): proofs from an external RFC 3161 timestamp authority,
+for organisations that need a proof independent of their own operation. It implements <<GDR-TSA-1>> and
+<<GDR-TSA-2>>. It is the alternative to the own
 timestamp `signed` of `git-store`. It depends on `git-store` and adds no third-party dependency (see the decision
 below). Rationale: xref:../concepts/evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion Stores, The
 Anchor].
@@ -63,8 +64,121 @@ header is sent.
 An authority run inside the organisation counts as independent only when it lies under a responsibility other than
 the Git administration and the application's operation; otherwise it proves no more than `signed`.
 
+=== Design of GDR-TSA-1
+
+The module exports the package `de.cuioss.git.document.timestamp` with two public top-level types, `Rfc3161AnchorProvider` and
+the `LogRecord` holder `GitTimestampLogMessages`; everything else is package-private: `TimestampConfiguration` (the
+section `timestamp`), `TimestampTransport` (the HTTP exchange), `TimeStampRequests` (the request and the reading of the
+reply), `TimeStampTokens` (the verification of <<GDR-TSA-2>>) and `Der`, the bounded DER reader and writer.
+
+* *Building the provider.* An application builds the configured provider with the public factory
+  `Rfc3161AnchorProvider.from(Map)` from the same already-parsed nested configuration map it hands to
+  `StoreConfiguration.from` of `git-store`, which ignores the section `timestamp`. `from` returns a `StoreResult`:
+  `OK` with the provider, or `MALFORMED` with a detail naming the missing or malformed key, never its value. The
+  application passes the provider to `StoreProviders.select` as a candidate anchor provider, and
+  `anchor.provider = rfc3161` selects it.
+* *The unconfigured instance.* `module-info.java` provides `Rfc3161AnchorProvider` to `ServiceLoader`. The instance
+  `ServiceLoader` creates through the public no-argument constructor has no configuration and never reaches the
+  network: its `obtain` answers `REFUSED` and its `verify` `SIGNATURE_INVALID`, each with the detail
+  `rfc3161: the section timestamp is not configured`. An application that also hands the loaded providers to
+  `select` passes the configured instance in place of the loaded one, since two candidates with one id are refused.
+* *The configuration.* `timestamp.url` must be an absolute `https` URL with a host and without user information.
+  Each file of `timestamp.trust` is read without following a symbolic link (`LinkOption.NOFOLLOW_LINKS`), only when it
+  is a regular file of at most 1 MiB, and must hold at least one X.509 certificate in PEM; a refusal names the entry
+  by its index (`timestamp.trust[<n>] is malformed`). `timestamp.credentials` must be a `token68` of
+  link:https://www.rfc-editor.org/rfc/rfc6750#section-2.1[RFC 6750, 2.1], so it cannot break the header.
+* *The request.* A `TimeStampReq` of version 1 with the `messageImprint` SHA-256 over the object id as lowercase
+  ASCII hex, a random 64-bit nonce from `SecureRandom` and `certReq = TRUE`, without a policy and without extensions;
+  the algorithm identifier of SHA-256 carries no parameters, as
+  link:https://www.rfc-editor.org/rfc/rfc5754#section-2[RFC 5754, 2] asks of an encoder.
+* *The transport.* The request is posted over `java.net.http.HttpClient` with HTTP/1.1, redirects never followed, a
+  connect timeout of 10 seconds and a request timeout of 30 seconds, as `Content-Type: application/timestamp-query`;
+  the reply is accepted only with the HTTP status 200 and the media type `application/timestamp-reply`, the two media
+  types of link:https://www.rfc-editor.org/rfc/rfc3161#section-3.4[RFC 3161, 3.4], and at most 1 MiB of it is read.
+  With `timestamp.credentials` the header `Authorization: Bearer <token>` is sent; without it no `Authorization`
+  header is sent.
+* *The reply.* The token is granted only with the `PKIStatus` `granted` (0) or `grantedWithMods` (1); the token must
+  repeat the nonce and the imprint of the request (RFC 3161, 2.4.2). The proof is the DER encoding of the
+  `TimeStampToken`. The commit time and the previous proof are not used: the authority keeps its own time, and
+  `rfc3161` forms no chain.
+* *The outcomes.* An authority that cannot be reached (connection refused, timeout or another I/O failure) is
+  `UNAVAILABLE`; an error status, another HTTP status than 200, another media type, a reply larger than the limit or
+  unreadable, and a token with another nonce or imprint are `REFUSED`. `git-store` keeps the subject pending on
+  either. A token obtained is logged as `GIT_TIMESTAMP-1`, an unavailable authority as `GIT_TIMESTAMP-100` and a
+  refusal as `GIT_TIMESTAMP-101`, with the repository alias, the object id and the fixed detail only
+  (xref:../../git-timestamp/doc/LogMessages.adoc[log-message catalogue]).
+* *No secret leaves the module* (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]): no result detail, log message or
+  `toString` of `TimestampConfiguration`, `TimestampTransport` or `Rfc3161AnchorProvider` carries the URL of the
+  authority, the bearer token, the body of a reply or the content of a certificate file.
+
+Tests: `Rfc3161ObtainTest` (the request, the fresh nonce, the bearer header and its absence, every refusal, the
+unreachable authority, the unconfigured instance and the `provides` directive), `TimestampConfigurationTest` (the keys
+and refusals of the section `timestamp`), `DerTest` (the bounds of the DER
+reader) and `TimestampSecretsTest` (GDR-NFR-3). They run against an in-process authority on the JDK `HttpsServer`
+bound to the loopback address, with certificates generated at run time, so no test needs network access and no
+private key is committed.
+
 [#GDR-TSA-2]
 == GDR-TSA-2: Timestamp Verification
 
 * The module must verify a stored token against the object id and `timestamp.trust`, and report the time the token
   proves, or imprint mismatch or signature invalid (also for a token that cannot be read).
+
+=== Design of GDR-TSA-2
+
+`Rfc3161AnchorProvider.verify` hands the stored token to `TimeStampTokens`, which accepts it only when every rule below
+holds, each checked with `java.security` alone
+(link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/Signature.html[Java SE 21,
+`Signature`];
+link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/cert/CertPathValidator.html[Java SE 21,
+`CertPathValidator`]):
+
+. The token is a CMS `ContentInfo` of `id-signedData` whose `SignedData` encapsulates content of the type
+  `id-ct-TSTInfo` (link:https://www.rfc-editor.org/rfc/rfc3161#section-2.4.2[RFC 3161, 2.4.2];
+  link:https://www.rfc-editor.org/rfc/rfc5652#section-5.1[RFC 5652, 5.1]).
+. The `SignedData` carries exactly one `SignerInfo`; RFC 3161, 2.4.2 requires a single signer.
+. The `SignerInfo` has signed attributes (link:https://www.rfc-editor.org/rfc/rfc5652#section-5.3[RFC 5652, 5.3])
+  with exactly one `contentType` of the single value `id-ct-TSTInfo` and exactly one `messageDigest` equal to the
+  digest of the encapsulated `TSTInfo` under the `digestAlgorithm` of the `SignerInfo` (RFC 5652, 11.1, 11.2 and 5.4).
+. The signed attributes carry exactly one ESS `signingCertificate`
+  (link:https://www.rfc-editor.org/rfc/rfc2634#section-5.4[RFC 2634, 5.4], its certificate hash SHA-1) or
+  `signingCertificateV2` (link:https://www.rfc-editor.org/rfc/rfc5035#section-3[RFC 5035, 3], its hash SHA-256 by
+  default), as RFC 3161, 2.4.2 and link:https://www.rfc-editor.org/rfc/rfc5816#section-2.2[RFC 5816, 2.2] require.
+  Its first certificate identifier names the signer certificate by hash; the certificate is looked up among the
+  certificates the token carries and those of `timestamp.trust`, and must match the `sid` of the `SignerInfo`
+  (issuer and serial number, or subject key identifier).
+. The signature verifies over the DER of the signed attributes under the explicit SET OF tag (RFC 5652, 5.4), with
+  ECDSA or RSA PKCS #1 v1.5 and SHA-256, SHA-384 or SHA-512, the hash of the signature algorithm equal to the digest
+  algorithm (link:https://www.rfc-editor.org/rfc/rfc5754#section-3[RFC 5754, 3.2 and 3.3]); any other algorithm is
+  refused.
+. The signer certificate carries the extended key usage extension, critical, with the single purpose
+  `id-kp-timeStamping` (link:https://www.rfc-editor.org/rfc/rfc3161#section-2.3[RFC 3161, 2.3]).
+. The signer certificate is one of `timestamp.trust` and valid at the time the token states, or has a certification
+  path, formed from the certificates the token carries, to a certificate of `timestamp.trust` that
+  `CertPathValidator` of the type PKIX accepts at that time
+  (link:https://www.rfc-editor.org/rfc/rfc5280#section-6[RFC 5280, 6]). Revocation checking is off: a verification
+  reaches no network, and the token holds no revocation status of the time of stamping.
+
+A token that cannot be read, or that breaks any of these rules, is `SIGNATURE_INVALID` with a fixed detail naming the
+rule, never a value of the token. A token that passes them and whose imprint is not SHA-256 over the lowercase hex of
+the object id is `IMPRINT_MISMATCH`; otherwise the result is `OK` with the `genTime` of the token, the time it proves.
+`rfc3161` forms no chain: the previous proof is ignored and `CHAIN_BROKEN` is never returned. Every rejected proof is
+logged as `GIT_TIMESTAMP-102` with the object id, the outcome and the detail. The same provider instance serves the
+anchor verification of `git-store`, `AnchorVerification.verifyAnchors(repository, provider)`
+(xref:git-store.adoc#GDR-STORE-17[GDR-STORE-17]).
+
+Tests: `Rfc3161VerifyTest` (a token of the authority verifies with its `genTime`; a token for another object id is
+`IMPRINT_MISMATCH`; a flipped signature byte, a signer outside `timestamp.trust`, a signer without
+`id-kp-timeStamping`, a token whose signer certificate is neither carried nor trusted, a truncated token, random
+octets and no octets are `SIGNATURE_INVALID`; a token without its certificate verifies when `timestamp.trust` holds
+the signer) and `Rfc3161AnchoringTest`, end to end with `anchor.provider = rfc3161`: `StoreProviders.select` with the
+configured provider, a release onto a `git-testing` local remote, `StoreWriter.anchor()` and
+`AnchorVerification.verifyAnchors` reporting a complete anchoring with every proof verified, and an unreachable
+authority that leaves the release commit pending without failing the release.
+
+[#native-image]
+== Native Image
+
+`git-timestamp` ships no native-image metadata (xref:general.adoc#GDR-NFR-4[GDR-NFR-4]): its main code uses no
+reflection, resource or resource bundle of its own, and a consumer receives the metadata of `git-core` through the
+dependency, on the same grounds as `git-store`. The reasons and what stays unchecked are stated in GDR-NFR-4.
