@@ -46,7 +46,8 @@ public enum GitOutcome {
 
     /**
      * Lease refused: {@code push} with a lease, the remote reference moved away from the expected value, seen in the
-     * advertisement or, after it, by a remote that could not lock the reference for the update (a lost race).
+     * advertisement or, after it, by a remote that could not lock the reference for the update or found it no longer
+     * at the old value the push sent (a lost race).
      */
     LEASE_REFUSED,
 

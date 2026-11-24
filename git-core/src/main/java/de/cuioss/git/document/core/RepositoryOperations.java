@@ -130,7 +130,8 @@ public interface RepositoryOperations {
      * <p>
      * A leased push that loses a race on the remote reference is {@link GitOutcome#LEASE_REFUSED} whether the
      * advertisement already showed another head or the remote could not lock the reference for the update because it
-     * moved, or another writer held it, after the advertisement; a caller may fetch and try again. Every other refusal
+     * moved, or another writer held it, after the advertisement (a JGit remote answers {@code failed to lock}, a native
+     * Git remote {@code incorrect old value provided}); a caller may fetch and try again. Every other refusal
      * of the remote, for example a protected branch, a refusing hook or a push that is no fast-forward, is
      * {@link GitOutcome#REJECTED} and does not go away on a retry; a plain push without a lease is
      * {@link GitOutcome#REJECTED} for a lost race as well.

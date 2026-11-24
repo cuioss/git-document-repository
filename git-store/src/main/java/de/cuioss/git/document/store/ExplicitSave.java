@@ -556,7 +556,8 @@ final class ExplicitSave {
                 .localRef(commit).remoteRef(request.target()).expectedRemoteHead(base.lease().name())
                 .credentials(user.credentials()).build());
         // git-core reports a leased push that lost a race on the remote reference as LEASE_REFUSED, also when the
-        // remote could not lock it after the advertisement; REJECTED is permanent and ends the save at once
+        // remote could not lock it after the advertisement or found a stale old value; any other REJECTED ends the
+        // save at once
         if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
             return Optional.empty();
         }

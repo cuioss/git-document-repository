@@ -199,6 +199,16 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      */
     private static final String REMOTE_LOCK_FAILURE = "failed to lock";
 
+    /**
+     * The message of a reference update a native Git remote refused because the old value the push sent no longer
+     * matches the reference: the status text of the {@code ng} line of {@code receive-pack}, observed with Git 2.56.1
+     * ({@code ! [remote rejected] <ref> (incorrect old value provided)}, the files backend), while the reason with
+     * both ids ({@code cannot lock ref ...: is at ... but expected ...}) reaches the client as a sideband error line
+     * only. JGit 7.8.0 {@code BasePackPushConnection.readStatusReport} turns the {@code ng} line into
+     * {@code REJECTED_OTHER_REASON} with exactly this text as {@code RemoteRefUpdate.getMessage()}.
+     */
+    private static final String REMOTE_STALE_OLD_VALUE = "incorrect old value provided";
+
     /** A remote refusing a want by its object id: JGit's {@code UploadPack} or a remote reporting it absent. */
     private static final Pattern WANT_REFUSED =
             Pattern.compile("(?i)\\bwant [0-9a-f]{40}(?:[0-9a-f]{24})? not (?:valid|found)\\b");
@@ -944,6 +954,14 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
     }
 
     /**
+     * Whether the message of a refused update is one of the two wordings of a lost race on the remote reference: JGit's
+     * {@link #REMOTE_LOCK_FAILURE} or native Git's {@link #REMOTE_STALE_OLD_VALUE}, each compared whole.
+     */
+    private static boolean lostRace(@Nullable String message) {
+        return REMOTE_LOCK_FAILURE.equals(message) || REMOTE_STALE_OLD_VALUE.equals(message);
+    }
+
+    /**
      * Maps the update of the pushed reference to the result.
      * <p>
      * JGit 7.8.0 {@code PushProcess} reports {@code UP_TO_DATE} as soon as the advertised id equals the new id, before
@@ -956,9 +974,14 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
      * remote updated it. JGit 7.8.0 {@code ReceivePack} updates the reference against the advertised id, which equals
      * the lease, and answers both cases, a {@code LOCK_FAILURE} of {@code RefUpdate}, with {@code ng <ref> failed to
      * lock}; {@code BasePackPushConnection.readStatusReport} turns every {@code ng} into {@code REJECTED_OTHER_REASON}
-     * with that text as the message. Such an update is {@link GitOutcome#LEASE_REFUSED}, like a lease the advertisement
-     * already refused; every other refusal, among them a protected branch or a refusing hook, stays
-     * {@link GitOutcome#REJECTED}, and so does a lock failure of a plain push, which carries no lease.
+     * with that text as the message. A native Git remote words the same lost race as {@link #REMOTE_STALE_OLD_VALUE}:
+     * its {@code receive-pack} updates the reference expecting the old id the push sent and, when the reference no
+     * longer holds it, answers {@code ng <ref> incorrect old value provided} (observed with Git 2.56.1, the files
+     * backend; the ids reach the client only as a sideband error line). Both messages are compared whole, as
+     * {@code getMessage()} returns them. Such an update is {@link GitOutcome#LEASE_REFUSED}, like a lease the
+     * advertisement already refused; every other refusal, among them a protected branch, a refusing hook, a push that is
+     * no fast-forward and a refused delete, stays {@link GitOutcome#REJECTED}, and so does either message on a plain
+     * push, which carries no lease.
      *
      * @param update             the update of the pushed reference
      * @param advertised         the remote reference the push saw; {@code null} if the remote had none
@@ -984,7 +1007,7 @@ public final class JGitRepositoryOperations implements RepositoryOperations {
                 .build();
         return switch (update.getStatus()) {
             case OK, UP_TO_DATE -> GitResult.ok(ref);
-            case REJECTED_OTHER_REASON -> expectedRemoteHead != null && REMOTE_LOCK_FAILURE.equals(update.getMessage())
+            case REJECTED_OTHER_REASON -> expectedRemoteHead != null && lostRace(update.getMessage())
                     ? GitResult.of(GitOutcome.LEASE_REFUSED, remoteRef)
                     : GitResult.of(GitOutcome.REJECTED, remoteRef + ": " + status);
             case REJECTED_NONFASTFORWARD, REJECTED_NODELETE ->

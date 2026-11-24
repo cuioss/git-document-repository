@@ -328,9 +328,11 @@ target branch that does not exist yet is pushed against the zero-id lease, which
 absent. A lease refusal starts the next attempt from the fetch; after the last of `save.max-attempts` the save is
 `NotSaved` with the passed-on `REJECTED` and the detail `<target>: lease refused on every attempt (<n>)`. `git-core`
 reports a leased push that lost a race on the remote reference as `LEASE_REFUSED`, also when the lease held in the
-advertisement and the remote could not lock the reference for the update
-(xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]), so every `REJECTED` of the push is a permanent refusal of the remote,
-such as a protected branch, a refusing hook or a push that is no fast-forward: it ends the save at once as the
+advertisement and the remote could not lock the reference for the update or, as a native Git remote reports it
+(`incorrect old value provided`), found it no longer at the old value the push sent; such a stale lease is retried
+like any other (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). Every `REJECTED` of the push is therefore a refusal of
+the remote that `git-core` does not recognise as a lost race, such as a protected branch, a refusing hook or a push
+that is no fast-forward, and a remote that words a lost race in yet another way is among them: it ends the save at once as the
 passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. An unreachable remote
 and invalid credentials end the save at once as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing
 changed.

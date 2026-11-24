@@ -223,7 +223,8 @@ whose name conflicts with an existing one (detail `refName: name conflict`, neve
 reference that points at no commit, such as an annotated tag; save after the last attempt, and a save or release whose
 push the remote refuses permanently, at once
 |`LEASE_REFUSED` |lease refused |push with lease that lost a race on the remote reference, seen in the advertisement or
-as a reference the remote could not lock for the update (`git-core`); the store retries and reports rejected after the
+as a reference the remote could not lock for the update or found no longer at the old value the push sent
+(`git-core`, xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]); the store retries and reports rejected after the
 last attempt
 |`UNREACHABLE` |unreachable |fetch, push, bare clone or cache fetch when the remote cannot be reached; the save keeps
 the draft

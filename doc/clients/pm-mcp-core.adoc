@@ -197,7 +197,7 @@ switch-over:
 |`UNKNOWN_REVISION`, `PATH_NOT_FOUND` |`NOT_FOUND`; a commit the remote does not serve in `fetchCommit` is `UNSERVED`
 |`REJECTED_NON_FAST_FORWARD` |`REJECTED`, also for the remote's other refusals
 |`REJECTED_LEASE` |`LEASE_REFUSED`, also for a leased push that lost a race after the advertisement, which the remote
-answers with `failed to lock` (xref:../specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7]); the facade maps it like a
+answers with `failed to lock` (a JGit remote) or `incorrect old value provided` (a native Git remote) (xref:../specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7]); the facade maps it like a
 refused lease
 |`REMOTE_ORIGIN_MISMATCH`, `CAPABILITY_MISSING` |`REFUSED_BY_POLICY`; the detail names the remote or the capability
 |`GIT_IDENTITY_AMBIGUOUS` |`AMBIGUOUS`
