@@ -46,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 
@@ -293,6 +294,38 @@ class AnchorEngineTest {
         Ref ref = repository.exactRef(StoreReferences.checkpoint(number));
         assertNotNull(ref, () -> "checkpoint " + number + " exists");
         return ref.getObjectId();
+    }
+
+    /** An observer of the events of a clone that records every call. */
+    private static final class RecordingObserver implements StoreEvents.Observer {
+
+        private final List<List<StoreEvents.Update>> moved = new CopyOnWriteArrayList<>();
+        private final AtomicInteger unchanged = new AtomicInteger();
+
+        @Override
+        public void moved(List<StoreEvents.Update> updates) {
+            moved.add(List.copyOf(updates));
+        }
+
+        @Override
+        public void unchanged() {
+            unchanged.incrementAndGet();
+        }
+
+        List<List<StoreEvents.Update>> moved() {
+            return List.copyOf(moved);
+        }
+
+        int unchangedCalls() {
+            return unchanged.get();
+        }
+    }
+
+    /** Registers a recording observer on the events of the writer's clone. */
+    private static RecordingObserver observe(StoreWriter writer) {
+        var observer = new RecordingObserver();
+        writer.storeClone().events().register(observer);
+        return observer;
     }
 
     private static ScheduledExecutorService executor() {
@@ -723,6 +756,7 @@ class AnchorEngineTest {
 
             try (var fixture = open(remote)) {
                 List<String> received = new CopyOnWriteArrayList<>();
+                var observer = observe(fixture.writer());
                 try (var subscription = fixture.writer().subscribe(StoreReferences.MAIN,
                              (branch, commitId) -> received.add(commitId))) {
                     var moved = commit(repository, StoreReferences.MAIN, main);
@@ -738,8 +772,57 @@ class AnchorEngineTest {
                                     "the unchecked failure is a result naming its class"),
                             () -> assertEquals(List.of(moved.name()), received,
                                     "the commit the due check fetched is delivered all the same"),
+                            () -> assertEquals(1, observer.moved().size(), "the observer is told once"),
+                            () -> assertTrue(observer.moved().getFirst().stream()
+                                            .anyMatch(update -> moved.name().equals(update.newId())),
+                                    "of the commit the due check fetched"),
+                            () -> assertEquals(0, observer.unchangedCalls(), "not as an operation that moved nothing"),
                             () -> assertEquals(List.of(), fixture.anchors().calls(), "the provider was not asked"));
                 }
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a due check of a closed writer, with or without a provider, reaches no observer")
+        void closedDueCheckEmitsNothing(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+            var withProvider = open(remote);
+            var withoutProvider = open(remote, null, null, NO_RETRY);
+            var observedWith = observe(withProvider.writer());
+            var observedWithout = observe(withoutProvider.writer());
+            withProvider.close();
+            withoutProvider.close();
+
+            var refusedWith = withProvider.writer().anchor();
+            var refusedWithout = withoutProvider.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), refusedWith,
+                            "refused with a provider, naming the close"),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), refusedWithout,
+                            "refused without a provider, naming the close"),
+                    () -> assertEquals(List.of(), observedWith.moved(), "no moved call with a provider"),
+                    () -> assertEquals(0, observedWith.unchangedCalls(), "no unchanged call with a provider"),
+                    () -> assertEquals(List.of(), observedWithout.moved(), "no moved call without a provider"),
+                    () -> assertEquals(0, observedWithout.unchangedCalls(), "no unchanged call without a provider"),
+                    () -> assertEquals(List.of(), withProvider.anchors().calls(), "the provider was not asked"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a due check of an open writer that moved nothing tells the observers once")
+        void openDueCheckThatMovedNothingCallsUnchangedOnce(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote, null, null, NO_RETRY)) {
+                var observer = observe(fixture.writer());
+
+                var anchoring = fixture.anchor();
+
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), anchoring,
+                                "nothing anchored without a provider"),
+                        () -> assertEquals(List.of(), observer.moved(), "no moved call"),
+                        () -> assertEquals(1, observer.unchangedCalls(), "one unchanged call"));
             }
         }
 

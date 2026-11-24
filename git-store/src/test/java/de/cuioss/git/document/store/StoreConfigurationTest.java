@@ -80,6 +80,12 @@ class StoreConfigurationTest {
 
     private static final RemotePolicy HTTPS = RemotePolicy.httpsOrigin(URI.create(ORIGIN));
 
+    /**
+     * The largest {@code drafts.expiry} in whole years that can be subtracted from the epoch in UTC: 1970 minus
+     * 1000001969 years is the year -999999999, the first year of {@link java.time.OffsetDateTime}.
+     */
+    static final String LARGEST_EXPIRY = "P1000001969Y";
+
     private static final TypedGenerator<String> ALIASES =
             Generators.uniqueValues(Generators.strings("abcdefghijklmnopqrstuvwxyz", 4, 16));
 
@@ -539,6 +545,35 @@ class StoreConfigurationTest {
             put(tree, key, StoreConfiguration.MAX_DURATION.toString());
 
             assertTrue(StoreConfiguration.from(tree, HTTPS).isOk(), "the bound itself is accepted");
+        }
+
+        /**
+         * A {@code drafts.expiry} that cannot be subtracted from the epoch in UTC: {@code P2147483647Y}, the largest
+         * year count a period holds, and {@code P1000001970Y}, one year beyond {@link #LARGEST_EXPIRY}, both leave the
+         * year range of {@link java.time.OffsetDateTime}.
+         */
+        @ParameterizedTest(name = "drafts.expiry = {0}")
+        @ValueSource(strings = {"P2147483647Y", "P1000001970Y"})
+        @DisplayName("a drafts.expiry beyond the range of a time is MALFORMED at configuration time, without its value")
+        void draftsExpiryBeyondBound(String value) {
+            var tree = minimal();
+            put(tree, "drafts.expiry", value);
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            assertMalformed("drafts.expiry is malformed", result);
+            assertNoneCarried(result, value, value.substring(1, value.length() - 1));
+        }
+
+        @ParameterizedTest(name = "drafts.expiry = {0}")
+        @ValueSource(strings = {LARGEST_EXPIRY, "P5000Y", "P30D"})
+        @DisplayName("a drafts.expiry at the bound, of several thousand years or of days is accepted as given")
+        void draftsExpiryWithinBound(String value) {
+            var tree = minimal();
+            put(tree, "drafts.expiry", value);
+
+            assertEquals(new Drafts(Period.parse(value)), configuration(StoreConfiguration.from(tree, HTTPS)).drafts(),
+                    "the period is read");
         }
 
         @ParameterizedTest(name = "{0} = [{1}]")

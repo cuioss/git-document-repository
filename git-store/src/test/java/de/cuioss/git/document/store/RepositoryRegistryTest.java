@@ -419,8 +419,14 @@ class RepositoryRegistryTest {
             }));
         }
 
+        /**
+         * An unencoded {@code ?} inside a password precedes an {@code @} that lies before the first {@code /}: the
+         * text is ambiguous (a password holding the delimiter, or a query holding an {@code @}), so the remote is
+         * rendered as {@code (malformed)}, the ambiguous-case result, and no part of it is rendered. Before the query
+         * and fragment hardening this case rendered scheme, host and path.
+         */
         @Test
-        @DisplayName("GDR-NFR-3: a question mark in a password does not decide the cut, no part of it is rendered")
+        @DisplayName("GDR-NFR-3: a question mark in a password makes the remote ambiguous, rendered as (malformed)")
         void questionMarkInPasswordRendersNoSecret() {
             var user = credential();
             var before = credential();
@@ -432,11 +438,82 @@ class RepositoryRegistryTest {
             var rendered = repository.toString();
 
             assertAll(
-                    () -> assertTrue(rendered.contains("remote=https://git.example/" + path + ".git,"),
-                            () -> "scheme, host and path: " + rendered),
+                    () -> assertTrue(rendered.contains("remote=(malformed),"), () -> "the ambiguous case: " + rendered),
                     () -> assertFalse(rendered.contains(user), "no user"),
                     () -> assertFalse(rendered.contains(before), "no part of the password before the question mark"),
-                    () -> assertFalse(rendered.contains(after), "no part of the password after the question mark"));
+                    () -> assertFalse(rendered.contains(after), "no part of the password after the question mark"),
+                    () -> assertFalse(rendered.contains(path), "no path"));
+        }
+
+        /**
+         * A query or a fragment that holds an {@code @}, with no {@code /} before it: the {@code @} is not the end of
+         * user information, and since the {@code ?} or {@code #} precedes it the remote is ambiguous and rendered as
+         * {@code (malformed)}. The host after the {@code @} is a valid host name, so a rendering that read the
+         * {@code @} as the end of user information would show it.
+         */
+        @Test
+        @DisplayName("GDR-NFR-3: an @ in a query or fragment without a path is never read as user information")
+        void atInQueryOrFragmentRendersMalformed() {
+            var secretHost = Generators.strings("abcdefghijklmnopqrstuvwxyz", 8, 16).next() + ".example";
+            var prefix = credential();
+            var fragment = credential();
+            var withQuery = ORIGIN + "?token=" + prefix + "@" + secretHost;
+            var withFragment = ORIGIN + "#" + fragment + "@" + secretHost;
+            var withBoth = ORIGIN + "?a=b#" + fragment + "@" + secretHost;
+
+            assertAll(Stream.of(withQuery, withFragment, withBoth).<Executable>map(remote -> () -> {
+                var rendered = repository(alias(), remote).toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains("remote=(malformed),"),
+                                () -> "the ambiguous case: " + rendered),
+                        () -> assertFalse(rendered.contains(secretHost), "no host after the @"),
+                        () -> assertFalse(rendered.contains(prefix), "no part of the query"),
+                        () -> assertFalse(rendered.contains(fragment), "no part of the fragment"),
+                        () -> assertFalse(rendered.contains("token"), "no query key"));
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an @ in a query after the path renders scheme, host and path without the query")
+        void atInQueryAfterPathRendersPath() {
+            var path = word();
+            var mailbox = credential();
+            var domain = Generators.strings("abcdefghijklmnopqrstuvwxyz", 8, 16).next() + ".example";
+            var repository = repository(alias(), ORIGIN + "/" + path + "?mail=" + mailbox + "@" + domain);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=" + ORIGIN + "/" + path + ","),
+                            () -> "scheme, host and path: " + rendered),
+                    () -> assertFalse(rendered.contains(mailbox), "no part of the query before the @"),
+                    () -> assertFalse(rendered.contains(domain), "no part of the query after the @"),
+                    () -> assertFalse(rendered.contains("mail="), "no query key"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an encoded fragment delimiter belongs to the path and stays")
+        void encodedFragmentDelimiterStays() {
+            var path = word();
+            var repository = repository(alias(), ORIGIN + "/" + path + "%23" + path + ".git");
+
+            assertTrue(repository.toString().contains("remote=" + ORIGIN + "/" + path + "%23" + path + ".git,"),
+                    repository::toString);
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a remote without a scheme renders its path without query and fragment")
+        void remoteWithoutSchemeRendersPath() {
+            var path = word();
+            var token = credential();
+            var repository = repository(alias(), "/" + path + "/" + path + ".git?token=" + token);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=/" + path + "/" + path + ".git,"),
+                            () -> "the path: " + rendered),
+                    () -> assertFalse(rendered.contains(token), "no query"));
         }
 
         @Test

@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
@@ -466,6 +467,49 @@ class StoreProvidersTest {
         }
 
         @Test
+        @DisplayName("GDR-GEN-3: the id of every signing candidate is read once per selection, also under signed")
+        void signingCandidateIdReadOncePerSelection() {
+            var commitKey = TestKeys.ed25519();
+            var anchorKey = TestKeys.ed25519();
+            var commitSource = new OnceIdSource(new KeyedSource(COMMIT_SOURCE, commitKey, commitReference), 1);
+            var anchorSource = new OnceIdSource(new KeyedSource(ANCHOR_SOURCE, anchorKey, anchorReference), 1);
+
+            var result = select(configuration(ANCHOR_SOURCE, anchorReference, null), commitSource, anchorSource);
+
+            var providers = providers(result);
+            var anchor = assertInstanceOf(SignedAnchorProvider.class, providers.anchor(), "the provider signed");
+            byte[] proof = Objects.requireNonNull(anchor.obtain("alias", ObjectId.zeroId(), Instant.now(),
+                    new byte[0]).value(), "a proof");
+            var signature = assertInstanceOf(SshSignatures.DecodedSignature.class,
+                    SshSignatures.decode(AnchorStatement.split(proof).orElseThrow().signature()), "the signature");
+            assertAll(
+                    () -> assertSame(commitSource, providers.signing(), "the commit-signing candidate"),
+                    () -> assertArrayEquals(anchorKey.publicKeyBlob(), signature.publicKeyBlob(),
+                            "the anchor key source is the other candidate"),
+                    () -> assertEquals(1, commitSource.idCalls(), "the commit-signing candidate is asked once"),
+                    () -> assertEquals(1, anchorSource.idCalls(), "the anchor key-source candidate is asked once"));
+        }
+
+        @Test
+        @DisplayName("GDR-GEN-3: a signing candidate whose first id() throws ends signed as MALFORMED, logging the class")
+        void signingCandidateIdThrowingFirstUnderSigned() {
+            var commitSource = new OnceIdSource(new KeyedSource(COMMIT_SOURCE, TestKeys.ed25519(), commitReference), 0);
+            var anchorSource = new OnceIdSource(new KeyedSource(ANCHOR_SOURCE, TestKeys.ed25519(), anchorReference),
+                    1);
+
+            var result = assertDoesNotThrow(() -> select(configuration(ANCHOR_SOURCE, anchorReference, null),
+                    commitSource, anchorSource), "the selection throws nothing");
+
+            assertRefused("SigningKeySource: a provider id cannot be read", result);
+            LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG, OnceIdSource.class.getName()
+                    + " of " + SigningKeySource.class.getName() + " failed with "
+                    + IllegalStateException.class.getName());
+            assertAll(
+                    () -> assertEquals(1, commitSource.idCalls(), "the failing candidate is asked once"),
+                    () -> assertSecretAbsent(OnceIdSource.MESSAGE, result));
+        }
+
+        @Test
         @DisplayName("GDR-STORE-18: a candidate anchor provider with the id signed is a duplicate")
         void duplicateSigned() {
             var result = StoreProviders.select(configuration(ANCHOR_SOURCE, anchorReference, null),
@@ -572,6 +616,47 @@ class StoreProvidersTest {
         public StoreResult<String> publicKey(String keyReference) {
             return references.contains(keyReference) ? StoreResult.ok(key.publicKeyLine())
                     : StoreResult.of(StoreOutcome.REFUSED, KeyedSource.UNEXPECTED_REFERENCE);
+        }
+    }
+
+    /**
+     * A signing key source that answers its {@code id()} a given number of times and throws on every later call, its
+     * message a marker that must reach no detail and no log record; signing and public keys go to the delegate.
+     */
+    private static final class OnceIdSource implements SigningKeySource {
+
+        /** The message of the thrown exception. */
+        static final String MESSAGE = "~" + Generators.letterStrings(12, 20).next() + "~";
+
+        private final SigningKeySource delegate;
+        private final int answers;
+        private final AtomicInteger calls = new AtomicInteger();
+
+        OnceIdSource(SigningKeySource delegate, int answers) {
+            this.delegate = delegate;
+            this.answers = answers;
+        }
+
+        @Override
+        public String id() {
+            if (calls.incrementAndGet() > answers) {
+                throw new IllegalStateException(MESSAGE);
+            }
+            return delegate.id();
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            return delegate.sign(keyReference, data);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            return delegate.publicKey(keyReference);
+        }
+
+        int idCalls() {
+            return calls.get();
         }
     }
 

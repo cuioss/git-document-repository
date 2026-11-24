@@ -16,6 +16,7 @@
 package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -401,6 +402,37 @@ class DraftExpiryTest {
                             () -> assertEquals(commitId, Objects.requireNonNull(draft).getObjectId().name(),
                                     "the draft is unchanged"),
                             () -> assertTrue(has(clone, ObjectId.fromString(commitId)), "its commit is present"));
+                }
+            }
+        }
+
+        /**
+         * The largest {@code drafts.expiry} the configuration accepts, {@link StoreConfigurationTest#LARGEST_EXPIRY},
+         * subtracted from the current time by the expiry: no draft is old enough, and the expiry neither throws nor
+         * fails.
+         */
+        @Test
+        @DisplayName("GDR-STORE-7: an expiry under the largest accepted drafts.expiry returns OK and throws nothing")
+        void largestAcceptedExpiryDoesNotThrow(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN, content(), time());
+            var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+            var gitDir = temp.resolve(word() + ".git");
+            var now = time();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.MAIN);
+
+            try (var writer = open(storeRepository, gitDir,
+                         configuration(Period.parse(StoreConfigurationTest.LARGEST_EXPIRY)), now)) {
+                var commitId = value(writer.draft(author, key, List.of(new TreeEdit.Put(word(), content())), word()));
+
+                var result = assertDoesNotThrow(() -> writer.expireDrafts(now), "the expiry throws nothing");
+
+                try (Repository clone = openRepository(gitDir)) {
+                    Ref draft = clone.exactRef(value(StoreReferences.draft(author.pseudonym(), key)));
+                    assertAll(
+                            () -> assertEquals(StoreResult.ok(List.<String>of()), result, "OK, no draft deleted"),
+                            () -> assertEquals(commitId, Objects.requireNonNull(draft, "the draft is kept")
+                                    .getObjectId().name(), "the draft is unchanged"));
                 }
             }
         }

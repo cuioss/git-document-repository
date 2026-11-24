@@ -864,9 +864,202 @@ class StoreIndexTest {
         }
     }
 
+    /**
+     * A contributor that records every document it is called for, blocks its first call for a document of one source
+     * once told to, until released (bounded), and runs an action once on its first call when given one.
+     */
+    private static final class Gate implements IndexContributor<String> {
+
+        private final List<DocumentKey> calls = Collections.synchronizedList(new ArrayList<>());
+        private final CountDownLatch inside = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicReference<@Nullable String> blockOn = new AtomicReference<>();
+        private final AtomicReference<@Nullable Runnable> once = new AtomicReference<>();
+
+        @Override
+        public String contribute(Document document) {
+            calls.add(document.key());
+            @Nullable Runnable action = once.getAndSet(null);
+            if (action != null) {
+                action.run();
+            }
+            @Nullable String source = blockOn.get();
+            if (source != null && source.equals(document.source()) && blockOn.compareAndSet(source, null)) {
+                inside.countDown();
+                try {
+                    assertTrue(release.await(WAIT_SECONDS, TimeUnit.SECONDS), "released");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return document.key().id();
+        }
+
+        void blockOn(String source) {
+            blockOn.set(source);
+        }
+
+        void runOnce(Runnable action) {
+            once.set(action);
+        }
+
+        boolean awaitInside() throws InterruptedException {
+            return inside.await(WAIT_SECONDS, TimeUnit.SECONDS);
+        }
+
+        void release() {
+            release.countDown();
+        }
+
+        List<DocumentKey> calls() {
+            synchronized (calls) {
+                return List.copyOf(calls);
+            }
+        }
+
+        void reset() {
+            calls.clear();
+        }
+    }
+
+    /** Whether a captured WARN record names an unread source of the index. */
+    private static boolean sourceUnreadLogged() {
+        String identifier = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString();
+        return TestLoggerFactory.getTestHandler().getRecords().stream()
+                .anyMatch(logRecord -> String.valueOf(logRecord.getMessage()).contains(identifier));
+    }
+
     @Nested
     @DisplayName("Serialisation, retry and log (GDR-STORE-9, GDR-NFR-3)")
     class Robustness {
+
+        /**
+         * A refresh that will end stale is blocked inside the contributor on {@code main}, the last source it reads, after
+         * the working branch failed to be read; an operation that moved nothing, issued on another thread meanwhile,
+         * waits for that refresh under the lock of the index and then retries it, now that the missing blob is present.
+         * Reading the stale flag without the lock, it would see the index current and skip the retry.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() during a refresh that ends stale waits for it and retries the refresh")
+        void unchangedDuringFailingRefreshWaitsAndRetries(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob,
+                        workingBefore);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                gate.blockOn(StoreReferences.MAIN);
+                var refresh = new Thread(() -> events.emit(List.of(
+                        new StoreEvents.Update(layout.workingBranch(), workingBefore.name(), broken.name()),
+                        new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(), mainMoved.name()))));
+                Thread retry = new Thread(() -> events.emit(List.of()));
+                boolean inside;
+                boolean failedFirst;
+                boolean waited;
+                try {
+                    refresh.start();
+                    inside = gate.awaitInside();
+                    failedFirst = sourceUnreadLogged();
+                    try (ObjectInserter inserter = repository.newObjectInserter()) {
+                        inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                        inserter.flush();
+                    }
+                    gate.reset();
+                    retry.start();
+                    ThreadStates.awaitParkedOrEnded(retry, WAIT_SECONDS);
+                    waited = retry.isAlive();
+                } finally {
+                    gate.release();
+                }
+                refresh.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+                retry.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertAll(
+                        () -> assertTrue(inside, "the refresh is inside the contributor on main"),
+                        () -> assertTrue(failedFirst, "the working branch failed before main was read"),
+                        () -> assertTrue(waited, "unchanged() waits for the running refresh"),
+                        () -> assertFalse(refresh.isAlive(), "the refresh ends"),
+                        () -> assertFalse(retry.isAlive(), "the unchanged() call ends"),
+                        () -> assertTrue(gate.calls().contains(layout.working()),
+                                "the retry calls the contributor for the document of the failed source"),
+                        () -> assertEquals(broken, tip(index, layout.workingBranch()),
+                                "the retried refresh indexes the working branch at its new tip"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() on a current index calls no contributor")
+        void unchangedOnCurrentIndexSkipsRebuild(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var built = gate.calls();
+                gate.reset();
+
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertFalse(built.isEmpty(), "the build called the contributor"),
+                        () -> assertEquals(List.of(), gate.calls(), "unchanged() rebuilt nothing"),
+                        () -> assertEquals(layout.mainTip(), tip(index, StoreReferences.MAIN), "main is unchanged"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() from the contributor's own thread during a refresh does not deadlock")
+        void unchangedFromContributorThreadDoesNotDeadlock(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                var returned = new CountDownLatch(1);
+                gate.runOnce(() -> {
+                    events.emit(List.of());
+                    returned.countDown();
+                });
+                var refresh = new Thread(() -> events.emit(List.of(
+                        new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(), mainMoved.name()))));
+                refresh.setDaemon(true);
+
+                refresh.start();
+                boolean reentered = returned.await(WAIT_SECONDS, TimeUnit.SECONDS);
+                refresh.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertAll(
+                        () -> assertTrue(reentered, "the nested unchanged() returns"),
+                        () -> assertFalse(refresh.isAlive(), "the refresh ends"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"));
+            }
+        }
 
         @Test
         @DisplayName("GDR-STORE-9: a snapshot during a refresh waits; no contributor is called by two threads at once")
