@@ -326,7 +326,7 @@ class OutputCheckTest {
 
         assertAll(
                 () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, document.outputPath()
-                        + ": too large, more than " + OutputCheck.MAX_FILE_BYTES + " bytes")), oversized,
+                                + ": too large, more than " + OutputCheck.MAX_FILE_BYTES + " bytes")), oversized,
                         "the output path and the bound"),
                 () -> assertTrue(smaller.isOk(), "a smaller expansion still generates"));
     }

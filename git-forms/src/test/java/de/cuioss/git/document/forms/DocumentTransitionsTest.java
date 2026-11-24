@@ -985,12 +985,12 @@ class DocumentTransitionsTest {
             value(fixture.writer().fetch());
             // another writer saves the document right after this save pushed, before the release fetches
             try (var subscription = fixture.writer().subscribe(target, (branch, commitId) -> {
-                if (moved.compareAndSet(false, true)) {
-                    saved[0] = ObjectId.fromString(commitId);
-                    commit(remote.repository(), target, Map.of(document, data("Other", "owner", "draft")),
-                            saved[0]);
-                }
-            })) {
+                     if (moved.compareAndSet(false, true)) {
+                         saved[0] = ObjectId.fromString(commitId);
+                         commit(remote.repository(), target, Map.of(document, data("Other", "owner", "draft")),
+                                 saved[0]);
+                     }
+                 })) {
                 var result = fixture.perform(Author.of("p-author"), MFA, key, "approve", List.of());
 
                 var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result);
