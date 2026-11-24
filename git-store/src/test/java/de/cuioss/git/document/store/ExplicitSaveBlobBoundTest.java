@@ -27,8 +27,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
-import org.eclipse.jgit.errors.IncorrectObjectTypeException;
-import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.internal.storage.dfs.DfsRepositoryDescription;
 import org.eclipse.jgit.internal.storage.dfs.InMemoryRepository;
 import org.eclipse.jgit.lib.AnyObjectId;
@@ -70,8 +68,7 @@ class ExplicitSaveBlobBoundTest {
         }
 
         @Override
-        public ObjectLoader open(AnyObjectId objectId, int typeHint)
-                throws MissingObjectException, IncorrectObjectTypeException, IOException {
+        public ObjectLoader open(AnyObjectId objectId, int typeHint) throws IOException {
             opens.incrementAndGet();
             return super.open(objectId, typeHint);
         }
