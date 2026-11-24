@@ -261,8 +261,9 @@ public final class AnchorVerification {
         // an unexpected failure reading the repository, or of the provider naming itself, ends the verification as a
         // result, never as an exception, naming the class of the failure only (GDR-STORE-17, GDR-NFR-3); the observer
         // rule of StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP33AtdQWIZKzKJz: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (IOException | RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") IOException | RuntimeException | Error e) {
             StoreEvents.rethrowIfFatal(e);
             return new StoreResult<>(new StoreResult.PassedOn(GitOutcome.FAILED), null,
                     "anchors: " + e.getClass().getSimpleName());
@@ -364,8 +365,9 @@ public final class AnchorVerification {
         }
         // a provider is pluggable code; its failure rejects the proof and never ends the verification; the observer
         // rule of StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP33AtdQWIZKzKJ0: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
             StoreEvents.rethrowIfFatal(e);
             LOGGER.debug("The anchor provider threw %s", e.getClass().getName());
             return StoreOutcome.SIGNATURE_INVALID;
@@ -460,9 +462,9 @@ public final class AnchorVerification {
      * as {@link Kind#CHECKPOINT_UNREADABLE}. The reachability of a listed object id from a reference is decided once
      * per verification for each tip the reference is observed at, keyed by the listed id, the reference name and that
      * tip, so a reference that moves during the run is decided again at its new tip, and one that stays unchanged is
-     * decided once however many checkpoints list it.
+     * decided once however many checkpoints list it. Package-private for the test of that cache.
      */
-    private static void listedReferences(Repository repository, RevWalk walk, RevCommit checkpoint,
+    static void listedReferences(Repository repository, RevWalk walk, RevCommit checkpoint,
             Map<String, Boolean> reached, List<Finding> findings) throws IOException {
         String content = new String(Checkpoints.content(repository, checkpoint), UTF_8);
         boolean unreadable = false;

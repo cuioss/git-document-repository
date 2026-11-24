@@ -278,8 +278,9 @@ final class AnchorEngine {
         }
         // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15); the
         // observer rule of StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP3eAtdQWIZKzKJp: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
             StoreEvents.rethrowIfFatal(e);
             LOGGER.debug("The anchor provider threw %s", e.getClass().getName());
             return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider failed");

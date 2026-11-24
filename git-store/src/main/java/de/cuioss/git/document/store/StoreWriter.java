@@ -121,6 +121,8 @@ public final class StoreWriter implements AutoCloseable {
      *         a path
      * @throws NullPointerException if an argument or a collection is {@code null}
      */
+    // operator-selected: AaIOFP3oAtdQWIZKzKJs: public API decided by the operator (collections argument)
+    @SuppressWarnings("java:S107")
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
             RepositoryOperations operations, Clock clock) {
@@ -147,6 +149,8 @@ public final class StoreWriter implements AutoCloseable {
      *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}
      * @throws NullPointerException if an argument or a collection is {@code null}
      */
+    // operator-selected: AaIOFP3oAtdQWIZKzKJt: public API decided by the operator (collections argument)
+    @SuppressWarnings("java:S107")
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
             RepositoryOperations operations, Clock clock) {

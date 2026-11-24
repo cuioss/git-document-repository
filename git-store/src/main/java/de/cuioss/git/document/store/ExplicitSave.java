@@ -474,8 +474,9 @@ final class ExplicitSave {
         }
         // a step that throws ends the save as a result, never as an exception (GDR-STORE-3); the observer rule of
         // StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP27AtdQWIZKzKJg: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
             StoreEvents.rethrowIfFatal(e);
             String type = e.getClass().getName();
             LOGGER.debug("The save step of the save onto %s threw %s", request.target(), type);

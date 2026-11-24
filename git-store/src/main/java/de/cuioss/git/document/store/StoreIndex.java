@@ -478,8 +478,9 @@ public final class StoreIndex<E> implements AutoCloseable {
         }
         // a failing contributor leaves its document out and never fails the refresh (GDR-STORE-9); the observer rule
         // of StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP3tAtdQWIZKzKJv: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
             StoreEvents.rethrowIfFatal(e);
             LOGGER.warn(GitStoreLogMessages.WARN.CONTRIBUTOR_FAILED, alias, key.collection().name(),
                     e.getClass().getName());

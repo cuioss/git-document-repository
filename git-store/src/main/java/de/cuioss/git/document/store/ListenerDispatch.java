@@ -307,8 +307,9 @@ final class ListenerDispatch implements StoreEvents.Observer {
             }
             // a failing listener never fails the save, release or fetch that triggered it (GDR-STORE-10); the observer
             // rule of StoreEvents isolates every Error but a VirtualMachineError
+            // operator-selected: AaIOFP3GAtdQWIZKzKJi: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
             // cui-rewrite:disable InvalidExceptionUsageRecipe
-            catch (RuntimeException | Error e) {
+            catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
                 StoreEvents.rethrowIfFatal(e);
                 LOGGER.warn(GitStoreLogMessages.WARN.LISTENER_FAILED, alias, branch, e.getClass().getName());
             } finally {

@@ -196,8 +196,9 @@ final class StoreEvents {
             call.run();
         }
         // a failing observer never fails the operation that emitted the events (GDR-STORE-9, GDR-STORE-10)
+        // operator-selected: AaIOFP2yAtdQWIZKzKJf: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException | Error e) {
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
             rethrowIfFatal(e);
             LOGGER.debug("An observer of the store events threw %s", e.getClass().getName());
         }

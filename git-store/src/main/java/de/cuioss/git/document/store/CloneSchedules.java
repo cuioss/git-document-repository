@@ -154,8 +154,9 @@ final class CloneSchedules {
             }
         }
         // a failure of one fetch must not end the schedule (GDR-STORE-9); a scheduled runner isolates every Throwable
+        // operator-selected: AaIOFP3iAtdQWIZKzKJq: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (Throwable e) {
+        catch (@SuppressWarnings("java:S1181") Throwable e) {
             LOGGER.warn(GitStoreLogMessages.WARN.PERIODIC_FETCH_FAILED, clone.alias(), e.getClass().getName());
         }
     }
@@ -248,8 +249,9 @@ final class CloneSchedules {
         }
         // a due check must never end the schedule nor fail the executor's thread (GDR-STORE-15); a scheduled runner
         // isolates every Throwable
+        // operator-selected: AaIOFP3iAtdQWIZKzKJr: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (Throwable e) {
+        catch (@SuppressWarnings("java:S1181") Throwable e) {
             LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, clone.alias(), e.getClass().getName());
         }
     }
