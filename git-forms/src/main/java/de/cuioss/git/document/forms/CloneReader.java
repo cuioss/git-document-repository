@@ -193,14 +193,17 @@ final class CloneReader {
             try (RevWalk walk = new RevWalk(repository);
                  TreeWalk file = TreeWalk.forPath(repository, path,
                          walk.parseCommit(ObjectId.fromString(commitId)).getTree())) {
-                if (file == null || FileMode.TREE.equals(file.getRawMode(0))
-                        || FileMode.GITLINK.equals(file.getRawMode(0))) {
+                if (file == null) {
                     return Optional.empty();
                 }
-                if (FileMode.EXECUTABLE_FILE.equals(file.getRawMode(0))) {
+                int rawMode = file.getRawMode(0);
+                if (FileMode.TREE.equals(rawMode) || FileMode.GITLINK.equals(rawMode)) {
+                    return Optional.empty();
+                }
+                if (FileMode.EXECUTABLE_FILE.equals(rawMode)) {
                     return Optional.of(TreeEdit.Mode.EXECUTABLE_FILE);
                 }
-                if (FileMode.SYMLINK.equals(file.getRawMode(0))) {
+                if (FileMode.SYMLINK.equals(rawMode)) {
                     return Optional.of(TreeEdit.Mode.SYMLINK);
                 }
                 return Optional.of(TreeEdit.Mode.REGULAR_FILE);

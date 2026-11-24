@@ -944,12 +944,15 @@ final class ExplicitSave {
                 return Optional.empty();
             }
             try (TreeWalk found = TreeWalk.forPath(repository, path, base.getTree())) {
-                if (found == null || FileMode.TREE.equals(found.getRawMode(0))
-                        || FileMode.GITLINK.equals(found.getRawMode(0))) {
+                if (found == null) {
+                    return Optional.empty();
+                }
+                int rawMode = found.getRawMode(0);
+                if (FileMode.TREE.equals(rawMode) || FileMode.GITLINK.equals(rawMode)) {
                     // a gitlink names a commit of another repository, no file of this tree: it has no file mode
                     return Optional.empty();
                 }
-                return Optional.of(DocumentRelease.mode(found.getRawMode(0)));
+                return Optional.of(DocumentRelease.mode(rawMode));
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
