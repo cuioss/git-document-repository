@@ -90,7 +90,7 @@ final class CloneOpening {
     static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
             RepositoryOperations operations, Clock clock) {
-        return checked(storeRepository, gitDir, user, configuration, collections, new Providers(signing, null),
+        return open(storeRepository, gitDir, user, configuration, collections, new Providers(signing, null),
                 operations, clock);
     }
 
@@ -113,11 +113,11 @@ final class CloneOpening {
             StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
             RepositoryOperations operations, Clock clock) {
         Objects.requireNonNull(providers, "providers");
-        return checked(storeRepository, gitDir, user, configuration, collections,
+        return open(storeRepository, gitDir, user, configuration, collections,
                 new Providers(providers.signing(), providers.anchor()), operations, clock);
     }
 
-    private static StoreResult<StoreClone> checked(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
+    private static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
             StoreConfiguration configuration, List<DocumentCollection> collections, Providers providers,
             RepositoryOperations operations, Clock clock) {
         Objects.requireNonNull(storeRepository, "storeRepository");
@@ -127,12 +127,6 @@ final class CloneOpening {
         Objects.requireNonNull(collections, "collections");
         Objects.requireNonNull(operations, "operations");
         Objects.requireNonNull(clock, "clock");
-        return open(storeRepository, gitDir, user, configuration, collections, providers, operations, clock);
-    }
-
-    private static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, List<DocumentCollection> collections, Providers providers,
-            RepositoryOperations operations, Clock clock) {
         if (!StoreReferences.collections(collections).isOk()) {
             // the detail of StoreReferences names the collection; the writer names the argument only
             return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.COLLECTIONS_DECLARED_TWICE);
