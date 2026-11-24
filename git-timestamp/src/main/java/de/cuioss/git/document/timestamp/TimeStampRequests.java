@@ -177,6 +177,17 @@ final class TimeStampRequests {
      * @throws Der.DerException if the token is no {@code SignedData} encapsulating a well-formed {@code TSTInfo}
      */
     static TstInfo tstInfo(byte[] token) throws Der.DerException {
+        return TstInfo.parse(tstContent(signedData(token)));
+    }
+
+    /**
+     * Reads the fields of the {@code SignedData} a token wraps (RFC 5652, 3 and 5.1).
+     *
+     * @param token the DER encoding of the {@code TimeStampToken}
+     * @return the fields of the {@code SignedData}, at least four
+     * @throws Der.DerException if the token is no {@code ContentInfo} of {@code id-signedData}
+     */
+    static List<Der.Element> signedData(byte[] token) throws Der.DerException {
         List<Der.Element> contentInfo = Der.parse(token.clone()).children(Der.SEQUENCE);
         if (contentInfo.size() != 2 || !ID_SIGNED_DATA.equals(contentInfo.getFirst().oid())) {
             throw new Der.DerException("not a signed data content info");
@@ -186,12 +197,23 @@ final class TimeStampRequests {
         if (signedData.size() < 4) {
             throw new Der.DerException("signed data incomplete");
         }
+        return signedData;
+    }
+
+    /**
+     * Reads the content octets of the {@code TSTInfo} a {@code SignedData} encapsulates (RFC 5652, 5.2; RFC 3161,
+     * 2.4.2).
+     *
+     * @param signedData the fields of the {@code SignedData}, as {@link #signedData(byte[])} returns them
+     * @return the DER encoding of the {@code TSTInfo}
+     * @throws Der.DerException if the encapsulated content is not a {@code TSTInfo}
+     */
+    static byte[] tstContent(List<Der.Element> signedData) throws Der.DerException {
         List<Der.Element> encapsulated = signedData.get(2).children(Der.SEQUENCE);
         if (encapsulated.size() != 2 || !ID_CT_TST_INFO.equals(encapsulated.getFirst().oid())) {
             throw new Der.DerException("not a TSTInfo");
         }
-        byte[] content = encapsulated.get(1).expect(Der.contextConstructed(0)).inner().octets();
-        return TstInfo.parse(content);
+        return encapsulated.get(1).expect(Der.contextConstructed(0)).inner().octets();
     }
 
     /**
@@ -257,7 +279,7 @@ final class TimeStampRequests {
     }
 
     /**
-     * The fields of a {@code TSTInfo} the provider checks (RFC 3161, 2.4.2), and its encoding.
+     * The fields of a {@code TSTInfo} the provider checks (RFC 3161, 2.4.2).
      */
     static final class TstInfo {
 
@@ -265,15 +287,12 @@ final class TimeStampRequests {
         private final byte[] hashedMessage;
         private final @Nullable BigInteger nonce;
         private final Instant genTime;
-        private final byte[] encoded;
 
-        private TstInfo(String hashAlgorithm, byte[] hashedMessage, @Nullable BigInteger nonce, Instant genTime,
-                byte[] encoded) {
+        private TstInfo(String hashAlgorithm, byte[] hashedMessage, @Nullable BigInteger nonce, Instant genTime) {
             this.hashAlgorithm = hashAlgorithm;
             this.hashedMessage = hashedMessage;
             this.nonce = nonce;
             this.genTime = genTime;
-            this.encoded = encoded;
         }
 
         /**
@@ -307,7 +326,7 @@ final class TimeStampRequests {
                     nonce = field.integer();
                 }
             }
-            return new TstInfo(algorithm, hashed, nonce, genTime, encoded.clone());
+            return new TstInfo(algorithm, hashed, nonce, genTime);
         }
 
         /**
@@ -347,11 +366,6 @@ final class TimeStampRequests {
         /** @return the time the token states */
         Instant genTime() {
             return genTime;
-        }
-
-        /** @return a copy of the DER encoding of the {@code TSTInfo} */
-        byte[] encoded() {
-            return encoded.clone();
         }
 
         /**

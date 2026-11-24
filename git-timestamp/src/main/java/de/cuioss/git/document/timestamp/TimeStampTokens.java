@@ -183,26 +183,13 @@ final class TimeStampTokens {
 
     private static TimeStampRequests.TstInfo check(byte[] token, List<X509Certificate> trust)
             throws Der.DerException, Rejected {
-        // RFC 5652, 3: ContentInfo ::= SEQUENCE { contentType, content [0] EXPLICIT }
-        List<Der.Element> contentInfo = Der.parse(token).children(Der.SEQUENCE);
-        if (contentInfo.size() != 2 || !TimeStampRequests.ID_SIGNED_DATA.equals(contentInfo.getFirst().oid())) {
-            throw new Der.DerException("not a signed data content info");
-        }
         // RFC 5652, 5.1: SignedData ::= SEQUENCE { version, digestAlgorithms, encapContentInfo,
         // certificates [0] IMPLICIT OPTIONAL, crls [1] IMPLICIT OPTIONAL, signerInfos }
-        List<Der.Element> signedData = contentInfo.get(1).expect(Der.contextConstructed(0)).inner()
-                .children(Der.SEQUENCE);
-        if (signedData.size() < 4) {
-            throw new Der.DerException("signed data incomplete");
-        }
+        List<Der.Element> signedData = TimeStampRequests.signedData(token);
         signedData.getFirst().integer();
         signedData.get(1).children(Der.SET);
         // RFC 5652, 5.2 and RFC 3161, 2.4.2: the encapsulated content is a TSTInfo
-        List<Der.Element> encapsulated = signedData.get(2).children(Der.SEQUENCE);
-        if (encapsulated.size() != 2 || !TimeStampRequests.ID_CT_TST_INFO.equals(encapsulated.getFirst().oid())) {
-            throw new Der.DerException("not a TSTInfo");
-        }
-        byte[] content = encapsulated.get(1).expect(Der.contextConstructed(0)).inner().octets();
+        byte[] content = TimeStampRequests.tstContent(signedData);
         TimeStampRequests.TstInfo info = TimeStampRequests.TstInfo.parse(content);
         List<X509Certificate> carried = new ArrayList<>();
         for (Der.Element field : signedData.subList(3, signedData.size() - 1)) {
