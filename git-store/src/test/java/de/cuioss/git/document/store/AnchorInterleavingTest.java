@@ -87,7 +87,8 @@ import org.junit.jupiter.api.io.TempDir;
  * {@link ScriptedRepositoryOperations} runs a concurrent save right before a push of the due check,
  * {@link ScriptedAnchorProvider} right before a proof is answered; {@link ThreadStates} waits until the save parks.
  * Every test has one deadline from which every wait takes what is left; a task still running at the deadline is
- * cancelled and its executor stopped with {@code shutdownNow} and {@code awaitTermination}, so no thread outlives it.
+ * cancelled and its executor stopped with {@code shutdownNow} and {@code awaitTermination}; every thread is a daemon,
+ * so one stuck on a lock of the clone, which no interrupt breaks, fails the test and does not keep the JVM alive.
  * Names, ids and contents are generated; the reference layout is the specified vocabulary and kept as literals.
  */
 @EnableGeneratorController
@@ -266,24 +267,37 @@ class AnchorInterleavingTest {
         }
     }
 
+    /** How the tasks of an executor ended. */
+    private enum Stopped {
+
+        /** Every task ended within the deadline. */
+        ENDED,
+
+        /** A task was still running at the deadline and ended once cancelled. */
+        CANCELLED,
+
+        /** A task did not end even once cancelled: it waits on a lock that no interrupt breaks. */
+        STUCK
+    }
+
     /**
      * Ends the tasks of an executor by the deadline: an orderly shutdown and a wait for what is left of the deadline;
-     * a task still running then is cancelled and interrupted ({@code shutdownNow}), and the executor is awaited again,
-     * so no thread outlives the test.
+     * a task still running then is cancelled and interrupted ({@code shutdownNow}), and the executor is awaited again
+     * with its own grace period. The locks of the clone are not interruptible, so a task stuck on one survives the
+     * cancel; the outcome says so instead of asserting it, so the caller can leave the writer open, whose close would
+     * wait for the same lock.
      *
-     * @return whether every task ended within the deadline
+     * @return how the tasks ended
      */
-    private static boolean stop(ExecutorService executor, List<Future<?>> tasks, Deadline deadline)
+    private static Stopped stop(ExecutorService executor, List<Future<?>> tasks, Deadline deadline)
             throws InterruptedException {
         executor.shutdown();
-        boolean ended = executor.awaitTermination(deadline.remainingNanos(), TimeUnit.NANOSECONDS);
-        if (!ended) {
-            tasks.forEach(task -> task.cancel(true));
-            executor.shutdownNow();
-            assertTrue(executor.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS),
-                    "the cancelled tasks end once interrupted");
+        if (executor.awaitTermination(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
+            return Stopped.ENDED;
         }
-        return ended;
+        tasks.forEach(task -> task.cancel(true));
+        executor.shutdownNow();
+        return executor.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS) ? Stopped.CANCELLED : Stopped.STUCK;
     }
 
     /** A save on its own thread; its result or failure is kept for the test. */
@@ -304,6 +318,8 @@ class AnchorInterleavingTest {
                     failure.set(e);
                 }
             });
+            // a save stuck on a lock of the clone must not keep the JVM alive
+            thread.setDaemon(true);
         }
 
         /**
@@ -377,6 +393,8 @@ class AnchorInterleavingTest {
             assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
             dueCheck.start();
             ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            // the step holds the transport lock until the latch is counted down, so a parked due check stays WAITING
+            assertEquals(Thread.State.WAITING, dueCheck.getState(), "the due check parks on the transport lock");
             dueCheckParked.countDown();
             TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
             TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
@@ -441,6 +459,8 @@ class AnchorInterleavingTest {
             assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
             dueCheck.start();
             ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            // the step holds the transport lock until the latch is counted down, so a parked due check stays WAITING
+            assertEquals(Thread.State.WAITING, dueCheck.getState(), "the due check parks on the transport lock");
             dueCheckParked.countDown();
             TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
             TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
@@ -531,12 +551,20 @@ class AnchorInterleavingTest {
         int savesPerWriter = 4;
         int dueChecks = 6;
 
-        try (var fixture = open(remote)) {
+        var fixture = open(remote);
+        // a worker stuck on a lock of the clone survives its cancel, and closing the writer would wait for that lock,
+        // so the fixture is closed only when the pool terminated
+        boolean terminated = false;
+        try {
             List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
             var deadline = Deadline.in(TIMEOUT_SECONDS);
-            ExecutorService executor = Executors.newFixedThreadPool(keys.size() + 1);
+            ExecutorService executor = Executors.newFixedThreadPool(keys.size() + 1, runnable -> {
+                var worker = new Thread(runnable, "interleaving-worker");
+                worker.setDaemon(true);
+                return worker;
+            });
             List<Future<?>> tasks = new ArrayList<>();
-            boolean ended;
+            Stopped stopped;
             try {
                 for (DocumentKey key : keys) {
                     tasks.add(executor.submit(() -> {
@@ -568,10 +596,17 @@ class AnchorInterleavingTest {
                     }
                 }));
             } finally {
-                ended = stop(executor, tasks, deadline);
+                stopped = stop(executor, tasks, deadline);
             }
-            assertTrue(ended, "every save and due check ended within the one deadline");
+            terminated = stopped != Stopped.STUCK;
+            assertTrue(terminated, "a worker did not end even once cancelled; the writer is left open, since its "
+                    + "close would wait for the lock the worker holds");
+            assertEquals(Stopped.ENDED, stopped, "every save and due check ended within the one deadline");
             assertEquals(List.of(), failures, "no save and no due check failed");
+            for (Future<?> task : tasks) {
+                // a throwable the catch clauses of a task do not take is stored in its future
+                task.get();
+            }
             fixture.clock().advance(INTERVAL);
             value(fixture.writer().anchor());
             var settled = value(fixture.writer().anchor());
@@ -611,6 +646,10 @@ class AnchorInterleavingTest {
                                     "each checkpoint follows the previous one");
                         }
                     });
+        } finally {
+            if (terminated) {
+                fixture.close();
+            }
         }
     }
 }

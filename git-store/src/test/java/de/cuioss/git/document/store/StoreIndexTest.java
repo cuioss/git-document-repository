@@ -1178,15 +1178,147 @@ class StoreIndexTest {
                 assertAll(
                         () -> assertFalse(bounded.get(), "the contributor never reached the re-entry bound"),
                         () -> assertEquals(workingBefore, staleAfterMove, "the unreadable source keeps its tip"),
-                        () -> assertTrue(failingRetryCalls < REENTRY_BOUND,
-                                () -> "a retry that still fails calls the contributor one pass at most: "
-                                        + failingRetryCalls),
+                        // the missing blob fails the read of the working branch before its document reaches the
+                        // contributor, and every other source is current, so the failing retry calls it for nothing
+                        () -> assertEquals(0, failingRetryCalls,
+                                "a retry that still fails calls the contributor for no document"),
                         () -> assertEquals(workingBefore, staleAfterFailingRetry,
                                 "a retry that still fails keeps the index stale"),
-                        () -> assertTrue(recoveringRetryCalls > 0 && recoveringRetryCalls < REENTRY_BOUND,
-                                () -> "the next operation retries in one pass: " + recoveringRetryCalls),
+                        // the recovering retry re-reads the one changed document of the working branch; its nested
+                        // no-move call is deferred, so no second pass calls the contributor again
+                        () -> assertEquals(1, recoveringRetryCalls,
+                                "the next operation retries in one pass, the restored document read once"),
                         () -> assertEquals(broken, recovered, "the retry indexes the restored source"),
                         () -> assertEquals(0, currentCalls, "the outer refresh cleared the stale mark"));
+            }
+        }
+
+        /**
+         * Finding 7e7455: the refresh after a move of {@code main} has read the references, the working branch still at
+         * B, when its contributor moves the working branch to C and reports the move on the same thread. Without the
+         * deferral of a nested move, the nested refresh published C, the outer refresh then published its own index with
+         * the working branch at B and cleared the stale mark, and the next no-move operation refreshed nothing: the
+         * assertion "the next no-move operation indexes the working branch at C" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a move reported from a contributor leaves the overtaken refresh stale, not older")
+        void nestedMoveLeavesOvertakenRefreshStale(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                AtomicReference<@Nullable ObjectId> workingMoved = new AtomicReference<>();
+                gate.reset();
+                gate.runOnce(() -> {
+                    var moved = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                            Map.of(path(layout.working(), ".json"), content())), workingBefore);
+                    workingMoved.set(moved);
+                    events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingBefore.name(),
+                            moved.name())));
+                });
+
+                events.emit(List.of(new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(),
+                        mainMoved.name())));
+                var outerCalls = gate.calls();
+                var workingAfterOuter = tip(index, layout.workingBranch());
+                gate.reset();
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertEquals(List.of(layout.released()), outerCalls,
+                                "the outer refresh calls the contributor for its one changed document, no nested pass"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"),
+                        () -> assertEquals(workingBefore, workingAfterOuter,
+                                "the outer refresh publishes the working branch it read"),
+                        () -> assertEquals(Objects.requireNonNull(workingMoved.get(), "the contributor moved"),
+                                tip(index, layout.workingBranch()),
+                                "the next no-move operation indexes the working branch at C"),
+                        () -> assertEquals(List.of(layout.working()), gate.calls(),
+                                "the retry reads the moved document"));
+            }
+        }
+
+        /**
+         * The counterpart of {@link #nestedMoveLeavesOvertakenRefreshStale}: a refresh that no nested move overtook
+         * publishes its result current, and the next no-move operation rebuilds nothing.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a refresh without a nested move stays current; the next no-move call rebuilds nothing")
+        void refreshWithoutNestedMoveStaysCurrent(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                events.emit(List.of(new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(),
+                        mainMoved.name())));
+                gate.reset();
+
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"),
+                        () -> assertEquals(List.of(), gate.calls(), "the next no-move operation rebuilt nothing"));
+            }
+        }
+
+        /**
+         * Finding 7e7455 through another index: the contributor of a snapshot of index A moves the working branch and
+         * reports the move. Without the deferral of a nested move, index B refreshed inside A's snapshot as the nested
+         * observer, so the assertion "B's contributor is not called inside A's snapshot" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a move reported from a snapshot's contributor defers the refresh of another index")
+        void nestedMoveFromSnapshotDefersOtherIndex(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gateA = new Gate();
+            var gateB = new Gate();
+
+            try (var a = direct(repository, layout, gateA, events); var b = direct(repository, layout, gateB, events)) {
+                var before = tip(b, layout.workingBranch());
+                AtomicReference<@Nullable ObjectId> moved = new AtomicReference<>();
+                AtomicReference<@Nullable List<DocumentKey>> callsOfBDuring = new AtomicReference<>();
+                gateA.reset();
+                gateB.reset();
+                gateA.runOnce(() -> {
+                    var next = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                            Map.of(path(layout.working(), ".json"), content())), before);
+                    moved.set(next);
+                    events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), next.name())));
+                    callsOfBDuring.set(gateB.calls());
+                });
+
+                var snapshot = a.snapshot(layout.mainTip().name());
+                var staleAfterSnapshot = tip(b, layout.workingBranch());
+                events.emit(List.of());
+                var movedTip = Objects.requireNonNull(moved.get(), "the contributor moved");
+
+                assertAll(
+                        () -> assertTrue(snapshot.isOk(), "the snapshot of index A is built"),
+                        () -> assertEquals(List.of(), callsOfBDuring.get(),
+                                "B's contributor is not called inside A's snapshot"),
+                        () -> assertEquals(before, staleAfterSnapshot, "B stays stale until the next operation"),
+                        () -> assertEquals(movedTip, tip(b, layout.workingBranch()),
+                                "the next no-move operation refreshes B to the new tip"),
+                        () -> assertEquals(movedTip, tip(a, layout.workingBranch()), "and refreshes A"));
             }
         }
 
