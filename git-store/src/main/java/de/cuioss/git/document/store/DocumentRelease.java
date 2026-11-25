@@ -37,7 +37,6 @@ import de.cuioss.git.document.core.RepositoryOperations.PushInput;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.AnyObjectId;
-import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -73,12 +72,20 @@ import org.jspecify.annotations.Nullable;
  * release, however it imitates the subject and the trailers. The shape tells a release from a commit written before that
  * refusal or by another writer: a per-document release has the tip of the working branch at its time as its second parent (or, onto an
  * absent {@code main}, as its only parent with the same tree), reachable from the working branch now; a numbered release
- * has at most one parent and changes no path outside the entry. Otherwise the attempt merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
+ * has at most one parent and changes no path outside the entry. Such a repair of an {@link StoreOutcome#INCOMPLETE}
+ * release reports in {@link Release#branchMovedOn()} whether the working or collection branch moved on since the
+ * released commit, so the caller learns that the release does not hold the latest saved state. Otherwise the attempt
+ * merges in core: for a per-document collection {@link InCoreMerger} merges the working branch into
  * {@code main}, and the release commit has the tip of {@code main} and the tip of the working branch as its parents and
  * the edits from the tree of {@code main} to the merged tree; for a numbered collection only the paths of the entry
- * ({@link DocumentPaths}) are taken from the collection branch onto {@code main}, the only parent. Every changed file
- * keeps its mode, so an executable file or a symbolic link of the source stays one ({@link TreeEdit.Mode}). A
- * conflicting merge
+ * ({@link DocumentPaths}) are taken from the collection branch onto {@code main}, the only parent, a path-level copy
+ * with conflict check: every path the copy would change is first compared on {@code main} with the commit of the
+ * previous release {@code v<n-1>} (with the empty tree for the first release), and a path {@code main} changed since
+ * ends the release with the passed-on {@link GitOutcome#CONFLICT} naming the number of such paths, nothing written.
+ * Every changed file keeps its mode, so an executable file or a symbolic link of the source stays one
+ * ({@link TreeEdit.Mode}). A path the release would set to a gitlink (a submodule entry, mode {@code 160000}) ends the
+ * release with {@link StoreOutcome#MALFORMED} and the detail {@value #GITLINK}, before any blob is read:
+ * {@link TreeEdit.Mode} carries no gitlink, so {@code git-core} cannot write one. A conflicting merge
  * ends the release with the passed-on {@link GitOutcome#CONFLICT} naming the number of conflicting paths. The commit is
  * written by {@link InCoreWriter} with the author and committer of {@link CommitIdentities}, the trailers, and the
  * signing of {@link CommitSignatures} (GDR-STORE-12); {@link #metadata} is the one place that builds its metadata. The
@@ -103,28 +110,41 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The local tag is written by an update that expects it absent and writes no reflog. Then {@code main} is pushed with
  * the lease of the fetched tip (the zero id for an absent {@code main}), and after that the tag against the zero-id
- * lease. {@code git-core} pushes one reference per call, so the two pushes are not atomic: when {@code main} was
- * accepted and the tag push failed, the release is {@link StoreOutcome#INCOMPLETE}, and a repeated release creates the
- * missing tag. A lease refusal of {@code main} starts the next attempt from the fetch, up to the configured attempts,
- * then the release is {@link GitOutcome#REJECTED}; a rejection of {@code main}, for example by a protected branch, ends
- * the release at once as {@link GitOutcome#REJECTED}. A local tag whose push never happened is pruned by the next
- * fetch, since the remote lacks it; no tag on the remote is ever moved or deleted.
+ * lease. {@code git-core} pushes one reference per call, so the two pushes are not atomic. When the remote refuses
+ * the tag ({@link GitOutcome#LEASE_REFUSED} or {@link GitOutcome#REJECTED}), the attempt fetches that one tag, still
+ * under the transport lock, and reads it from the result of that fetch: a tag the remote already holds at the released
+ * commit, for example pushed by an earlier attempt whose answer was lost, makes the release complete
+ * ({@link StoreOutcome#OK}); a tag the remote holds at another commit, or a tag push that failed for another reason,
+ * leaves the release {@link StoreOutcome#INCOMPLETE}, and a repeated release creates the missing tag. A lease refusal
+ * of {@code main} starts the next attempt from the fetch, up to the configured attempts, then the release is
+ * {@link GitOutcome#REJECTED}; the local tag of that attempt is pruned by the next fetch, since the remote lacks it. Every
+ * other failure of the push of {@code main}, for example a rejection by a protected branch, ends the release at once
+ * with its passed-on outcome and deletes the local tag of the attempt, expecting the release commit, so no local tag
+ * points at a commit the remote never accepted. No tag on the remote is ever moved or deleted.
  * <p>
  * After the release released every lock, the references its fetches moved in the clone, the release commit its push
  * placed on {@code main} and its pushed tag are emitted to the {@link StoreEvents} of the writer, so the index
  * refreshes (GDR-STORE-9).
  * <p>
- * A detail names a reference or a field, never a path, a content or a pseudonym (GDR-NFR-3).
+ * Every blob the release copies from the fetched working or collection branch is read bounded by
+ * {@link ExplicitSave#BLOB_LIMIT}; a larger one ends the attempt like an unreadable object, as the passed-on
+ * {@link GitOutcome#FAILED} naming the class of the exception.
+ * <p>
+ * A detail names a reference or a field, never a path, a content or a pseudonym, and an exception by its class name
+ * ({@link Class#getName()}) only (GDR-NFR-3).
  */
 final class DocumentRelease {
 
     private static final CuiLogger LOGGER = new CuiLogger(DocumentRelease.class);
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
-
     /** The detail of a key of content without release. */
     private static final String NO_RELEASE = "key: content without release";
+
+    /** The detail of a release that would write a gitlink; it names the class of the path, never the path. */
+    static final String GITLINK = "entry: a gitlink path cannot be released";
+
+    /** The detail suffix of a numbered release whose paths {@code main} changed since the previous release. */
+    private static final String CHANGED_ON_MAIN = " paths changed on main since the previous release";
 
     /**
      * The form of the subject of a release of any document: a collection name ({@code [a-z0-9-]+}), an id
@@ -179,14 +199,16 @@ final class DocumentRelease {
      * @param expectedCommitId the full commit id the working or collection branch must point to on every attempt that
      *                         writes a release commit, which is then the merge input; {@code null} to release the tip
      *                         of the branch as each attempt finds it
-     * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} when {@code main} moved
-     *         and the tag is missing; {@link StoreOutcome#MALFORMED} for content without release, an invalid
-     *         pseudonym or an expected commit id that is no full commit id; {@link StoreOutcome#REFUSED} or
-     *         {@link StoreOutcome#UNAVAILABLE} of the signing key source; the passed-on {@link GitOutcome#NOT_FOUND}
-     *         for a missing working or collection branch, {@link GitOutcome#CONFLICT} for a conflicting merge or a
-     *         branch that no longer points to the expected commit, {@link GitOutcome#REJECTED} for a rejected push of
-     *         {@code main} or after every attempt lost its lease, or the passed-on outcome that ended the release, for
-     *         example {@link GitOutcome#UNREACHABLE}
+     * @return {@link StoreOutcome#OK} with the {@link Release}, also when the remote refused the tag because it already
+     *         holds it at the released commit; {@link StoreOutcome#INCOMPLETE} when {@code main} moved and the tag is
+     *         missing or held at another commit; {@link StoreOutcome#MALFORMED} for content without release, an
+     *         invalid pseudonym, an expected commit id that is no full commit id or a gitlink among the paths
+     *         ({@value #GITLINK}); {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} of the signing key
+     *         source; the passed-on {@link GitOutcome#NOT_FOUND} for a missing working or collection branch,
+     *         {@link GitOutcome#CONFLICT} for a conflicting merge, a branch that no longer points to the expected
+     *         commit, or a numbered entry whose paths {@code main} changed since the previous release,
+     *         {@link GitOutcome#REJECTED} for a rejected push of {@code main} or after every attempt lost its lease, or
+     *         the passed-on outcome that ended the release, for example {@link GitOutcome#UNREACHABLE}
      * @throws NullPointerException if {@code author}, {@code claims} or {@code key} is {@code null}
      */
     StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key,
@@ -240,7 +262,7 @@ final class DocumentRelease {
     private Optional<StoreResult<Release>> attempt(Request request, CommitSignatures.Lazy lazySigning) {
         Repository repository = clone.repository();
         try {
-            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                     .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                     .prune(true).build());
             if (!fetched.isOk()) {
@@ -261,11 +283,13 @@ final class DocumentRelease {
             if (merged != null) {
                 LOGGER.debug("The release %s is on %s without its tag; pushing the tag only", tag,
                         StoreReferences.MAIN);
-                return Optional.of(tagAndPush(request, merged, tag, version));
+                return Optional.of(tagAndPush(request, merged, tag, version,
+                        movedOn(repository, merged, request.key(), source)));
             }
-            return checkedAndWritten(request, new Attempt(main, source, version, tag, message), lazySigning);
+            return checkedAndWritten(request,
+                    new Attempt(main, source, versions.previous(), version, tag, message), lazySigning);
         } catch (IOException e) {
-            String type = e.getClass().getSimpleName();
+            String type = e.getClass().getName();
             LOGGER.debug("I/O failure of the release of %s: %s", request.source(), type);
             return Optional.of(passedOn(GitOutcome.FAILED, request.source() + ": " + type));
         }
@@ -293,20 +317,26 @@ final class DocumentRelease {
         // A pinned release merges the pinned commit itself: an object id names one commit, whatever the branch does
         // after this attempt's fetch.
         Attempt input = pinned == null ? state
-                : new Attempt(state.main(), pinned, state.version(), state.tag(), state.message());
+                : new Attempt(state.main(), pinned, state.previous(), state.version(), state.tag(), state.message());
         return mergeAndPush(request, input, Objects.requireNonNull(prepared.value()));
     }
 
     /**
      * Writes the signed release commit, tags it and pushes {@code main} with the lease of the fetched tip, then the tag.
+     * A failure of the push of {@code main} other than a lost lease deletes the local tag again.
      *
      * @return the result of the release, or empty when the push of {@code main} lost its lease
      */
     private Optional<StoreResult<Release>> mergeAndPush(Request request, Attempt state,
             CommitSignatures.Prepared signing) throws IOException {
         Repository repository = clone.repository();
-        GitResult<String> written = write(repository, request, state.main(), state.source(),
-                metadata(request.author(), request.claims(), state.message(), signing));
+        StoreResult<List<TreeEdit>> edits = releaseEdits(repository, request, state);
+        if (!edits.isOk()) {
+            return Optional.of(new StoreResult<>(edits.outcome(), null, edits.detail()));
+        }
+        GitResult<String> written = writer.write(repository, parents(request.key(), state),
+                metadata(request.author(), request.claims(), state.message(), signing),
+                Objects.requireNonNull(edits.value()));
         if (!written.isOk()) {
             Optional<StoreResult<Release>> unsigned = committing.signatures().outcomeOf(written, signing,
                     request.source());
@@ -318,65 +348,108 @@ final class DocumentRelease {
         }
         @Nullable ObjectId main = state.main();
         ObjectId lease = main == null ? ObjectId.zeroId() : main;
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN)
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                 .localRef(commit.name()).remoteRef(StoreReferences.MAIN).expectedRemoteHead(lease.name())
                 .credentials(user.credentials()).build());
         if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
             return Optional.empty();
         }
         if (!pushed.isOk()) {
+            deleteTag(repository, state.tag(), commit);
             return Optional.of(StoreResult.passOn(pushed));
         }
         request.updates().add(StoreEvents.Update.pushed(StoreReferences.MAIN, lease.name(), commit.name()));
         moveMain(repository, lease, commit);
-        return Optional.of(pushTag(request, state.tag(), commit, state.version()));
+        return Optional.of(pushTag(request, state.tag(), commit, state.version(), false));
     }
 
     /** Creates the missing local tag of a merged release and pushes it. */
-    private StoreResult<Release> tagAndPush(Request request, ObjectId commit, String tag, int version)
-            throws IOException {
+    private StoreResult<Release> tagAndPush(Request request, ObjectId commit, String tag, int version,
+            boolean branchMovedOn) throws IOException {
         if (!createTag(clone.repository(), tag, commit)) {
             return passedOn(GitOutcome.REJECTED, tag + ": exists");
         }
-        return pushTag(request, tag, commit, version);
+        return pushTag(request, tag, commit, version, branchMovedOn);
     }
 
     /**
-     * Pushes the tag against the zero-id lease; after {@code main} moved on the remote, a failure is
-     * {@link StoreOutcome#INCOMPLETE}.
+     * Pushes the tag against the zero-id lease. A refused push reads the remote tag by a fetch of that one tag, under
+     * the transport lock the attempt holds: at the released commit the release is complete; otherwise, after
+     * {@code main} moved on the remote, a failure is {@link StoreOutcome#INCOMPLETE}.
      */
-    private StoreResult<Release> pushTag(Request request, String tag, ObjectId commit, int version) {
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit.name())
+    private StoreResult<Release> pushTag(Request request, String tag, ObjectId commit, int version,
+            boolean branchMovedOn) {
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN).localRef(commit.name())
                 .remoteRef(tag).expectedRemoteHead(ObjectId.zeroId().name()).credentials(user.credentials())
                 .build());
-        if (!pushed.isOk()) {
-            LOGGER.debug("The push of the release tag %s failed: %s", tag, pushed.outcome());
-            LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_INCOMPLETE, clone.alias(), tag, commit.name());
-            return StoreResult.of(StoreOutcome.INCOMPLETE, tag + ": not pushed (" + pushed.outcome().name() + ")");
+        if (pushed.isOk()) {
+            request.updates().add(StoreEvents.Update.pushed(tag, ObjectId.zeroId().name(), commit.name()));
+            return StoreResult.ok(new Release(tag, commit.name(), version, branchMovedOn));
         }
-        request.updates().add(StoreEvents.Update.pushed(tag, ObjectId.zeroId().name(), commit.name()));
-        return StoreResult.ok(new Release(tag, commit.name(), version));
+        boolean refused = pushed.outcome() == GitOutcome.LEASE_REFUSED || pushed.outcome() == GitOutcome.REJECTED;
+        if (refused && remoteTagAt(request, tag, commit)) {
+            LOGGER.debug("The release tag %s was refused because the remote holds it at the released commit", tag);
+            return StoreResult.ok(new Release(tag, commit.name(), version, branchMovedOn));
+        }
+        LOGGER.debug("The push of the release tag %s failed: %s", tag, pushed.outcome());
+        LOGGER.warn(GitStoreLogMessages.WARN.RELEASE_INCOMPLETE, clone.alias(), tag, commit.name());
+        return StoreResult.of(StoreOutcome.INCOMPLETE, tag + ": not pushed (" + pushed.outcome().name() + ")");
     }
 
     /**
-     * Writes the release commit: for a per-document collection the merge of the working branch into {@code main}, for
-     * a numbered collection the entry's paths of the collection branch onto {@code main}.
+     * Whether the remote holds the tag at the commit: the result of a fetch of that one tag into the local tag, so the
+     * clone mirrors the remote tag afterwards. A failed fetch, a tag the remote lacks among it, is no evidence and
+     * answers {@code false}.
      */
-    private GitResult<String> write(Repository repository, Request request, @Nullable ObjectId main, ObjectId source,
-            CommitMetadata metadata) throws IOException {
+    private boolean remoteTagAt(Request request, String tag, ObjectId commit) {
+        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
+                .refSpecs(List.of("+" + tag + ":" + tag)).credentials(user.credentials()).prune(false).build());
+        if (!fetched.isOk()) {
+            LOGGER.debug("The refused release tag %s was not fetched: %s", tag, fetched.outcome());
+            return false;
+        }
+        StoreEvents.fetched(fetched.value(), request.updates());
+        try {
+            return commit.equals(tip(clone.repository(), tag));
+        } catch (IOException e) {
+            LOGGER.debug("The fetched release tag %s was not read: %s", tag, e.getClass().getName());
+            return false;
+        }
+    }
+
+    /** The parents of the release commit: {@code main} and, for a per-document collection, the working branch. */
+    private static List<String> parents(DocumentKey key, Attempt state) {
+        @Nullable ObjectId main = state.main();
+        if (key.collection().kind() == DocumentCollection.Kind.NUMBERED) {
+            return main == null ? List.of() : List.of(main.name());
+        }
+        return main == null ? List.of(state.source().name()) : List.of(main.name(), state.source().name());
+    }
+
+    /**
+     * The edits of the release commit: for a per-document collection those from {@code main} to the merge of the
+     * working branch into it (none onto an absent {@code main}), for a numbered collection the entry's paths of the
+     * collection branch onto {@code main}, each first checked against the previous release.
+     *
+     * @return {@link StoreOutcome#OK} with the edits; {@link StoreOutcome#MALFORMED} with {@value #GITLINK}; or the
+     *         passed-on {@link GitOutcome#CONFLICT} of a conflicting merge or of entry paths {@code main} changed since
+     *         the previous release, or the passed-on outcome of a merge that did not run
+     */
+    private StoreResult<List<TreeEdit>> releaseEdits(Repository repository, Request request, Attempt state)
+            throws IOException {
+        @Nullable ObjectId main = state.main();
         if (request.key().collection().kind() == DocumentCollection.Kind.NUMBERED) {
-            List<String> parents = main == null ? List.of() : List.of(main.name());
-            return writer.write(repository, parents, metadata, entryEdits(repository, request.key(), main, source));
+            return entryEdits(repository, request, state);
         }
         if (main == null) {
-            return writer.write(repository, List.of(source.name()), metadata, List.of());
+            return StoreResult.ok(List.of());
         }
-        return switch (merger.merge(repository, main.name(), source.name())) {
-            case MergeResult.Merged(String treeId) -> writer.write(repository, List.of(main.name(), source.name()),
-                    metadata, edits(repository, commitTree(repository, main), ObjectId.fromString(treeId), null));
-            case MergeResult.Conflicting(List<String> paths) -> GitResult.of(GitOutcome.CONFLICT,
+        return switch (merger.merge(repository, main.name(), state.source().name())) {
+            case MergeResult.Merged(String treeId) -> puts(repository,
+                    changes(repository, commitTree(repository, main), ObjectId.fromString(treeId), null));
+            case MergeResult.Conflicting(List<String> paths) -> passedOn(GitOutcome.CONFLICT,
                     request.source() + ": " + paths.size() + " conflicting paths");
-            case MergeResult.NotMerged(GitOutcome outcome, String reason) -> GitResult.of(outcome, reason);
+            case MergeResult.NotMerged(GitOutcome outcome, String reason) -> passedOn(outcome, reason);
         };
     }
 
@@ -394,20 +467,60 @@ final class DocumentRelease {
                 signing.signing());
     }
 
-    /** The edits that take the entry's paths of the collection branch onto {@code main}. */
-    private static List<TreeEdit> entryEdits(Repository repository, DocumentKey key, @Nullable ObjectId main,
-            ObjectId source) throws IOException {
+    /**
+     * The edits that take the entry's paths of the collection branch onto {@code main}, a path-level copy with conflict
+     * check: every path the copy changes must be on {@code main} as it was in the previous release (absent before the
+     * first release), else {@code main} changed it since and the release ends with a conflict. The paths are compared
+     * by mode and object id, before any blob is read.
+     */
+    private static StoreResult<List<TreeEdit>> entryEdits(Repository repository, Request request, Attempt state)
+            throws IOException {
+        @Nullable ObjectId main = state.main();
         @Nullable ObjectId mainTree = main == null ? null : commitTree(repository, main);
-        return edits(repository, mainTree, commitTree(repository, source), key);
+        var changes = changes(repository, mainTree, commitTree(repository, state.source()), request.key());
+        if (!changes.isOk()) {
+            return new StoreResult<>(changes.outcome(), null, changes.detail());
+        }
+        List<Change> changed = Objects.requireNonNull(changes.value());
+        @Nullable ObjectId previous = state.previous();
+        @Nullable ObjectId previousTree = previous == null ? null : commitTree(repository, previous);
+        int changedOnMain = 0;
+        for (Change change : changed) {
+            if (!sameEntry(repository, change.path(), mainTree, previousTree)) {
+                changedOnMain++;
+            }
+        }
+        if (changedOnMain > 0) {
+            return passedOn(GitOutcome.CONFLICT, request.source() + ": " + changedOnMain + CHANGED_ON_MAIN);
+        }
+        return puts(repository, changes);
+    }
+
+    /** Whether a path has the same mode and object id in two trees, an absent tree or path counting as absent. */
+    private static boolean sameEntry(Repository repository, String path, @Nullable ObjectId one,
+            @Nullable ObjectId other) throws IOException {
+        return Objects.equals(entry(repository, path, one), entry(repository, path, other));
+    }
+
+    /** The mode and object id of a path in a tree; {@code null} when the tree or the path is absent. */
+    private static @Nullable Entry entry(Repository repository, String path, @Nullable ObjectId tree)
+            throws IOException {
+        if (tree == null) {
+            return null;
+        }
+        try (TreeWalk found = TreeWalk.forPath(repository, path, tree)) {
+            return found == null ? null : new Entry(found.getRawMode(0), found.getObjectId(0));
+        }
     }
 
     /**
-     * The edits from one tree to another: a put of every file that differs or is new, a delete of every file the
-     * second tree lacks; with a key, only the paths that belong to it.
+     * The changed paths from one tree to another: a put of every file that differs or is new, a delete of every file
+     * the second tree lacks; with a key, only the paths that belong to it. No blob is read: a put of a gitlink ends the
+     * changes as {@link StoreOutcome#MALFORMED} with {@value #GITLINK} before {@link #puts} reads any content.
      */
-    private static List<TreeEdit> edits(Repository repository, @Nullable ObjectId from, ObjectId to,
+    private static StoreResult<List<Change>> changes(Repository repository, @Nullable ObjectId from, ObjectId to,
             @Nullable DocumentKey key) throws IOException {
-        List<TreeEdit> edits = new ArrayList<>();
+        List<Change> changes = new ArrayList<>();
         try (TreeWalk walk = new TreeWalk(repository)) {
             if (from == null) {
                 walk.addTree(new EmptyTreeIterator());
@@ -418,27 +531,50 @@ final class DocumentRelease {
             walk.setRecursive(true);
             while (walk.next()) {
                 String path = walk.getPathString();
-                boolean unchanged = walk.getRawMode(0) == walk.getRawMode(1) && walk.idEqual(0, 1);
+                int mode = walk.getRawMode(1);
+                boolean unchanged = walk.getRawMode(0) == mode && walk.idEqual(0, 1);
                 if (key != null && !DocumentPaths.belongs(key, path) || unchanged) {
                     continue;
                 }
-                if (walk.getRawMode(1) == FileMode.MISSING.getBits()) {
-                    edits.add(new TreeEdit.Delete(path));
-                } else {
-                    byte[] content = repository.open(walk.getObjectId(1), Constants.OBJ_BLOB)
-                            .getBytes(Integer.MAX_VALUE);
-                    edits.add(new TreeEdit.Put(path, content, mode(walk.getRawMode(1))));
+                if (FileMode.GITLINK.equals(mode)) {
+                    LOGGER.debug("A release would write a gitlink, which git-core cannot carry");
+                    return StoreResult.of(StoreOutcome.MALFORMED, GITLINK);
                 }
+                changes.add(new Change(path, mode == FileMode.MISSING.getBits() ? null : walk.getObjectId(1), mode));
             }
         }
-        return edits;
+        return StoreResult.ok(changes);
+    }
+
+    /** Reads the content of every put among the changes, keeping its mode; a delete stays a delete. */
+    private static StoreResult<List<TreeEdit>> puts(Repository repository, StoreResult<List<Change>> changes)
+            throws IOException {
+        if (!changes.isOk()) {
+            return new StoreResult<>(changes.outcome(), null, changes.detail());
+        }
+        List<TreeEdit> edits = new ArrayList<>();
+        for (Change change : Objects.requireNonNull(changes.value())) {
+            @Nullable ObjectId blob = change.blob();
+            if (blob == null) {
+                edits.add(new TreeEdit.Delete(change.path()));
+            } else {
+                byte[] content = ExplicitSave.readBlob(repository, blob);
+                edits.add(new TreeEdit.Put(change.path(), content, mode(change.mode())));
+            }
+        }
+        return StoreResult.ok(edits);
     }
 
     /**
-     * The mode of the put of a source entry, so the release keeps an executable file and a symbolic link as the source
-     * tree holds them; every other blob is a regular file.
+     * The mode of the put of a source entry, so the release and the save keep an executable file and a symbolic link
+     * as the source tree holds them; every other blob is a regular file. A gitlink is no blob and never reaches this
+     * method: the release refuses one as {@link StoreOutcome#MALFORMED} and the view of a save step reports no mode for
+     * one ({@link SaveStep.Attempt#mode}).
+     *
+     * @param rawMode the raw mode of the tree entry
+     * @return the mode of the put
      */
-    private static TreeEdit.Mode mode(int rawMode) {
+    static TreeEdit.Mode mode(int rawMode) {
         if (FileMode.EXECUTABLE_FILE.equals(rawMode)) {
             return TreeEdit.Mode.EXECUTABLE_FILE;
         }
@@ -534,6 +670,40 @@ final class DocumentRelease {
                 && reachable(repository, commit.getParent(0), source);
     }
 
+    /**
+     * Whether the working or collection branch moved on since a merged release whose tag is missing: for a
+     * per-document collection, its tip is no longer the parent the release merged (or, onto an absent {@code main}, its
+     * only parent); for a numbered collection, a path of the entry differs between the release commit and the tip.
+     */
+    private static boolean movedOn(Repository repository, ObjectId release, DocumentKey key, ObjectId source)
+            throws IOException {
+        try (RevWalk walk = new RevWalk(repository)) {
+            RevCommit commit = walk.parseCommit(release);
+            if (key.collection().kind() == DocumentCollection.Kind.NUMBERED) {
+                return !onlyEntryUnchanged(repository, commit.getTree(), commitTree(repository, source), key);
+            }
+            RevCommit merged = commit.getParent(commit.getParentCount() == 2 ? 1 : 0);
+            return !merged.equals(source);
+        }
+    }
+
+    /** Whether no path of the entry differs between two trees. */
+    private static boolean onlyEntryUnchanged(Repository repository, ObjectId one, ObjectId other, DocumentKey key)
+            throws IOException {
+        try (TreeWalk walk = new TreeWalk(repository)) {
+            walk.addTree(one);
+            walk.addTree(other);
+            walk.setRecursive(true);
+            walk.setFilter(TreeFilter.ANY_DIFF);
+            while (walk.next()) {
+                if (DocumentPaths.belongs(key, walk.getPathString())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /** Whether the commit is the tip or an ancestor of it. */
     private static boolean reachable(Repository repository, AnyObjectId commit, ObjectId tip) throws IOException {
         try (RevWalk walk = new RevWalk(repository)) {
@@ -607,6 +777,26 @@ final class DocumentRelease {
     }
 
     /**
+     * Deletes the local tag of a release whose push of {@code main} failed, expecting it at the release commit,
+     * without a reflog. A failed delete changes nothing the remote holds; the next fetch prunes the tag the remote
+     * lacks.
+     */
+    private static void deleteTag(Repository repository, String tag, ObjectId commit) {
+        try {
+            RefUpdate update = repository.updateRef(tag);
+            update.setExpectedOldObjectId(commit);
+            update.setForceUpdate(true);
+            update.disableRefLog();
+            RefUpdate.Result result = update.delete();
+            if (result != RefUpdate.Result.FORCED) {
+                LOGGER.debug("The local release tag %s was not deleted: %s", tag, result);
+            }
+        } catch (IOException e) {
+            LOGGER.debug("The local release tag %s was not deleted: %s", tag, e.getClass().getName());
+        }
+    }
+
+    /**
      * Moves the local {@code main} to the accepted release commit, expecting the fetched tip, without a reflog. A failed
      * move changes nothing the remote holds; the next fetch mirrors the remote {@code main} into the clone.
      */
@@ -621,7 +811,7 @@ final class DocumentRelease {
                 LOGGER.debug("The local main was not moved after the accepted release: %s", result);
             }
         } catch (IOException e) {
-            LOGGER.debug("The local main was not moved after the accepted release: %s", e.getClass().getSimpleName());
+            LOGGER.debug("The local main was not moved after the accepted release: %s", e.getClass().getName());
         }
     }
 
@@ -674,13 +864,34 @@ final class DocumentRelease {
     /**
      * What one attempt read after its fetch.
      *
-     * @param main    the fetched tip of {@code main}; {@code null} when {@code main} is absent
-     * @param source  the tip of the working or collection branch
-     * @param version the version of this release
-     * @param tag     the full name of its tag
-     * @param message the store-composed subject of the release commit
+     * @param main     the fetched tip of {@code main}; {@code null} when {@code main} is absent
+     * @param source   the tip of the working or collection branch
+     * @param previous the commit of the previous release; {@code null} for the first release
+     * @param version  the version of this release
+     * @param tag      the full name of its tag
+     * @param message  the store-composed subject of the release commit
      */
-    private record Attempt(@Nullable ObjectId main, ObjectId source, int version, String tag, String message) {
+    private record Attempt(@Nullable ObjectId main, ObjectId source, @Nullable ObjectId previous, int version,
+    String tag, String message) {
+    }
+
+    /**
+     * One path a release changes.
+     *
+     * @param path the repository-relative path
+     * @param blob the blob the path is set to; {@code null} for a delete
+     * @param mode the raw mode of the path in the source tree
+     */
+    private record Change(String path, @Nullable ObjectId blob, int mode) {
+    }
+
+    /**
+     * The tree entry of a path.
+     *
+     * @param mode the raw mode
+     * @param id   the object id
+     */
+    private record Entry(int mode, ObjectId id) {
     }
 
     /**

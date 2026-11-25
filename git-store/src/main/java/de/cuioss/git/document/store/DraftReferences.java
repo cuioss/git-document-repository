@@ -32,6 +32,7 @@ import de.cuioss.git.document.core.ReferenceUpdater;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.core.TreeOperation;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
@@ -207,8 +208,9 @@ final class DraftReferences {
      * Lists the drafts of a user, sorted by reference name.
      *
      * @param pseudonym the pseudonym of the user
-     * @return {@link StoreOutcome#OK} with the drafts, possibly none; {@link StoreOutcome#MALFORMED} for an invalid
-     *         pseudonym; the passed-on {@link GitOutcome#FAILED} for an I/O failure
+     * @return {@link StoreOutcome#OK} with the drafts, possibly none, without a reference whose tip is no commit;
+     *         {@link StoreOutcome#MALFORMED} for an invalid pseudonym; the passed-on {@link GitOutcome#FAILED} for an
+     *         I/O failure
      * @throws NullPointerException if {@code pseudonym} is {@code null}
      */
     StoreResult<List<Draft>> list(String pseudonym) {
@@ -222,21 +224,37 @@ final class DraftReferences {
             refs.sort(Comparator.comparing(Ref::getName));
             List<Draft> drafts = new ArrayList<>(refs.size());
             for (Ref ref : refs) {
-                String[] segments = ref.getName().substring(prefix.length()).split("/");
-                ObjectId id = ref.getObjectId();
-                if (segments.length != 2 || id == null) {
-                    // only this class writes below refs/drafts/, always as <collection>/<id>
-                    LOGGER.debug("Skipped the reference %s, which is no draft of the form <collection>/<id>",
-                            ref.getName());
-                    continue;
-                }
-                RevCommit commit = walk.parseCommit(id);
-                drafts.add(new Draft(segments[0], segments[1], id.name(),
-                        commit.getCommitterIdent().getWhenAsInstant()));
+                draft(walk, prefix, ref).ifPresent(drafts::add);
             }
             return StoreResult.ok(List.copyOf(drafts));
         } catch (IOException e) {
             return StoreResult.passOn(failure(prefix, e));
+        }
+    }
+
+    /**
+     * The draft a reference below the drafts of a user holds; empty for a reference that is no draft: one not of the
+     * form {@code <collection>/<id>}, without a tip, or whose tip is no commit.
+     *
+     * @throws IOException if the tip cannot be read
+     */
+    private static Optional<Draft> draft(RevWalk walk, String prefix, Ref ref) throws IOException {
+        String[] segments = ref.getName().substring(prefix.length()).split("/");
+        ObjectId id = ref.getObjectId();
+        if (segments.length != 2 || id == null) {
+            // only this class writes below refs/drafts/, always as <collection>/<id>
+            LOGGER.debug("Skipped the reference %s, which is no draft of the form <collection>/<id>", ref.getName());
+            return Optional.empty();
+        }
+        try {
+            RevCommit commit = walk.parseCommit(id);
+            return Optional.of(new Draft(segments[0], segments[1], id.name(),
+                    commit.getCommitterIdent().getWhenAsInstant()));
+        } catch (IncorrectObjectTypeException e) {
+            // a reference of this form whose tip is no commit was not written by this class; it is no draft
+            LOGGER.debug("Skipped a reference below %s whose tip is no commit: %s", StoreReferences.DRAFTS,
+                    e.getClass().getSimpleName());
+            return Optional.empty();
         }
     }
 

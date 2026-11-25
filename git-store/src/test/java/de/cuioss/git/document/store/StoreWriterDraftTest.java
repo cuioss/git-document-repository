@@ -350,8 +350,9 @@ class StoreWriterDraftTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var gitDir = temp.resolve(word() + ".git");
         var now = time();
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, TestKeys.ed25519().source(),
-                new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, List.of(),
+                TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, user, now);
     }
 
@@ -364,9 +365,9 @@ class StoreWriterDraftTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 
     @Nested
@@ -648,11 +649,12 @@ class StoreWriterDraftTest {
             var user = user(null);
             var mine = registered(remote);
             var signing = TestKeys.ed25519().source();
-            value(StoreWriter.open(registered(other), gitDir, user, configuration, signing, operations, clock))
-                    .close();
+            value(StoreWriter.open(registered(other), gitDir, user, configuration, List.of(), signing, operations,
+                    clock)).close();
 
-            var refused = StoreWriter.open(mine, gitDir, user, configuration, signing, operations, clock);
-            var reused = StoreWriter.open(registered(other), gitDir, user, configuration, signing, operations, clock);
+            var refused = StoreWriter.open(mine, gitDir, user, configuration, List.of(), signing, operations, clock);
+            var reused = StoreWriter.open(registered(other), gitDir, user, configuration, List.of(), signing,
+                    operations, clock);
 
             try {
                 var detail = Objects.requireNonNull(refused.detail(), "a refusal carries a detail");
@@ -690,9 +692,9 @@ class StoreWriterDraftTest {
 
             var signing = TestKeys.ed25519().source();
 
-            try (var saving = value(StoreWriter.open(storeRepository, gitDir, user, configuration, signing, scripted,
-                         clock));
-                 var expiring = value(StoreWriter.open(storeRepository, gitDir, user, configuration, signing,
+            try (var saving = value(StoreWriter.open(storeRepository, gitDir, user, configuration, List.of(), signing,
+                         scripted, clock));
+                 var expiring = value(StoreWriter.open(storeRepository, gitDir, user, configuration, List.of(), signing,
                          new JGitRepositoryOperations(RemotePolicy.localOnly()), clock))) {
                 value(saving.draft(author, key, put(word()), word()));
                 scripted.beforeNextPush(() -> {
@@ -757,6 +759,31 @@ class StoreWriterDraftTest {
                                 "the other user has one draft"),
                         () -> assertEquals(List.of(), value(fixture.writer().drafts(pseudonym() + "-n")),
                                 "a user without drafts has none"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: a reference of the draft form whose tip is a blob is no draft and is listed around")
+        void skipsReferenceAtBlob(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN, word());
+            var user = Author.of(pseudonym());
+            var key = key(Kind.PER_DOCUMENT);
+            var foreign = value(StoreReferences.draft(user.pseudonym(), key(Kind.NUMBERED)));
+
+            try (var fixture = open(remote)) {
+                var commitId = value(fixture.writer().draft(user, key, put(word()), word()));
+                try (Repository clone = fixture.openClone(); ObjectInserter inserter = clone.newObjectInserter()) {
+                    var blob = inserter.insert(Constants.OBJ_BLOB, content());
+                    inserter.flush();
+                    RefUpdate update = clone.updateRef(foreign);
+                    update.setNewObjectId(blob);
+                    assertEquals(RefUpdate.Result.NEW, update.update(), "the foreign reference points at a blob");
+                }
+
+                var drafts = fixture.writer().drafts(user.pseudonym());
+
+                assertEquals(List.of(new Draft(key.collection().name(), key.id(), commitId, fixture.now())),
+                        value(drafts), "the listing holds the draft and skips the reference at the blob");
             }
         }
     }

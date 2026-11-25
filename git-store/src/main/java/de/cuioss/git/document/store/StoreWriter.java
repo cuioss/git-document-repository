@@ -28,7 +28,6 @@ import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RefusingFS;
 import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
-import org.eclipse.jgit.lib.Repository;
 
 /**
  * The write path of one repository of the store: drafts per user and document (GDR-STORE-2) and the explicit save
@@ -79,9 +78,6 @@ import org.eclipse.jgit.lib.Repository;
  *
  * @since 0.1
  */
-// S6539 counts the types of the public face of the store; the writer delegates every operation to StoreClone and its
-// parts, so its coupling is its purpose as the facade
-@SuppressWarnings("java:S6539")
 public final class StoreWriter implements AutoCloseable {
 
     /** The detail of a clone whose remote is not the registered one; it names no URL, credential or path. */
@@ -90,8 +86,8 @@ public final class StoreWriter implements AutoCloseable {
     /** The detail of a configuration without the key reference of the commit signature. */
     static final String SIGNING_KEY_MISSING = "signing.key is missing";
 
-    /** The prefix of every branch. */
-    private static final String HEADS = "refs/heads/";
+    /** The detail of declared collections that hold one name twice; it names the argument, never the name. */
+    static final String COLLECTIONS_DECLARED_TWICE = "collections: a name is declared twice";
 
     /** The opened clone and the parts that work on it; every operation delegates to it. */
     private final StoreClone clone;
@@ -107,29 +103,36 @@ public final class StoreWriter implements AutoCloseable {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user: committer and holder of the transport credentials
      * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param collections     the declared collections of the repository, in declaration order; no name twice
+     *                        (GDR-STORE-2)
      * @param signing         the active signing key source ({@link StoreProviders#signing()}), which signs every save
      *                        and release commit under {@code signing.key}
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time
      * @return {@link StoreOutcome#OK} with the writer; {@link StoreOutcome#MALFORMED} with the detail
-     *         {@code signing.key is missing} for a configuration without the key reference, checked before anything is
-     *         cloned; or the passed-on Git outcome of the clone or of opening it, for example
+     *         {@code collections: a name is declared twice} for collections that declare one name twice, checked with
+     *         {@link StoreReferences#collections(List)}, or with the detail {@code signing.key is missing} for a
+     *         configuration without the key reference, both checked before anything is cloned; or the passed-on Git
+     *         outcome of the clone or of opening it, for example
      *         {@link GitOutcome#UNREACHABLE}, {@link GitOutcome#CREDENTIALS_INVALID},
      *         {@link GitOutcome#REFUSED_BY_POLICY}, {@link GitOutcome#FAILED}, or {@link GitOutcome#NOT_A_REPOSITORY}
      *         with the detail {@code <alias>: clone: remote does not match the registry} for an existing clone whose
-     *         remote is not the registered one; no detail names a URL, a credential, a key reference or a path
-     * @throws NullPointerException if an argument is {@code null}
+     *         remote is not the registered one; no detail names a URL, a credential, a key reference, a collection or
+     *         a path
+     * @throws NullPointerException if an argument or a collection is {@code null}
      */
+    // operator-selected: AaIOFP3oAtdQWIZKzKJs: public API decided by the operator (collections argument)
+    @SuppressWarnings("java:S107")
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, SigningKeySource signing, RepositoryOperations operations,
-            Clock clock) {
-        return open(storeRepository, gitDir, user, configuration, new CloneOpening.Providers(signing, null),
-                operations, clock);
+            StoreConfiguration configuration, List<DocumentCollection> collections, SigningKeySource signing,
+            RepositoryOperations operations, Clock clock) {
+        return writer(CloneOpening.open(new CloneOpening.Arguments(storeRepository, gitDir, user, configuration,
+                collections, operations, clock), signing));
     }
 
     /**
      * Opens the write path of a repository like
-     * {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)},
+     * {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)},
      * with the providers selected at start: the signing key source signs every save and release commit, and the anchor
      * provider, when one is active, anchors the release commits and checkpoints of the repository (GDR-STORE-15).
      *
@@ -137,31 +140,26 @@ public final class StoreWriter implements AutoCloseable {
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user: committer and holder of the transport credentials
      * @param configuration   the configuration of the store; {@code signing.key} must be set
+     * @param collections     the declared collections of the repository, in declaration order; no name twice
+     *                        (GDR-STORE-2)
      * @param providers       the selected providers ({@link StoreProviders#load} or {@link StoreProviders#select})
      * @param operations      the repository operations of {@code git-core}
      * @param clock           the clock of every commit time and of the due checks of the anchoring
      * @return the results of
-     *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, SigningKeySource, RepositoryOperations, Clock)}
-     * @throws NullPointerException if an argument is {@code null}
+     *         {@link #open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}
+     * @throws NullPointerException if an argument or a collection is {@code null}
      */
+    // operator-selected: AaIOFP3oAtdQWIZKzKJt: public API decided by the operator (collections argument)
+    @SuppressWarnings("java:S107")
     public static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, StoreProviders providers, RepositoryOperations operations,
-            Clock clock) {
-        Objects.requireNonNull(providers, "providers");
-        return open(storeRepository, gitDir, user, configuration,
-                new CloneOpening.Providers(providers.signing(), providers.anchor()), operations, clock);
+            StoreConfiguration configuration, List<DocumentCollection> collections, StoreProviders providers,
+            RepositoryOperations operations, Clock clock) {
+        return writer(CloneOpening.open(new CloneOpening.Arguments(storeRepository, gitDir, user, configuration,
+                collections, operations, clock), providers));
     }
 
-    private static StoreResult<StoreWriter> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, CloneOpening.Providers providers, RepositoryOperations operations,
-            Clock clock) {
-        Objects.requireNonNull(storeRepository, "storeRepository");
-        Objects.requireNonNull(gitDir, "gitDir");
-        Objects.requireNonNull(user, "user");
-        Objects.requireNonNull(configuration, "configuration");
-        Objects.requireNonNull(operations, "operations");
-        Objects.requireNonNull(clock, "clock");
-        var opened = CloneOpening.open(storeRepository, gitDir, user, configuration, providers, operations, clock);
+    /** The writer over an opened clone, or the non-success of opening it. */
+    private static StoreResult<StoreWriter> writer(StoreResult<StoreClone> opened) {
         if (!opened.isOk()) {
             return new StoreResult<>(opened.outcome(), null, opened.detail());
         }
@@ -195,7 +193,7 @@ public final class StoreWriter implements AutoCloseable {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(edits, "edits");
         Objects.requireNonNull(message, "message");
-        return clone.draft(author, key, edits, message);
+        return clone.writes().draft(author, key, edits, message);
     }
 
     /**
@@ -208,7 +206,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public StoreResult<List<Draft>> drafts(String pseudonym) {
         Objects.requireNonNull(pseudonym, "pseudonym");
-        return clone.drafts(pseudonym);
+        return clone.writes().drafts(pseudonym);
     }
 
     /**
@@ -237,19 +235,22 @@ public final class StoreWriter implements AutoCloseable {
      * @param message         the commit message, before the trailers
      * @return {@link SaveResult.Saved} with the commit the target branch points at, {@link SaveResult.Conflicting}
      *         with every conflicting path, or {@link SaveResult.NotSaved} with the outcome that prevented the save, for
-     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message,
+     *         example {@link StoreOutcome#MALFORMED} for an invalid pseudonym, an expected blob id that is no full
+     *         object id (detail {@code expectedBlobIds: not a full object id}, never the value) or a release subject
+     *         as the message,
      *         {@link StoreOutcome#REFUSED} for a
      *         signing key source that refuses or a key of another type than Ed25519,
      *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that cannot be reached,
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing draft,
-     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt,
+     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} after the last attempt lost its lease or at once
+     *         for a permanent rejection of the push, for example by a protected branch or a hook,
      *         {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE} or
      *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message) {
-        return clone.save(author, claims, key, expectedBlobIds, message, null);
+        return clone.writes().save(author, claims, key, expectedBlobIds, message, null);
     }
 
     /**
@@ -259,7 +260,9 @@ public final class StoreWriter implements AutoCloseable {
      * attempt, the first and each re-application onto a new tip, after the conflict check; it sees the tip and the tree
      * the draft's changes produce on it through a read-only {@link SaveStep.Attempt}. Its {@link SaveStep.Edits} are
      * written into the same single save commit, whose only parent stays the tip, an edit on a path the draft also
-     * changed replacing the draft's edit. A draft without changes writes no commit and calls no step.
+     * changed replacing the draft's edit. A draft without changes writes no commit and calls no step. The step runs
+     * under the locks of the save, so every other operation of the clone waits for it: it is expected to return within
+     * milliseconds, and one that calls {@link #expireDrafts} gets {@link StoreOutcome#REFUSED} instead of a deadlock.
      *
      * @param author          the author, whose pseudonym names the draft reference, the commit's author and the
      *                        trailer {@code Actor}
@@ -273,14 +276,17 @@ public final class StoreWriter implements AutoCloseable {
      *         {@link SaveResult.NotSaved} with
      *         {@link StoreOutcome#REFUSED} and the detail {@code <target>: step: refused} for a {@link SaveStep.Refusal},
      *         or with the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} and the detail
-     *         {@code <target>: step: <simple class name of the exception>} for a step that threw a
-     *         {@link RuntimeException}, without a further attempt; in both cases nothing is pushed, and draft and target
-     *         branch stay unchanged
+     *         {@code <target>: step: <class name of the throwable>} ({@link Class#getName()}) for a step that threw a
+     *         {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}, without a further
+     *         attempt; in both cases nothing is pushed, the draft stays unchanged and so does the target branch on the
+     *         remote, while the fetch that attempt ran before the step may still have moved the local mirror of the
+     *         target in the clone, emitted to the index and the listeners as after any fetch
      * @throws NullPointerException if an argument, a path or an expected blob id is {@code null}
      */
     public SaveResult save(Author author, IdentityClaims claims, DocumentKey key, Map<String, String> expectedBlobIds,
             String message, SaveStep step) {
-        return clone.save(author, claims, key, expectedBlobIds, message, Objects.requireNonNull(step, "step"));
+        return clone.writes().save(author, claims, key, expectedBlobIds, message,
+                Objects.requireNonNull(step, "step"));
     }
 
     /**
@@ -296,8 +302,12 @@ public final class StoreWriter implements AutoCloseable {
      * <p>
      * The release runs under the shared side of the clone's maintenance lock, each attempt, from the fetch to the push
      * of the tag, under its transport lock. When {@code main} moved on the remote and the tag is missing there, a
-     * repeated release creates and pushes the missing tag on the release commit instead of merging again. A release
-     * tag on the remote is never moved or deleted.
+     * repeated release creates and pushes the missing tag on the release commit instead of merging again, and reports
+     * in {@link Release#branchMovedOn()} whether the working or collection branch moved on since that commit. A tag
+     * push the remote refuses is checked by a fetch of that tag: when the remote holds it at the released commit
+     * already, the release is complete. A release tag on the remote is never moved or deleted; a local tag whose push of
+     * {@code main} failed for any reason but a lost lease is deleted again. A numbered release copies the entry's paths
+     * onto {@code main} only when {@code main} did not change them since the previous release.
      * <p>
      * This form releases the tip of the working or collection branch as each attempt finds it after its fetch, so a
      * save that moves the branch between a caller's save and this release is released with it. A caller that releases
@@ -308,21 +318,23 @@ public final class StoreWriter implements AutoCloseable {
      * @param claims the claims of that user's authentication, written as identity trailers
      * @param key    the document or numbered entry
      * @return {@link StoreOutcome#OK} with the {@link Release}; {@link StoreOutcome#INCOMPLETE} with the detail
-     *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed;
-     *         {@link StoreOutcome#MALFORMED} for content without release or a pseudonym outside
-     *         {@code [A-Za-z0-9-]+}; {@link StoreOutcome#REFUSED} or {@link StoreOutcome#UNAVAILABLE} for a signing key
-     *         source that refuses or cannot be reached, or {@link StoreOutcome#REFUSED} for a key of another type than
-     *         Ed25519, nothing pushed; the passed-on
+     *         {@code <tag>: not pushed (<outcome>)} when {@code main} moved and the tag push failed or the remote holds
+     *         the tag at another commit; {@link StoreOutcome#MALFORMED} for content without release, a pseudonym
+     *         outside {@code [A-Za-z0-9-]+} or a gitlink among the paths the release would write (detail
+     *         {@code entry: a gitlink path cannot be released}); {@link StoreOutcome#REFUSED} or
+     *         {@link StoreOutcome#UNAVAILABLE} for a signing key source that refuses or cannot be reached, or
+     *         {@link StoreOutcome#REFUSED} for a key of another type than Ed25519, nothing pushed; the passed-on
      *         {@link de.cuioss.git.document.core.GitOutcome#NOT_FOUND} for a missing working or collection branch,
      *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} with the number of conflicting paths for a
-     *         conflicting merge, {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
+     *         conflicting merge or with the number of entry paths {@code main} changed since the previous release,
+     *         {@link de.cuioss.git.document.core.GitOutcome#REJECTED} for a refused push of
      *         {@code main} or after every attempt lost its lease, or the passed-on outcome that ended the release, for
      *         example {@link de.cuioss.git.document.core.GitOutcome#UNREACHABLE}; no detail names a path, a content or
      *         a pseudonym
      * @throws NullPointerException if an argument is {@code null}
      */
     public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key) {
-        return clone.release(author, claims, key, null);
+        return clone.writes().release(author, claims, key, null);
     }
 
     /**
@@ -349,7 +361,8 @@ public final class StoreWriter implements AutoCloseable {
      */
     public StoreResult<Release> release(Author author, IdentityClaims claims, DocumentKey key,
             String expectedCommitId) {
-        return clone.release(author, claims, key, Objects.requireNonNull(expectedCommitId, "expectedCommitId"));
+        return clone.writes().release(author, claims, key,
+                Objects.requireNonNull(expectedCommitId, "expectedCommitId"));
     }
 
     /**
@@ -358,15 +371,23 @@ public final class StoreWriter implements AutoCloseable {
      * {@code drafts.expiry} (UTC) is deleted by compare-and-delete expecting that tip, so a draft changed meanwhile is
      * kept; then a garbage collection runs. Both run under the exclusive side of the clone's maintenance lock, so no
      * draft write or save of this writer runs meanwhile.
+     * <p>
+     * The exclusive side cannot be taken by a thread that holds the shared side: a call from a {@link SaveStep} or
+     * another callback that runs under the locks of an operation of the clone is refused instead of waiting for
+     * itself.
      *
      * @param now the current time
-     * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none; or
-     *         the passed-on {@link de.cuioss.git.document.core.GitOutcome#FAILED} of a failed read, delete or garbage
-     *         collection
+     * @return {@link StoreOutcome#OK} with the full names of the deleted draft references, sorted, possibly none;
+     *         {@link StoreOutcome#REFUSED} with the detail
+     *         {@code maintenance: re-entered from a callback that holds the shared lock} for a call from a thread that
+     *         holds the shared side of the maintenance lock; or the passed-on
+     *         {@link de.cuioss.git.document.core.GitOutcome#CONFLICT} when another garbage collection holds
+     *         {@code gc.pid}, or {@link de.cuioss.git.document.core.GitOutcome#FAILED} of a failed read, delete or
+     *         garbage collection
      * @throws NullPointerException if {@code now} is {@code null}
      */
     public StoreResult<List<String>> expireDrafts(Instant now) {
-        return clone.expireDrafts(now);
+        return clone.writes().expireDrafts(now);
     }
 
     /**
@@ -383,7 +404,7 @@ public final class StoreWriter implements AutoCloseable {
      *         {@link de.cuioss.git.document.core.GitOutcome#CREDENTIALS_INVALID}
      */
     public StoreResult<List<String>> fetch() {
-        return clone.fetch();
+        return clone.schedules().fetch();
     }
 
     /**
@@ -400,7 +421,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public FetchSchedule fetchPeriodically(ScheduledExecutorService executor) {
         Objects.requireNonNull(executor, "executor");
-        return clone.fetchPeriodically(executor);
+        return clone.schedules().fetchPeriodically(executor);
     }
 
     /**
@@ -411,14 +432,26 @@ public final class StoreWriter implements AutoCloseable {
      * the provider for a proof of every pending subject, the commit of each release tag (unless
      * {@code anchor.releases} is {@code false}) and each checkpoint without a note in
      * {@code refs/notes/anchors/<provider>}, oldest first; each proof is written as a base64 note and pushed with lease
-     * right after. A failure of the provider or of a push leaves the subject pending and is logged
-     * ({@code GIT_STORE-111}).
+     * right after. A failure of the provider or of a push leaves the subject pending and is logged once
+     * ({@code GIT_STORE-111}); an empty proof counts as a refusal of the provider. The references the fetch of the due
+     * check moved reach the indexes and the listeners also when the due check ends early.
+     * <p>
+     * A call inside a callback whose thread holds a lock of the clone, a {@link SaveStep} (under the shared maintenance
+     * lock and the transport lock of its save), an {@link IndexContributor} under the locks of its operation or an
+     * {@link AnchorProvider} call (under the anchoring lock of its due check), is refused before the anchoring lock is
+     * requested, as {@link #close()} is, since it would wait for a due check that waits for the callback's lock in
+     * turn. The refusal does not wait, logs nothing and reaches no index and no listener.
      *
      * @return {@link StoreOutcome#OK} with the anchored and the pending subjects; or the non-success that ended the
-     *         due check before any subject was asked for, for example the passed-on outcome of its fetch
+     *         due check before any subject was asked for, for example the passed-on outcome of its fetch,
+     *         {@link StoreOutcome#INCOMPLETE} with the detail {@code anchor: <class name of the exception>} for an
+     *         unchecked failure while it fetched, repaired or planned, {@link StoreOutcome#REFUSED} with the detail
+     *         {@code anchor: the writer is closed} after {@link #close()}, or {@link StoreOutcome#REFUSED} with the
+     *         detail {@code anchor: refused inside a callback that holds a lock of the clone} for a call from a thread
+     *         that holds a lock of the clone
      */
     public StoreResult<Anchoring> anchor() {
-        return clone.anchor();
+        return clone.schedules().anchor();
     }
 
     /**
@@ -436,7 +469,7 @@ public final class StoreWriter implements AutoCloseable {
      */
     public AnchorSchedule anchorPeriodically(ScheduledExecutorService executor) {
         Objects.requireNonNull(executor, "executor");
-        return clone.anchorPeriodically(executor);
+        return clone.schedules().anchorPeriodically(executor);
     }
 
     /**
@@ -469,10 +502,12 @@ public final class StoreWriter implements AutoCloseable {
      * and the indexes over this writer were refreshed. The subscription starts at the tip the branch has in the clone
      * now, or at the tip of every branch of the clone when the branch does not exist yet; every commit reachable from
      * the branch and not from that start is delivered once, whatever order the events of concurrent operations arrive
-     * in. What the subscription delivered is kept in memory only, so nothing older than the subscription is delivered,
-     * also not by a new writer over the same clone. A listener that throws a
-     * {@link RuntimeException} is logged ({@code GIT_STORE-109}) with the alias, the branch and the class of the
-     * exception and never fails the save, release or fetch.
+     * in. The subscription is registered before its start is read, so a commit an operation moved the branch to while
+     * the listener subscribes is never missed. What the subscription delivered is kept in memory only, so nothing older
+     * than the subscription is delivered, also not by a new writer over the same clone. A listener that throws a
+     * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError} is logged
+     * ({@code GIT_STORE-109}) with the alias, the branch and the class name of the throwable, never fails the save,
+     * release or fetch and never keeps the next listener from its call.
      *
      * @param branch   the branch, by its full name ({@code refs/heads/main}) or its name below {@code refs/heads/}
      * @param listener the listener
@@ -482,29 +517,34 @@ public final class StoreWriter implements AutoCloseable {
     public CommitListener.Subscription subscribe(String branch, CommitListener listener) {
         Objects.requireNonNull(branch, "branch");
         Objects.requireNonNull(listener, "listener");
-        String full = branch.startsWith(HEADS) ? branch : HEADS + branch;
+        String full = branch.startsWith(StoreReferences.HEADS) ? branch : StoreReferences.HEADS + branch;
         return clone.subscribe(full, listener);
     }
 
     /**
-     * Returns the opened clone, for the index over this writer.
+     * Returns the opened clone with its repository and its notification seam, for the index over this writer. The
+     * accessor is not named {@code clone()}, which would override {@link Object#clone()} with weaker access.
      *
      * @return the clone
      */
-    Repository repository() {
-        return clone.repository();
+    StoreClone storeClone() {
+        return clone;
     }
 
     /**
-     * Returns the notification seam of this writer, for the index over it.
-     *
-     * @return the events
+     * Releases the opened clone: sets its closed flag under the anchoring lock, so a due check handed to the caller's
+     * executor and run after the close does nothing, and one running waits until it ended. A second call releases
+     * nothing.
+     * <p>
+     * A close issued inside a callback whose thread holds a lock of the clone, a {@link SaveStep} (under the shared
+     * maintenance lock and the transport lock of its save) or an {@link AnchorProvider} call (under the anchoring lock
+     * of its due check), is refused, since it would wait for a due check that waits for the callback's lock in turn,
+     * or release the repository under the running due check. The refusal does not wait and returns normally: the
+     * closed flag is not set, the clone is not released, the writer stays usable, and one warning is logged
+     * ({@code GIT_STORE-114}) with the alias. The caller closes the writer again after the callback returned. An index
+     * refresh and a {@link CommitListener} run after the operation released every lock, so a close from them closes
+     * the writer as a close from outside every callback does.
      */
-    StoreEvents events() {
-        return clone.events();
-    }
-
-    /** Releases the opened clone. */
     @Override
     public void close() {
         clone.close();

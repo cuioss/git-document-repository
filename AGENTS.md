@@ -41,7 +41,10 @@ repository fixtures (`@LocalRepository`, `@InMemory`, `@Remote`) and the host-co
 `@HermeticGitConfiguration` with `HermeticGitConfigurationExtension` (not for tests that run concurrently in one JVM). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
 `pm-provider-git` as a plain copy: `RefusingFS` with `CapabilityRefusedException`, `RemotePolicy`, `GitIdentity`,
 `GitResult` and `GitOutcome`, `RepositoryOperations` with `JGitRepositoryOperations` (open, init, `cloneIfMissing`,
-log, fetch, push, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
+log, fetch, push, whose leased push that the advertisement already refuses (the remote reference differs from the lease)
+or that lost a race on the remote reference and was refused with one of the two recognised remote messages is
+`LEASE_REFUSED` and whose every other refusal, a lost race reported in any other wording included, is `REJECTED`, cache
+repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
 compare-and-swap: `InCoreWriter` with `TreeEdit`, `CommitMetadata` and `CommitSigning`, and `ReferenceUpdater` with
 `TreeOperation` (compare-and-swap and compare-and-delete of a reference), and with in-core merge, reading and notes:
 `InCoreMerger` with the sealed `MergeResult` (the merged tree, or the conflicting paths as data), `RepositoryReader`
@@ -60,27 +63,51 @@ sections include `commit`, the record `Commit` with `commit.email`), the
 service interfaces `SigningKeySource`, `AnchorProvider` and `PersonDirectory` with `PersonEntry` and `Membership`, the
 provider selection `StoreProviders` through `ServiceLoader`, the signing key source `FileSigningKeySource` (id `file`,
 an unencrypted OpenSSH Ed25519 key), and the `LogRecord` holder `GitStoreLogMessages`; and the
-write path: `StoreWriter` (`open` with the active `SigningKeySource`; drafts, listing, explicit save with lease and the
-optional per-attempt `SaveStep` taking the `IdentityClaims` of the user,
-`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, optionally pinned to the commit id a save returned, draft expiry with garbage collection, `fetch` and
-`fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`) with
+write path: `StoreWriter` (`open` with the declared collections, a name declared twice refused as `MALFORMED`, and the
+active `SigningKeySource`; drafts, listing, explicit save with lease, retried only on a lost lease, and the
+optional per-attempt `SaveStep` taking the `IdentityClaims` of the user, whose `SaveStep.Attempt` view reports the
+`mode` of a path, a save keeping the file mode of every draft put,
+`release` of a document with its tag taking the `IdentityClaims` and returning `Release`, optionally pinned to the commit
+id a save returned (with `branchMovedOn` for a
+repair of an incomplete release; a tag the remote already holds at the release commit completes it, a gitlink path is
+`MALFORMED`, a numbered entry `main` changed since the previous release is `CONFLICT`, a failed push of `main` leaves no
+local tag), draft expiry with garbage collection (`REFUSED` when re-entered from a callback holding the shared lock), `fetch` and
+`fetchPeriodically` on the caller's executor returning a `FetchSchedule`, and `subscribe` of a per-branch `CommitListener`
+registered before its start is read) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
-every fetch, save and release, with `snapshot` of a tag or commit) over the consumer's `IndexContributor` per
-collection, over the package-private `DraftReferences`, `ExplicitSave`, `DocumentRelease`, `DocumentPaths`,
-`DraftExpiry`, `StoreEvents`, `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
+every fetch, save and release, each source read in isolation, with `snapshot` of a tag or commit; `snapshot` and
+`open` are `REFUSED` without waiting inside a callback that holds a lock of the clone) over the consumer's
+`IndexContributor` per collection, over the package-private `StoreClone` (the opened clone, to which `StoreWriter`
+delegates, with its events, the listener subscription and the closed flag that `close()` sets under the anchoring lock,
+so no due check runs after the close; a close issued inside a callback that holds a lock of the clone, a save step or
+an anchor provider call, is refused without waiting, leaves the writer open and logs `GIT_STORE-114`, and an `anchor()`
+issued there is refused the same way, as `REFUSED` without a log), `CloneWrites` (drafts, listing, save, release, expiry), `CloneSchedules` (fetch,
+periodic fetch, anchoring, the coalescing due-check trigger) and `CloneOpening` (checks the arguments of `open`, builds
+the providers and those parts), `DraftReferences`,
+`ExplicitSave`, `DocumentRelease`, `DocumentPaths`, `DraftExpiry`, `StoreEvents` (the notification seam and the one
+isolation rule of the store's callbacks: a listener, contributor, step or anchor provider isolates a
+`RuntimeException` and every `Error` but a `VirtualMachineError`, the two scheduled runners every `Throwable`; it owns
+the one lock of the writer's indexes),
+`ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
 commit is signed in the SSH signature format (GDR-STORE-12) through the package-private `SshSignatures` (an own
 SSHSIG encoder, no dependency), `SourceSigner` and `CommitSignatures`, and carries the identity trailers of
-`IdentityTrailers` (GDR-STORE-13); draft commits are neither. The signature verification (GDR-STORE-14) is
-`AllowedSigners` (Git's `allowed_signers` format), `SignatureVerification` and the CI main class `VerifySignatures`.
+`IdentityTrailers` (GDR-STORE-13), built from `IdentityClaims` (`IdentityClaims.of` returns a token value that does not
+fit a trailer line as `MALFORMED`); draft commits are neither. A `RuntimeException` of a third-party signing key source
+is isolated as `REFUSED`. Every blob read of the store is bounded by 16 MiB (`ExplicitSave.BLOB_LIMIT`). The signature
+verification (GDR-STORE-14) is `AllowedSigners` (Git's `allowed_signers` format, read bounded: a regular file of at
+most 64 KiB and 1024 lines in UTF-8, a malformed file or path a result), `SignatureVerification` (a second `gpgsig`
+header is `INVALID`, no commit body retained) and the CI main class `VerifySignatures`.
 The anchoring (GDR-STORE-15 to GDR-STORE-18) is `StoreWriter.open` with the selected `StoreProviders`, `anchor()`
-(one due check, returning `StoreWriter.Anchoring`) and `anchorPeriodically` on the caller's executor returning an
+(one due check, returning `StoreWriter.Anchoring`; an unchecked failure of its first phase `INCOMPLETE`, a closed
+writer `REFUSED`, an empty proof refused) and `anchorPeriodically` on the caller's executor returning an
 `AnchorSchedule`, over the package-private `AnchorEngine` (due check under the clone's anchoring lock, a coalesced due
 check after every save, release and fetch), `Checkpoints` (checkpoint commits with the file `refs`, never-moved tags
 `refs/tags/checkpoints/<n>`) and `AnchorNotes` (base64 proofs as notes under `refs/notes/anchors/<provider>`, an
 unpushed proof or checkpoint kept under the local-only `refs/anchoring/`); the built-in anchor provider
 `SignedAnchorProvider` (id `signed`, statement codec `AnchorStatement`, SSH signature in the namespace
-`git-document-anchor`, `AllowedSigners.fromAnchor`), and the verification `AnchorVerification.verifyAnchors` with the
+`git-document-anchor`, `AllowedSigners.fromAnchor`), and the verification `AnchorVerification.verifyAnchors` (with the
+checkpoint chain: `CHECKPOINT_CHAIN_BROKEN`, `CHECKPOINT_DUPLICATE`, `CHECKPOINT_UNREADABLE`) with the
 CI main class `VerifyAnchors`. JOL (`org.openjdk.jol:jol-core`) is a test-scope dependency of
 `git-store` only, for `IndexFootprintTest` (GDR-NFR-1). Its tests run on the class path against
 the `git-testing` fixtures. `git-forms` exports `de.cuioss.git.document.forms` with the closed outcome list

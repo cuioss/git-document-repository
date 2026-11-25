@@ -47,6 +47,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.LogRecord;
@@ -335,13 +336,131 @@ class StoreIndexTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(interval), List.of(),
                 TestKeys.ed25519().source(), operations, Clock.fixed(now, ZoneOffset.UTC)));
         Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
         contributors.put(layout.documents(), recorder);
         contributors.put(layout.numbered(), recorder);
         var index = value(StoreIndex.open(writer, contributors));
         return new Fixture(writer, operations, index, recorder);
+    }
+
+    /**
+     * Writes a commit whose tree holds one file of the document at a blob id the repository lacks, onto a reference: a
+     * source whose documents cannot be read.
+     */
+    private static ObjectId brokenCommit(Repository repository, String ref, String path, ObjectId parent) {
+        try (ObjectInserter inserter = repository.newObjectInserter()) {
+            DirCache index = DirCache.newInCore();
+            DirCacheBuilder builder = index.builder();
+            var entry = new DirCacheEntry(path);
+            entry.setFileMode(FileMode.REGULAR_FILE);
+            entry.setObjectId(ObjectId.fromString(Generators.strings("0123456789abcdef", 40, 40).next()));
+            builder.add(entry);
+            builder.finish();
+            var commit = new CommitBuilder();
+            var ident = new PersonIdent(pseudonym(), "");
+            commit.setTreeId(index.writeTree(inserter));
+            commit.setParentIds(parent);
+            commit.setAuthor(ident);
+            commit.setCommitter(ident);
+            commit.setMessage(word());
+            var id = inserter.insert(commit);
+            inserter.flush();
+            RefUpdate update = repository.updateRef(ref);
+            update.setNewObjectId(id);
+            update.setForceUpdate(true);
+            var result = update.update();
+            assertTrue(result == RefUpdate.Result.NEW || result == RefUpdate.Result.FORCED
+                    || result == RefUpdate.Result.FAST_FORWARD, () -> "the fixture reference is written: " + result);
+            return id;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Nested
+    @DisplayName("Per-source refresh (GDR-STORE-9)")
+    class PerSource {
+
+        @Test
+        @DisplayName("GDR-STORE-9: an unreadable working branch keeps its entries, the other sources are fresh")
+        void unreadableSourceKeepsItsEntries(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var other = value(DocumentKey.of(layout.documents(), Ulid.next()));
+            var otherBranch = StoreReferences.target(other);
+            var otherTip = commit(repository, otherBranch,
+                    merged(layout.main(), Map.of(path(other, ".json"), content())), layout.mainTip());
+            var recorder = new Recorder();
+            var events = new StoreEvents(updates -> {
+                // no listeners in this test
+            });
+            Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+            contributors.put(layout.documents(), recorder);
+            contributors.put(layout.numbered(), recorder);
+            String alias = word();
+
+            try (var index = value(StoreIndex.open(alias, repository, events, contributors))) {
+                var workingBefore = index.entries(layout.workingBranch(), layout.documents());
+                var workingCommit = index.commitId(layout.workingBranch());
+                var broken = brokenCommit(repository, layout.workingBranch(), path(layout.working(), ".json"),
+                        ObjectId.fromString(workingCommit.orElseThrow()));
+                Map<String, String> mainNow = merged(layout.main(), Map.of(path(layout.released(), ".json"),
+                        content()));
+                var mainTip = commit(repository, StoreReferences.MAIN, mainNow, layout.mainTip());
+                var otherText = content();
+                var otherMoved = commit(repository, otherBranch,
+                        merged(layout.main(), Map.of(path(other, ".json"), otherText)), otherTip);
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingCommit.orElseThrow(),
+                        broken.name())));
+
+                assertAll(
+                        () -> assertEquals(workingBefore, index.entries(layout.workingBranch(), layout.documents()),
+                                "the unreadable source keeps its previous entries"),
+                        () -> assertEquals(workingCommit, index.commitId(layout.workingBranch()),
+                                "at its previous commit"),
+                        () -> assertEquals(Optional.of(mainTip.name()), index.commitId(StoreReferences.MAIN),
+                                "main is published fresh"),
+                        () -> assertEquals(entry(filesOf(layout.released(), mainNow)),
+                                index.entries(StoreReferences.MAIN, layout.documents()).get(layout.released()),
+                                "with its new entry"),
+                        () -> assertEquals(Optional.of(otherMoved.name()), index.commitId(otherBranch),
+                                "the other working branch is published fresh"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString()),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, "working branch"),
+                        () -> assertNothingLeaks(null, List.of(layout.workingBranch(), layout.working().id(),
+                                otherText)));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: a new source that cannot be read stays out of the index, the others are indexed")
+        void unreadableNewSourceStaysOut(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var other = value(DocumentKey.of(layout.documents(), Ulid.next()));
+            var otherBranch = StoreReferences.target(other);
+            brokenCommit(repository, otherBranch, path(other, ".json"), layout.mainTip());
+            var recorder = new Recorder();
+            var events = new StoreEvents(updates -> {
+                // no listeners in this test
+            });
+            Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+            contributors.put(layout.documents(), recorder);
+            contributors.put(layout.numbered(), recorder);
+
+            try (var index = value(StoreIndex.open(word(), repository, events, contributors))) {
+                assertAll(
+                        () -> assertFalse(index.sources().contains(otherBranch), "the unreadable source is left out"),
+                        () -> assertTrue(index.sources().containsAll(Set.of(StoreReferences.MAIN,
+                                layout.workingBranch(), layout.collectionBranch())), "every other source"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString()));
+            }
+        }
     }
 
     /** Writes a draft of one file of the document and saves it. */
@@ -665,6 +784,9 @@ class StoreIndexTest {
     /** The deadline of every wait for another thread. */
     private static final long WAIT_SECONDS = 10;
 
+    /** The calls after which a re-entering contributor stops re-entering, far below the depth of the stack. */
+    private static final int REENTRY_BOUND = 50;
+
     /** Opens an index directly over a repository and its own events, as {@link StoreIndex#open} does for a writer. */
     private static StoreIndex<String> direct(Repository repository, Layout layout, IndexContributor<String> contributor,
             StoreEvents events) {
@@ -746,9 +868,578 @@ class StoreIndexTest {
         }
     }
 
+    /**
+     * A contributor that records every document it is called for, blocks its first call for a document of one source
+     * once told to, until released (bounded), and runs an action once on its first call when given one.
+     */
+    private static final class Gate implements IndexContributor<String> {
+
+        private final List<DocumentKey> calls = Collections.synchronizedList(new ArrayList<>());
+        private final CountDownLatch inside = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicReference<@Nullable String> blockOn = new AtomicReference<>();
+        private final AtomicReference<@Nullable Runnable> once = new AtomicReference<>();
+
+        @Override
+        public String contribute(Document document) {
+            calls.add(document.key());
+            @Nullable Runnable action = once.getAndSet(null);
+            if (action != null) {
+                action.run();
+            }
+            @Nullable String source = blockOn.get();
+            if (source != null && source.equals(document.source()) && blockOn.compareAndSet(source, null)) {
+                inside.countDown();
+                try {
+                    assertTrue(release.await(WAIT_SECONDS, TimeUnit.SECONDS), "released");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return document.key().id();
+        }
+
+        void blockOn(String source) {
+            blockOn.set(source);
+        }
+
+        void runOnce(Runnable action) {
+            once.set(action);
+        }
+
+        boolean awaitInside() throws InterruptedException {
+            return inside.await(WAIT_SECONDS, TimeUnit.SECONDS);
+        }
+
+        void release() {
+            release.countDown();
+        }
+
+        List<DocumentKey> calls() {
+            synchronized (calls) {
+                return List.copyOf(calls);
+            }
+        }
+
+        void reset() {
+            calls.clear();
+        }
+    }
+
+    /**
+     * A contributor of one of two indexes on the same events: once armed, its first call marks it inside, waits until
+     * the thread of the other index is inside the other contributor, parked on a lock or ended (bounded by the one
+     * deadline of the test), and then emits an operation that moved nothing, as a fetch of a current clone does.
+     */
+    private static final class NoMoveContributor implements IndexContributor<String> {
+
+        private final StoreEvents events;
+        private final AtomicBoolean armed;
+        private final long deadlineNanos;
+        private final CountDownLatch inside = new CountDownLatch(1);
+        private final AtomicInteger actions = new AtomicInteger();
+        private final AtomicBoolean done = new AtomicBoolean();
+        private volatile @Nullable NoMoveContributor partner;
+        private volatile @Nullable Thread partnerThread;
+
+        NoMoveContributor(StoreEvents events, AtomicBoolean armed, long deadlineNanos) {
+            this.events = events;
+            this.armed = armed;
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        void partner(NoMoveContributor contributor, Thread thread) {
+            partner = contributor;
+            partnerThread = thread;
+        }
+
+        @Override
+        public String contribute(Document document) {
+            if (armed.get() && done.compareAndSet(false, true)) {
+                actions.incrementAndGet();
+                inside.countDown();
+                try {
+                    awaitPartner();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                events.emit(List.of());
+            }
+            return document.key().id();
+        }
+
+        private void awaitPartner() throws InterruptedException {
+            var other = Objects.requireNonNull(partner, "partner");
+            var thread = Objects.requireNonNull(partnerThread, "partner thread");
+            while (other.inside.getCount() > 0 && thread.getState() != Thread.State.WAITING
+                    && thread.getState() != Thread.State.TERMINATED && System.nanoTime() < deadlineNanos) {
+                thread.join(1);
+            }
+        }
+    }
+
+    /** Whether a captured WARN record names an unread source of the index. */
+    private static boolean sourceUnreadLogged() {
+        String identifier = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString();
+        return TestLoggerFactory.getTestHandler().getRecords().stream()
+                .anyMatch(logRecord -> String.valueOf(logRecord.getMessage()).contains(identifier));
+    }
+
     @Nested
     @DisplayName("Serialisation, retry and log (GDR-STORE-9, GDR-NFR-3)")
     class Robustness {
+
+        /**
+         * A refresh that will end stale is blocked inside the contributor on {@code main}, the last source it reads, after
+         * the working branch failed to be read; an operation that moved nothing, issued on another thread meanwhile,
+         * waits for that refresh under the lock of the index and then retries it, now that the missing blob is present.
+         * Reading the stale flag without the lock, it would see the index current and skip the retry.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() during a refresh that ends stale waits for it and retries the refresh")
+        void unchangedDuringFailingRefreshWaitsAndRetries(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob,
+                        workingBefore);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                gate.blockOn(StoreReferences.MAIN);
+                var refresh = new Thread(() -> events.emit(List.of(
+                        new StoreEvents.Update(layout.workingBranch(), workingBefore.name(), broken.name()),
+                        new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(), mainMoved.name()))));
+                Thread retry = new Thread(() -> events.emit(List.of()));
+                boolean inside;
+                boolean failedFirst;
+                boolean waited;
+                try {
+                    refresh.start();
+                    inside = gate.awaitInside();
+                    failedFirst = sourceUnreadLogged();
+                    try (ObjectInserter inserter = repository.newObjectInserter()) {
+                        inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                        inserter.flush();
+                    }
+                    gate.reset();
+                    retry.start();
+                    ThreadStates.awaitParkedOrEnded(retry, WAIT_SECONDS);
+                    waited = retry.isAlive();
+                } finally {
+                    gate.release();
+                }
+                refresh.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+                retry.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertAll(
+                        () -> assertTrue(inside, "the refresh is inside the contributor on main"),
+                        () -> assertTrue(failedFirst, "the working branch failed before main was read"),
+                        () -> assertTrue(waited, "unchanged() waits for the running refresh"),
+                        () -> assertFalse(refresh.isAlive(), "the refresh ends"),
+                        () -> assertFalse(retry.isAlive(), "the unchanged() call ends"),
+                        () -> assertTrue(gate.calls().contains(layout.working()),
+                                "the retry calls the contributor for the document of the failed source"),
+                        () -> assertEquals(broken, tip(index, layout.workingBranch()),
+                                "the retried refresh indexes the working branch at its new tip"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() on a current index calls no contributor")
+        void unchangedOnCurrentIndexSkipsRebuild(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var built = gate.calls();
+                gate.reset();
+
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertFalse(built.isEmpty(), "the build called the contributor"),
+                        () -> assertEquals(List.of(), gate.calls(), "unchanged() rebuilt nothing"),
+                        () -> assertEquals(layout.mainTip(), tip(index, StoreReferences.MAIN), "main is unchanged"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: unchanged() from the contributor's own thread during a refresh does not deadlock")
+        void unchangedFromContributorThreadDoesNotDeadlock(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                var returned = new CountDownLatch(1);
+                gate.runOnce(() -> {
+                    events.emit(List.of());
+                    returned.countDown();
+                });
+                var refresh = new Thread(() -> events.emit(List.of(
+                        new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(), mainMoved.name()))));
+                refresh.setDaemon(true);
+
+                refresh.start();
+                boolean reentered = returned.await(WAIT_SECONDS, TimeUnit.SECONDS);
+                refresh.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertAll(
+                        () -> assertTrue(reentered, "the nested unchanged() returns"),
+                        () -> assertFalse(refresh.isAlive(), "the refresh ends"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"));
+            }
+        }
+
+        /**
+         * A contributor that performs a no-move operation on every call, while the index is stale: without the retry
+         * restricted to the outermost holder of the index lock, every nested {@code unchanged()} read the flag still
+         * set and refreshed again, calling the contributor again, until the stack overflowed. The contributor stops
+         * re-entering at {@value #REENTRY_BOUND} calls, so the test fails on that bound instead of overflowing.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a contributor re-entering unchanged() on a stale index defers the retry, no recursion")
+        void reenteringContributorOnStaleIndexDoesNotRecurse(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var calls = new AtomicInteger();
+            var armed = new AtomicBoolean();
+            var bounded = new AtomicBoolean();
+            IndexContributor<String> contributor = document -> {
+                if (armed.get()) {
+                    if (calls.incrementAndGet() < REENTRY_BOUND) {
+                        events.emit(List.of());
+                    } else {
+                        bounded.set(true);
+                    }
+                }
+                return document.key().id();
+            };
+
+            try (var index = direct(repository, layout, contributor, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob,
+                        workingBefore);
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingBefore.name(),
+                        broken.name())));
+                var staleAfterMove = tip(index, layout.workingBranch());
+
+                armed.set(true);
+                events.emit(List.of());
+                int failingRetryCalls = calls.getAndSet(0);
+                var staleAfterFailingRetry = tip(index, layout.workingBranch());
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                    inserter.flush();
+                }
+                events.emit(List.of());
+                int recoveringRetryCalls = calls.getAndSet(0);
+                var recovered = tip(index, layout.workingBranch());
+                events.emit(List.of());
+                int currentCalls = calls.get();
+
+                assertAll(
+                        () -> assertFalse(bounded.get(), "the contributor never reached the re-entry bound"),
+                        () -> assertEquals(workingBefore, staleAfterMove, "the unreadable source keeps its tip"),
+                        // the missing blob fails the read of the working branch before its document reaches the
+                        // contributor, and every other source is current, so the failing retry calls it for nothing
+                        () -> assertEquals(0, failingRetryCalls,
+                                "a retry that still fails calls the contributor for no document"),
+                        () -> assertEquals(workingBefore, staleAfterFailingRetry,
+                                "a retry that still fails keeps the index stale"),
+                        // the recovering retry re-reads the one changed document of the working branch; its nested
+                        // no-move call is deferred, so no second pass calls the contributor again
+                        () -> assertEquals(1, recoveringRetryCalls,
+                                "the next operation retries in one pass, the restored document read once"),
+                        () -> assertEquals(broken, recovered, "the retry indexes the restored source"),
+                        () -> assertEquals(0, currentCalls, "the outer refresh cleared the stale mark"));
+            }
+        }
+
+        /**
+         * Finding 7e7455: the refresh after a move of {@code main} has read the references, the working branch still at
+         * B, when its contributor moves the working branch to C and reports the move on the same thread. Without the
+         * deferral of a nested move, the nested refresh published C, the outer refresh then published its own index with
+         * the working branch at B and cleared the stale mark, and the next no-move operation refreshed nothing: the
+         * assertion "the next no-move operation indexes the working branch at C" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a move reported from a contributor leaves the overtaken refresh stale, not older")
+        void nestedMoveLeavesOvertakenRefreshStale(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var workingBefore = tip(index, layout.workingBranch());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                AtomicReference<@Nullable ObjectId> workingMoved = new AtomicReference<>();
+                gate.reset();
+                gate.runOnce(() -> {
+                    var moved = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                            Map.of(path(layout.working(), ".json"), content())), workingBefore);
+                    workingMoved.set(moved);
+                    events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), workingBefore.name(),
+                            moved.name())));
+                });
+
+                events.emit(List.of(new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(),
+                        mainMoved.name())));
+                var outerCalls = gate.calls();
+                var workingAfterOuter = tip(index, layout.workingBranch());
+                gate.reset();
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertEquals(List.of(layout.released()), outerCalls,
+                                "the outer refresh calls the contributor for its one changed document, no nested pass"),
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"),
+                        () -> assertEquals(workingBefore, workingAfterOuter,
+                                "the outer refresh publishes the working branch it read"),
+                        () -> assertEquals(Objects.requireNonNull(workingMoved.get(), "the contributor moved"),
+                                tip(index, layout.workingBranch()),
+                                "the next no-move operation indexes the working branch at C"),
+                        () -> assertEquals(List.of(layout.working()), gate.calls(),
+                                "the retry reads the moved document"));
+            }
+        }
+
+        /**
+         * The counterpart of {@link #nestedMoveLeavesOvertakenRefreshStale}: a refresh that no nested move overtook
+         * publishes its result current, and the next no-move operation rebuilds nothing.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a refresh without a nested move stays current; the next no-move call rebuilds nothing")
+        void refreshWithoutNestedMoveStaysCurrent(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gate = new Gate();
+
+            try (var index = direct(repository, layout, gate, events)) {
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var mainMoved = commit(repository, StoreReferences.MAIN, merged(layout.main(),
+                        Map.of(path(layout.released(), ".json"), content())), mainBefore);
+                events.emit(List.of(new StoreEvents.Update(StoreReferences.MAIN, mainBefore.name(),
+                        mainMoved.name())));
+                gate.reset();
+
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertEquals(mainMoved, tip(index, StoreReferences.MAIN), "main is indexed fresh"),
+                        () -> assertEquals(List.of(), gate.calls(), "the next no-move operation rebuilt nothing"));
+            }
+        }
+
+        /**
+         * Finding 7e7455 through another index: the contributor of a snapshot of index A moves the working branch and
+         * reports the move. Without the deferral of a nested move, index B refreshed inside A's snapshot as the nested
+         * observer, so the assertion "B's contributor is not called inside A's snapshot" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a move reported from a snapshot's contributor defers the refresh of another index")
+        void nestedMoveFromSnapshotDefersOtherIndex(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gateA = new Gate();
+            var gateB = new Gate();
+
+            try (var a = direct(repository, layout, gateA, events); var b = direct(repository, layout, gateB, events)) {
+                var before = tip(b, layout.workingBranch());
+                AtomicReference<@Nullable ObjectId> moved = new AtomicReference<>();
+                AtomicReference<@Nullable List<DocumentKey>> callsOfBDuring = new AtomicReference<>();
+                gateA.reset();
+                gateB.reset();
+                gateA.runOnce(() -> {
+                    var next = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                            Map.of(path(layout.working(), ".json"), content())), before);
+                    moved.set(next);
+                    events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), next.name())));
+                    callsOfBDuring.set(gateB.calls());
+                });
+
+                var snapshot = a.snapshot(layout.mainTip().name());
+                var staleAfterSnapshot = tip(b, layout.workingBranch());
+                events.emit(List.of());
+                var movedTip = Objects.requireNonNull(moved.get(), "the contributor moved");
+
+                assertAll(
+                        () -> assertTrue(snapshot.isOk(), "the snapshot of index A is built"),
+                        () -> assertEquals(List.of(), callsOfBDuring.get(),
+                                "B's contributor is not called inside A's snapshot"),
+                        () -> assertEquals(before, staleAfterSnapshot, "B stays stale until the next operation"),
+                        () -> assertEquals(movedTip, tip(b, layout.workingBranch()),
+                                "the next no-move operation refreshes B to the new tip"),
+                        () -> assertEquals(movedTip, tip(a, layout.workingBranch()), "and refreshes A"));
+            }
+        }
+
+        /**
+         * Finding c5f522: two indexes on the events of one writer, whose contributors each emit an operation that moved
+         * nothing from inside a snapshot, on two threads. With one lock per index, the first thread held the lock of
+         * index A and its nested {@code unchanged()} on index B waited for B's lock, which the second thread held while
+         * its nested {@code unchanged()} waited for A's: neither ended, and the assertion "both threads end within the
+         * deadline, so the two indexes did not wait for each other" failed. With the one lock of the writer's indexes
+         * the second thread waits until the first released it, and both end.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: two indexes of one writer whose contributors move nothing never wait for each other")
+        void twoIndexesWithNoMoveContributorsDoNotDeadlock(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+            var armed = new AtomicBoolean();
+            var first = new NoMoveContributor(events, armed, deadline);
+            var second = new NoMoveContributor(events, armed, deadline);
+            List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
+
+            try (var a = direct(repository, layout, first, events);
+                 var b = direct(repository, layout, second, events)) {
+                AtomicReference<@Nullable StoreResult<StoreIndex.Snapshot<String>>> fromA = new AtomicReference<>();
+                AtomicReference<@Nullable StoreResult<StoreIndex.Snapshot<String>>> fromB = new AtomicReference<>();
+                var threadA = new Thread(() -> fromA.set(a.snapshot(layout.mainTip().name())), "snapshot-a");
+                var threadB = new Thread(() -> fromB.set(b.snapshot(layout.mainTip().name())), "snapshot-b");
+                for (Thread thread : List.of(threadA, threadB)) {
+                    thread.setDaemon(true);
+                    thread.setUncaughtExceptionHandler((failed, e) -> failures.add(e));
+                }
+                first.partner(second, threadB);
+                second.partner(first, threadA);
+                armed.set(true);
+
+                threadA.start();
+                threadB.start();
+                TimeUnit.NANOSECONDS.timedJoin(threadA, Math.max(0, deadline - System.nanoTime()));
+                TimeUnit.NANOSECONDS.timedJoin(threadB, Math.max(0, deadline - System.nanoTime()));
+                boolean ended = !threadA.isAlive() && !threadB.isAlive();
+                armed.set(false);
+
+                assertAll(
+                        () -> assertTrue(ended,
+                                "both threads end within the deadline, so the two indexes did not wait for each other"),
+                        () -> assertTrue(Objects.requireNonNull(fromA.get(), "snapshot A returned").isOk(),
+                                "the snapshot of index A is built"),
+                        () -> assertTrue(Objects.requireNonNull(fromB.get(), "snapshot B returned").isOk(),
+                                "the snapshot of index B is built"),
+                        () -> assertEquals(1, first.actions.get(), "the contributor of A emitted once"),
+                        () -> assertEquals(1, second.actions.get(), "the contributor of B emitted once"),
+                        () -> assertEquals(List.of(), failures, "no thread failed"),
+                        () -> assertEquals(layout.mainTip(), tip(a, StoreReferences.MAIN), "index A is unchanged"),
+                        () -> assertEquals(layout.mainTip(), tip(b, StoreReferences.MAIN), "index B is unchanged"));
+            }
+        }
+
+        /**
+         * Finding c5f522, the deferral through the other index: both indexes of one writer are stale, and the
+         * contributor of index A emits an operation that moved nothing from inside a snapshot of A. The nested
+         * {@code unchanged()} of index B runs under the one lock A's snapshot holds, so it defers its retry like a
+         * nested call on the same index: B's contributor is not called and B stays stale until the next operation.
+         * With one lock per index, B took its own free lock as the outermost holder and refreshed inside A's snapshot,
+         * so the assertion "the retry of B is deferred" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a nested no-move call through another index of the writer defers its retry")
+        void nestedCallThroughOtherIndexDefersRetry(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gateA = new Gate();
+            var gateB = new Gate();
+
+            try (var a = direct(repository, layout, gateA, events); var b = direct(repository, layout, gateB, events)) {
+                var before = tip(b, layout.workingBranch());
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob, before);
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), broken.name())));
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                    inserter.flush();
+                }
+                gateA.reset();
+                gateB.reset();
+                AtomicReference<@Nullable List<DocumentKey>> callsOfBDuring = new AtomicReference<>();
+                AtomicReference<@Nullable ObjectId> tipOfBDuring = new AtomicReference<>();
+                gateA.runOnce(() -> {
+                    events.emit(List.of());
+                    callsOfBDuring.set(gateB.calls());
+                    tipOfBDuring.set(tip(b, layout.workingBranch()));
+                });
+
+                var snapshot = a.snapshot(layout.mainTip().name());
+                var staleAfterSnapshot = tip(b, layout.workingBranch());
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertTrue(snapshot.isOk(), "the snapshot of index A is built"),
+                        () -> assertEquals(List.of(), callsOfBDuring.get(),
+                                "the retry of B is deferred: its contributor is not called inside A's snapshot"),
+                        () -> assertEquals(before, tipOfBDuring.get(), "B stays stale inside A's snapshot"),
+                        () -> assertEquals(before, staleAfterSnapshot, "and after it, until the next operation"),
+                        () -> assertEquals(broken, tip(b, layout.workingBranch()),
+                                "the next operation retries B as the outermost holder"),
+                        () -> assertEquals(broken, tip(a, layout.workingBranch()), "and retries A"));
+            }
+        }
 
         @Test
         @DisplayName("GDR-STORE-9: a snapshot during a refresh waits; no contributor is called by two threads at once")
@@ -784,6 +1475,37 @@ class StoreIndexTest {
                         () -> assertEquals(1, probe.maxActive.get(), "one thread at a time in the contributor"),
                         () -> assertTrue(snapshot.get().isOk(), "the snapshot is built afterwards"),
                         () -> assertEquals(moved, tip(index, layout.workingBranch()), "the refresh completed"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-9: a fetched blob above 16 MiB keeps the source's previous entries, never read whole")
+        void oversizedBlobKeepsPreviousEntries(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+
+            try (var index = direct(repository, layout, new Recorder(), events)) {
+                var before = tip(index, layout.workingBranch());
+                var entriesBefore = index.entries(layout.workingBranch(), layout.documents());
+                var mainBefore = tip(index, StoreReferences.MAIN);
+                var moved = commit(repository, layout.workingBranch(), merged(layout.workingTree(),
+                        Map.of(path(layout.working(), ".json"), "x".repeat(ExplicitSave.BLOB_LIMIT + 1))), before);
+
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), moved.name())));
+
+                String identifier = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString();
+                assertAll(
+                        () -> assertEquals(before, tip(index, layout.workingBranch()),
+                                "the source keeps the commit it was indexed at"),
+                        () -> assertEquals(entriesBefore, index.entries(layout.workingBranch(), layout.documents()),
+                                "and its previous entries"),
+                        () -> assertEquals(mainBefore, tip(index, StoreReferences.MAIN), "main is unaffected"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN, identifier),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                ExplicitSave.BlobTooLargeException.class.getSimpleName()));
             }
         }
 

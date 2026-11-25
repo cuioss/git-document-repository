@@ -231,13 +231,19 @@ constant, and the table lists exactly the constants of `GitOutcome`:
 
 |`OK` |success |every operation; reported by the store as saved
 |`CONFLICT` |conflict |compare-and-swap after the last attempt, also of a notes write; in-core merge, with the
-conflicting paths as data, or with more than one merge base; save, concurrent change detection
-|`REJECTED` |rejected |push refused by the remote (non-fast-forward, protected branch or another refusal); reference
+conflicting paths as data, or with more than one merge base; save, concurrent change detection; release, for a
+conflicting merge or a numbered entry whose paths `main` changed since the previous release
+(xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6])
+|`REJECTED` |rejected |push refused by the remote (non-fast-forward, protected branch, hook or another permanent
+refusal; a plain push without a lease that lost a race); reference
 update refused locally; compare-and-swap, compare-and-delete and notes write on a reference that does not exist and
 whose name conflicts with an existing one (detail `refName: name conflict`, never retried as a lost race) or on a
-reference that points at no commit, such as an annotated tag; save after the last attempt
-|`LEASE_REFUSED` |lease refused |push with lease (`git-core`); the store retries and reports rejected after the last
-attempt
+reference that points at no commit, such as an annotated tag; save after the last attempt, and a save or release whose
+push the remote refuses permanently, at once
+|`LEASE_REFUSED` |lease refused |push with lease that lost a race on the remote reference, seen in the advertisement or
+as a reference the remote could not lock for the update or found no longer at the old value the push sent
+(`git-core`, xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]); the store retries and reports rejected after the
+last attempt
 |`UNREACHABLE` |unreachable |fetch, push, bare clone or cache fetch when the remote cannot be reached; the save keeps
 the draft
 |`CREDENTIALS_INVALID` |credentials expired or invalid |fetch, push, bare clone, save
@@ -289,12 +295,17 @@ lists exactly the constants of `StoreOutcome`:
 |Constant |Outcome |Raised by
 
 |`OK` |success |every operation; a valid proof is success with the time it establishes
-|`INCOMPLETE` |incomplete |release whose tag is still missing after `main` moved
+|`INCOMPLETE` |incomplete |release whose tag is still missing after `main` moved, or that the remote holds at another
+commit; a tag the remote refused because it holds it at the release commit already completes the release
+(xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6])
 |`UNAVAILABLE` |unavailable |obtaining an anchor proof: the provider cannot be reached; the subject stays pending; a
 signing key source that cannot be reached
 |`REFUSED` |refused |obtaining an anchor proof: the provider refuses, `signed` because its clock is behind, an RFC 3161
 authority by an error response; the subject stays pending; a signing key source that refuses; a save whose
-per-attempt step refused, nothing being pushed (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3])
+per-attempt step refused, nothing being pushed (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]); a draft expiry called
+from a thread that holds the shared side of the clone's maintenance lock, such as a save step re-entering the writer,
+instead of a deadlock (detail `maintenance: re-entered from a callback that holds the shared lock`,
+xref:git-store.adoc#GDR-STORE-7[GDR-STORE-7])
 |`NO_PROOF` |no proof |anchor verification: a subject that should be anchored has no proof
 |`IMPRINT_MISMATCH` |imprint mismatch |anchor verification: the proof is about another object id
 |`SIGNATURE_INVALID` |signature invalid |anchor and commit-signature verification: the signature does not verify
@@ -307,8 +318,11 @@ unbound entries, binding
 pseudonym
 |`MALFORMED` |malformed |start: a configuration that lacks a required key, holds a malformed value, an invalid or
 duplicate alias, a remote with user information or an anchor key equal to the commit-signing key, or names a provider
-that is missing or not unique; a content a codec cannot decode; the detail names the key, alias, path or provider id,
-never the value
+that is missing or not unique or whose id cannot be read; a content a codec cannot decode; a save whose expected blob
+id is no full object id (xref:git-store.adoc#GDR-STORE-5[GDR-STORE-5]), the detail naming the argument
+`expectedBlobIds`; a release that would write a gitlink (detail `entry: a gitlink path cannot be released`,
+xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6]); the detail names the key, alias, path, argument, class of path or
+provider interface, never the value
 |===
 
 `FormsOutcome` (`git-forms`) is the outcome list of `git-forms`. Its result is `FormsResult`, of the same shape as
@@ -366,12 +380,15 @@ beside its code. Debug and trace messages use `CuiLogger` directly, without iden
 A test is to generate the documents into an in-memory repository, build the index and measure the retained size of the
 index object graph. The measuring tool is JOL (`org.openjdk.jol:jol-core` 0.17, a test-scope dependency of
 `git-store` only), decided by the owner on 2026-11-21. `IndexFootprintTest` of `git-store` measures with
-`GraphLayout.parseInstance(index).totalSize()` the size of the object graph reachable from the index, checked against
-`GraphLayout.java` at the tag `0.17` of
+`GraphLayout.parseInstance(...).totalSize()` the reachable size of the entry graph of the index, the entries of
+`main` and of one working branch, checked against `GraphLayout.java` at the tag `0.17` of
 link:https://github.com/openjdk/jol/blob/0.17/jol-core/src/main/java/org/openjdk/jol/info/GraphLayout.java[JOL 0.17,
-`GraphLayout`]. The walked graph includes the repository the index reads, so the measured size is an upper bound of
-what the index retains. JOL 0.17 cannot read the field offsets of record classes through `Unsafe.objectFieldOffset` on
-Java 21 or 25, so the Surefire configuration of `git-store` sets `jol.magicFieldOffset=true`.
+`GraphLayout`]. The repository the index reads, with its `DfsBlockCache`, is shared with the writer and outside the
+entry graph, so it is not measured. The figure is relative to the value type the consumer's contributor returns: the
+index keeps only that value per document (xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9]), and a value that copies every
+field retains more than one that keeps a few. A lower bound of the measured size checks that JOL reached the entries.
+JOL 0.17 cannot read the field offsets of record classes through `Unsafe.objectFieldOffset` on Java 21 or 25, so the
+Surefire configuration of `git-store` sets `jol.magicFieldOffset=true`.
 
 [#GDR-NFR-2]
 == GDR-NFR-2: Concurrent Writers

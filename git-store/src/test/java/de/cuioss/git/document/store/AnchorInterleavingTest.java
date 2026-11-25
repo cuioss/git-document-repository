@@ -39,6 +39,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -82,6 +86,9 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * {@link ScriptedRepositoryOperations} runs a concurrent save right before a push of the due check,
  * {@link ScriptedAnchorProvider} right before a proof is answered; {@link ThreadStates} waits until the save parks.
+ * Every test has one deadline from which every wait takes what is left; a task still running at the deadline is
+ * cancelled and its executor stopped with {@code shutdownNow} and {@code awaitTermination}; every thread is a daemon,
+ * so one stuck on a lock of the clone, which no interrupt breaks, fails the test and does not keep the JVM alive.
  * Names, ids and contents are generated; the reference layout is the specified vocabulary and kept as literals.
  */
 @EnableGeneratorController
@@ -171,7 +178,7 @@ class AnchorInterleavingTest {
         var provider = new ScriptedAnchorProvider("a" + word());
         var clock = new MovableClock(Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next()));
         var gitDir = temp.resolve(word() + ".git");
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(provider.id()), List.of(),
                 new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider), operations,
                 clock));
         return new Fixture(writer, operations, provider, clock, gitDir);
@@ -248,6 +255,51 @@ class AnchorInterleavingTest {
         return new FileRepositoryBuilder().setGitDir(fixture.gitDir().toFile()).setMustExist(true).build();
     }
 
+    /** The one deadline of a test that runs several threads, from which every wait takes what is left. */
+    private record Deadline(long nanos) {
+
+        static Deadline in(long seconds) {
+            return new Deadline(System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds));
+        }
+
+        long remainingNanos() {
+            return Math.max(0, nanos - System.nanoTime());
+        }
+    }
+
+    /** How the tasks of an executor ended. */
+    private enum Stopped {
+
+        /** Every task ended within the deadline. */
+        ENDED,
+
+        /** A task was still running at the deadline and ended once cancelled. */
+        CANCELLED,
+
+        /** A task did not end even once cancelled: it waits on a lock that no interrupt breaks. */
+        STUCK
+    }
+
+    /**
+     * Ends the tasks of an executor by the deadline: an orderly shutdown and a wait for what is left of the deadline;
+     * a task still running then is cancelled and interrupted ({@code shutdownNow}), and the executor is awaited again
+     * with its own grace period. The locks of the clone are not interruptible, so a task stuck on one survives the
+     * cancel; the outcome says so instead of asserting it, so the caller can leave the writer open, whose close would
+     * wait for the same lock.
+     *
+     * @return how the tasks ended
+     */
+    private static Stopped stop(ExecutorService executor, List<Future<?>> tasks, Deadline deadline)
+            throws InterruptedException {
+        executor.shutdown();
+        if (executor.awaitTermination(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
+            return Stopped.ENDED;
+        }
+        tasks.forEach(task -> task.cancel(true));
+        executor.shutdownNow();
+        return executor.awaitTermination(TIMEOUT_SECONDS, TimeUnit.SECONDS) ? Stopped.CANCELLED : Stopped.STUCK;
+    }
+
     /** A save on its own thread; its result or failure is kept for the test. */
     private static final class SaveThread {
 
@@ -266,24 +318,165 @@ class AnchorInterleavingTest {
                     failure.set(e);
                 }
             });
+            // a save stuck on a lock of the clone must not keep the JVM alive
+            thread.setDaemon(true);
         }
 
-        /** Starts the save and waits until it parks on a lock or ends; whether it was still running then. */
-        boolean startAndAwaitParked() {
+        /**
+         * Starts the save and waits, with what is left of the test's one deadline, until it parks on a lock or ends;
+         * whether it was still running then.
+         */
+        boolean startAndAwaitParked(Deadline deadline) {
             thread.start();
             try {
-                ThreadStates.awaitParkedOrEnded(thread, TIMEOUT_SECONDS);
+                ThreadStates.awaitParkedOrEnded(thread, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
             return thread.isAlive();
         }
 
-        SaveResult join() throws InterruptedException {
-            thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
-            assertFalse(thread.isAlive(), "the save ends");
+        /** Waits for the save with what is left of the test's one deadline. */
+        SaveResult join(Deadline deadline) throws InterruptedException {
+            TimeUnit.NANOSECONDS.timedJoin(thread, deadline.remainingNanos());
+            assertFalse(thread.isAlive(), "the save ends within the deadline");
             assertNull(failure.get(), "the save threw nothing");
             return Objects.requireNonNull(result.get(), "the save returned");
+        }
+
+        /** Interrupts a save still running when the test ends and waits for it, so no thread outlives the test. */
+        void stop() throws InterruptedException {
+            if (thread.isAlive()) {
+                thread.interrupt();
+                thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a step closing the writer while a due check waits for the transport lock does not deadlock")
+    void stepClosingDuringDueCheckDoesNotDeadlock(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var key = document(repository, commit(repository, StoreReferences.MAIN));
+        var deadline = Deadline.in(TIMEOUT_SECONDS);
+        var stepEntered = new CountDownLatch(1);
+        var dueCheckParked = new CountDownLatch(1);
+        var closeReturned = new AtomicBoolean();
+        AtomicReference<@Nullable SaveResult> saved = new AtomicReference<>();
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> anchored = new AtomicReference<>();
+        var fixture = open(remote);
+        // a deadlocked due check holds the anchoring lock, so the fixture is closed only when both threads ended
+        var bothEnded = new AtomicBoolean();
+
+        try {
+            var writer = fixture.writer();
+            var author = draft(writer, key);
+            var save = new Thread(() -> saved.set(writer.save(author, CLAIMS, key, Map.of(), word(), attempt -> {
+                // the step holds the shared side and the transport lock of its save
+                stepEntered.countDown();
+                try {
+                    if (dueCheckParked.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
+                        writer.close();
+                        closeReturned.set(true);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new SaveStep.Edits(List.of());
+            })), "closing-step");
+            // the due check takes the anchoring lock and then waits for the transport lock the step holds
+            var dueCheck = new Thread(() -> anchored.set(writer.anchor()), "due-check");
+            save.setDaemon(true);
+            dueCheck.setDaemon(true);
+
+            save.start();
+            assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
+            dueCheck.start();
+            ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            // the step holds the transport lock until the latch is counted down, so a parked due check stays WAITING
+            assertEquals(Thread.State.WAITING, dueCheck.getState(), "the due check parks on the transport lock");
+            dueCheckParked.countDown();
+            TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
+            TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
+            boolean ended = !save.isAlive() && !dueCheck.isAlive();
+            bothEnded.set(ended);
+            var stillOpen = ended ? writer.anchor() : null;
+
+            assertAll(
+                    () -> assertTrue(ended, "both threads end within the deadline, so nothing deadlocked"),
+                    () -> assertTrue(closeReturned.get(), "the close from the step returned"),
+                    () -> assertInstanceOf(SaveResult.Saved.class, saved.get(), "the save completes"),
+                    () -> assertTrue(Objects.requireNonNull(anchored.get()).isOk(), "the due check completes"),
+                    () -> assertTrue(Objects.requireNonNull(stillOpen).isOk(), "the writer stays open"));
+        } finally {
+            if (bothEnded.get()) {
+                fixture.close();
+            }
+        }
+    }
+
+    /**
+     * The deadlock of finding 230fcc: the due check of another thread holds the anchoring lock and waits for the
+     * transport lock the step holds, and the step calls {@code anchor()}. Without the refusal before the anchoring lock
+     * is requested, the step waited for the anchoring lock and neither thread ended.
+     */
+    @Test
+    @DisplayName("GDR-STORE-16: anchor() from a step while a due check waits for the transport lock is refused at once")
+    void stepAnchoringDuringDueCheckIsRefused(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var key = document(repository, commit(repository, StoreReferences.MAIN));
+        var deadline = Deadline.in(TIMEOUT_SECONDS);
+        var stepEntered = new CountDownLatch(1);
+        var dueCheckParked = new CountDownLatch(1);
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> nested = new AtomicReference<>();
+        AtomicReference<@Nullable SaveResult> saved = new AtomicReference<>();
+        AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> anchored = new AtomicReference<>();
+        var fixture = open(remote);
+        // a deadlocked due check holds the anchoring lock, so the fixture is closed only when both threads ended
+        var bothEnded = new AtomicBoolean();
+
+        try {
+            var writer = fixture.writer();
+            var author = draft(writer, key);
+            var save = new Thread(() -> saved.set(writer.save(author, CLAIMS, key, Map.of(), word(), attempt -> {
+                // the step holds the shared side and the transport lock of its save
+                stepEntered.countDown();
+                try {
+                    if (dueCheckParked.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
+                        nested.set(writer.anchor());
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new SaveStep.Edits(List.of());
+            })), "anchoring-step");
+            // the due check takes the anchoring lock and then waits for the transport lock the step holds
+            var dueCheck = new Thread(() -> anchored.set(writer.anchor()), "due-check");
+            save.setDaemon(true);
+            dueCheck.setDaemon(true);
+
+            save.start();
+            assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
+            dueCheck.start();
+            ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
+            // the step holds the transport lock until the latch is counted down, so a parked due check stays WAITING
+            assertEquals(Thread.State.WAITING, dueCheck.getState(), "the due check parks on the transport lock");
+            dueCheckParked.countDown();
+            TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
+            TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
+            boolean ended = !save.isAlive() && !dueCheck.isAlive();
+            bothEnded.set(ended);
+
+            assertAll(
+                    () -> assertTrue(ended, "both threads end within the deadline, so nothing deadlocked"),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.ANCHOR_IN_CALLBACK),
+                            nested.get(), "the anchor() of the step is refused"),
+                    () -> assertInstanceOf(SaveResult.Saved.class, saved.get(), "the save completes"),
+                    () -> assertTrue(Objects.requireNonNull(anchored.get()).isOk(), "the due check completes"));
+        } finally {
+            if (bothEnded.get()) {
+                fixture.close();
+            }
         }
     }
 
@@ -296,24 +489,33 @@ class AnchorInterleavingTest {
         var secondKey = document(repository, main);
 
         try (var fixture = open(remote)) {
+            var deadline = Deadline.in(TIMEOUT_SECONDS);
             var firstSave = new SaveThread(fixture.writer(), draft(fixture.writer(), firstKey), firstKey);
             var secondSave = new SaveThread(fixture.writer(), draft(fixture.writer(), secondKey), secondKey);
             var firstWaited = new AtomicBoolean();
             var secondWaited = new AtomicBoolean();
             var firstResult = new AtomicReference<@Nullable SaveResult>();
-            fixture.operations().beforeNextPush(() -> firstWaited.set(firstSave.startAndAwaitParked()));
+            fixture.operations().beforeNextPush(() -> firstWaited.set(firstSave.startAndAwaitParked(deadline)));
             fixture.provider().beforeNextObtain(() -> {
                 try {
-                    firstResult.set(firstSave.join());
+                    firstResult.set(firstSave.join(deadline));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                fixture.operations().beforeNextPush(() -> secondWaited.set(secondSave.startAndAwaitParked()));
+                fixture.operations().beforeNextPush(() -> secondWaited.set(secondSave.startAndAwaitParked(deadline)));
             });
 
-            var anchoring = value(fixture.writer().anchor());
-            var second = secondSave.join();
-            var again = value(fixture.writer().anchor());
+            StoreWriter.Anchoring anchoring;
+            SaveResult second;
+            StoreWriter.Anchoring again;
+            try {
+                anchoring = value(fixture.writer().anchor());
+                second = secondSave.join(deadline);
+                again = value(fixture.writer().anchor());
+            } finally {
+                firstSave.stop();
+                secondSave.stop();
+            }
 
             var checkpoint = Objects.requireNonNull(tip(repository, StoreReferences.checkpoint(1)), "checkpoint 1");
             ObjectId localTag;
@@ -349,38 +551,62 @@ class AnchorInterleavingTest {
         int savesPerWriter = 4;
         int dueChecks = 6;
 
-        try (var fixture = open(remote)) {
+        var fixture = open(remote);
+        // a worker stuck on a lock of the clone survives its cancel, and closing the writer would wait for that lock,
+        // so the fixture is closed only when the pool terminated
+        boolean terminated = false;
+        try {
             List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
-            List<Thread> threads = new ArrayList<>();
-            for (DocumentKey key : keys) {
-                threads.add(new Thread(() -> {
-                    try {
-                        for (int i = 0; i < savesPerWriter; i++) {
-                            var author = draft(fixture.writer(), key);
-                            assertInstanceOf(SaveResult.Saved.class,
-                                    fixture.writer().save(author, CLAIMS, key, Map.of(), word()), "saved");
+            var deadline = Deadline.in(TIMEOUT_SECONDS);
+            ExecutorService executor = Executors.newFixedThreadPool(keys.size() + 1, runnable -> {
+                var worker = new Thread(runnable, "interleaving-worker");
+                worker.setDaemon(true);
+                return worker;
+            });
+            List<Future<?>> tasks = new ArrayList<>();
+            Stopped stopped;
+            try {
+                for (DocumentKey key : keys) {
+                    tasks.add(executor.submit(() -> {
+                        try {
+                            for (int i = 0; i < savesPerWriter; i++) {
+                                var author = draft(fixture.writer(), key);
+                                assertInstanceOf(SaveResult.Saved.class,
+                                        fixture.writer().save(author, CLAIMS, key, Map.of(), word()), "saved");
+                            }
                         }
-                    } catch (RuntimeException | AssertionError e) {
+                        // the failure of a writer is kept for the test to assert, whatever its type
+                        // cui-rewrite:disable InvalidExceptionUsageRecipe
+                        catch (RuntimeException | AssertionError e) {
+                            failures.add(e);
+                        }
+                    }));
+                }
+                tasks.add(executor.submit(() -> {
+                    try {
+                        for (int i = 0; i < dueChecks; i++) {
+                            fixture.clock().advance(INTERVAL);
+                            value(fixture.writer().anchor());
+                        }
+                    }
+                    // the failure of a due check is kept for the test to assert, whatever its type
+                    // cui-rewrite:disable InvalidExceptionUsageRecipe
+                    catch (RuntimeException | AssertionError e) {
                         failures.add(e);
                     }
                 }));
+            } finally {
+                stopped = stop(executor, tasks, deadline);
             }
-            threads.add(new Thread(() -> {
-                try {
-                    for (int i = 0; i < dueChecks; i++) {
-                        fixture.clock().advance(INTERVAL);
-                        value(fixture.writer().anchor());
-                    }
-                } catch (RuntimeException | AssertionError e) {
-                    failures.add(e);
-                }
-            }));
-            threads.forEach(Thread::start);
-            for (Thread thread : threads) {
-                thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
-                assertFalse(thread.isAlive(), "every thread ends");
-            }
+            terminated = stopped != Stopped.STUCK;
+            assertTrue(terminated, "a worker did not end even once cancelled; the writer is left open, since its "
+                    + "close would wait for the lock the worker holds");
+            assertEquals(Stopped.ENDED, stopped, "every save and due check ended within the one deadline");
             assertEquals(List.of(), failures, "no save and no due check failed");
+            for (Future<?> task : tasks) {
+                // a throwable the catch clauses of a task do not take is stored in its future
+                task.get();
+            }
             fixture.clock().advance(INTERVAL);
             value(fixture.writer().anchor());
             var settled = value(fixture.writer().anchor());
@@ -420,6 +646,10 @@ class AnchorInterleavingTest {
                                     "each checkpoint follows the previous one");
                         }
                     });
+        } finally {
+            if (terminated) {
+                fixture.close();
+            }
         }
     }
 }

@@ -32,12 +32,21 @@ import java.util.function.Supplier;
  * Draft writes, saves and releases take the shared side of the maintenance lock, the expiry of drafts, its deletes and
  * its garbage collection, the exclusive side, so no write runs while the expiry deletes references and objects. One
  * lock per draft reference serialises the saves of that draft, from the read of the draft and its applied-draft
- * reference to the settlement, so a save reads both only after every earlier save of the draft has settled. One
+ * reference to the settlement, so a save reads both only after every earlier save of the draft has settled; the lock
+ * exists only while a save holds or waits for it. One
  * transport lock serialises the fetch, apply and push of a save attempt and the fetch, merge, local tag and the two
  * pushes of a release attempt (GDR-STORE-6), so two operations of the clone never interleave their transport and no
  * pruning fetch deletes the local tag of a release before its push. The order is fixed: the shared side of the
  * maintenance lock, then, for a save, the draft lock, then the transport lock per attempt; a release takes no draft
- * lock, and the expiry takes the exclusive side only, so no cycle arises. The locks are in-process only.
+ * lock, and the expiry takes the exclusive side only, so no cycle arises. A thread that holds the shared side and asks
+ * for the exclusive side, a callback re-entering the writer, is refused ({@link #exclusive}) instead of waiting for
+ * itself. The locks are in-process only.
+ * <p>
+ * A close of the writer takes the anchoring lock to set its closed flag. A thread that holds any lock of the guard, a
+ * callback running inside an operation of the clone, does not ask for it ({@link #insideCallback()}): under the shared
+ * side or the transport lock it would wait for a due check that holds the anchoring lock and waits for the transport
+ * lock in turn, and under the anchoring lock, which is reentrant, it would release the repository under the running
+ * due check.
  * <p>
  * The transport lock also serialises the writes and pushes of the anchoring (GDR-STORE-16, GDR-STORE-17): the fetch of
  * a due check, the checkpoint commit with its local tag and the tag push, and each anchor note with the push of its
@@ -52,18 +61,48 @@ import java.util.function.Supplier;
  */
 final class RepositoryGuard {
 
-    /** The guard of every clone opened in this JVM, by the real path of its git directory; never removed. */
+    /**
+     * The guard of every clone opened in this JVM, by the real path of its git directory; never removed. The map is
+     * bounded by the number of clone paths the JVM opens, one entry per clone, which the configuration fixes at start.
+     */
     private static final ConcurrentMap<Path, RepositoryGuard> GUARDS = new ConcurrentHashMap<>();
+
+    /**
+     * The detail of an exclusive request from a thread that holds the shared side of the maintenance lock: a callback
+     * that re-entered the writer.
+     */
+    static final String REENTERED = "maintenance: re-entered from a callback that holds the shared lock";
+
+    /**
+     * The detail of a close from a thread that holds a lock of the guard: a callback that closed the writer inside the
+     * operation that called it.
+     */
+    static final String CLOSE_IN_CALLBACK = "close: refused inside a callback that holds a lock of the clone";
+
+    /** The name of the action argument, in the message of its null check. */
+    private static final String ACTION = "action";
 
     private final ReentrantReadWriteLock maintenance = new ReentrantReadWriteLock();
     private final ReentrantLock transport = new ReentrantLock();
     private final ReentrantLock anchoring = new ReentrantLock();
 
     /**
-     * The lock of every draft reference saved through the clone, by its full name; never removed, so two saves of one
-     * draft always meet the same lock.
+     * The lock of every draft reference a save currently holds or waits for, by its full name. An entry is registered
+     * and released only inside one atomic map operation on its key, together with the count of its holders, and is
+     * removed when the last holder releases it: the map stays bounded by the saves in flight, and a save never locks
+     * an instance that is no longer in the map, so two saves of one draft always meet the same lock.
      */
-    private final ConcurrentMap<String, ReentrantLock> drafts = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, DraftLock> drafts = new ConcurrentHashMap<>();
+
+    /**
+     * The lock of one draft reference with the number of saves holding or waiting for it. The count is read and changed
+     * only inside a {@link ConcurrentMap#compute} of its key, which the map runs atomically per key.
+     */
+    private static final class DraftLock {
+
+        private final ReentrantLock lock = new ReentrantLock();
+        private int holders;
+    }
 
     /**
      * Returns the one guard of a clone, shared by every {@link StoreWriter} of the JVM that opens it, so the garbage
@@ -101,13 +140,39 @@ final class RepositoryGuard {
     /**
      * Runs an action under the exclusive side of the maintenance lock: the deletes and the garbage collection of the
      * draft expiry.
+     * <p>
+     * The shared side cannot be upgraded: a thread that holds it and asked for the exclusive side would wait for itself
+     * forever. A request from such a thread, a {@link SaveStep} or an {@link IndexContributor} that calls back into the
+     * writer under the locks of the operation that called it, is refused before the lock is requested: it reads the
+     * calling thread's own hold count of the shared side, a fact of that thread alone, so no other thread can change it
+     * between the check and the request.
      *
      * @param action the action
-     * @param <T>    the result type
-     * @return the result of the action
+     * @param <V>    the value type of the result
+     * @return the result of the action; {@link StoreOutcome#REFUSED} with the detail {@value #REENTERED} when the
+     *         calling thread holds the shared side of the maintenance lock
      */
-    <T> T exclusive(Supplier<T> action) {
+    <V> StoreResult<V> exclusive(Supplier<StoreResult<V>> action) {
+        Objects.requireNonNull(action, ACTION);
+        if (maintenance.getReadHoldCount() > 0) {
+            return StoreResult.of(StoreOutcome.REFUSED, REENTERED);
+        }
         return locked(maintenance.writeLock(), action);
+    }
+
+    /**
+     * Whether the calling thread holds a lock of the guard: the shared side of the maintenance lock (a save, a release,
+     * a draft write and the callbacks they run), the transport lock (a fetch, an attempt of a save or a release, the
+     * writes of a due check, and the callbacks run inside them) or the anchoring lock (a due check and the anchor
+     * provider it calls). It reads the calling thread's own hold counts only and takes or releases no lock, so it never
+     * waits.
+     *
+     * @return {@code true} if the calling thread holds the shared side of the maintenance lock, the transport lock or
+     *         the anchoring lock
+     */
+    boolean insideCallback() {
+        return maintenance.getReadHoldCount() > 0 || transport.isHeldByCurrentThread()
+                || anchoring.isHeldByCurrentThread();
     }
 
     /**
@@ -120,8 +185,47 @@ final class RepositoryGuard {
      * @throws NullPointerException if an argument is {@code null}
      */
     <T> T draft(String draftRef, Supplier<T> action) {
+        return draft(draftRef, () -> {
+            // no pause between registration and lock outside the tests
+        }, action);
+    }
+
+    /**
+     * Runs an action under the lock of one draft reference, with a pause point between the registration of the lock and
+     * taking it, through which a test holds a save at the moment another save may release the lock.
+     *
+     * @param draftRef the full name of the draft reference
+     * @param pause    run after the lock is registered and before it is taken
+     * @param action   the action
+     * @param <T>      the result type
+     * @return the result of the action
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    <T> T draft(String draftRef, Runnable pause, Supplier<T> action) {
         Objects.requireNonNull(draftRef, "draftRef");
-        return locked(drafts.computeIfAbsent(draftRef, name -> new ReentrantLock()), action);
+        Objects.requireNonNull(pause, "pause");
+        Objects.requireNonNull(action, ACTION);
+        DraftLock entry = drafts.compute(draftRef, (name, existing) -> {
+            DraftLock registered = existing == null ? new DraftLock() : existing;
+            registered.holders++;
+            return registered;
+        });
+        try {
+            pause.run();
+            return locked(entry.lock, action);
+        } finally {
+            // the last holder removes the entry in the same atomic operation that counts it down
+            drafts.computeIfPresent(draftRef, (name, registered) -> --registered.holders == 0 ? null : registered);
+        }
+    }
+
+    /**
+     * The number of draft locks currently registered, for the tests of the bound of the map.
+     *
+     * @return the number of draft references a save holds or waits for
+     */
+    int draftLocks() {
+        return drafts.size();
     }
 
     /**
@@ -150,7 +254,7 @@ final class RepositoryGuard {
     }
 
     private static <T> T locked(Lock lock, Supplier<T> action) {
-        Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(action, ACTION);
         lock.lock();
         try {
             return action.get();

@@ -112,6 +112,27 @@ final class ScriptedAnchorProvider implements AnchorProvider {
     }
 
     /**
+     * Scripts the next call to succeed with an empty proof, which proves nothing.
+     *
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider emptyNext() {
+        script.add(() -> StoreResult.ok(new byte[0]));
+        return this;
+    }
+
+    /**
+     * Scripts the next call to succeed with a proof of a given size, of zero bytes.
+     *
+     * @param size the size of the proof in bytes
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider sizedNext(int size) {
+        script.add(() -> StoreResult.ok(new byte[size]));
+        return this;
+    }
+
+    /**
      * Scripts the next call to throw an {@link IllegalStateException}.
      *
      * @return this double
@@ -119,6 +140,21 @@ final class ScriptedAnchorProvider implements AnchorProvider {
     synchronized ScriptedAnchorProvider throwNext() {
         script.add(() -> {
             throw new IllegalStateException(SCRIPTED);
+        });
+        return this;
+    }
+
+    /**
+     * Scripts the next call to throw an {@link Error}, such as an {@link AssertionError} of a broken provider or a
+     * {@link StackOverflowError}, a {@link VirtualMachineError}.
+     *
+     * @param error the error to throw
+     * @return this double
+     */
+    synchronized ScriptedAnchorProvider errorNext(Error error) {
+        Objects.requireNonNull(error, "error");
+        script.add(() -> {
+            throw error;
         });
         return this;
     }

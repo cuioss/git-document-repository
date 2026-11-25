@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -34,19 +35,25 @@ import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
@@ -56,6 +63,7 @@ import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
 import de.cuioss.test.juli.LogAsserts;
 import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
 import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
@@ -205,8 +213,8 @@ class AnchorEngineTest {
         var clock = new MovableClock(Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next()));
         var providers = new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider);
         var writer = value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user,
-                configuration(provider == null ? null : provider.id(), releases, retry), providers, operations,
-                clock));
+                configuration(provider == null ? null : provider.id(), releases, retry), List.of(), providers,
+                operations, clock));
         return new Fixture(writer, operations, provider, clock);
     }
 
@@ -291,13 +299,99 @@ class AnchorEngineTest {
         return ref.getObjectId();
     }
 
+    /** An observer of the events of a clone that records every call. */
+    private static final class RecordingObserver implements StoreEvents.Observer {
+
+        private final List<List<StoreEvents.Update>> moved = new CopyOnWriteArrayList<>();
+        private final AtomicInteger unchanged = new AtomicInteger();
+
+        @Override
+        public void moved(List<StoreEvents.Update> updates) {
+            moved.add(List.copyOf(updates));
+        }
+
+        @Override
+        public void unchanged() {
+            unchanged.incrementAndGet();
+        }
+
+        List<List<StoreEvents.Update>> moved() {
+            return List.copyOf(moved);
+        }
+
+        int unchangedCalls() {
+            return unchanged.get();
+        }
+    }
+
+    /** Registers a recording observer on the events of the writer's clone. */
+    private static RecordingObserver observe(StoreWriter writer) {
+        var observer = new RecordingObserver();
+        writer.storeClone().events().register(observer);
+        return observer;
+    }
+
     private static ScheduledExecutorService executor() {
         return Executors.newSingleThreadScheduledExecutor();
+    }
+
+    /**
+     * A single-thread executor that counts the one-shot tasks handed to {@link #execute(Runnable)}; the periodic task
+     * of {@link StoreWriter#anchorPeriodically} goes through {@code scheduleWithFixedDelay} and is not counted.
+     */
+    private static final class CountingExecutor extends ScheduledThreadPoolExecutor {
+
+        private final AtomicInteger executeCalls = new AtomicInteger();
+
+        CountingExecutor() {
+            super(1);
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            executeCalls.incrementAndGet();
+            super.execute(command);
+        }
+
+        int executeCalls() {
+            return executeCalls.get();
+        }
+    }
+
+    /** The number of captured log records whose message carries a log identifier. */
+    private static long records(String identifier) {
+        return TestLoggerFactory.getTestHandler().getRecords().stream()
+                .filter(logRecord -> String.valueOf(logRecord.getMessage()).contains(identifier)).count();
     }
 
     private static void stop(ScheduledExecutorService executor) throws InterruptedException {
         executor.shutdownNow();
         assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a provider closing the writer is refused, the due check completes, a later close closes")
+    void providerClosingWriterIsRefused(@Remote LocalRemote remote) throws Exception {
+        var key = forked(remote.repository());
+        try (var fixture = open(remote)) {
+            save(fixture.writer(), key);
+            fixture.clock().advance(INTERVAL.plusMinutes(1));
+            fixture.anchors().beforeNextObtain(() -> fixture.writer().close());
+
+            var anchoring = fixture.anchor();
+            var open = fixture.writer().anchor();
+            fixture.writer().close();
+            var closed = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertFalse(fixture.anchors().calls().isEmpty(), "the provider was asked for a proof"),
+                    () -> assertFalse(anchoring.anchored().isEmpty(), "the due check completes and pushes its note"),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.CLOSE_REFUSED.resolveIdentifierString()),
+                    () -> assertTrue(open.isOk(), () -> "the writer stays open: " + open.detail()),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "anchor: the writer is closed"), closed,
+                            "a close after the due check closes the writer"));
+        }
     }
 
     @Nested
@@ -313,7 +407,7 @@ class AnchorEngineTest {
                  var legacy = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                          temp.resolve(word() + ".git"), new TechnicalUser(word(), null,
                                  new UsernamePasswordCredentialsProvider(word(), word())),
-                         configuration(null, null, NO_RETRY), TestKeys.ed25519().source(),
+                         configuration(null, null, NO_RETRY), List.of(), TestKeys.ed25519().source(),
                          new ScriptedRepositoryOperations(), Clock.systemUTC()))) {
                 save(fixture.writer(), key);
                 int fetches = fixture.operations().fetches().size();
@@ -561,6 +655,76 @@ class AnchorEngineTest {
         }
 
         @Test
+        @DisplayName("GDR-STORE-15: an Error of the provider leaves the subject pending; a VirtualMachineError propagates")
+        void errorOfProviderIsIsolated(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().errorNext(new AssertionError(word())).errorNext(new StackOverflowError());
+
+                var failed = fixture.anchor();
+                var writer = fixture.writer();
+                var exhausted = assertThrows(StackOverflowError.class, writer::anchor,
+                        "a VirtualMachineError is not isolated");
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), failed,
+                                "an AssertionError of the provider leaves the subject pending"),
+                        () -> assertInstanceOf(VirtualMachineError.class, exhausted, "a JVM error"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors it"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.DEBUG,
+                                AssertionError.class.getName()));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a proof whose base64 note exceeds the blob bound is refused, never kept or published")
+        void oversizedProofIsRefused(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().sizedNext(AnchorEngine.PROOF_LIMIT + 1);
+                var notesRef = StoreReferences.anchorNotes(fixture.anchors().id());
+
+                var refused = fixture.anchor();
+                var noteAfterRefusal = remote.repository().exactRef(notesRef);
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(ExplicitSave.BLOB_LIMIT,
+                                Base64.getEncoder().encode(new byte[AnchorEngine.PROOF_LIMIT]).length,
+                                "the largest accepted proof fills the blob bound with its base64 form"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), refused,
+                                "the oversized proof leaves the subject pending"),
+                        () -> assertNull(noteAfterRefusal, "no note was published"),
+                        () -> assertEquals(2, fixture.anchors().calls().size(),
+                                "nothing was kept: the next due check asks the provider again"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors the subject with a proof of a fitting size"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: anchor() of a closed writer without a provider is REFUSED, of an open one empty")
+        void closedWriterWithoutProviderRefuses(@Remote LocalRemote remote) {
+            var fixture = open(remote, null, null, NO_RETRY);
+
+            var open = fixture.writer().anchor();
+            fixture.close();
+            var closed = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), value(open),
+                            "an open writer without a provider anchors nothing"),
+                    () -> assertEquals(StoreOutcome.REFUSED, closed.outcome(), "a closed writer refuses"),
+                    () -> assertEquals(AnchorEngine.CLOSED, closed.detail(), "naming the close"));
+        }
+
+        @Test
         @DisplayName("GDR-STORE-15: a provider that blocks delays no save, release or fetch")
         void blockingProviderDelaysNothing(@Remote LocalRemote remote) throws Exception {
             var key = forked(remote.repository());
@@ -607,6 +771,339 @@ class AnchorEngineTest {
                         () -> assertEquals(List.of(), anchoring.pending(), "afterwards nothing is pending"));
             } finally {
                 release.countDown();
+                stop(executor);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Outcomes of a due check (GDR-STORE-15, GDR-STORE-17)")
+    class Outcomes {
+
+        @Test
+        @DisplayName("GDR-STORE-15: the updates a due check fetched reach the listeners after an unchecked failure")
+        void fetchedUpdatesEmittedAfterRuntimeException(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var main = commit(repository, StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                List<String> received = new CopyOnWriteArrayList<>();
+                var observer = observe(fixture.writer());
+                try (var subscription = fixture.writer().subscribe(StoreReferences.MAIN,
+                             (branch, commitId) -> received.add(commitId))) {
+                    var moved = commit(repository, StoreReferences.MAIN, main);
+                    fixture.operations().beforeNextPush(() -> {
+                        throw new IllegalStateException(word());
+                    });
+
+                    var anchoring = fixture.writer().anchor();
+
+                    assertAll(
+                            () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                            "anchor: " + IllegalStateException.class.getName()), anchoring,
+                                    "the unchecked failure is a result naming its class"),
+                            () -> assertEquals(List.of(moved.name()), received,
+                                    "the commit the due check fetched is delivered all the same"),
+                            () -> assertEquals(1, observer.moved().size(), "the observer is told once"),
+                            () -> assertTrue(observer.moved().getFirst().stream()
+                                            .anyMatch(update -> moved.name().equals(update.newId())),
+                                    "of the commit the due check fetched"),
+                            () -> assertEquals(0, observer.unchangedCalls(), "not as an operation that moved nothing"),
+                            () -> assertEquals(List.of(), fixture.anchors().calls(), "the provider was not asked"));
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a due check of a closed writer, with or without a provider, reaches no observer")
+        void closedDueCheckEmitsNothing(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+            var withProvider = open(remote);
+            var withoutProvider = open(remote, null, null, NO_RETRY);
+            var observedWith = observe(withProvider.writer());
+            var observedWithout = observe(withoutProvider.writer());
+            withProvider.close();
+            withoutProvider.close();
+
+            var refusedWith = withProvider.writer().anchor();
+            var refusedWithout = withoutProvider.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), refusedWith,
+                            "refused with a provider, naming the close"),
+                    () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), refusedWithout,
+                            "refused without a provider, naming the close"),
+                    () -> assertEquals(List.of(), observedWith.moved(), "no moved call with a provider"),
+                    () -> assertEquals(0, observedWith.unchangedCalls(), "no unchanged call with a provider"),
+                    () -> assertEquals(List.of(), observedWithout.moved(), "no moved call without a provider"),
+                    () -> assertEquals(0, observedWithout.unchangedCalls(), "no unchanged call without a provider"),
+                    () -> assertEquals(List.of(), withProvider.anchors().calls(), "the provider was not asked"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: a due check of an open writer that moved nothing tells the observers once")
+        void openDueCheckThatMovedNothingCallsUnchangedOnce(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote, null, null, NO_RETRY)) {
+                var observer = observe(fixture.writer());
+
+                var anchoring = fixture.anchor();
+
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of()), anchoring,
+                                "nothing anchored without a provider"),
+                        () -> assertEquals(List.of(), observer.moved(), "no moved call"),
+                        () -> assertEquals(1, observer.unchangedCalls(), "one unchanged call"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-15: an empty proof is refused like none, and the subject stays pending")
+        void emptyProofRefused(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.anchors().emptyNext();
+
+                var refused = fixture.anchor();
+                var notesAfterRefusal = refs(remote.repository(), StoreReferences.ANCHOR_NOTES);
+                var anchored = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), refused,
+                                "the empty proof leaves the subject pending"),
+                        () -> assertTrue(notesAfterRefusal.isEmpty(), "no empty note was published"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchored,
+                                "the next due check anchors it"),
+                        () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.ANCHORING_PENDING.resolveIdentifierString()));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: a failed push of a note is logged once, as GIT_STORE-112 only")
+        void oneWarnPerFailedPush(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                fixture.operations().failPushTo(StoreReferences.anchorNotes(fixture.anchors().id()),
+                        GitOutcome.UNREACHABLE);
+
+                var anchoring = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(), List.of(checkpoint)), anchoring,
+                                "the subject stays pending"),
+                        () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                                GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()),
+                        () -> assertEquals(List.of(), TestLoggerFactory.getTestHandler().getRecords().stream()
+                                .map(logRecord -> String.valueOf(logRecord.getMessage()))
+                                .filter(message -> message.contains(GitStoreLogMessages.WARN.ANCHORING_PENDING
+                                        .resolveIdentifierString()))
+                                .toList(), "no second record of the same failure"));
+            }
+        }
+
+        /**
+         * The retry of a kept proof fails before its push: the kept reference cannot be updated, held by a lock file.
+         * Without the publication result kept through {@code pushKept}, the detail read as a failed push and the
+         * warning {@code GIT_STORE-111} was suppressed, so the failure was logged by nobody.
+         */
+        @Test
+        @DisplayName("GDR-STORE-17: a kept proof whose retry fails before the push is logged as GIT_STORE-111")
+        void keptProofFailingBeforePushIsLogged(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                var notesRef = StoreReferences.anchorNotes(fixture.anchors().id());
+                fixture.operations().failPushTo(notesRef, GitOutcome.UNREACHABLE);
+                fixture.anchor();
+                var subject = checkpoint(remote.repository(), 1).name();
+                Repository clone = fixture.writer().storeClone().repository();
+                var kept = refs(clone, StoreReferences.ANCHORING).keySet().stream()
+                        .filter(name -> name.endsWith(subject)).toList();
+                assertEquals(1, kept.size(), "the proof whose push failed is kept");
+                Path lock = clone.getDirectory().toPath().resolve(kept.getFirst() + ".lock");
+                Files.createFile(lock);
+                StoreResult<StoreWriter.Anchoring> retry;
+                try {
+                    retry = fixture.writer().anchor();
+                } finally {
+                    Files.deleteIfExists(lock);
+                }
+
+                var stillKept = refs(clone, StoreReferences.ANCHORING).keySet();
+                assertAll(
+                        () -> assertEquals(": a kept proof was not published", AnchorEngine.KEPT_NOT_PUBLISHED),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                        notesRef + AnchorEngine.KEPT_NOT_PUBLISHED), retry,
+                                "the retry ends incomplete, naming the notes reference"),
+                        () -> assertEquals(1, records(
+                                GitStoreLogMessages.WARN.ANCHORING_PENDING.resolveIdentifierString()),
+                                "the failure before the push is logged once as GIT_STORE-111"),
+                        () -> assertEquals(1, records(
+                                GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()),
+                                "no GIT_STORE-112 beyond the failed push of the first due check"),
+                        () -> assertTrue(stillKept.contains(kept.getFirst()), "the proof stays kept"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-17: a kept proof whose push fails again is logged as GIT_STORE-112 only")
+        void keptProofPushFailingAgainIsLoggedOnce(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                var notesRef = StoreReferences.anchorNotes(fixture.anchors().id());
+                fixture.operations().failPushTo(notesRef, GitOutcome.UNREACHABLE, GitOutcome.UNREACHABLE);
+                fixture.anchor();
+
+                var retry = fixture.writer().anchor();
+
+                assertAll(
+                        () -> assertEquals(": a kept proof was not pushed", AnchorEngine.KEPT_NOT_PUSHED),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                notesRef + AnchorEngine.KEPT_NOT_PUSHED), retry, "the retry ends incomplete"),
+                        () -> assertEquals(2, records(
+                                GitStoreLogMessages.WARN.ANCHOR_PUSH_INCOMPLETE.resolveIdentifierString()),
+                                "each failed push is logged once, as GIT_STORE-112"),
+                        () -> assertEquals(0, records(
+                                GitStoreLogMessages.WARN.ANCHORING_PENDING.resolveIdentifierString()),
+                                "no GIT_STORE-111 for a failed push"));
+            }
+        }
+
+        /**
+         * Without the refusal at the top of the due check, the nested {@code anchor()} ran a whole due check inside
+         * the step and emitted its updates to the observers from a thread that holds the locks of the save.
+         */
+        @Test
+        @DisplayName("GDR-STORE-15: anchor() inside a save step is refused, reaches no observer, the save completes")
+        void anchorInsideSaveStepIsRefused(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+
+            try (var fixture = open(remote)) {
+                var writer = fixture.writer();
+                var inStep = new AtomicBoolean();
+                var calledInStep = new AtomicInteger();
+                writer.storeClone().events().register(new StoreEvents.Observer() {
+
+                    @Override
+                    public void moved(List<StoreEvents.Update> updates) {
+                        if (inStep.get()) {
+                            calledInStep.incrementAndGet();
+                        }
+                    }
+
+                    @Override
+                    public void unchanged() {
+                        if (inStep.get()) {
+                            calledInStep.incrementAndGet();
+                        }
+                    }
+                });
+                AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> nested = new AtomicReference<>();
+                var author = Author.of(pseudonym());
+                value(writer.draft(author, key,
+                        List.of(new TreeEdit.Put(word(), word().getBytes(StandardCharsets.UTF_8))), word()));
+
+                var saved = writer.save(author, CLAIMS, key, Map.of(), word(), attempt -> {
+                    inStep.set(true);
+                    try {
+                        nested.set(writer.anchor());
+                    } finally {
+                        inStep.set(false);
+                    }
+                    return new SaveStep.Edits(List.of());
+                });
+                int providerCalls = fixture.anchors().calls().size();
+                var outside = fixture.anchor();
+
+                assertAll(
+                        () -> assertEquals("anchor: refused inside a callback that holds a lock of the clone",
+                                AnchorEngine.ANCHOR_IN_CALLBACK),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.ANCHOR_IN_CALLBACK),
+                                nested.get(), "the anchor() of the step is refused"),
+                        () -> assertInstanceOf(SaveResult.Saved.class, saved, "the save completes"),
+                        () -> assertEquals(0, calledInStep.get(), "no observer is called from inside the step"),
+                        () -> assertEquals(0, providerCalls, "the refused due check asked the provider nothing"),
+                        () -> assertFalse(outside.anchored().isEmpty(),
+                                "an anchor() from outside every callback runs its due check"));
+            }
+        }
+
+        /**
+         * Without the refusal, the nested {@code anchor()} re-entered the reentrant anchoring lock and ran a second due
+         * check inside the provider call of the first.
+         */
+        @Test
+        @DisplayName("GDR-STORE-15: anchor() inside an anchor provider call is refused, the outer due check anchors")
+        void anchorInsideProviderIsRefused(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN);
+
+            try (var fixture = open(remote)) {
+                AtomicReference<@Nullable StoreResult<StoreWriter.Anchoring>> nested = new AtomicReference<>();
+                fixture.anchors().beforeNextObtain(() -> nested.set(fixture.writer().anchor()));
+
+                var anchoring = fixture.anchor();
+
+                var checkpoint = checkpoint(remote.repository(), 1).name();
+                assertAll(
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.ANCHOR_IN_CALLBACK),
+                                nested.get(), "the nested anchor() is refused"),
+                        () -> assertEquals(new StoreWriter.Anchoring(List.of(checkpoint), List.of()), anchoring,
+                                "the outer due check anchors its subject"),
+                        () -> assertEquals(1, fixture.anchors().calls().size(), "the provider was asked once"));
+            }
+        }
+
+        /**
+         * The save must hand one due check to the occupied executor before the close: without that count the test
+         * would also pass for a save that never submits a due check, which looks the same as a queued due check that
+         * correctly does nothing after the close.
+         */
+        @Test
+        @DisplayName("GDR-STORE-15: a closed writer runs no due check, neither asked for nor handed to an executor")
+        void noDueCheckAfterClose(@Remote LocalRemote remote) throws Exception {
+            var key = forked(remote.repository());
+            var executor = new CountingExecutor();
+            var busy = new CountDownLatch(1);
+            var occupied = new CountDownLatch(1);
+            try {
+                var fixture = open(remote);
+                fixture.writer().anchorPeriodically(executor);
+                executor.execute(() -> {
+                    occupied.countDown();
+                    try {
+                        assertTrue(busy.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the test frees the executor");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                assertTrue(occupied.await(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor is occupied");
+                int beforeSave = executor.executeCalls();
+                save(fixture.writer(), key);
+                assertEquals(1, executor.executeCalls() - beforeSave,
+                        "the save handed one due check to the occupied executor before the close");
+                fixture.close();
+                busy.countDown();
+                executor.shutdown();
+                assertTrue(executor.awaitTermination(WAIT.toSeconds(), TimeUnit.SECONDS), "the executor ends");
+
+                var afterClose = fixture.writer().anchor();
+
+                assertAll(
+                        () -> assertEquals(List.of(), fixture.anchors().calls(),
+                                "the due check handed over before the close did nothing"),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, AnchorEngine.CLOSED), afterClose,
+                                "a due check asked for after the close is refused"),
+                        () -> assertTrue(refs(remote.repository(), StoreReferences.CHECKPOINTS).isEmpty(),
+                                "no checkpoint was made"));
+            } finally {
+                busy.countDown();
                 stop(executor);
             }
         }

@@ -23,11 +23,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Period;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
 
+import de.cuioss.git.document.core.JGitRepositoryOperations;
+import de.cuioss.git.document.core.RemotePolicy;
 import de.cuioss.git.document.store.DocumentCollection.Kind;
 import de.cuioss.git.document.testing.InMemory;
 import de.cuioss.test.generator.Generators;
@@ -39,6 +49,7 @@ import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -79,6 +90,48 @@ class StoreReferencesTest {
 
     private static DocumentKey key(Kind kind, String id) {
         return value(DocumentKey.of(value(DocumentCollection.of(name(), kind)), id));
+    }
+
+    /** The namespaces of reference specifications on one side, {@code [+]<source>:<destination>}, wildcard dropped. */
+    private static Set<String> namespaces(List<String> specs, boolean destination) {
+        Set<String> namespaces = new TreeSet<>();
+        for (String spec : specs) {
+            String plain = spec.startsWith("+") ? spec.substring(1) : spec;
+            String side = destination ? plain.substring(plain.indexOf(':') + 1) : plain.substring(0, plain.indexOf(':'));
+            namespaces.add(side.endsWith("*") ? side.substring(0, side.length() - 1) : side);
+        }
+        return namespaces;
+    }
+
+    private static boolean covered(Set<String> namespaces, String reference) {
+        return namespaces.stream().anyMatch(reference::startsWith);
+    }
+
+    @Nested
+    @DisplayName("Push and mirror scope (GDR-STORE-16, GDR-STORE-17)")
+    class PushAndMirrorScope {
+
+        @Test
+        @DisplayName("GDR-STORE-16: the namespaces the clone pushes are exactly those the mirror fetch of git-core prunes")
+        void pushNamespacesEqualMirrorPruneScope() {
+            var pushed = namespaces(StoreReferences.PUSH_REF_SPECS, false);
+            var mirrored = namespaces(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS, true);
+            var checkpoint = StoreReferences.checkpoint(Generators.integers(1, 999).next());
+            var notes = StoreReferences.anchorNotes("a" + name());
+            var kept = StoreReferences.ANCHORING + "checkpoints/" + Generators.integers(1, 999).next();
+
+            assertAll(
+                    () -> assertEquals(mirrored, pushed,
+                            "what the clone pushes is what the mirror fetch overwrites and prunes"),
+                    () -> assertTrue(covered(pushed, checkpoint) && covered(mirrored, checkpoint),
+                            "a checkpoint tag is pushed and mirrored"),
+                    () -> assertTrue(covered(pushed, notes) && covered(mirrored, notes),
+                            "an anchor notes reference is pushed and mirrored"),
+                    () -> assertFalse(covered(pushed, kept) || covered(mirrored, kept),
+                            "a kept checkpoint is neither pushed nor pruned"),
+                    () -> assertFalse(covered(pushed, StoreReferences.DRAFTS) || covered(mirrored,
+                            StoreReferences.DRAFTS), "a draft is neither pushed nor pruned"));
+        }
     }
 
     @Nested
@@ -228,6 +281,34 @@ class StoreReferencesTest {
                             StoreReferences.collections(List.of(perDocument, other, numbered)), "both kinds"),
                     () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "collection " + name + ": declared twice"),
                             StoreReferences.collections(List.of(perDocument, perDocument)), "the same twice"));
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-2: the writer refuses at open collections that declare one name twice, before a clone")
+        void writerOpenRefusesDeclaredTwice() {
+            // a digit cannot occur in the detail, so the name is absent from it
+            var name = name() + "0";
+            var declared = List.of(value(DocumentCollection.of(name, Kind.PER_DOCUMENT)),
+                    value(DocumentCollection.of(name, Kind.NUMBERED)));
+            Map<String, Object> tree = new LinkedHashMap<>();
+            tree.put("save", Map.of("max-attempts", Generators.integers(1, 10).next()));
+            tree.put("drafts", Map.of("expiry", Period.ofDays(Generators.integers(1, 90).next()).toString()));
+            tree.put("fetch", Map.of("interval", Duration.ofMinutes(Generators.integers(1, 60).next()).toString()));
+            tree.put("signing", Map.of("key", name()));
+            var configuration = value(StoreConfiguration.from(tree, RemotePolicy.localOnly()));
+            var operations = new ScriptedRepositoryOperations();
+
+            var opened = StoreWriter.open(new StoreRepository(name(), "https://example.invalid/" + name() + ".git",
+                            name(), null), Path.of(name() + ".git"),
+                    new TechnicalUser(name(), null, new UsernamePasswordCredentialsProvider(name(), name())),
+                    configuration, declared, TestKeys.ed25519().source(), operations, Clock.systemUTC());
+
+            assertAll(
+                    () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "collections: a name is declared twice"),
+                            opened, "MALFORMED, naming the argument"),
+                    () -> assertFalse(Objects.requireNonNull(opened.detail()).contains(name),
+                            "the detail never names the collection"),
+                    () -> assertEquals(List.of(), operations.credentials(), "nothing was cloned or fetched"));
         }
 
         @Test

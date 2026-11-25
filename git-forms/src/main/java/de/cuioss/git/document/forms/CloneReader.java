@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 
+import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.SaveStep;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
@@ -184,6 +185,31 @@ final class CloneReader {
         @Override
         public Optional<byte[]> content(String path) {
             return tipContent(path);
+        }
+
+        @Override
+        public Optional<TreeEdit.Mode> mode(String path) {
+            Objects.requireNonNull(path, "path");
+            try (RevWalk walk = new RevWalk(repository);
+                 TreeWalk file = TreeWalk.forPath(repository, path,
+                         walk.parseCommit(ObjectId.fromString(commitId)).getTree())) {
+                if (file == null) {
+                    return Optional.empty();
+                }
+                int rawMode = file.getRawMode(0);
+                if (FileMode.TREE.equals(rawMode) || FileMode.GITLINK.equals(rawMode)) {
+                    return Optional.empty();
+                }
+                if (FileMode.EXECUTABLE_FILE.equals(rawMode)) {
+                    return Optional.of(TreeEdit.Mode.EXECUTABLE_FILE);
+                }
+                if (FileMode.SYMLINK.equals(rawMode)) {
+                    return Optional.of(TreeEdit.Mode.SYMLINK);
+                }
+                return Optional.of(TreeEdit.Mode.REGULAR_FILE);
+            } catch (IOException e) {
+                throw new ReadFailure(e);
+            }
         }
 
         @Override

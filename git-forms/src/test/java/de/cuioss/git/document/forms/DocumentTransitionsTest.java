@@ -291,7 +291,7 @@ class DocumentTransitionsTest {
         var gitDir = temp.resolve("clone.git");
         var writer = value(StoreWriter.open(new StoreRepository("register", remote.uri().toString(), "internal", null),
                 gitDir, new TechnicalUser("store", null, new UsernamePasswordCredentialsProvider("store", "secret")),
-                configuration, signing, new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                configuration, List.of(), signing, new JGitRepositoryOperations(RemotePolicy.localOnly()),
                 Clock.fixed(NOW, ZoneOffset.UTC)));
         try {
             Repository clone = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();

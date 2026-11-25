@@ -16,6 +16,7 @@
 package de.cuioss.git.document.store;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -230,8 +231,9 @@ class DraftExpiryTest {
 
     private static StoreWriter open(StoreRepository storeRepository, Path gitDir, StoreConfiguration configuration,
             Instant now) {
-        return value(StoreWriter.open(storeRepository, gitDir, user(), configuration, TestKeys.ed25519().source(),
-                new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.fixed(now, ZoneOffset.UTC)));
+        return value(StoreWriter.open(storeRepository, gitDir, user(), configuration, List.of(),
+                TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()),
+                Clock.fixed(now, ZoneOffset.UTC)));
     }
 
     /**
@@ -404,6 +406,37 @@ class DraftExpiryTest {
             }
         }
 
+        /**
+         * The largest {@code drafts.expiry} the configuration accepts, {@link StoreConfigurationTest#LARGEST_EXPIRY},
+         * subtracted from the current time by the expiry: no draft is old enough, and the expiry neither throws nor
+         * fails.
+         */
+        @Test
+        @DisplayName("GDR-STORE-7: an expiry under the largest accepted drafts.expiry returns OK and throws nothing")
+        void largestAcceptedExpiryDoesNotThrow(@Remote LocalRemote remote) throws Exception {
+            commit(remote.repository(), StoreReferences.MAIN, content(), time());
+            var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+            var gitDir = temp.resolve(word() + ".git");
+            var now = time();
+            var author = Author.of(pseudonym());
+            var key = key(Kind.MAIN);
+
+            try (var writer = open(storeRepository, gitDir,
+                         configuration(Period.parse(StoreConfigurationTest.LARGEST_EXPIRY)), now)) {
+                var commitId = value(writer.draft(author, key, List.of(new TreeEdit.Put(word(), content())), word()));
+
+                var result = assertDoesNotThrow(() -> writer.expireDrafts(now), "the expiry throws nothing");
+
+                try (Repository clone = openRepository(gitDir)) {
+                    Ref draft = clone.exactRef(value(StoreReferences.draft(author.pseudonym(), key)));
+                    assertAll(
+                            () -> assertEquals(StoreResult.ok(List.<String>of()), result, "OK, no draft deleted"),
+                            () -> assertEquals(commitId, Objects.requireNonNull(draft, "the draft is kept")
+                                    .getObjectId().name(), "the draft is unchanged"));
+                }
+            }
+        }
+
         @Test
         @DisplayName("GDR-STORE-7: a null time is refused")
         void refusesNull(@Remote LocalRemote remote) {
@@ -492,7 +525,7 @@ class DraftExpiryTest {
             AtomicReference<StoreResult<List<String>>> expired = new AtomicReference<>();
 
             String updated;
-            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user(), configuration,
+            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user(), configuration, List.of(),
                          TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()), clock));
                  ExecutorService executor = Executors.newSingleThreadExecutor()) {
                 Future<StoreResult<String>> update = executor.submit(() -> writer.draft(author, key,
@@ -582,6 +615,39 @@ class DraftExpiryTest {
                         () -> assertFalse(has(repository, orphanCommit), "its commit is collected"),
                         () -> assertEquals(liveCommit, Objects.requireNonNull(repository.exactRef(live)).getObjectId(),
                                 "the reference of a live draft is kept"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-7: a reference below refs/drafts/ whose tip is a blob is skipped and kept, not a failure")
+        void skipsReferenceAtBlob() throws Exception {
+            var gitDir = bareRepository();
+            var expiry = expiry();
+            var draftAt = time();
+            var now = draftAt.atOffset(ZoneOffset.UTC).plus(expiry).toInstant();
+            var staleRef = value(StoreReferences.draft(pseudonym(), key(Kind.PER_DOCUMENT)));
+            var foreignRef = value(StoreReferences.draft(pseudonym(), key(Kind.NUMBERED)));
+            ObjectId blob;
+            try (Repository writer = openRepository(gitDir)) {
+                commit(writer, staleRef, content(), draftAt);
+                try (ObjectInserter inserter = writer.newObjectInserter()) {
+                    blob = inserter.insert(Constants.OBJ_BLOB, content());
+                    inserter.flush();
+                }
+                RefUpdate update = writer.updateRef(foreignRef);
+                update.setNewObjectId(blob);
+                assertEquals(RefUpdate.Result.NEW, update.update(), "the foreign reference points at a blob");
+            }
+
+            try (Repository repository = openRepository(gitDir)) {
+                var deleted = value(new DraftExpiry(word(), repository, new RepositoryGuard(),
+                        new ReferenceUpdater(new InCoreWriter()), expiry, ATTEMPTS).expire(now));
+
+                assertAll(
+                        () -> assertEquals(List.of(staleRef), deleted, "the stale draft is deleted despite the blob"),
+                        () -> assertEquals(blob, Objects.requireNonNull(repository.exactRef(foreignRef)).getObjectId(),
+                                "the reference at the blob is left as it is"),
+                        () -> assertTrue(has(repository, blob), "the blob it names is kept"));
             }
         }
 
@@ -680,8 +746,8 @@ class DraftExpiryTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null check. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 }

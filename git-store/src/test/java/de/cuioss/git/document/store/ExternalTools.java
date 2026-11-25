@@ -33,7 +33,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 
+import de.cuioss.tools.logging.CuiLogger;
+import de.cuioss.tools.logging.LogRecord;
+import de.cuioss.tools.logging.LogRecordModel;
 import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.Assumptions;
 
 /**
  * The external tools some tests cross-check the store against ({@code ssh-keygen}, {@code git}): finding an executable
@@ -45,11 +49,26 @@ import org.jspecify.annotations.Nullable;
  * test, and a process still running when the wait ends otherwise, for example by an interrupt, is destroyed as well. A
  * probe generates its key with {@code ssh-keygen -t ed25519} and makes its signature with {@code ssh-keygen -Y sign}
  * itself, so its verdict says what the tool can do and never depends on the encoders under test.
+ * <p>
+ * A cross-check that cannot run is never skipped silently ({@link #assumeCrossCheck}): it logs
+ * {@link #CROSS_CHECK_SKIPPED} and aborts, or fails under {@value #REQUIRE_CROSS_CHECKS}{@code =true}.
  */
 final class ExternalTools {
 
     /** The deadline of every process. */
     static final Duration DEADLINE = Duration.ofSeconds(60);
+
+    /**
+     * The environment variable that turns a skipped cross-check into a failure: a build that provides the tools sets
+     * it to {@code true}.
+     */
+    static final String REQUIRE_CROSS_CHECKS = "GIT_STORE_REQUIRE_CROSS_CHECKS";
+
+    /** The record of a cross-check that did not run, with the reason; logged so a skipped run is never silent. */
+    static final LogRecord CROSS_CHECK_SKIPPED = LogRecordModel.builder().prefix("GIT_STORE_TEST").identifier(1)
+            .template("Cross-check skipped: %s").build();
+
+    private static final CuiLogger LOGGER = new CuiLogger(ExternalTools.class);
 
     private static final String PRINCIPAL = "probe@example.invalid";
 
@@ -63,6 +82,37 @@ final class ExternalTools {
      * @param output standard output and standard error, decoded as UTF-8
      */
     record Finished(int code, String output) {
+    }
+
+    /**
+     * Skips a cross-check visibly: a cross-check whose tool is missing or lacks a needed operation logs
+     * {@link #CROSS_CHECK_SKIPPED} with the reason and aborts the test; under the environment variable
+     * {@value #REQUIRE_CROSS_CHECKS} set to {@code true}, as a CI build that provides the tools sets it, it fails the
+     * test instead, so a green build there proves the cross-check ran.
+     *
+     * @param condition whether the tools the cross-check needs are present
+     * @param reason    what is missing, for the log record and the test report
+     */
+    static void assumeCrossCheck(boolean condition, String reason) {
+        assumeCrossCheck(condition, reason, System.getenv(REQUIRE_CROSS_CHECKS));
+    }
+
+    /**
+     * Skips a cross-check visibly, with the value of {@value #REQUIRE_CROSS_CHECKS} given.
+     *
+     * @param condition whether the tools the cross-check needs are present
+     * @param reason    what is missing
+     * @param required  the value of {@value #REQUIRE_CROSS_CHECKS}; {@code null} when it is not set
+     */
+    static void assumeCrossCheck(boolean condition, String reason, @Nullable String required) {
+        if (condition) {
+            return;
+        }
+        LOGGER.warn(CROSS_CHECK_SKIPPED, reason);
+        if ("true".equalsIgnoreCase(required)) {
+            fail("the cross-check is required by " + REQUIRE_CROSS_CHECKS + " but cannot run: " + reason);
+        }
+        Assumptions.abort("cross-check skipped: " + reason);
     }
 
     /**

@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -237,8 +238,8 @@ class CommitListenerTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), TestKeys.ed25519().source(),
-                new ScriptedRepositoryOperations(), Clock.fixed(now, ZoneOffset.UTC)));
+        return value(StoreWriter.open(storeRepository, gitDir, user, configuration(), List.of(),
+                TestKeys.ed25519().source(), new ScriptedRepositoryOperations(), Clock.fixed(now, ZoneOffset.UTC)));
     }
 
     private StoreWriter open(LocalRemote remote) {
@@ -440,6 +441,88 @@ class CommitListenerTest {
             dispatch.moved(List.of(new StoreEvents.Update(branch, null, saved.name())));
 
             assertEquals(List.of(saved.name()), listener.commits(), "the saved commit, though main now holds it");
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: a commit moved while the listener subscribes, after its start was read, is delivered")
+    void subscriptionWindowDeliversTheCommit(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var branch = branch();
+        var tip = commit(repository, branch, files());
+        var dispatch = new ListenerDispatch(word(), repository);
+        var listener = new Recording();
+        ObjectId[] moved = new ObjectId[1];
+        Thread[] trigger = new Thread[1];
+        Thread.State[] waiting = new Thread.State[1];
+
+        try (var subscription = dispatch.subscribe(branch, listener, () -> {
+                 moved[0] = commit(repository, branch, files(), tip);
+                 trigger[0] = new Thread(() -> dispatch.moved(List.of(new StoreEvents.Update(branch, tip.name(),
+                         moved[0].name()))));
+                 trigger[0].start();
+                 try {
+                     ThreadStates.awaitParkedOrEnded(trigger[0], WAIT_SECONDS);
+                 } catch (InterruptedException e) {
+                     Thread.currentThread().interrupt();
+                 }
+                 waiting[0] = trigger[0].getState();
+             })) {
+            trigger[0].join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+            assertAll(
+                    () -> assertEquals(Thread.State.WAITING, waiting[0],
+                            "the event reached the registered subscription and waited for its start"),
+                    () -> assertFalse(trigger[0].isAlive(), "the trigger ended"),
+                    () -> assertEquals(List.of(moved[0].name()), listener.commits(),
+                            "the commit of the window is delivered, once"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: an Error of a listener is isolated and the next listener still runs")
+    void errorOfListenerIsIsolated(@Remote LocalRemote remote) {
+        var repository = remote.repository();
+        var branch = branch();
+        var tip = commit(repository, branch, files());
+        var dispatch = new ListenerDispatch(word(), repository);
+        var after = new Recording();
+        var secret = content();
+        CommitListener failing = (name, commitId) -> {
+            throw new AssertionError(secret);
+        };
+
+        try (var first = dispatch.subscribe(branch, failing); var second = dispatch.subscribe(branch, after)) {
+            var next = commit(repository, branch, files(), tip);
+
+            dispatch.moved(List.of(new StoreEvents.Update(branch, tip.name(), next.name())));
+
+            assertAll(
+                    () -> assertEquals(List.of(next.name()), after.commits(), "the next listener still runs"),
+                    () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.LISTENER_FAILED.resolveIdentifierString()),
+                    () -> LogAsserts.assertLogMessagePresentContaining(TestLogLevel.WARN,
+                            AssertionError.class.getName()),
+                    () -> assertNothingLeaks(List.of(secret)));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-10: a VirtualMachineError of a listener propagates")
+    void virtualMachineErrorOfListenerPropagates(@Remote LocalRemote remote) {
+        var repository = remote.repository();
+        var branch = branch();
+        var tip = commit(repository, branch, files());
+        var dispatch = new ListenerDispatch(word(), repository);
+        CommitListener exhausted = (name, commitId) -> {
+            throw new StackOverflowError();
+        };
+
+        try (var subscription = dispatch.subscribe(branch, exhausted)) {
+            var next = commit(repository, branch, files(), tip);
+            var updates = List.of(new StoreEvents.Update(branch, tip.name(), next.name()));
+
+            assertThrows(StackOverflowError.class, () -> dispatch.moved(updates), "the JVM error is not isolated");
         }
     }
 

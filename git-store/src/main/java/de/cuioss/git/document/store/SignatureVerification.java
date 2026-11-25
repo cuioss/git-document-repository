@@ -17,18 +17,27 @@ package de.cuioss.git.document.store;
 
 import static java.nio.charset.StandardCharsets.US_ASCII;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.PriorityQueue;
 import java.util.Set;
 
 
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.errors.CorruptObjectException;
+import org.eclipse.jgit.lib.AnyObjectId;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -44,7 +53,8 @@ import org.jspecify.annotations.Nullable;
  * verifies, in the namespace {@value SshSignatures#NAMESPACE_GIT}, over the commit without that header, and whose key
  * the allowed signers list for commits with a validity that includes the committer time, as Git checks it
  * ({@code git verify-commit} with {@code gpg.ssh.allowedSignersFile}, Git 2.35 or later). Every other commit is listed
- * once, with the first {@link Reason} that applies when the header, the format, the decoding, the signature over the
+ * once, with the first {@link Reason} that applies when the number of headers, the header, the format, the decoding,
+ * the signature over the
  * commit and then the key are checked in this order: {@link Reason#UNSIGNED}, {@link Reason#NOT_SSH},
  * {@link Reason#MALFORMED}, {@link Reason#INVALID}, then {@link Reason#UNKNOWN_KEY} or
  * {@link Reason#OUTSIDE_VALIDITY}. The allowed signers are those given, never a file of the repository.
@@ -54,8 +64,19 @@ import org.jspecify.annotations.Nullable;
  * the boundary cannot be checked. The shallow commits are read again after the walk; a boundary that changed while the
  * walk ran is {@link StoreOutcome#INCOMPLETE} as well.
  * <p>
+ * A commit with more than one {@code gpgsig} header is {@link Reason#INVALID}: Git verifies the first and removes every
+ * one from the signed payload, so a second header would travel along unverified.
+ * <p>
+ * The verification walks the history itself, newest commit time first like {@code RevWalk}, and reads every commit
+ * once: its size is asked first ({@link ObjectReader#getObjectSize}, the object header only in JGit 7.8.0), a commit
+ * within {@link ExplicitSave#BLOB_LIMIT} is read bounded, parsed ({@code RevCommit.parse}), checked, and its body,
+ * which that parse keeps in the pool of the walk, is released ({@code RevCommit.disposeBody}), so the memory of the
+ * verification does not grow with the history. A larger commit is {@link Reason#MALFORMED} and is never loaded: its
+ * header is read as a stream for its parents and its commit time only, so the commits behind it are still verified
+ * and the verification goes on.
+ * <p>
  * The verification reads only: it changes no reference and writes no object. A finished verification is logged as
- * {@code GIT_STORE-6} with the reference and the counts.
+ * {@code GIT_STORE-6} with the counts only, never the reference, whose name may carry a document id.
  *
  * @since 0.1
  */
@@ -155,24 +176,39 @@ public final class SignatureVerification {
             List<UnverifiedCommit> unverified = new ArrayList<>();
             int commits = 0;
             try (RevWalk walk = new RevWalk(repository)) {
-                walk.markStart(walk.parseCommit(ref.getObjectId()));
-                for (RevCommit commit : walk) {
-                    if (shallow.contains(commit)) {
+                // the walk only parses: JGit 7.8.0 RevWalk.setRetainBody(false) keeps no body of what parseAny reads
+                walk.setRetainBody(false);
+                ObjectReader reader = walk.getObjectReader();
+                PriorityQueue<Walked> queue = new PriorityQueue<>(NEWEST_FIRST);
+                Set<ObjectId> seen = new HashSet<>();
+                ObjectId start = start(reader, walk, ref.getObjectId());
+                long sequence = 0;
+                seen.add(start);
+                queue.add(read(reader, walk, start, allowedSigners, sequence++));
+                while (!queue.isEmpty()) {
+                    Walked commit = queue.poll();
+                    if (shallow.contains(commit.id())) {
+                        // the parents of a shallow commit are absent, so the commits beyond it cannot be checked
                         return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW);
                     }
                     commits++;
-                    Reason reason = check(commit, allowedSigners);
+                    @Nullable Reason reason = commit.reason();
                     if (reason != null) {
-                        unverified.add(new UnverifiedCommit(commit.getId().name(), reason));
+                        unverified.add(new UnverifiedCommit(commit.id().name(), reason));
+                    }
+                    for (ObjectId parent : commit.parents()) {
+                        if (seen.add(parent)) {
+                            queue.add(read(reader, walk, parent, allowedSigners, sequence++));
+                        }
                     }
                 }
             }
-            // the walk reads the shallow boundary itself when it parses the start commit; a boundary that changed in
-            // between may have let it skip parents the check above did not see, so the verification fails closed
+            // the walk stops at the shallow boundary read before it; a boundary that changed in between may have let it
+            // read parents a fetch has removed or skip ones it has added, so the verification fails closed
             if (!shallow.equals(Set.copyOf(repository.getObjectDatabase().getShallowCommits()))) {
                 return StoreResult.of(StoreOutcome.INCOMPLETE, reference + ": " + SHALLOW_CHANGED);
             }
-            LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, reference, commits, unverified.size());
+            LOGGER.info(GitStoreLogMessages.INFO.SIGNATURES_VERIFIED, commits, unverified.size());
             return StoreResult.ok(List.copyOf(unverified));
         }
         // an unexpected failure reading the repository ends the verification as a result, never as an exception,
@@ -184,8 +220,73 @@ public final class SignatureVerification {
         }
     }
 
-    /** The reason a commit has no valid signature; {@code null} for a valid one. */
-    private static @Nullable Reason check(RevCommit commit, AllowedSigners allowedSigners) {
+    /** The order of the walk: the newest commit time first, then the order in which the commits were reached. */
+    private static final Comparator<Walked> NEWEST_FIRST = Comparator.comparingLong(Walked::time).reversed()
+            .thenComparingLong(Walked::sequence);
+
+    /**
+     * A commit the walk reached, checked when it was reached.
+     *
+     * @param id       the commit
+     * @param time     its commit time in seconds, the key of the order of the walk
+     * @param parents  its parents
+     * @param reason   why its signature is not valid; {@code null} for a valid one
+     * @param sequence the order in which the walk reached it
+     */
+    private record Walked(ObjectId id, long time, List<ObjectId> parents, @Nullable Reason reason, long sequence) {
+    }
+
+    /**
+     * The commit the walk starts at: the target of the reference, an annotated tag peeled as {@code RevWalk.parseCommit}
+     * peels it. An object larger than {@link ExplicitSave#BLOB_LIMIT} is not parsed but read as a commit header, so a
+     * larger tag fails as no commit.
+     */
+    private static ObjectId start(ObjectReader reader, RevWalk walk, ObjectId target) throws IOException {
+        if (reader.getObjectSize(target, ObjectReader.OBJ_ANY) > ExplicitSave.BLOB_LIMIT) {
+            return target;
+        }
+        return walk.peel(walk.parseAny(target)).copy();
+    }
+
+    /**
+     * Reads and checks one commit. Its size is asked first; a commit within {@link ExplicitSave#BLOB_LIMIT} is read
+     * bounded, parsed, checked and its body released, a larger one is {@link Reason#MALFORMED}, and only its header is
+     * read, as a stream, for its parents and its commit time.
+     *
+     * @throws IOException if the commit is missing, is no commit, or its header names a parent that is no object id
+     */
+    private static Walked read(ObjectReader reader, RevWalk walk, ObjectId id, AllowedSigners allowedSigners,
+            long sequence) throws IOException {
+        if (reader.getObjectSize(id, Constants.OBJ_COMMIT) > ExplicitSave.BLOB_LIMIT) {
+            try (InputStream in = new BufferedInputStream(reader.open(id, Constants.OBJ_COMMIT).openStream())) {
+                CommitHeader header = CommitHeader.read(id, in);
+                return new Walked(id, header.time(), header.parents(), Reason.MALFORMED, sequence);
+            }
+        }
+        byte[] raw = reader.open(id, Constants.OBJ_COMMIT).getBytes(ExplicitSave.BLOB_LIMIT);
+        // JGit 7.8.0 RevCommit.parse looks the commit up in the pool of the walk and keeps the raw buffer on it,
+        // whatever setRetainBody says; the body is released once the commit is checked
+        RevCommit commit = RevCommit.parse(walk, raw);
+        try {
+            List<ObjectId> parents = Arrays.stream(commit.getParents()).map(AnyObjectId::copy).toList();
+            return new Walked(id, commit.getCommitTime(), parents, check(raw, commit, allowedSigners), sequence);
+        } finally {
+            commit.disposeBody();
+        }
+    }
+
+    /**
+     * The reason a commit within {@link ExplicitSave#BLOB_LIMIT} has no valid signature; {@code null} for a valid one.
+     *
+     * @param raw    the raw commit
+     * @param commit the parsed commit
+     */
+    private static @Nullable Reason check(byte[] raw, RevCommit commit, AllowedSigners allowedSigners) {
+        if (gpgsigHeaders(raw) > 1) {
+            // Git verifies the first gpgsig header and strips every one from the payload, so a second header would be
+            // carried along unverified
+            return Reason.INVALID;
+        }
         byte[] signature = commit.getRawGpgSignature();
         if (signature == null) {
             return Reason.UNSIGNED;
@@ -197,7 +298,7 @@ public final class SignatureVerification {
         if (!(SshSignatures.decode(armored) instanceof SshSignatures.DecodedSignature decoded)) {
             return Reason.MALFORMED;
         }
-        if (!SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, unsignedPayload(commit.getRawBuffer()))) {
+        if (!SshSignatures.verify(decoded, SshSignatures.NAMESPACE_GIT, unsignedPayload(raw))) {
             return Reason.INVALID;
         }
         return switch (allowedSigners.check(decoded.publicKeyBlob(),
@@ -241,8 +342,122 @@ public final class SignatureVerification {
         return out.toByteArray();
     }
 
+    /**
+     * The number of {@code gpgsig} headers of a raw commit: the header lines before the first empty line that start
+     * with {@code gpgsig }, continuation lines not counted.
+     *
+     * @param raw the raw commit
+     * @return the number of {@code gpgsig} headers
+     */
+    static int gpgsigHeaders(byte[] raw) {
+        int count = 0;
+        int position = 0;
+        while (position < raw.length && raw[position] != '\n') {
+            if (startsWith(raw, position, GPGSIG)) {
+                count++;
+            }
+            while (position < raw.length && raw[position] != '\n') {
+                position++;
+            }
+            position++;
+        }
+        return count;
+    }
+
     private static boolean startsWith(byte[] data, int offset, byte[] prefix) {
         return data.length - offset >= prefix.length
                 && Arrays.equals(data, offset, offset + prefix.length, prefix, 0, prefix.length);
+    }
+
+    /**
+     * The parents and the commit time of a commit, read from its header as a stream up to the first empty line. Of
+     * every header line only its first and its last {@value #KEPT} bytes are kept, so a header line of any length, for
+     * example a {@code gpgsig} header, allocates nothing: a {@code parent} line names its id in its first bytes, a
+     * {@code committer} line its time in its last.
+     */
+    private static final class CommitHeader {
+
+        private static final int KEPT = 64;
+        private static final String PARENT = "parent ";
+        private static final String COMMITTER = "committer ";
+
+        private final ObjectId id;
+        private final List<ObjectId> parents = new ArrayList<>();
+        private final byte[] head = new byte[KEPT];
+        private final byte[] tail = new byte[KEPT];
+        private long length;
+        private long time;
+
+        private CommitHeader(ObjectId id) {
+            this.id = id;
+        }
+
+        /**
+         * Reads the header of a commit.
+         *
+         * @param id the commit, for the exception
+         * @param in the raw commit
+         * @return the parents and the commit time; the time 0 when the committer line carries none
+         * @throws IOException if the stream fails or a {@code parent} line names no object id
+         */
+        static CommitHeader read(ObjectId id, InputStream in) throws IOException {
+            var header = new CommitHeader(id);
+            int next = in.read();
+            while (next != -1 && header.accept(next)) {
+                next = in.read();
+            }
+            return header;
+        }
+
+        List<ObjectId> parents() {
+            return List.copyOf(parents);
+        }
+
+        long time() {
+            return time;
+        }
+
+        /** Takes one byte of the header; {@code false} at the empty line that ends it. */
+        private boolean accept(int value) throws CorruptObjectException {
+            if (value != '\n') {
+                if (length < KEPT) {
+                    head[(int) length] = (byte) value;
+                }
+                tail[(int) (length % KEPT)] = (byte) value;
+                length++;
+                return true;
+            }
+            if (length == 0) {
+                return false;
+            }
+            String start = new String(head, 0, (int) Math.min(length, KEPT), US_ASCII);
+            if (start.startsWith(PARENT)) {
+                String parent = start.substring(PARENT.length(),
+                        Math.min(start.length(), PARENT.length() + Constants.OBJECT_ID_STRING_LENGTH));
+                if (!ObjectId.isId(parent)) {
+                    throw new CorruptObjectException(id, "parent");
+                }
+                parents.add(ObjectId.fromString(parent));
+            } else if (start.startsWith(COMMITTER)) {
+                time = committerTime();
+            }
+            length = 0;
+            return true;
+        }
+
+        /** The commit time of the committer line just read: the second-to-last token of its last bytes. */
+        private long committerTime() {
+            int kept = (int) Math.min(length, KEPT);
+            var end = new StringBuilder(kept);
+            for (long index = length - kept; index < length; index++) {
+                end.append((char) (tail[(int) (index % KEPT)] & 0xff));
+            }
+            String[] tokens = end.toString().strip().split(" ");
+            try {
+                return tokens.length < 2 ? 0 : Long.parseLong(tokens[tokens.length - 2]);
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
     }
 }

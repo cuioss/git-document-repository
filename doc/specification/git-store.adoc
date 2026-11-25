@@ -92,17 +92,34 @@ qualified binary name of the service
 _Deploying service providers on the class path_). The module `de.cuioss.git.document.store` declares `uses` for each
 of the three interfaces. `StoreProviders.load(configuration)` finds the candidates with `ServiceLoader.load` for each
 interface and hands them to
-`StoreProviders.select(configuration, signing, anchors, persons)`, which picks the provider whose id is
+`StoreProviders.select(configuration, signing, anchors, persons)`. The `AnchorProvider` candidates are instantiated only
+when `anchor.provider` names an id other than `signed` (<<GDR-STORE-15>>); a start that anchors nothing, or that anchors
+with the built-in provider `signed`, instantiates none, so a broken anchor provider on the class path cannot stop it.
+`select` picks the provider whose id is
 `signing.key-source`, the one whose id is `directory.persons.provider`, and, when `anchor.provider` is present, the one
 with that id; without `anchor.provider` no anchor provider is selected. A configured id that no candidate carries, or
 that two candidates carry, is `MALFORMED` with the detail `<interface>: no provider with the id of <key>` or
 `<interface>: more than one provider with the id of <key>`, where `<key>` is the configuration key the id is read from;
 the detail never carries the configured id, a configured value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). Two candidates
-with an id nobody configured do not stop the start. A `ServiceConfigurationError` while loading is `MALFORMED` naming
-the interface; only the interface and the class name of the error are logged (DEBUG), never the message of the error
-or of its cause, which a failing provider may fill with a credential. A selection is logged as
-`GIT_STORE-1` with the three ids, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
+with an id nobody configured do not stop the start. A `ServiceConfigurationError` or a `LinkageError` while loading is
+`MALFORMED` naming the interface; only the interface and the class name of the error are logged (DEBUG), never the
+message of the error or of its cause, which a failing provider may fill with a credential. The id of every candidate
+the selection consults is read once per call of `select` and guarded, from one snapshot keyed by the candidate
+instance, also when the commit-signing and the anchor key source are both selected among the signing candidates: a candidate whose `id()` throws a `RuntimeException` or a
+`LinkageError`, or returns `null`, ends the selection as `MALFORMED` with the detail `<interface>: a provider id cannot
+be read`, and only the class of the candidate and of the throwable are logged (DEBUG). Under
+xref:general.adoc#GDR-GEN-3[GDR-GEN-3] a provider that fails while naming itself is an expected non-success of the
+start, not an exception; a `LinkageError` is handled like a `RuntimeException` because a provider whose classes cannot
+be linked fails first when one of its methods is called. A selection is logged as `GIT_STORE-1` with the three ids the
+providers were matched by, a refusal as `GIT_STORE-100` with its detail; both are catalogued in
 `git-store/doc/LogMessages.adoc` (xref:general.adoc#GDR-GEN-4[GDR-GEN-4]).
+
+The tests of the provider selection (`StoreProvidersTest`) run on the class path only, so they exercise the lookup
+through `META-INF/services` and not through the `provides` directive of a provider module: `git-testing` requires
+`org.junit.jupiter.api` transitively, and on the module path Surefire would place `org.junit.platform.commons` in a named
+module while its launcher stays in the unnamed module, which fails with `IllegalAccessError` (the failure recorded in
+`git-store/pom.xml` and `git-testing/pom.xml`). The module-mode lookup is that of `ServiceLoader` itself and is not
+exercised by a test of `git-store`.
 
 [#GDR-STORE-1]
 == GDR-STORE-1: Repository Registry
@@ -121,7 +138,18 @@ repositories:
 ----
 
 A repository is the record `StoreRepository` (alias, remote, confidentiality, optional retention as a
-`java.time.Period`); its `toString()` renders the remote without user information. `RepositoryRegistry.of(repositories,
+`java.time.Period`); its `toString()` renders the remote as scheme, host, port and path only: the user, the password,
+the query and the fragment are never rendered (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]), so a token carried in a query
+such as `?token=…` reaches no log record. JGit 7.8.0 `URIish` knows no query and no fragment and keeps both in its
+path, and in its host when no `/` precedes them (`https://host?token=…`, `https://host#…`). A remote with a scheme is
+therefore reduced before it is parsed: its authority ends at the first `/`, `?` or `#` after the scheme, the user
+information, the authority up to its last `@`, is looked for inside the authority only and dropped, so an `@` of a
+query or a fragment is never read as user information and the text after it never as the host, and the rest is cut at its first `?` or `#`. Where a `?` or `#` precedes an `@` that lies before the first `/`, the remote
+is ambiguous (a password holding the delimiter, or a query holding an `@`) and is rendered as `(malformed)` rather
+than any text after the delimiter; an `@` after the first `/` (`https://host/p?mail=a@b`) is part of the path or its
+query, which is cut. The path of any other remote is cut at its first `?` or `#`. Encoded delimiters (`%3F`, `%23`)
+belong to the path and stay. A remote `URIish` cannot parse is rendered as `(malformed)`. `RepositoryRegistry.toString()` and `StoreConfiguration.toString()` render their repositories this way.
+`RepositoryRegistry.of(repositories,
 policy)` builds the immutable registry, in registration order, and checks every repository in turn against one
 `RemotePolicy` of `git-core`: one remote policy per registry, because every repository has a remote on the one Git
 server, or on a single server local bare repositories
@@ -209,10 +237,13 @@ it starts the suffix. A path whose segment after the collection starts with a do
 `<collection>/.counter` of a numbered collection, belongs to no document. The release of a numbered entry
 (<<GDR-STORE-6>>) takes exactly the paths that belong to it.
 
-`StoreWriter.open(repository, gitDir, user, configuration, signing, operations, clock)` clones the remote into a bare
-clone if none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user; `signing` is the active
-`SigningKeySource` (<<GDR-STORE-12>>), and a configuration without `signing.key` is `MALFORMED` with the detail
-`signing.key is missing`, checked before anything is cloned. An existing clone is reused only
+`StoreWriter.open(repository, gitDir, user, configuration, collections, signing, operations, clock)` clones the
+remote into a bare clone if none exists yet, with `PUSH_REF_SPECS` and the credentials of the technical user;
+`collections` are the declared collections of the repository, `signing` is the active `SigningKeySource`
+(<<GDR-STORE-12>>). The writer refuses at open, before anything is cloned, collections that declare one name twice,
+checked with `StoreReferences.collections`, as `MALFORMED` with the detail `collections: a name is declared twice`,
+which names the argument and never the collection, as `StoreIndex.open` refuses them for the index; and a
+configuration without `signing.key` as `MALFORMED` with the detail `signing.key is missing`. An existing clone is reused only
 when its `origin` has exactly one fetch URL and every push URL (the fetch URL when none is configured) equal to the
 registered remote, read through JGit 7.8.0 `RemoteConfig`, which applies `insteadOf` and `pushInsteadOf`; a clone of
 another repository at the path is the passed-on `NOT_A_REPOSITORY` with the detail
@@ -239,8 +270,9 @@ tip as the time of the last intermediate save).
 * An explicit save must apply the draft's changes onto the remote tip of the working branch as one commit whose only
   parent is that tip (a squash merge in core, path-level as in xref:git-core.adoc#GDR-CORE-6[GDR-CORE-6]); no draft
   commit may become reachable from a pushed reference.
-* The save must push with lease; when the lease is refused or the push rejected, it must fetch and re-apply its
-  operation onto the new tip, up to `save.max-attempts`.
+* The save must push with lease; when the lease is refused, the push having lost a race on the remote reference, it
+  must fetch and re-apply its operation onto the new tip, up to `save.max-attempts`. A permanent rejection of the push,
+  such as by a protected branch or a hook, must end the save at once as rejected.
 * A save may carry a per-attempt step of the caller. The store must call it on every attempt, after the conflict
   check, with a read-only view of the tip and of the tree the draft's changes produce on it; the edits it returns must
   become part of the one save commit, and a refusal or a failure of the step must end the save with nothing pushed and
@@ -256,7 +288,8 @@ image::../resources/diagrams/save-sequence.svg["Sequence of an explicit save",al
 . Apply the draft's changes onto the base as one commit (path-level; no textual three-way merge of file content).
   Check every edit that carries an `expectedBlobId` (<<GDR-STORE-5>>). Then call the per-attempt step, if any: its
   edits join the commit, and its refusal or failure ends the save before anything is written or pushed.
-. Push with lease, the expected remote id being the base. On a lease refusal or a rejection, repeat from step 1.
+. Push with lease, the expected remote id being the base. On a lease refusal, repeat from step 1; a permanent
+  rejection ends the save.
 . After the accepted push, move the local working branch to the new commit and delete the draft reference by
   compare-and-delete (xref:git-core.adoc#GDR-CORE-5[GDR-CORE-5]); a draft reference that moved meanwhile is kept.
 
@@ -296,10 +329,40 @@ overwrite a later change of another writer to a path it saved already. The refer
 draft, and lives in the clone only. One commit with the base as its only parent and the changes as its edits is
 written in core by `InCoreWriter` of `git-core` and pushed to the target with the lease of the base; a
 target branch that does not exist yet is pushed against the zero-id lease, which expects the remote branch to be
-absent. A lease refusal or a rejection starts the next attempt from the fetch; after the last of `save.max-attempts`
-the save is `NotSaved` with the passed-on `REJECTED`. An unreachable remote and invalid credentials end the save at once
-as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing changed. A save without a draft is the passed-on
-`NOT_FOUND`. A draft without changes is `Saved` with the tip of its existing target branch, with no commit and no push;
+absent. A lease refusal starts the next attempt from the fetch; after the last of `save.max-attempts` the save is
+`NotSaved` with the passed-on `REJECTED` and the detail `<target>: lease refused on every attempt (<n>)`. `git-core`
+reports a leased push that lost a race on the remote reference as `LEASE_REFUSED`, also when the lease held in the
+advertisement and the remote could not lock the reference for the update or, as a native Git remote reports it
+(`incorrect old value provided`), found it no longer at the old value the push sent; such a stale lease is retried
+like any other (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). Every `REJECTED` of the push is therefore a refusal of
+the remote that `git-core` does not recognise as a lost race, such as a protected branch, a refusing hook or a push
+that is no fast-forward, and a remote that words a lost race in yet another way is among them: it ends the save at once as the
+passed-on `REJECTED` with the detail of `git-core`, after one attempt and with the draft kept. This is an accepted,
+documented limit: a remote that words a lost race in a way `git-core` does not recognise makes such a save
+`REJECTED`, and it is not retried, for example one that reports `failed to update ref` (a wording reported in review,
+not checked against any Git release); the draft remains and the caller saves
+again (xref:git-core.adoc#GDR-CORE-7[GDR-CORE-7]). An unreachable remote
+and invalid credentials end the save at once as the passed-on `UNREACHABLE` or `CREDENTIALS_INVALID`, with nothing
+changed.
+
+[cols="2,1,2"]
+|===
+|Situation |Outcome |Attempts
+
+|the remote accepted the push |`Saved` |one
+|a changed path conflicts (<<GDR-STORE-4>>) |`Conflicting`, passed-on `CONFLICT` |one
+|an invalid pseudonym, an expected blob id that is no full object id, a release subject as the message |`MALFORMED`
+|none
+|the step or the signing key source refuses |`REFUSED` |one
+|the signing key source cannot be reached |`UNAVAILABLE` |one
+|no draft, or no changes and no target branch |passed-on `NOT_FOUND` |none or one
+|the step throws |passed-on `FAILED` |one
+|the lease is refused on every attempt |passed-on `REJECTED` |`save.max-attempts`
+|the remote refuses the push permanently |passed-on `REJECTED` |one
+|the remote cannot be reached, the credentials are invalid |passed-on `UNREACHABLE`, `CREDENTIALS_INVALID` |one
+|===
+
+A save without a draft is the passed-on `NOT_FOUND`. A draft without changes is `Saved` with the tip of its existing target branch, with no commit and no push;
 when the target branch does not exist, the save is `NotSaved` with the passed-on `NOT_FOUND` and the detail
 `draft: no changes and no target branch`, and the draft is kept. After the accepted
 push the local target branch moves by a reference update that expects the base and writes no reflog; an I/O failure
@@ -315,8 +378,13 @@ into the one signed, trailer-carrying save commit. The attempt loop of `Explicit
 calls the step on every attempt, the first and each re-application onto a new tip, after the conflict check and
 before the save commit is written, so a step that derives its edits from the tip, such as a counter, sees the tip the
 commit is written on. The step receives a read-only `SaveStep.Attempt`: the full id of that tip (`null` for a root
-commit), the content of a path on the tip, the content of a path in the tree the draft's edits produce on the tip, and
-the paths of the files below a directory of that produced tree. The view is the tip's tree overlaid with the draft's
+commit), the content of a path on the tip, the content and the mode (`TreeEdit.Mode`) of a path in the tree the draft's
+edits produce on the tip, and the paths of the files below a directory of that produced tree. Every put of the draft
+keeps the mode the draft holds its path in, so an executable file stays `100755` and a symbolic link `120000` on the
+target branch, and the view reports that mode. The modes the view reports are those of `TreeEdit.Mode`, a regular
+file, an executable file and a symbolic link; a gitlink of the tip (`160000`, the entry of a submodule) names a commit
+of another repository and is no file, so the view reports no mode for it, as for a directory. The view is the tip's
+tree overlaid with the draft's
 edits and read on demand: it writes no object, and the step gets no `Repository`, no credential and nothing the caller
 did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two variants:
 
@@ -329,12 +397,26 @@ did not pass. The step returns a `SaveStep.Outcome`, a sealed type of two varian
 * `Refusal`, which carries no text of the caller: the save ends as `NotSaved` with `StoreOutcome.REFUSED` and the
   fixed detail `<target>: step: refused`.
 
-A step that throws a `RuntimeException` ends the save as `NotSaved` with the passed-on `FAILED` and the detail
-`<target>: step: <simple class name of the exception>`, without a further attempt; no log record attaches the
-exception, and neither names its message (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A failure to read the view reaches
+A step that throws a `RuntimeException` or an `Error` other than a `VirtualMachineError` (the isolation rule of
+<<GDR-STORE-10>>) ends the save as `NotSaved` with the passed-on `FAILED` and the detail
+`<target>: step: <class name of the throwable>` (`Class.getName()`, so an anonymous or nested class is named as well),
+without a further attempt; no log record attaches the throwable, and neither names its message
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]). A `VirtualMachineError` propagates. A failure to read the view reaches
 the step as an `UncheckedIOException` and ends the save the same way. After a refusal or a failure nothing is written
-or pushed, and the draft and the target branch are unchanged; the save is logged as `GIT_STORE-101` with its outcome.
+or pushed, and the draft and the target branch on the remote are unchanged; the fetch the attempt ran before the step
+may still have moved the local mirror of the target, emitted like every fetch; the save is logged as `GIT_STORE-101` with its outcome.
 A draft without changes writes no commit and calls no step.
+
+The step runs under the locks of the save, the shared side of the maintenance lock, the lock of its draft and the
+transport lock, so every other save, release and fetch of the clone waits while it runs: a step is expected to return
+within milliseconds, reading its view only and calling no remote service. A step that calls back into the writer meets
+locks its own thread holds. The draft write, the save, the release and the fetch only take locks that thread may take
+again; the draft expiry, which needs the exclusive side of the maintenance lock, cannot be granted to a thread that
+holds the shared side, and is refused instead of waiting for itself: `expireDrafts` returns `REFUSED` with the detail
+`maintenance: re-entered from a callback that holds the shared lock` (<<GDR-STORE-7>>). The refusal reads the calling
+thread's own hold count of the shared side before the exclusive side is requested, a fact of that thread alone, so no
+other thread can change it in between. A step that closes the writer is refused the same way (<<GDR-STORE-16>>), and
+so is a step that takes a snapshot of an index or opens one, which would wait for the index lock (<<GDR-STORE-9>>).
 
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes
@@ -343,7 +425,11 @@ exclusive side, one lock per draft reference serialises the saves of that draft,
 fetch, apply and push of a save attempt. A save takes the shared side of the maintenance lock, then the lock of its
 draft, then the transport lock per attempt; the expiry takes only the exclusive side, so no cycle arises. Under the
 draft lock a save reads the draft and its `refs/applied/` reference only after every earlier save of that draft in the
-process has settled, so it does not apply again the changes an earlier save applied. The draft lock is in-process only,
+process has settled, so it does not apply again the changes an earlier save applied. A draft lock exists only while a
+save holds or waits for it: it is registered and released inside one atomic operation of the lock map on its
+reference name, together with the count of its holders, and the last holder removes it, so the map stays bounded by
+the saves in flight and a save never takes a lock that is no longer in the map. The map of the guards themselves is
+bounded by the clone paths the process opens, one guard per clone, and is never shrunk. The draft lock is in-process only,
 and a failed write of the `refs/applied/` reference for a kept draft is outside it: the next save then applies the
 draft's changes since its merge base. The guard does not close the window
 between reading a reference and moving it; the expected-id comparison under the reference's lock
@@ -379,20 +465,23 @@ that differs is a conflict (<<GDR-STORE-4>>). A written path also conflicts when
 file and a directory in a way the draft did not resolve: when a parent of the path is a file on the base that the
 draft does not delete (the edit would turn it into a directory), or when the path is a directory on the base holding
 a file the draft does not change (the edit would replace it); this holds with and without an expected blob id, and an
-addition below an existing directory is no overlap. An expected blob id that is no full object id is `NotSaved` with
-the passed-on `NOT_FOUND`, as for `git-core`'s own object-id inputs, and the detail
-`expectedBlobIds: not a full object id`, which names no path.
+addition below an existing directory is no overlap. An expected blob id that is no full object id is a malformed
+argument, not a missing object: the save is `NotSaved` with `StoreOutcome.MALFORMED` and the detail
+`expectedBlobIds: not a full object id`, which names the argument and never the value or a path; nothing is fetched,
+written or pushed.
 
 [#GDR-STORE-6]
 == GDR-STORE-6: Release
 
 * A release must merge the document's working branch into `main` and create the tag
   `refs/tags/<collection>/<id>/v<n>` on that merge commit; `n` counts the releases of that document from 1. For a
-  numbered collection the release must merge only the entry's path from the collection branch (path-level merge in
-  core).
-* `main` and the tag must be pushed together, `main` with lease.
+  numbered collection the release must copy only the entry's paths from the collection branch onto `main`, a
+  path-level copy with conflict check: a path `main` changed since the previous release of the entry is a conflict.
+* `main` must be pushed first, with lease, and the tag after it; a release whose push of `main` failed must leave no
+  local release tag behind.
 * When `main` moved but the tag is missing, the release must report incomplete, and a repeated release of the same
-  document must create the missing tag on the merged commit instead of merging again.
+  document must create the missing tag on the merged commit instead of merging again; a tag the remote already holds at
+  the released commit completes the release.
 * An existing release tag must never be moved or deleted.
 * A release pinned to the commit a save wrote must publish exactly that commit and must be refused, with nothing
   written or pushed, when the working or collection branch no longer points to it.
@@ -403,7 +492,8 @@ identity trailers of the user who releases (<<GDR-STORE-13>>), so it names the a
 
 `StoreWriter.release(author, claims, key)` and its pinned form `release(author, claims, key, expectedCommitId)` (see
 _Pinned release_ below) return a `StoreResult<Release>`; a `Release` carries the full name of the tag, the
-full id of the release commit and the version `n`. Content without release (a key of a `MAIN` collection) is
+full id of the release commit, the version `n` and `branchMovedOn`, whether the working or collection branch moved on
+since the released commit, which only a repair of an incomplete release can report (see below). Content without release (a key of a `MAIN` collection) is
 `MALFORMED` with the detail `key: content without release`. A release runs under the shared side of the clone's
 maintenance lock and takes no draft lock; each attempt runs under the transport lock (<<GDR-STORE-3>>), from its fetch
 to the push of its tag. An attempt fetches with `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS` and the credentials
@@ -421,7 +511,15 @@ release tags of the document once. A missing working or collection branch is the
   the release with the passed-on `CONFLICT` and the detail `<branch>: <n> conflicting paths`, which names no path. For a
   numbered collection only the paths of the entry are taken from the collection branch onto `main`, the only parent:
   every file of the entry that differs or is new is put, every file of the entry the collection branch lacks is
-  deleted, and the files of other entries and the counter file stay as `main` has them. Without `main` the release
+  deleted, and the files of other entries and the counter file stay as `main` has them. That copy carries a conflict
+  check: before anything is read or written, every path the copy would change is compared, by mode and object id, on
+  `main` with the commit of the previous release `v<n-1>` (with an empty tree for the first release); a path `main`
+  changed since, by a save onto `main` for example, ends the release with the passed-on `CONFLICT` and the detail
+  `<branch>: <n> paths changed on main since the previous release`, which names no path, and nothing is written. A
+  path the release would set to a gitlink (mode `160000`, a submodule entry) ends it with `MALFORMED` and the detail
+  `entry: a gitlink path cannot be released`, which names the class of the path, never the path, before any blob is
+  read: `TreeEdit.Mode` of xref:git-core.adoc#GDR-CORE-4[GDR-CORE-4] has no gitlink member, so `git-core` cannot write
+  one, and carrying gitlinks is left to a change of `git-core`. Without `main` the release
   commit of a per-document collection has the working branch as its only parent and its tree, and that of a numbered
   collection is a root commit holding the entry's files. The commit is written by `InCoreWriter` with the author and
   committer of <<GDR-STORE-8>>, signed (<<GDR-STORE-12>>) and carrying the identity trailers (<<GDR-STORE-13>>); one
@@ -431,8 +529,16 @@ release tags of the document once. A missing working or collection branch is the
   the local `main` moves and the tag is pushed against the zero-id lease. `RepositoryOperations.push` of `git-core`
   pushes one reference per call, so the two pushes are not atomic; the transport lock keeps every other fetch of the
   process out of the gap, so no pruning fetch deletes the local tag before its push. A local tag whose push never
-  happened, because the push of `main` was refused, is pruned by the next fetch, since the remote lacks it
-  (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); no tag on the remote is ever moved or deleted.
+  happened because the push of `main` lost its lease is pruned by the fetch of the next attempt, since the remote lacks
+  it (JGit 7.8.0 `FetchProcess.deleteStaleTrackingRefs`, <<GDR-STORE-3>>); when the push of `main` failed for any other
+  reason, the release deletes its local tag at once, by a reference update that expects the release commit and writes
+  no reflog, so no local tag points at a commit the remote never accepted. No tag on the remote is ever moved or
+  deleted.
+* *Refused tag.* When the remote refuses the push of the tag (`LEASE_REFUSED` or `REJECTED`), the attempt fetches that
+  one tag (`+<tag>:<tag>`, without pruning) still under the transport lock and reads the remote tag from the result of
+  that fetch, never from a separate read: a tag the remote holds at the released commit, for example one an earlier
+  attempt pushed whose answer was lost, completes the release (`OK`); a tag at another commit, or a fetch that fails,
+  leaves the release `INCOMPLETE` as below.
 * *Incomplete and its recovery.* When the remote accepted `main` and the push of the tag failed, the release is
   `INCOMPLETE` with the detail `<tag>: not pushed (<outcome>)`. A repeated release finds the release commit by its
   subject and its shape: a commit on the first-parent chain of `main`, after the commit of `v<n-1>`, whose first
@@ -448,7 +554,10 @@ release tags of the document once. A missing working or collection branch is the
   two parents, the second reachable from the working branch, or, written onto an absent `main`, one parent reachable
   from the working branch and the same tree as that parent; for a numbered collection it has at most one parent and
   changes no path outside the entry. A commit with the message but without the shape is ordinary history, and the
-  release merges as usual.
+  release merges as usual. The repaired release reports in `Release.branchMovedOn` whether the working or collection
+  branch moved on since the released commit: for a per-document collection its tip is no longer the parent the release
+  merged, for a numbered collection a path of the entry differs between the release commit and the tip. The release
+  then does not hold the latest saved state, and the caller may release again.
 * *File modes.* Every put of a release keeps the mode the source tree gives the file (`TreeEdit.Mode` of
   xref:git-core.adoc#GDR-CORE-4[GDR-CORE-4]): an executable file stays `100755`, a symbolic link `120000`, a mode change
   alone is an edit, and every other file is a regular file.
@@ -479,7 +588,22 @@ release tags of the document once. A missing working or collection branch is the
 
 A completed release is logged as `GIT_STORE-5` with the tag and the commit, an incomplete one as `GIT_STORE-105`, and a
 release that put nothing on the remote as `GIT_STORE-106` with its outcome (`git-store/doc/LogMessages.adoc`). Every
-detail names a reference or a field, never a path, a content or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+detail names a reference or a field, never a path, a content or a pseudonym, and an exception by its class name
+(`Class.getName()`) only (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+[cols="2,1"]
+|===
+|Situation |Outcome
+
+|`main` and the tag accepted, or the tag refused and held by the remote at the release commit |`OK`
+|`main` accepted, the tag not pushed or held by the remote at another commit |`INCOMPLETE`
+|content without release, an invalid pseudonym, a gitlink among the paths |`MALFORMED`
+|the signing key source refuses or cannot be reached |`REFUSED`, `UNAVAILABLE`
+|a missing working or collection branch |passed-on `NOT_FOUND`
+|a conflicting merge, or entry paths `main` changed since the previous release |passed-on `CONFLICT`
+|the lease of `main` refused on every attempt, or `main` refused permanently |passed-on `REJECTED`
+|any other failure of a fetch or of the push of `main` |the passed-on outcome
+|===
 
 [#GDR-STORE-7]
 == GDR-STORE-7: Draft Expiry
@@ -491,7 +615,10 @@ detail names a reference or a field, never a path, a content or a pseudonym (xre
 `StoreWriter.expireDrafts(now)` deletes every draft below `refs/drafts/` whose tip has a committer time at or before
 `now` minus `drafts.expiry`, computed in UTC, by compare-and-delete expecting the tip that was read as stale; a draft
 changed meanwhile ends that delete in `CONFLICT` and is kept. The result is `OK` with the full names of the deleted
-draft references, sorted, possibly none, and the run is logged as `GIT_STORE-4` with their number. The deletes run
+draft references, sorted, possibly none, and the run is logged as `GIT_STORE-4` with their number. A call from a thread
+that holds the shared side of the maintenance lock, a `SaveStep` or another callback re-entering the writer, is
+`REFUSED` with the detail `maintenance: re-entered from a callback that holds the shared lock`, nothing deleted
+(<<GDR-STORE-3>>). The deletes run
 under the exclusive side of the clone's maintenance lock (<<GDR-STORE-3>>), so no draft write or save of the process
 runs meanwhile: a draft write that found its draft present cannot lose it before its compare-and-swap. Every
 `refs/applied/` reference (<<GDR-STORE-3>>) whose draft no longer exists is deleted the same way, so it keeps no
@@ -518,6 +645,20 @@ after it took `gc.pid`. The expiry gives the command a progress monitor; when th
 collection was skipped, however late the other collection took `gc.pid`, and the expiry logs `GIT_STORE-104` and ends
 in the passed-on `CONFLICT` with the detail `gc: skipped, another collection holds gc.pid`, which may be retried, so a
 skipped collection is never reported as a successful expiry; the drafts it deleted stay deleted.
+
+The expiry `now` is kept, without a grace period. JGit 7.8.0 `GC.prune` deletes a loose object only when no
+reference reaches it and its file time lies before the expiry instant, which `GC.getExpireDate` parses once per
+collection, and it checks the file time once more right before the delete, so an object written after the collection
+started is never pruned. An older unreferenced object belongs to no write in flight: the bare clone is the cache of
+one process
+(xref:../adr/0002-Every_repository_has_a_remote_and_the_local_bare_clone_is_a_disposable_cache.adoc[ADR-0002]), and
+every write of that process holds the shared side of the maintenance lock the collection holds exclusively. `gc.pid`
+only keeps a second collection off the clone; it does not protect a writer. A grace period would protect a writer
+outside the process, which the store does not have, and would keep the objects of a deleted draft past its expiry.
+
+A reference below `refs/drafts/` whose tip is no commit, such as one pointing at a blob, was not written by the store
+and is no draft: the expiry and the listing of drafts skip it, log it at DEBUG with the exception class only, and go
+on, and the expiry leaves it in place.
 
 [#GDR-STORE-8]
 == GDR-STORE-8: Author, Committer and Credentials
@@ -571,6 +712,12 @@ every working branch and collection branch. After a save only the changed docume
   changed between the indexed commit and the new tip (`RepositoryReader.changes` of `git-core`,
   xref:git-core.adoc#GDR-CORE-9[GDR-CORE-9]), a new source is read in full and a gone one is dropped. When the changed
   paths cannot be read, for example because the indexed commit is no longer in the clone, the source is read in full.
+* *Per-source refresh.* Each source is read in isolation. A source that cannot be read, for example because a blob of
+  its tip is missing from the clone, keeps the entries it was indexed with before (a new source stays out of the
+  index), is logged as `GIT_STORE-113` with the alias and the class of the source (`main`, `working branch` or
+  `collection branch`), never its reference name, which may carry a document id, and the class name of the exception,
+  and marks the index stale; every other source is published fresh, so one unreadable source never freezes the
+  others. Only a failure to read the references of the clone keeps the whole previous index.
 * *Fetch.* `StoreWriter.fetch()` mirrors the remote into the clone with
   `JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS`, pruning, and the credentials of the technical user, under the
   shared side of the maintenance lock and the transport lock (<<GDR-STORE-3>>), and returns `OK` with the full names of
@@ -584,23 +731,43 @@ every working branch and collection branch. After a save only the changed docume
   id, and builds a separate `StoreIndex.Snapshot` of that commit, indexed as `main` is; the current index is not
   changed. A tag or commit the clone does not hold is the passed-on `NOT_FOUND` of `RepositoryReader.snapshot`, whose
   detail names the field `revision`.
-* *Contributor failure.* A contributor that throws a `RuntimeException` leaves its document out; the failure is logged
-  with the class of the exception only, no throwable attached, and the refresh goes on with the next document.
+* *Contributor failure.* A contributor that throws a `RuntimeException` or an `Error` other than a
+  `VirtualMachineError` (the isolation rule of <<GDR-STORE-10>>) leaves its document out; the failure is logged with
+  the class name of the throwable only, no throwable attached, and the refresh goes on with the next document.
+* *Contributor time.* A contributor runs on the thread of the refresh, under the lock of the index, and the save,
+  release or fetch that triggered the refresh returns to its caller only after it: a contributor is expected to return
+  within milliseconds per document, decoding the files it is given and calling no remote service. A contributor that
+  calls the writer holds no lock of the clone on its own thread, since the refresh runs after the operation released
+  them; one that would wait for a lock its thread holds is refused instead (<<GDR-STORE-3>>). Another thread's save,
+  release or fetch may still hold the transport lock, so a contributor that fetches waits for it.
 * *Index lock.* A refresh reads the references and then publishes a new index, so two refreshes, one after a save and
-  one after a fetch, could publish out of order. Refreshes are therefore serialised by one lock of the index and always
-  rebuild from the tips read under that lock; the published index is an immutable value swapped atomically, so a
+  one after a fetch, could publish out of order. Refreshes are therefore serialised by the lock of the index and always
+  rebuild from the tips read under that lock. That lock is the one reentrant lock of the writer's `StoreEvents`, shared
+  by every index opened on the writer, so the refreshes, retries and snapshots of all indexes of one writer are
+  serialised by it and no two indexes of a writer can wait for each other's lock; the published index is an immutable value swapped atomically, so a
   reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
-  operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
-  A refresh that fails to read the clone keeps the previous index and marks it stale: an operation that moved no
+  operation released the transport lock, never while it is held, and a thread that still holds a lock of the clone,
+  inside a save step or an anchor provider call, is refused instead of waiting for it: `snapshot` and `open` of an
+  index return `REFUSED` there without waiting. No thread therefore waits for the index lock while it holds a lock of
+  the clone, and the lock order of <<GDR-STORE-3>> gains no cycle, also not between a contributor of one index that
+  fetches and a save step of another thread that snapshots another index of the writer.
+  A refresh that fails to read the clone, or one of its sources, keeps the previous index, or that source's previous
+  entries, and marks it stale: an operation that moved no
   reference, such as a fetch that found the clone current, tells the index so (`StoreEvents.Observer.unchanged`), and a
-  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. A
-  snapshot calls the contributors under the same lock, so the contributors of one index are never called by two
-  threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
+  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. Only
+  the outermost holder of the lock retries: a retry requested from a contributor of a running refresh or snapshot of
+  any index of the writer, which holds the lock already, is deferred to the next operation and the index stays stale,
+  so a contributor that calls the writer cannot recurse; a move reported from there, a fetch of a contributor that
+  moved a branch, is deferred the same way: the running refresh publishes its own result but stays stale, and the next
+  operation of the writer, also one that moves nothing, refreshes from the latest references. A thread that calls from
+  outside waits for a running refresh and then reads the stale mark. A snapshot calls the contributors under the same lock, so no contributor of any index
+  of the writer is called by two threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
   documents changed.
 
-A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, a throwing contributor as
-`GIT_STORE-108` with the alias, the collection and the class of the exception (`git-store/doc/LogMessages.adoc`). No
-message names a path, a content, an id or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, or the class name of any
+throwable the run threw, a throwing contributor as `GIT_STORE-108` with the alias, the collection and the class name
+of the throwable, and an unreadable source as `GIT_STORE-113` (`git-store/doc/LogMessages.adoc`). No message names a
+path, a content, an id or a pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-STORE-10]
 == GDR-STORE-10: Post-Commit Listeners
@@ -628,7 +795,10 @@ image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source 
   and the old id of an update may already be history another operation moved past (a release that merged a saved
   commit into `main` before the save emitted its event, for example). Every subscription keeps a fixed *start*, the
   tip the branch has in the clone when it is subscribed, or the tip of every branch of the clone for a branch that does
-  not exist yet, and its *delivered tips*, the new ids it walked, an ancestor of a later one dropped. For each move of
+  not exist yet, and its *delivered tips*, the new ids it walked, an ancestor of a later one dropped. A subscription is
+  registered before its start is read, both under its own lock: an event a save emits while the listener subscribes
+  reaches the subscription and waits until the start is fixed, so a commit made between the read of the start and the
+  registration is never missed, and one already part of the start is not delivered again. For each move of
   the branch the dispatch walks the commits reachable from the new id and from neither the start nor a delivered tip,
   oldest first (JGit 7.8.0 `RevWalk` with `RevSort.TOPO` and `RevSort.REVERSE`). So every commit reachable from the
   branch that was not reachable from the start reaches the listener exactly once, oldest first, whatever the order of
@@ -646,11 +816,21 @@ image::../resources/diagrams/store-classes-and-listeners.svg["Git as the source 
   drains the queue before it lets go of the lock. Two listeners on two branches that save onto each other's branch on
   two threads therefore never deadlock, and a listener that re-enters the store gets its own new commits after it
   returned.
-* *Failure isolation.* A `RuntimeException` of a listener is caught and logged with the class of the exception only, no
-  throwable attached; the commit counts as delivered, and the save, release or fetch that triggered the call keeps its
-  result.
+* *Failure isolation.* A `RuntimeException` or an `Error` other than a `VirtualMachineError` of a listener is caught
+  and logged as `GIT_STORE-109` with the class name of the throwable (`Class.getName()`) only, no throwable attached;
+  the commit counts as delivered, the next listener is still called, and the save, release or fetch that triggered the
+  call keeps its result.
+* *Isolation rule.* One rule covers every callback of the store. The observer sites, the observers of `StoreEvents`
+  (the indexes and the listener dispatch), a `CommitListener`, an `IndexContributor`, a `SaveStep` and the calls of an
+  `AnchorProvider` (its proof in a due check, its verification in `AnchorVerification`), isolate a `RuntimeException`
+  and every `Error` except a `VirtualMachineError`: an `OutOfMemoryError` or a `StackOverflowError` leaves the JVM in
+  no state to go on and propagates, while a `LinkageError`, an `AssertionError` or a `ServiceConfigurationError` of
+  pluggable code is that code's failure, not the store's. The two scheduled runners of a writer, the periodic fetch
+  (`fetchPeriodically`) and the due check of the anchoring off the caller's thread, isolate every `Throwable`, so a
+  schedule never ends. Every site logs the class name of the throwable only, never its message, and attaches no
+  throwable (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
-A failing listener is logged as `GIT_STORE-109` with the alias, the branch and the class of the exception
+A failing listener is logged as `GIT_STORE-109` with the alias, the branch and the class name of the throwable
 (`git-store/doc/LogMessages.adoc`); no message names a path, a content or a pseudonym
 (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
@@ -669,6 +849,11 @@ The interface is `Codec<V>` with `byte[] encode(V value)` and `StoreResult<V> de
 canonical: two equal values, and an unchanged value encoded again, yield byte-identical content. A content the codec
 cannot read is `MALFORMED`, never an exception, and its detail names what could not be read (a line number or a key)
 without repeating the content.
+
+`git-store` has no implementation of `Codec`, so the interface has no behaviour of its own to test. `CodecTest` is the
+documented contract test of the interface: it carries the one implementation in `git-store`, a canonical test codec,
+and checks what every implementation owes, the byte-identical round trip, the identical encoding of equal values and a
+`MALFORMED` refusal whose detail does not repeat the content; it exercises no other code of `git-store`.
 
 [#GDR-STORE-12]
 == GDR-STORE-12: Commit Signature
@@ -718,6 +903,12 @@ for signatures: SSHSIG and Ed25519 come from the JDK (xref:general.adoc#GDR-GEN-
   an encrypted key (`signing: encrypted key not supported`) and a file that is no valid key
   (`signing: key malformed`) are `REFUSED`. No detail names the path or a key byte.
 
+The signing key source is third-party code: a `RuntimeException` of its `publicKey` or `sign` is isolated by
+`CommitSignatures` and `SourceSigner` as `StoreProviders` isolates a provider, ending the save, release, checkpoint or
+note as `REFUSED` with `signing: key source refused`, logged by its class name only and without the throwable.
+`GIT_STORE-110` names the alias, the class of the reference (`main`, `branch`, `tag`, `checkpoint tag`,
+`notes reference`) and the outcome, never the reference name.
+
 [#GDR-STORE-13]
 == GDR-STORE-13: Identity Trailers
 
@@ -744,9 +935,12 @@ caller supplies the claims; the store never receives the access token.
 
 The caller passes the claims as the public record `IdentityClaims(issuer, authTime, acr, amr)` to `save` and
 `release`; it has no component for `sub` or `sid`. Each component is checked so that it fits on one trailer line: the
-issuer not blank and without whitespace or control characters, `acr` not blank and without control characters and
-`;`, each `amr` not blank and without whitespace, control characters, `,` and `;`; a violation is an
-`IllegalArgumentException` naming the component, never the value. The package-private `IdentityTrailers` appends the
+issuer not blank and without whitespace or control characters, `acr` and each `amr` not blank and without whitespace,
+control characters, `,` and `;`. The claims come from a token, so the caller builds them with the public factory
+`IdentityClaims.of(issuer, authTime, acr, amr)`, which returns a violation as `MALFORMED` with the detail
+`issuer: invalid`, `acr: invalid` or `amr: invalid`, never the value, instead of throwing; the canonical constructor,
+for values the caller already checked, throws an `IllegalArgumentException` with the same message. The package-private
+`IdentityTrailers` appends the
 block to the message, its trailing line breaks stripped, after one blank line, in the trailer form of
 `git interpret-trailers`:
 
@@ -788,7 +982,9 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   latter reading `signing.allowed-signers` (absent: `MALFORMED`, `signing.allowed-signers is missing`). A line is
   `<principals> [<options>] <key type> <base64 key> [<comment>]`, fields may be quoted with `"`, blank lines and `#`
   comments are skipped. The options `valid-after` and `valid-before` take `YYYYMMDD` or `YYYYMMDDHHMM[SS]`, in UTC with
-  a trailing `Z` and in the system time zone otherwise, are resolved strictly (a date the calendar lacks, such as
+  a trailing `Z` or `z` (OpenSSH `misc.c` `parse_absolute_time` compares the suffix case-insensitively,
+  link:https://github.com/openssh/openssh-portable/blob/master/misc.c[misc.c]) and in the system time zone otherwise,
+  are resolved strictly (a date the calendar lacks, such as
   `20260230`, is `timestamp malformed`) and bound the validity inclusively; `namespaces` restricts a key, which is used
   for commits only when the list contains `git`, an entry listed twice counting once. Each option is given at most
   once (a repeated `valid-after`, `valid-before` or `namespaces` is `option repeated`), and a `valid-before` that is
@@ -797,10 +993,16 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   pattern list, in which a negated entry such as `!git` overrides a matching positive one; the store evaluates no
   patterns and refuses a list with an entry that contains `!`, `*` or `?` (`namespace pattern not supported`), so it
   never accepts a key for commits that OpenSSH would reject. Another key type than `ssh-ed25519`, `cert-authority`, any
-  other option and a line that cannot be read are `MALFORMED` with the detail `line <n>: <reason>`; a file that cannot
-  be read is `UNAVAILABLE`. No detail names a principal, key text or a path.
+  other option and a line that cannot be read are `MALFORMED` with the detail `line <n>: <reason>`. The refusal of
+  another key type is a decision: OpenSSH would accept an `ssh-rsa` line, but the store refuses the whole file at that
+  line instead of trusting it in part, so no line is ignored silently. The file is read bounded: a regular file only
+  (a directory, a FIFO or a device is `REFUSED`, `<key>: not a regular file`), at most 64 KiB, the bound of a key file
+  of `FileSigningKeySource`, and 1024 lines (`REFUSED`, `<key>: too large`), valid UTF-8 (`MALFORMED`,
+  `<key>: not UTF-8`); a configured value that is no path, for example one with a NUL character, is `MALFORMED`
+  (`<key>: not a path`), and a file that does not exist or cannot be read is `UNAVAILABLE`, where `<key>` is
+  `signing.allowed-signers` or `anchor.signed.allowed-signers`. No detail names a principal, key text or a path.
 * *Verification.* The public `SignatureVerification.verify(repository, reference, allowedSigners)` walks every commit
-  reachable from the reference (JGit 7.8.0 `RevWalk`) and returns a `StoreResult` with the list of
+  reachable from the reference (a walk of its own over JGit 7.8.0 `RevCommit`, see below) and returns a `StoreResult` with the list of
   `UnverifiedCommit(commitId, reason)` in the order of the walk, empty when every commit is valid. The verification
   has no start boundary: a commit without a `gpgsig` header, written before signing was enabled or by another tool, is
   listed as `UNSIGNED` like any other unverified commit, so `VerifySignatures` exits `1` for a reference whose
@@ -815,14 +1017,31 @@ that a stock Git accepts a commit the store signed and rejects it outside the va
   file (JGit 7.8.0 `ObjectDatabase.getShallowCommits`, whose parents `RevWalk` treats as absent), is `INCOMPLETE` with
   the detail `<reference>: history is shallow`, never a success, because no commit beyond the boundary is checked. The
   shallow commits are read again after the walk, and a boundary that changed while the walk ran is `INCOMPLETE` with
-  the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A
-  finished verification is logged as `GIT_STORE-6`.
+  the detail `<reference>: shallow boundary changed`, so no result rests on a boundary the check did not see. A commit
+  with more than one `gpgsig` header is `INVALID`: stock Git verifies the first header and strips every one from the
+  signed payload, so a second header would travel along unverified. The verification walks the history itself,
+  newest commit time first as `RevWalk` does, and reads each commit once: its size is asked first
+  (`ObjectReader.getObjectSize`, the object header only in JGit 7.8.0); a commit within the blob bound of
+  <<blob-bound>> is read bounded, parsed (`RevCommit.parse`), checked, and its body, which that parse keeps in the pool
+  of the walk, is released (`RevCommit.disposeBody`), so the memory of the verification does not grow with the
+  history. A larger commit is never loaded: it is `MALFORMED`, its header is read as a stream for its parents and its
+  commit time only, and the commits behind it are verified as well, so an oversized commit is one finding and never
+  ends the verification. A
+  finished verification is logged as `GIT_STORE-6` with the counts only, never the reference, whose name may carry a
+  document id.
+* *Limit: validity at the committer time.* Like `git verify-commit`, the verification checks the validity of a key at
+  the committer time the commit states, which the signer chooses: a key whose `valid-before` has passed can still sign a
+  commit that states an earlier time. The verification does not close that gap; the anchoring does (<<GDR-STORE-16>>,
+  <<GDR-STORE-18>>): a commit that a checkpoint listed before the end of the validity is anchored with a time the
+  signer does not control, so a backdated commit is one no checkpoint anchored in time.
 * *CI.* The public main class `VerifySignatures` runs from CI without the application:
   `VerifySignatures <git-dir> <allowed-signers> <reference>...` opens the repository read-only on `RefusingFS`, prints
   one line `<commit id> <reason>` per unverified commit, and exits `0` when every commit is valid, `1` when one is not,
   and `2` for a usage error, an argument that is no valid path (`MALFORMED arguments: not a valid path`, naming no
   argument), a repository that cannot be opened or another non-success, such as a shallow history, printed as
-  `<outcome> <detail>`. It writes standard output and standard error in UTF-8. The allowed-signers file must come
+  `<outcome> <detail>`; only a failure to open the repository is printed as `NOT_A_REPOSITORY git-dir: not a
+  repository`, every other failure as the result of the verification. It writes standard output and standard error in
+  UTF-8. The allowed-signers file must come
   from the trusted CI configuration (a secret, a pinned file or the protected base branch), never from the checkout of
   the repository being verified: `VerifySignatures` does not check where the path points, and a file taken from that
   checkout would let a change of the repository add a trusted key.
@@ -844,6 +1063,17 @@ yields the time the proof establishes, no proof (a subject without a stored proo
 (also for a proof that cannot be read) or chain broken. The provider id names its notes reference
 `refs/notes/anchors/<id>`; the id is of the form `[a-z0-9-]+`, so that name is a valid reference name by construction
 (<<store-configuration>>).
+
+A provider is pluggable code, and its calls follow the isolation rule of <<GDR-STORE-10>>: a `RuntimeException` or an
+`Error` other than a `VirtualMachineError` of `obtain` leaves the subject pending like a refusal, one of `verify` in
+`AnchorVerification` rejects that proof (`PROOF_REJECTED`) and the verification goes on, each logged by the class name
+of the throwable only; a `VirtualMachineError` propagates. The due check off the caller's thread, a scheduled runner,
+isolates every `Throwable`, so its schedule never ends.
+
+The anchor provider candidates are instantiated lazily: `StoreProviders.load` instantiates them only when
+`anchor.provider` names an id other than the built-in `signed`. Without `anchor.provider`, or with `signed`, no
+`AnchorProvider` found through `ServiceLoader` is instantiated, so a provider that cannot be loaded does not stop a
+start that does not need it.
 
 [#GDR-STORE-16]
 == GDR-STORE-16: Anchored Subjects and Checkpoints
@@ -868,15 +1098,44 @@ The checkpoint commit is reachable only through its tag; the tag is pushed with 
 on the remote, separately from the commits of any save, before the proof is requested. The due check runs after every
 push and fetch and every `anchor.retry-interval`.
 
+`StoreWriter.close()` sets the closed flag of the writer and releases its clone under the anchoring lock, which every
+due check holds while it runs, so a running due check ends before the clone is released and one run after the close
+does nothing. A close issued inside a callback whose thread holds a lock of the clone is refused instead: a `SaveStep`,
+which runs under the shared side of the maintenance lock, the lock of its draft and the transport lock
+(<<GDR-STORE-3>>), and a call of the anchor provider, which a due check makes under the anchoring lock. Such a close
+would wait for the anchoring lock held by a due check that waits for the transport lock in turn, or, as the anchoring
+lock is reentrant, release the clone under the due check that called the provider. The refusal reads the calling
+thread's own hold counts of the three locks before the anchoring lock is requested, and takes no lock, so it never
+waits. `close()` returns no result: the refused close returns normally, the closed flag is not set, the clone is not
+released, the writer stays usable, and `GIT_STORE-114` is logged with the alias and the detail
+`close: refused inside a callback that holds a lock of the clone`; the caller closes the writer again after the
+callback returned. The index refresh and the commit listeners run on the thread of the operation after it released
+every lock (<<GDR-STORE-10>>), so a close from them, like a close from outside every callback, closes the writer as
+before. `StoreWriter.anchor()` follows the same rule: issued inside such a callback, it would wait for the anchoring
+lock held by a due check of another thread that waits for the callback's lock in turn, so it is refused before the
+anchoring lock is requested, with or without an active provider, and returns `REFUSED` with the detail
+`anchor: refused inside a callback that holds a lock of the clone`; the refusal takes no lock, logs nothing and emits
+nothing to the index and the listeners.
+
+The anchor verification (<<GDR-STORE-17>>) checks the chain of the checkpoints: checkpoint `n` must have the commit of
+checkpoint `n-1` as its only parent and the first one none (`CHECKPOINT_CHAIN_BROKEN`, which reports a moved checkpoint
+tag and a history rewritten between two checkpoints), no two checkpoint tags may point at one commit
+(`CHECKPOINT_DUPLICATE`), and a checkpoint must be readable as one: its tag points at a commit, its message is
+`Checkpoint <n>`, its tree holds the regular file `refs` and nothing else, and every line of that file is
+`<object id> SP <reference name>` (`CHECKPOINT_UNREADABLE`). Across a gap in the numbers, already reported as
+`CHECKPOINT_MISSING`, the parent is not checked.
+
 [#GDR-STORE-17]
 == GDR-STORE-17: Anchor Proofs as Notes
 
 * A proof must be stored as a note on the anchored commit under `refs/notes/anchors/<provider>`, base64-encoded.
 * The note must be pushed with lease right after it is written, separately from the commits of any save.
 * A subject without a pushed proof must stay pending and be retried; a retry must push a stored proof instead of
-  requesting a new one.
+  requesting a new one, unless the notes tip moved since that proof was obtained: then the stored proof, kept only
+  locally, must be dropped and a new proof requested, so no proof forks the chain.
 * A verification must check every stored proof and list every reference a checkpoint lists whose object id is no
-  longer reachable from that reference (or, for a tag, no longer its target), and every missing checkpoint number.
+  longer reachable from that reference (or, for a tag, no longer its target), every missing checkpoint number, and
+  every break of the checkpoint chain (<<GDR-STORE-16>>).
 
 `<provider>` is the id of the provider, of the form `[a-z0-9-]+` (<<GDR-STORE-15>>); the notes writer and the
 verifier use the same reference name `refs/notes/anchors/<provider>`, which is valid by construction.
@@ -915,8 +1174,27 @@ previous <SHA-256 of the previous proof, lowercase hex, or "none" for sequence 1
 The proof is the statement followed by an armored SSH signature over it with the namespace `git-document-anchor`
 (https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.sshsig[PROTOCOL.sshsig]). The anchor key comes from
 `anchor.signed.key-source` and `anchor.signed.key`, like the commit-signing key; it should lie under a responsibility
-other than the Git administration, for example the security team's KMS. The log record lets the operator's log
-pipeline keep a copy outside Git. A single proof can be checked with a stock OpenSSH installation:
+other than the Git administration, for example the security team's KMS. Whether the anchor key equals the
+commit-signing key is decided at provider selection by comparing the two public keys, each read once from its key
+source: equal public keys stop the start as `MALFORMED` with `anchor.signed.key equals the commit-signing key`,
+whatever key source or spelling of the key reference names them. This comparison is authoritative; the configuration
+check of the two references (<<store-configuration>>) is an early string check that refuses only identical
+references. The log record lets the operator's log
+pipeline keep a copy outside Git. It records the signing, not the publication: a proof whose push failed while the
+notes tip stayed the same is kept under its local-only reference, the notes reference is set back, and a later due
+check publishes the same proof without the provider signing it again; only a proof whose notes tip moved is dropped, and a later due
+check signs a new one. So one subject may have several `GIT_STORE-7` records; the proof that counts is the one whose
+SHA-256 the published note matches, and its publication is `GIT_STORE-9`. `anchor.signed.max-clock-skew`, like every configured duration, is at most 100 years
+(36 525 days); a longer one is `MALFORMED`, so no time plus a configured duration overflows.
+
+Limit: `obtain` reads the statement of the previous proof for its sequence number, time and SHA-256 but does not
+verify its signature, because the anchor key may have been rotated and the signing instance need not hold the anchor
+allowed signers. A previous proof forged in the notes reference is chained to; the chain check of the verification,
+which CI runs over every proof in order, reports it. A provider that returns an empty proof is refused by the store
+like one that returns none, and so is a proof larger than three quarters of the blob read bound of 16 MiB, whose
+base64 note no read of a note could hold, before it is kept or published.
+
+A single proof can be checked with a stock OpenSSH installation:
 `ssh-keygen -Y verify -f <allowed signers> -I <identity> -n git-document-anchor -s <signature file> < <statement file>`
 (https://man.openbsd.org/ssh-keygen.1[ssh-keygen(1)]).
 
@@ -926,8 +1204,8 @@ pipeline keep a copy outside Git. A single proof can be checked with a stock Ope
 The requirements from <<GDR-STORE-15>> to <<GDR-STORE-18>> are implemented in `git-store`; `git-core` is used and not
 changed (JGit 7.8.0).
 
-* *Opening and triggering.* `StoreWriter.open(storeRepository, gitDir, user, configuration, providers, operations,
-  clock)` takes the `StoreProviders` of the start: the signing key source signs the save and release commits, and the
+* *Opening and triggering.* `StoreWriter.open(storeRepository, gitDir, user, configuration, collections, providers,
+  operations, clock)` takes the `StoreProviders` of the start: the signing key source signs the save and release commits, and the
   active anchor provider, when there is one, anchors. `StoreWriter.anchor()` runs one due check on the calling thread
   and returns a `StoreResult` of `StoreWriter.Anchoring` (the commits whose note it pushed, and those left pending,
   oldest first). `StoreWriter.anchorPeriodically(executor)` runs a due check every `anchor.retry-interval` on the
@@ -941,8 +1219,24 @@ changed (JGit 7.8.0).
   lock (`RepositoryGuard`) it fetches with prune, pushes what an earlier due check kept, makes a due checkpoint and
   derives the pending subjects; it then asks the provider without holding a lock of the clone; and it writes and pushes
   each proof under those locks again. A save, a release and a fetch take no anchoring lock, so the order of the locks
-  has no cycle. A failure of the provider (also an exception it throws) or of a push leaves the subject pending, ends
-  the due check, and is logged as `GIT_STORE-111` with the alias and the outcome only.
+  has no cycle. A failure of the provider (also an exception it throws, an empty proof, or a proof larger than
+  `AnchorEngine.PROOF_LIMIT`, three quarters of the blob read bound, refused before it is kept) or of a push leaves the
+  subject pending, ends the due check, and is logged once with the alias and the outcome only: a failed push as
+  `GIT_STORE-112` by the part that pushed, every other failure as `GIT_STORE-111`. An unchecked failure of the first
+  phase, for example of JGit, ends the due check as `INCOMPLETE` naming the class of the exception, and the reference
+  updates its fetch collected are emitted in every case, also when the due check ended early. The due check reads the
+  closed flag of the clone under the anchoring lock, which `StoreWriter.close()` takes to set it and to release the
+  repository: a due check handed to the caller's executor and run after the close does nothing (`anchor()` then
+  returns `REFUSED` with `anchor: the writer is closed`, also for a writer without an active provider, whose open
+  writer gets an empty `OK`), and one running when the writer closes ends first. Before it requests the anchoring
+  lock, the due check refuses a calling thread that holds a lock of the clone (`RepositoryGuard.insideCallback()`):
+  `anchor()` from a `SaveStep`, an `IndexContributor` under the locks of its operation or the anchor provider returns
+  `REFUSED` with `anchor: refused inside a callback that holds a lock of the clone` and emits nothing.
+* *Structure.* `StoreWriter` delegates to the package-private `StoreClone` (the opened clone, its events, the listener
+  subscription, the closed flag and `close()`), which holds `CloneWrites` (drafts, listing, save, release, expiry) and
+  `CloneSchedules` (fetch, periodic fetch, anchoring and the coalescing due-check trigger); `CloneOpening` checks the
+  arguments of `open`, builds the providers and the three parts. The split keeps the behaviour, the locks and their
+  order, and keeps every class below the dependency threshold of Sonar's `java:S6539` without a suppression.
 * *Checkpoints.* The package-private `Checkpoints` writes the checkpoint commit of <<GDR-STORE-16>> in core, signed
   through `CommitSignatures` without identity trailers (<<GDR-STORE-12>>, <<GDR-STORE-13>>), writes its tag locally by
   an update that expects it absent, and pushes the tag against the zero-id lease, so a tag on the remote is never moved.
@@ -957,7 +1251,9 @@ changed (JGit 7.8.0).
   it. Before its note is written a proof is kept under the local-only reference
   `refs/anchoring/<provider>/proofs/<commit id>`, a blob outside `refs/heads/`, `refs/tags/` and `refs/notes/`, so it is
   never pushed, never fetched and never pruned; a proof whose push failed stays kept, the local notes reference is set
-  back to its fetched id, and the next due check pushes the kept proof instead of requesting a new one. `previous` is
+  back to its fetched id, and the next due check pushes the kept proof instead of requesting a new one, as long as the
+  notes tip is still the one the proof extends; a kept proof whose notes tip moved is dropped and a new one is
+  requested. `previous` is
   the proof whose note the newest notes commit added, or within a due check the proof obtained just before; the commit
   time of the subject is passed to `obtain`. Checkpoint commits, their tags and the notes commits are written and pushed
   in one transport section, so no pruning fetch of a concurrent save deletes a local checkpoint tag or overwrites a local
@@ -975,14 +1271,19 @@ changed (JGit 7.8.0).
   only verifies, for CI.
 * *Verification.* `AnchorVerification.verifyAnchors(repository, provider)` reads only and returns a `StoreResult` of an
   `AnchorVerification.Report` (the numbers of checkpoints, subjects and proofs, and the findings). A `Finding` is one
-  constant of the closed enum `AnchorVerification.Kind`: `CHECKPOINT_MISSING` for every gap in the checkpoint numbers
+  constant of the closed enum `AnchorVerification.Kind`, which is the authoritative list of the kinds; the kinds whose
+  behavior needs an explanation are these: `CHECKPOINT_MISSING` for every gap in the checkpoint numbers
   below the highest (`refs/tags/checkpoints/<n>`, or `refs/tags/checkpoints/<n>..<m>` for a gap of several); `NO_PROOF`
   for a checkpoint or release commit without a note; `PROOF_REJECTED`, with the outcome, for a proof the provider does
   not verify, the proofs being verified in chain order (the order in which the notes commits added them along their first
   parents) with the proof before as `previous`, and a note that is no base64 being `SIGNATURE_INVALID`;
   `REFERENCE_UNREACHABLE` for a branch or notes reference a checkpoint lists that no longer reaches the listed id or no
-  longer exists (JGit 7.8.0 `RevWalk.isMergedInto`); and `TAG_RETARGETED` for a listed tag that no longer points at the
-  listed id. A repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with
+  longer exists (JGit 7.8.0 `RevWalk.isMergedInto`), decided once per verification for a (reference, object id) pair
+  that several checkpoints list unchanged; `TAG_RETARGETED` for a listed tag that no longer points at the listed id;
+  and the kinds of the checkpoint chain, which <<GDR-STORE-16>> defines. A release-shaped tag on a blob or a tree is no subject, as the due check skips it. Every release
+  tag is a subject: the verification reads no configuration, so a repository anchored with `anchor.releases` set to
+  `false` reports a `NO_PROOF` per release, which a CI run that knows the setting filters (a recorded limit). A
+  repository with a shallow boundary (JGit 7.8.0 `ObjectDatabase.getShallowCommits`) is `INCOMPLETE` with
   the detail `anchors: history is shallow`; a read failure is the passed-on `FAILED` naming the class of the exception.
   A finished verification is logged as `GIT_STORE-10` with the counts only.
 * *CI.* The public main class `VerifyAnchors <git-dir> <anchor-allowed-signers>` verifies the provider `signed`: it
@@ -992,6 +1293,21 @@ changed (JGit 7.8.0).
   non-success, with the conventions of `VerifySignatures` (<<GDR-STORE-14>>): UTF-8 output, no path, key or principal
   printed, the allowed-signers file taken from the trusted CI configuration. The checkpoint and notes commits verify
   under `VerifySignatures` with the commit-signing key.
+
+[#blob-bound]
+=== Bounded reads
+
+Every blob the store reads into memory is read bounded by 16 MiB (`ExplicitSave.BLOB_LIMIT`), its size taken from the
+object header before the content is inflated (JGit 7.8.0 `ObjectLoader.getSize`): the documents handed to an index
+contributor (<<GDR-STORE-9>>), the files a release copies (<<GDR-STORE-6>>), the files of the fetched base a save step
+sees and the draft files a save writes (<<GDR-STORE-3>>), the notes and kept proofs of the anchoring and the file
+`refs` of a checkpoint (<<GDR-STORE-16>>, <<GDR-STORE-17>>), the notes the anchor verification reads, and every commit
+the signature verification checks (<<GDR-STORE-14>>). A fetched branch, tag or note controls all of them but the draft
+files, which are bounded as well so that one rule holds. A larger blob ends the operation as an unreadable object does:
+a save or release as the passed-on `FAILED` naming the class of the exception, a refresh of the index by keeping the
+previous entries of that source (`GIT_STORE-113`), a due check as `INCOMPLETE`, the anchor verification as the
+passed-on `FAILED`; the signature verification lists a larger commit as `MALFORMED`. The bound is a limit: a document
+file of more than 16 MiB can be written to a draft, but not saved, released or indexed.
 
 [#GDR-STORE-19]
 == GDR-STORE-19: Person Directory Interface
@@ -1025,7 +1341,8 @@ xref:../concepts/data-protection.adoc#_the_person_directory[Data Protection, The
 
 |`repositories` |the registry (<<GDR-STORE-1>>)
 |`save.max-attempts` |required; 1 to 100; attempts of a save or of a push of notes
-|`drafts.expiry` |required; ISO 8601 period
+|`drafts.expiry` |required; positive ISO 8601 period that can be subtracted from the epoch in UTC without leaving the
+range of `OffsetDateTime`; any other period is `MALFORMED` naming the key at configuration time
 |`commit.email` |boolean, default `false`: whether author and committer of every commit `git-store` writes carry an
 e-mail address (xref:general.adoc#GDR-NFR-3[GDR-NFR-3], <<GDR-STORE-8>>)
 |`fetch.interval` |required; ISO 8601 duration of the periodic fetch
@@ -1064,6 +1381,10 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
 * `save.max-attempts`, `drafts.expiry` and `fetch.interval` are required. Every other key may be absent at start and
   then takes the default of the table; a key without a default, such as `signing.key` or the allowed-signers files that
   only a verification needs, stays absent.
+* Every duration, `fetch.interval`, `anchor.checkpoint-interval`, `anchor.retry-interval` and
+  `anchor.signed.max-clock-skew`, is positive and at most 100 years (36 525 days); a longer one, such as
+  `P1000000000000D`, is malformed, so no time plus a configured duration overflows an `Instant` and no interval
+  overflows the nanoseconds of a schedule.
 * Only an omitted key is absent. A key supplied with a null value, as a leaf (`anchor.releases:` without a value) or as
   a section on the way (`anchor:` without a value), is malformed and named by its dotted key; it never takes the
   default.
@@ -1071,8 +1392,9 @@ it, keys nested by dot segment (`anchor.signed.key` is the key `key` of the map 
   `timestamp.*` of xref:git-timestamp.adoc[`git-timestamp`]). An absent `repositories` is an empty registry.
 * An anchor key equal to the commit-signing key is refused (<<GDR-STORE-18>>): the start compares the effective key
   source (`anchor.signed.key-source`, an absent one taken as the default `file`) with `signing.key-source`, and
-  `anchor.signed.key` with `signing.key`, and refuses when both are equal. Comparing the public keys themselves needs
-  the key source and is left to the provider `signed`.
+  `anchor.signed.key` with `signing.key`, and refuses when both are equal. This is an early string check only; the
+  authoritative check is the comparison of the two public keys at provider selection (<<GDR-STORE-18>>), which also
+  refuses the same key under another spelling of its reference, such as `/k` and `/./k`.
 
 The first refusal is returned and logged once as `GIT_STORE-100`. Its outcome is `MALFORMED`, or the passed-on
 `REFUSED_BY_POLICY` of the registry; its detail names the dotted key or the alias, never the value:

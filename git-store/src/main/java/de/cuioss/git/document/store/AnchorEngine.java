@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 
 import de.cuioss.git.document.core.JGitRepositoryOperations;
@@ -65,17 +67,47 @@ import org.jspecify.annotations.Nullable;
  * </ol>
  * The order of the locks is the anchoring lock, the shared side of the maintenance lock, the transport lock; a save, a
  * release and a fetch take no anchoring lock, so no cycle arises, and a slow provider holds no lock a save needs. A
- * failure of the provider or of a push leaves the subject pending, ends the due check, is logged ({@code GIT_STORE-111})
- * with the alias and the outcome only, and is retried by the next due check; it never reaches the caller of a save, a
- * release or a fetch, which hand the due check to an executor. The reference updates of the fetch of a due check are
- * handed to the events of the clone ({@link StoreEvents}) once every lock was released, as those of every other fetch.
+ * failure of the provider or of a push leaves the subject pending, ends the due check, is logged once with the alias
+ * and the outcome only, a failed push as {@code GIT_STORE-112} by the part that pushed and every other failure as
+ * {@code GIT_STORE-111}, and is retried by the next due check; it never reaches the caller of a save, a release or a
+ * fetch, which hand the due check to an executor. A provider that returns an empty proof is refused like one that
+ * returns none, and so is one whose proof is larger than {@link #PROOF_LIMIT}, before it is kept or published, since
+ * its note would exceed the read bound of every note. The reference updates of the fetch of a due check are handed to the events of the clone
+ * ({@link StoreEvents}) once every lock was released, as those of every other fetch, also when the due check ended
+ * early or by an exception.
  */
 final class AnchorEngine {
 
     private static final CuiLogger LOGGER = new CuiLogger(AnchorEngine.class);
 
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
+    /** The detail of a due check of a closed clone ({@link StoreClone#close()}). */
+    static final String CLOSED = "anchor: the writer is closed";
+
+    /**
+     * The detail of a due check requested from a thread that holds a lock of the clone
+     * ({@link RepositoryGuard#insideCallback()}): a callback that called {@link StoreWriter#anchor()} inside the
+     * operation that called it.
+     */
+    static final String ANCHOR_IN_CALLBACK = "anchor: refused inside a callback that holds a lock of the clone";
+
+    /** The detail, after the notes reference, of a kept proof whose push failed again. */
+    static final String KEPT_NOT_PUSHED = ": a kept proof was not pushed";
+
+    /** The detail, after the notes reference, of a kept proof whose publication failed before its push. */
+    static final String KEPT_NOT_PUBLISHED = ": a kept proof was not published";
+
+    /** The prefix of a detail of the anchoring that names the class of an exception. */
+    private static final String DETAIL = "anchor: ";
+
+    /**
+     * The largest proof the store keeps and publishes: the note holds its base64 form, four bytes for every three, and
+     * every read of a note is bounded by {@link ExplicitSave#BLOB_LIMIT}, so a larger proof would make the notes
+     * reference unreadable to every due check and every verification.
+     */
+    static final int PROOF_LIMIT = ExplicitSave.BLOB_LIMIT / 4 * 3;
+
+    /** The detail of a proof larger than {@link #PROOF_LIMIT}. */
+    static final String PROOF_TOO_LARGE = "anchor: provider returned a proof larger than a note can hold";
 
     private final ExplicitSave.Clone clone;
     private final @Nullable AnchorProvider provider;
@@ -143,31 +175,70 @@ final class AnchorEngine {
     }
 
     /**
-     * Runs one due check.
+     * Runs one due check. A thread that holds a lock of the clone, a {@link SaveStep}, an {@link IndexContributor}
+     * under the locks of its operation or an anchor provider call, is refused before the anchoring lock is requested,
+     * also without a provider: it would wait for a due check of another thread that holds the anchoring lock and waits
+     * for a lock that thread holds in turn. The refusal reads the calling thread's own hold counts only, takes no lock,
+     * logs nothing and emits nothing to the observers. Otherwise the closed flag of the clone is read under the
+     * anchoring lock, which {@link StoreClone#close()} takes to set it, before anything else, also without a provider,
+     * so a due check after the close does nothing, emits nothing to the observers, and the repository is never released
+     * while one runs. For every due check that passed the closed check, the reference updates the fetch collected are
+     * emitted in every case, also when the due check ended early or by an exception, and an empty list after a due
+     * check that collected none.
      *
-     * @return {@link StoreOutcome#OK} with the subjects anchored and those left pending; or the non-success that ended
-     *         the due check before any subject was asked for, for example the passed-on outcome of the fetch; a failure of
-     *         the provider or a push is reported through the pending subjects, not as a non-success
+     * @param closed the closed flag of the clone
+     * @return {@link StoreOutcome#OK} with the subjects anchored and those left pending, both empty without a provider;
+     *         {@link StoreOutcome#REFUSED} with {@value #ANCHOR_IN_CALLBACK} for a calling thread that holds a lock of
+     *         the clone, with or without a provider;
+     *         {@link StoreOutcome#REFUSED} with {@value #CLOSED} for a closed clone, with or without a provider; or the
+     *         non-success that ended the due check before any subject
+     *         was asked for, for example the passed-on outcome of the fetch or {@link StoreOutcome#INCOMPLETE} naming
+     *         the class of an unchecked failure; a failure of the provider or a push is reported through the pending
+     *         subjects, not as a non-success
      */
-    StoreResult<StoreWriter.Anchoring> dueCheck() {
+    StoreResult<StoreWriter.Anchoring> dueCheck(BooleanSupplier closed) {
+        Objects.requireNonNull(closed, "closed");
+        RepositoryGuard guard = clone.guard();
+        if (guard.insideCallback()) {
+            // the same rule as the refused close(): a callback never waits for the anchoring lock, and no observer is
+            // called from a thread that holds a lock of the clone
+            return StoreResult.of(StoreOutcome.REFUSED, ANCHOR_IN_CALLBACK);
+        }
         AnchorProvider active = provider;
         AnchorNotes proofs = notes;
-        if (active == null || proofs == null) {
-            return StoreResult.ok(new StoreWriter.Anchoring(List.of(), List.of()));
-        }
-        RepositoryGuard guard = clone.guard();
         List<StoreEvents.Update> updates = new ArrayList<>();
-        var result = guard.anchoring(() -> run(active, proofs, guard, updates));
-        events.emit(updates);
-        return result;
+        // set under the anchoring lock that reads the closed flag, so the decision to emit follows that same read
+        AtomicBoolean refused = new AtomicBoolean();
+        try {
+            return guard.anchoring(() -> {
+                if (closed.getAsBoolean()) {
+                    refused.set(true);
+                    return StoreResult.of(StoreOutcome.REFUSED, CLOSED);
+                }
+                if (active == null || proofs == null) {
+                    return StoreResult.ok(new StoreWriter.Anchoring(List.of(), List.of()));
+                }
+                return run(active, proofs, guard, updates);
+            });
+        } finally {
+            // the updates the fetch collected reach the index and the listeners however a due check that ran ended;
+            // a due check refused for a closed clone reaches no observer, which would read the released repository
+            if (!refused.get()) {
+                events.emit(updates);
+            }
+        }
     }
 
     private StoreResult<StoreWriter.Anchoring> run(AnchorProvider active, AnchorNotes proofs, RepositoryGuard guard,
             List<StoreEvents.Update> updates) {
         List<String> anchored = new ArrayList<>();
-        StoreResult<Plan> planned = guard.shared(() -> guard.transport(() -> prepare(proofs, anchored, updates)));
+        StoreResult<Plan> planned = guard.shared(() -> guard.transport(() -> safePrepare(proofs, anchored, updates)));
         if (!planned.isOk()) {
-            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, clone.alias(), StoreResult.name(planned.outcome()));
+            if (!String.valueOf(planned.detail()).endsWith(KEPT_NOT_PUSHED)) {
+                // a failed push of a kept proof was logged once already, by the notes (GIT_STORE-112)
+                LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, clone.alias(),
+                        StoreResult.name(planned.outcome()));
+            }
             return new StoreResult<>(planned.outcome(), null, planned.detail());
         }
         Plan plan = Objects.requireNonNull(planned.value());
@@ -205,28 +276,64 @@ final class AnchorEngine {
         var proof = new AnchorNotes.Kept(tip.commit(), Objects.requireNonNull(obtained.value()));
         var published = guard.shared(() -> guard.transport(() -> publish(proofs, subject, proof)));
         if (!published.isOk()) {
-            LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, clone.alias(),
-                    StoreResult.name(published.outcome()));
+            if (!AnchorNotes.pushFailed(published)) {
+                // a failed push was logged once already, by the notes (GIT_STORE-112)
+                LOGGER.warn(GitStoreLogMessages.WARN.ANCHORING_PENDING, clone.alias(),
+                        StoreResult.name(published.outcome()));
+            }
             return Optional.empty();
         }
         LOGGER.info(GitStoreLogMessages.INFO.SUBJECT_ANCHORED, clone.alias(), subject.id().name());
         return Optional.of(new AnchorNotes.Tip(published.value(), proof.proof()));
     }
 
-    /** Asks the provider for one proof; an exception of the provider leaves the subject pending like a refusal. */
+    /**
+     * Asks the provider for one proof; a failure of the provider the observer rule of {@link StoreEvents} isolates (a
+     * {@link RuntimeException} or an {@link Error} other than a {@link VirtualMachineError}) leaves the subject pending
+     * like a refusal, logged by its class name only.
+     */
     private StoreResult<byte[]> obtain(AnchorProvider active, Subject subject, byte[] previous) {
         try {
             var obtained = active.obtain(clone.alias(), subject.id(), subject.time(), previous.clone());
-            if (obtained.isOk() && obtained.value() == null) {
+            byte[] proof = obtained.value();
+            if (obtained.isOk() && (proof == null || proof.length == 0)) {
+                // an empty proof proves nothing and would read as the start of a chain to the next proof
                 return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider returned no proof");
+            }
+            if (obtained.isOk() && proof != null && proof.length > PROOF_LIMIT) {
+                // a note above the read bound of every note would block the anchoring and its verification for good
+                return StoreResult.of(StoreOutcome.REFUSED, PROOF_TOO_LARGE);
             }
             return obtained;
         }
-        // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15)
+        // a provider is pluggable code; its failure must never end the due check of the store (GDR-STORE-15); the
+        // observer rule of StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP3eAtdQWIZKzKJp: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
+            LOGGER.debug("The anchor provider threw %s", e.getClass().getName());
+            return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider failed");
+        }
+    }
+
+    /**
+     * Phase one, with an unchecked failure of the store's own code, for example of JGit, mapped to
+     * {@link StoreOutcome#INCOMPLETE} naming the class of the exception only, so the due check ends with a result and
+     * the updates its fetch collected are still emitted.
+     */
+    private StoreResult<Plan> safePrepare(AnchorNotes proofs, List<String> anchored,
+            List<StoreEvents.Update> updates) {
+        try {
+            return prepare(proofs, anchored, updates);
+        }
+        // an unchecked failure, for example of JGit, must end the due check as a result, never as an exception, so the
+        // fetched updates are emitted and the caller of anchor() gets an outcome (GDR-STORE-15)
         // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
-            LOGGER.debug("The anchor provider threw %s", e.getClass().getSimpleName());
-            return StoreResult.of(StoreOutcome.REFUSED, "anchor: provider failed");
+            String type = e.getClass().getName();
+            LOGGER.debug("Unchecked failure of the due check: %s", type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 
@@ -235,7 +342,7 @@ final class AnchorEngine {
      * derive the pending subjects with the notes tip.
      */
     private StoreResult<Plan> prepare(AnchorNotes proofs, List<String> anchored, List<StoreEvents.Update> updates) {
-        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+        var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                 .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                 .prune(true).build());
         if (!fetched.isOk()) {
@@ -251,8 +358,11 @@ final class AnchorEngine {
                 return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: the newest checkpoint tag points at no commit");
             }
             Map<ObjectId, Instant> subjects = subjects();
-            if (!pushKept(proofs, subjects, proofs.annotated(), anchored)) {
-                return StoreResult.of(StoreOutcome.INCOMPLETE, proofs.notesRef() + ": a kept proof was not pushed");
+            Optional<StoreResult<ObjectId>> failed = pushKept(proofs, subjects, proofs.annotated(), anchored);
+            if (failed.isPresent()) {
+                // only a failed push was logged already (GIT_STORE-112); every other failure is logged by run()
+                String reason = AnchorNotes.pushFailed(failed.get()) ? KEPT_NOT_PUSHED : KEPT_NOT_PUBLISHED;
+                return StoreResult.of(StoreOutcome.INCOMPLETE, proofs.notesRef() + reason);
             }
             Set<ObjectId> annotated = proofs.annotated();
             List<Subject> pending = new ArrayList<>();
@@ -271,7 +381,7 @@ final class AnchorEngine {
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the due check: %s", type);
-            return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: " + type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 
@@ -309,10 +419,12 @@ final class AnchorEngine {
      * subject is no subject of the anchoring any more, got a note from the remote meanwhile, or extends another tip than
      * the current one, so a new proof is requested for it.
      *
-     * @return whether every kept proof that is still valid was pushed
+     * @return the first publication of a kept proof that failed, so the caller tells a failed push, which
+     *         {@link AnchorNotes#publish} logged already, from a failure before the push; empty when every kept proof
+     *         that is still valid was pushed
      */
-    private boolean pushKept(AnchorNotes proofs, Map<ObjectId, Instant> subjects, Set<ObjectId> annotated,
-            List<String> anchored) throws IOException {
+    private Optional<StoreResult<ObjectId>> pushKept(AnchorNotes proofs, Map<ObjectId, Instant> subjects,
+            Set<ObjectId> annotated, List<String> anchored) throws IOException {
         Map<ObjectId, AnchorNotes.Kept> kept = proofs.kept();
         List<ObjectId> order = new ArrayList<>(kept.keySet());
         order.sort(Comparator.comparing((ObjectId id) -> subjects.getOrDefault(id, Instant.MIN))
@@ -326,12 +438,12 @@ final class AnchorEngine {
             }
             var published = proofs.publish(subject, proof);
             if (!published.isOk()) {
-                return false;
+                return Optional.of(published);
             }
             anchored.add(subject.name());
             LOGGER.info(GitStoreLogMessages.INFO.SUBJECT_ANCHORED, clone.alias(), subject.name());
         }
-        return true;
+        return Optional.empty();
     }
 
     /**
@@ -347,7 +459,7 @@ final class AnchorEngine {
         } catch (IOException e) {
             String type = e.getClass().getSimpleName();
             LOGGER.debug("I/O failure of the publication of a proof: %s", type);
-            return StoreResult.of(StoreOutcome.INCOMPLETE, "anchor: " + type);
+            return StoreResult.of(StoreOutcome.INCOMPLETE, DETAIL + type);
         }
     }
 

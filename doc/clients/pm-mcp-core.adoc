@@ -196,7 +196,9 @@ switch-over:
 `WORKTREE_DIRTY`, `WORKTREE_LOCKED`, `PATH_REFUSED` |unchanged
 |`UNKNOWN_REVISION`, `PATH_NOT_FOUND` |`NOT_FOUND`; a commit the remote does not serve in `fetchCommit` is `UNSERVED`
 |`REJECTED_NON_FAST_FORWARD` |`REJECTED`, also for the remote's other refusals
-|`REJECTED_LEASE` |`LEASE_REFUSED`
+|`REJECTED_LEASE` |`LEASE_REFUSED`, also for a leased push that lost a race after the advertisement, which the remote
+answers with `failed to lock` (a JGit remote) or `incorrect old value provided` (a native Git remote) (xref:../specification/git-core.adoc#GDR-CORE-7[GDR-CORE-7]); the facade maps it like a
+refused lease
 |`REMOTE_ORIGIN_MISMATCH`, `CAPABILITY_MISSING` |`REFUSED_BY_POLICY`; the detail names the remote or the capability
 |`GIT_IDENTITY_AMBIGUOUS` |`AMBIGUOUS`
 |`GIT_IDENTITY_MISMATCH` |`IDENTITY_MISMATCH`
@@ -273,7 +275,16 @@ the size.
 . Work package in `pm-mcp-core`: switch `pm-provider-git` onto `git-core` and reduce it to facade, adapter and
   digest, with the changes listed above.
 
-The aspect modules of the document store (`git-store` and the modules above it) change nothing in `pm-mcp-core`.
+The aspect modules of the document store (`git-store` and the modules above it) change nothing in `pm-mcp-core`: it
+uses `git-core` only, so a changed outcome of `git-store`, such as `MALFORMED` instead of the passed-on `NOT_FOUND`
+for a save whose expected blob id is no full object id
+(xref:../specification/git-store.adoc#GDR-STORE-5[GDR-STORE-5]), or the changed outcomes of a release (`OK` for a tag
+the remote already holds at the release commit, `MALFORMED` for a gitlink among its paths, the passed-on `CONFLICT`
+for a numbered entry `main` changed since the previous release,
+xref:../specification/git-store.adoc#GDR-STORE-6[GDR-STORE-6]) and `REFUSED` for a draft expiry re-entered from a
+callback (xref:../specification/git-store.adoc#GDR-STORE-7[GDR-STORE-7]), does not reach it; the client maps none of
+them. Neither does the refused close of a writer issued inside a callback that holds a lock of the clone
+(xref:../specification/git-store.adoc#GDR-STORE-16[GDR-STORE-16]).
 
 [CAUTION]
 ====

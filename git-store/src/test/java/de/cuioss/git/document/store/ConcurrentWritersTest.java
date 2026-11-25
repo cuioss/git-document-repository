@@ -71,11 +71,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Concurrent writers of GDR-NFR-2 against one {@code git-testing} local remote with {@code save.max-attempts} 10: ten
- * writers with their own bare clones save different files of one working branch at the same time and all succeed, two
- * writers that change the same file from the same loaded blob end in exactly one save and one conflict naming that
- * file, and ten threads sharing one writer all succeed as well. A second save of one draft, started while the first is
- * about to push, waits for it and finds the draft settled instead of replaying its changes.
+ * Concurrent writers of GDR-NFR-2 against one {@code git-testing} local remote with {@code save.max-attempts}
+ * {@value #ATTEMPTS}: ten writers with their own bare clones save different files of one working branch at the same
+ * time and all succeed, two writers that change the same file from the same loaded blob end in exactly one save and one
+ * conflict naming that file, and ten threads sharing one writer all succeed as well. A second save of one draft,
+ * started while the first is about to push, waits for it and finds the draft settled instead of replaying its changes.
  * <p>
  * Names, ids, pseudonyms, paths and contents are generated; the number of writers, the attempts and the details are
  * the specified scenario and kept as literals.
@@ -87,8 +87,18 @@ class ConcurrentWritersTest {
     /** The number of concurrent writers of the scenario. */
     private static final int WRITERS = 10;
 
-    /** {@code save.max-attempts} of the scenario: one lost lease per other writer and one more. */
-    private static final int ATTEMPTS = 10;
+    /**
+     * The margin of lost attempts per other writer: after the first-push barrier a writer can lose more than one
+     * attempt to the same winner, for example once to the lease and once more to the remote reference lock it still
+     * holds while its push completes (GDR-CORE-7), so one loss per other writer is not a bound.
+     */
+    private static final int LOSSES_PER_OTHER_WRITER = 3;
+
+    /**
+     * {@code save.max-attempts} of the scenario, sized from the number of writers: up to
+     * {@value #LOSSES_PER_OTHER_WRITER} lost attempts per other writer, and the attempt that wins.
+     */
+    private static final int ATTEMPTS = (WRITERS - 1) * LOSSES_PER_OTHER_WRITER + 1;
 
     /** The time a scenario may take before it counts as hanging. */
     private static final long TIMEOUT_SECONDS = 120;
@@ -191,7 +201,7 @@ class ConcurrentWritersTest {
 
     private StoreWriter open(StoreRepository storeRepository, RepositoryOperations operations) {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
-        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(),
+        return value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration(), List.of(),
                 TestKeys.ed25519().source(), operations, Clock.fixed(Instant.now(), ZoneOffset.UTC)));
     }
 
@@ -238,19 +248,42 @@ class ConcurrentWritersTest {
         return results;
     }
 
+    /**
+     * Ten writers, each with its own clone and its own repository operations, are released together and held before
+     * their first push until all ten fetched the same base, so all ten push against the same lease: one wins and nine
+     * lose, and each loser fetches and re-applies. A writer can lose more than one attempt to the same winner, so one
+     * loss per other writer is no bound: with {@code save.max-attempts} {@value #ATTEMPTS}, up to
+     * {@value #LOSSES_PER_OTHER_WRITER} lost attempts per other writer and the attempt that wins, every writer ends
+     * {@link SaveResult.Saved}.
+     * <p>
+     * The lost race was observed in two forms on the {@code git-testing} local remote (JGit 7.8.0 in-process
+     * {@code ReceivePack}): a refused lease when the advertisement already showed the moved branch, and, when the
+     * branch moved after the advertisement, the status line {@code ng <ref> failed to lock}, which {@code git-core}
+     * reported before as
+     * {@code NotSaved[outcome=PassedOn[git=REJECTED], reason=refs/heads/<collection>/<id>: rejected_other_reason]} and
+     * now reports as {@code LEASE_REFUSED} (GDR-CORE-7), so the save retries it and ends a permanent rejection at once.
+     */
     @Test
-    @DisplayName("GDR-NFR-2: ten writers with their own clones save different files of one branch and all succeed")
+    @DisplayName("GDR-NFR-2: ten writers with their own clones racing at one lease all succeed after retrying")
     void tenWritersWithOwnClones(@Remote LocalRemote remote) throws Exception {
         var key = key();
         var target = StoreReferences.target(key);
         Map<String, String> expected = new TreeMap<>(Map.of(word() + "-base", text()));
         commit(remote.repository(), target, expected);
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
+        var atTheLease = new CountDownLatch(WRITERS);
+        List<ScriptedRepositoryOperations> handles = new ArrayList<>();
         List<StoreWriter> writers = new ArrayList<>();
         try {
             List<Callable<SaveResult>> saves = new ArrayList<>();
             for (int index = 0; index < WRITERS; index++) {
-                var writer = open(storeRepository);
+                var operations = new ScriptedRepositoryOperations();
+                operations.beforeNextPush(() -> {
+                    atTheLease.countDown();
+                    awaitAll(atTheLease);
+                });
+                handles.add(operations);
+                var writer = open(storeRepository, operations);
                 writers.add(writer);
                 var author = Author.of(pseudonym());
                 var path = word() + "-" + index;
@@ -262,12 +295,30 @@ class ConcurrentWritersTest {
 
             var results = concurrently(saves);
 
+            List<Integer> pushes = handles.stream().map(handle -> handle.pushes().size()).toList();
             assertAll(
                     () -> assertTrue(results.stream().allMatch(SaveResult.Saved.class::isInstance),
                             () -> "every save succeeds: " + results),
-                    () -> assertEquals(expected, files(remote.repository(), target), "the branch holds all files"));
+                    () -> assertEquals(expected, files(remote.repository(), target), "the branch holds all files"),
+                    () -> assertTrue(pushes.stream().anyMatch(count -> count > 1),
+                            () -> "at least one writer lost the race and retried: " + pushes),
+                    () -> assertTrue(pushes.stream().mapToInt(Integer::intValue).sum() >= 2 * WRITERS - 1,
+                            () -> "every writer but the winner of the first round pushed again: " + pushes),
+                    () -> assertTrue(pushes.stream().allMatch(count -> count <= ATTEMPTS),
+                            () -> "no writer needed more than save.max-attempts: " + pushes));
         } finally {
+            // every writer is closed before the fixture deletes the temporary remote
             writers.forEach(StoreWriter::close);
+        }
+    }
+
+    /** Waits for every writer at the lease, from a callback that may not throw a checked exception. */
+    private static void awaitAll(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "every writer reaches the lease");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("the wait at the lease is interrupted", e);
         }
     }
 

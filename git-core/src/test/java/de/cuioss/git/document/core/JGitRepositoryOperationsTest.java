@@ -84,6 +84,7 @@ import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.jgit.transport.HttpConfig;
+import org.eclipse.jgit.transport.ReceiveCommand;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.TrackingRefUpdate;
@@ -102,6 +103,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
@@ -868,6 +870,106 @@ class JGitRepositoryOperationsTest {
                             "a lease on another head is refused although the reference is up to date"),
                     () -> assertEquals(GitOutcome.OK, holdingLease.outcome(), "a holding lease is accepted"),
                     () -> assertEquals(head, refId(remote.repository(), ref), "the remote stays at the commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a leased push the remote cannot lock lost a race and is LEASE_REFUSED, a plain one REJECTED")
+        void lostRaceOnRemote(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var remoteHead = TestCommits.commitOn(remote.repository(), ref);
+            assertTrue(operations.fetch(fetch(client)).isOk(), "the client fetches the remote head");
+            TestCommits.setRef(client, ref, remoteHead);
+            var next = TestCommits.commitOn(client, ref);
+            // another writer holds the lock of the remote reference: JGit 7.8.0 ReceivePack answers the update of the
+            // advertised id with "failed to lock", as it does when the reference moved after the advertisement
+            Path lock = dir(remote.repository()).resolve(ref + ".lock");
+            Files.createFile(lock);
+
+            var leased = operations.push(push(client, ref, remoteHead.name()));
+            var plain = operations.push(push(client, ref, null));
+            Files.delete(lock);
+            var retried = operations.push(push(client, ref, remoteHead.name()));
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.LEASE_REFUSED, leased.outcome(),
+                            "a leased push that lost the race on the remote reference is a refused lease"),
+                    () -> assertEquals(ref, leased.detail(), "the detail names the reference"),
+                    () -> assertEquals(GitOutcome.REJECTED, plain.outcome(),
+                            "a plain push carries no lease and stays rejected"),
+                    () -> assertEquals(GitOutcome.OK, retried.outcome(), "the retried leased push is accepted"),
+                    () -> assertEquals(next, refId(remote.repository(), ref), "the remote moves to the new commit"));
+        }
+
+        @Test
+        @DisplayName("GDR-CORE-7: a leased push a native Git remote refuses with a stale old value is LEASE_REFUSED, a plain one REJECTED")
+        void staleOldValueOnRemote(@Remote LocalRemote remote, @LocalRepository Repository client) throws Exception {
+            // native Git 2.56.1 receive-pack answers an update whose old value no longer matches with
+            // "ng <ref> incorrect old value provided"; JGit 7.8.0 BasePackPushConnection.readStatusReport makes the rest
+            // of the line the message of REJECTED_OTHER_REASON
+            var refused = refusedPushes(remote, client, ReceiveCommand.Result.REJECTED_OTHER_REASON,
+                    "incorrect old value provided");
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.LEASE_REFUSED, refused.leased().outcome(),
+                            "a leased push refused with a stale old value lost a race"),
+                    () -> assertEquals(refused.ref(), refused.leased().detail(), "the detail names the reference"),
+                    () -> assertEquals(GitOutcome.REJECTED, refused.plain().outcome(),
+                            "a plain push carries no lease and stays rejected"),
+                    () -> assertEquals(refused.remoteHead(), refId(remote.repository(), refused.ref()),
+                            "the remote reference is unchanged"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"protected branch", "pre-receive hook declined", "incorrect old value provided (x)",
+                "error: incorrect old value provided", "Incorrect old value provided", "failed to lock (x)"})
+        @DisplayName("GDR-CORE-7: a leased push refused with another message stays REJECTED, compared as the whole message")
+        void otherRefusalOfLeasedPush(String message, @Remote LocalRemote remote, @LocalRepository Repository client)
+                throws Exception {
+            var refused = refusedPushes(remote, client, ReceiveCommand.Result.REJECTED_OTHER_REASON, message);
+
+            assertAll(
+                    () -> assertEquals(GitOutcome.REJECTED, refused.leased().outcome(),
+                            "a permanent refusal of a leased push is never a lost race"),
+                    () -> assertEquals(GitOutcome.REJECTED, refused.plain().outcome(), "a plain push stays rejected"));
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = ReceiveCommand.Result.class, names = {"REJECTED_NONFASTFORWARD", "REJECTED_NODELETE"})
+        @DisplayName("GDR-CORE-7: a leased push the remote refuses as no fast-forward or as a delete stays REJECTED")
+        void permanentResultOfLeasedPush(ReceiveCommand.Result result, @Remote LocalRemote remote,
+                @LocalRepository Repository client) throws Exception {
+            var refused = refusedPushes(remote, client, result, null);
+
+            assertEquals(GitOutcome.REJECTED, refused.leased().outcome(),
+                    "a permanent refusal of a leased push is never a lost race");
+        }
+
+        /**
+         * Pushes a new commit on a fetched remote head, once with the lease of that head and once without, to a remote
+         * that refuses every update with the result and the message.
+         */
+        private RefusedPushes refusedPushes(LocalRemote remote, Repository client, ReceiveCommand.Result result,
+                @Nullable String message) throws Exception {
+            TestCommits.addRemote(client, ORIGIN, remote.uri().toString());
+            var ref = branchRef();
+            var remoteHead = TestCommits.commitOn(remote.repository(), ref);
+            assertTrue(operations.fetch(fetch(client)).isOk(), "the client fetches the remote head");
+            TestCommits.setRef(client, ref, remoteHead);
+            TestCommits.commitOn(client, ref);
+            var marker = TestCommits.name();
+            var config = client.getConfig();
+            config.setString(ConfigConstants.CONFIG_REMOTE_SECTION, ORIGIN, ConfigConstants.CONFIG_KEY_URL,
+                    temp.resolve(marker).toUri().toString());
+            config.save();
+            try (var refusing = new RefusingReceiveProtocol(marker, remote.repository(), result, message)) {
+                return new RefusedPushes(ref, remoteHead, operations.push(push(client, ref, remoteHead.name())),
+                        operations.push(push(client, ref, null)));
+            }
+        }
+
+        private record RefusedPushes(String ref, ObjectId remoteHead, GitResult<RefUpdate> leased,
+        GitResult<RefUpdate> plain) {
         }
 
         @Test

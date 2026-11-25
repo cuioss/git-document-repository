@@ -45,9 +45,13 @@ import de.cuioss.git.document.core.RepositoryReader.ChangeType;
 import de.cuioss.git.document.core.RepositoryReader.PathChange;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.tools.logging.CuiLogger;
+import org.eclipse.jgit.errors.LargeObjectException;
+import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectLoader;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
@@ -107,13 +111,22 @@ import org.jspecify.annotations.Nullable;
  * of the edits counting as changed, so a step put that would replace a directory of the base, or turn a file into a
  * directory, is a conflict as well, while a step edit disjoint from the base's files, such as a counter, stays valid;
  * its refusal
- * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} it throws with the passed-on
- * {@link GitOutcome#FAILED} naming the class of the exception only, without a further attempt. In both cases nothing is
- * written or pushed, and draft and target branch stay as they are. A draft without changes calls no step. The step's
- * edits are written into the one signed, trailer-carrying save commit; there is no second commit path.
+ * ends the save with {@link StoreOutcome#REFUSED}, and a {@link RuntimeException} or an {@link Error} other than a
+ * {@link VirtualMachineError} it throws (the observer rule of {@link StoreEvents}) with the passed-on
+ * {@link GitOutcome#FAILED} naming the class of the throwable by {@link Class#getName()} only, without a further
+ * attempt. In both cases nothing is written or pushed, and the draft and the remote target branch stay as they are;
+ * the fetch of the attempt may have moved the local mirror of the target. A draft without
+ * changes calls no step. The step's edits are written into the one signed, trailer-carrying save commit; there is no
+ * second commit path. The step runs under the locks of the save: one that calls back into the writer gets
+ * {@link StoreOutcome#REFUSED} for a draft expiry ({@link RepositoryGuard#exclusive}) instead of a deadlock.
  * <p>
- * The save is a cooperative compare-and-swap against the remote: a lease refusal or a rejection starts the next
- * attempt from the fetch, up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; an unreachable
+ * Every put of the draft keeps the mode the draft holds the path in: an executable file stays executable and a
+ * symbolic link stays one ({@link TreeEdit.Mode}); the step's view reports that mode ({@link SaveStep.Attempt#mode}).
+ * <p>
+ * The save is a cooperative compare-and-swap against the remote: a lease refusal, which {@code git-core} also reports
+ * for a push that lost a race on the remote reference after the advertisement, starts the next attempt from the fetch,
+ * up to the configured attempts, then the save is {@link GitOutcome#REJECTED}; a permanent rejection of the push, for
+ * example by a protected branch or a hook, ends the save at once as {@link GitOutcome#REJECTED}, and an unreachable
  * remote or invalid credentials end the save at once with nothing changed. Only after the remote accepted the commit
  * the local target branch moves by a {@link RefUpdate} expecting the base, with the reflog disabled (an I/O failure
  * there is logged and the save stays {@link SaveResult.Saved}), and the draft is deleted by
@@ -127,14 +140,15 @@ import org.jspecify.annotations.Nullable;
  * on the target branch are emitted to the {@link StoreEvents} of the writer, so the index refreshes (GDR-STORE-9); a
  * save that moved nothing emits nothing.
  * <p>
+ * Every blob the save reads, of the draft and of the fetched base, is read bounded by {@link #BLOB_LIMIT}; a larger one
+ * ends the attempt like an unreadable object, as the passed-on {@link GitOutcome#FAILED} naming the class of the
+ * exception only.
+ * <p>
  * A detail names a reference or a field, never a path, a content, a pseudonym or an address (GDR-NFR-3).
  */
 final class ExplicitSave {
 
     private static final CuiLogger LOGGER = new CuiLogger(ExplicitSave.class);
-
-    /** The remote of every bare clone of the store. */
-    private static final String ORIGIN = "origin";
 
     /** The detail of a save whose draft does not exist. */
     private static final String DRAFT_NOT_FOUND = "draft: not found";
@@ -153,6 +167,64 @@ final class ExplicitSave {
 
     /** The detail of a save whose per-attempt step threw, after the target and before the class of the exception. */
     private static final String STEP_FAILED = ": step: ";
+
+    /**
+     * The largest blob the store reads into memory, 16 MiB: every read of a blob that a fetched branch, tag or note
+     * controls, and of a draft blob, is bounded by it, so a remote cannot make the store allocate more for one object.
+     */
+    static final int BLOB_LIMIT = 16 * 1024 * 1024;
+
+    /**
+     * A blob larger than {@link #BLOB_LIMIT}: an {@link IOException}, so every read site maps it as it maps an
+     * unreadable object, to a defined outcome naming the class of the exception only.
+     */
+    static final class BlobTooLargeException extends IOException {
+
+        private static final long serialVersionUID = 1L;
+
+        BlobTooLargeException() {
+            super("blob exceeds " + BLOB_LIMIT + " bytes");
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #BLOB_LIMIT} bytes. The size is asked first with
+     * {@link ObjectReader#getObjectSize}, which reads the object header only (JGit 7.8.0), and a larger blob is refused
+     * before {@link ObjectReader#open} could load its content: opening a loose object below the stream threshold of
+     * JGit inflates it whole. The bounded {@link ObjectLoader#getBytes(int)} stays as the second check.
+     *
+     * @param reader the reader of the repository
+     * @param blob   the id of the blob
+     * @return the content of the blob
+     * @throws BlobTooLargeException if the blob is larger than {@link #BLOB_LIMIT}
+     * @throws IOException           if the blob cannot be read
+     */
+    static byte[] readBlob(ObjectReader reader, AnyObjectId blob) throws IOException {
+        if (reader.getObjectSize(blob, Constants.OBJ_BLOB) > BLOB_LIMIT) {
+            throw new BlobTooLargeException();
+        }
+        ObjectLoader loader = reader.open(blob, Constants.OBJ_BLOB);
+        try {
+            return loader.getBytes(BLOB_LIMIT);
+        } catch (LargeObjectException e) {
+            throw new BlobTooLargeException();
+        }
+    }
+
+    /**
+     * Reads a blob of at most {@link #BLOB_LIMIT} bytes of a repository; see {@link #readBlob(ObjectReader, AnyObjectId)}.
+     *
+     * @param repository the repository
+     * @param blob       the id of the blob
+     * @return the content of the blob
+     * @throws BlobTooLargeException if the blob is larger than {@link #BLOB_LIMIT}
+     * @throws IOException           if the blob cannot be read
+     */
+    static byte[] readBlob(Repository repository, AnyObjectId blob) throws IOException {
+        try (ObjectReader reader = repository.newObjectReader()) {
+            return readBlob(reader, blob);
+        }
+    }
 
     private final Clone clone;
     private final RepositoryOperations operations;
@@ -253,13 +325,14 @@ final class ExplicitSave {
      * @param step            the per-attempt step; {@code null} for none
      * @return {@link SaveResult.Saved} with the commit the target branch points at; {@link SaveResult.Conflicting}
      *         with every path whose blob on the fetched tip differs from its expected id; {@link SaveResult.NotSaved}
-     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym or a release subject as the message (of
-     *         the document, and onto {@code main} of any document),
+     *         with {@link StoreOutcome#MALFORMED} for an invalid pseudonym, an expected blob id that is no full object
+     *         id (detail {@code expectedBlobIds: not a full object id}, never the value) or a release subject as the
+     *         message (of the document, and onto {@code main} of any document),
      *         {@link StoreOutcome#REFUSED} for a refusal
      *         of the step or of the signing key source, {@link StoreOutcome#UNAVAILABLE} for a signing key source that
-     *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft or an expected blob id that is no full
-     *         object id, {@link GitOutcome#FAILED} for a step that threw, {@link GitOutcome#REJECTED} after every
-     *         attempt lost its lease or was rejected, or the passed-on outcome that ended the save, for example
+     *         cannot be reached, {@link GitOutcome#NOT_FOUND} for a missing draft, {@link GitOutcome#FAILED} for a step
+     *         that threw, {@link GitOutcome#REJECTED} after every attempt lost its lease or at once for a permanent
+     *         rejection of the push, or the passed-on outcome that ended the save, for example
      *         {@link GitOutcome#UNREACHABLE} or {@link GitOutcome#CREDENTIALS_INVALID}
      * @throws NullPointerException if an argument but {@code step}, a path or an expected blob id is {@code null}
      */
@@ -274,7 +347,7 @@ final class ExplicitSave {
         Map<String, ObjectId> expected = new HashMap<>();
         for (Map.Entry<String, String> expectation : expectations.entrySet()) {
             if (!ObjectId.isId(expectation.getValue())) {
-                return report(target, notSaved(GitOutcome.NOT_FOUND, INVALID_EXPECTED_BLOB_ID));
+                return report(target, new SaveResult.NotSaved(StoreOutcome.MALFORMED, INVALID_EXPECTED_BLOB_ID));
             }
             expected.put(expectation.getKey(), ObjectId.fromString(expectation.getValue()));
         }
@@ -326,24 +399,23 @@ final class ExplicitSave {
             if (done.isPresent()) {
                 return done.get();
             }
-            LOGGER.debug("The save onto %s lost its lease or was rejected, attempt %s of %s", request.target(),
-                    attempt, attempts);
+            LOGGER.debug("The save onto %s lost its lease, attempt %s of %s", request.target(), attempt, attempts);
         }
         return notSaved(GitOutcome.REJECTED,
-                request.target() + ": lease refused or rejected on every attempt (" + attempts + ")");
+                request.target() + ": lease refused on every attempt (" + attempts + ")");
     }
 
     /**
      * Runs one attempt on the draft commit the save started with: fetches, pruning the mirrored references the remote
      * deleted, and applies the draft's changes onto the fetched base.
      *
-     * @return the result of the save, or empty when the push lost its lease or was rejected and the next attempt
-     *         starts from the fetch
+     * @return the result of the save, or empty when the push lost its lease and the next attempt starts from the
+     *         fetch
      */
     private Optional<SaveResult> attempt(Request request, Drafted drafted) {
         Repository repository = clone.repository();
         try {
-            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(ORIGIN)
+            var fetched = operations.fetch(FetchInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
                     .refSpecs(JGitRepositoryOperations.MIRROR_FETCH_REF_SPECS).credentials(user.credentials())
                     .prune(true).build());
             if (!fetched.isOk()) {
@@ -390,19 +462,23 @@ final class ExplicitSave {
     }
 
     /**
-     * Calls the per-attempt step. A refusal ends the save with {@link StoreOutcome#REFUSED}; a
-     * {@link RuntimeException} with the passed-on {@link GitOutcome#FAILED}, naming its class only and attaching no
-     * throwable to a log record.
+     * Calls the per-attempt step. A refusal ends the save with {@link StoreOutcome#REFUSED}; a failure the observer
+     * rule of {@link StoreEvents} isolates (a {@link RuntimeException} or an {@link Error} other than a
+     * {@link VirtualMachineError}) with the passed-on {@link GitOutcome#FAILED}, naming its class by
+     * {@link Class#getName()} only and attaching no throwable to a log record.
      */
     private static Stepped step(Request request, SaveStep step, AttemptView view) {
         SaveStep.Outcome outcome;
         try {
             outcome = Objects.requireNonNull(step.apply(view), "the step returned no outcome");
         }
-        // a step that throws ends the save as a result, never as an exception (GDR-STORE-3)
+        // a step that throws ends the save as a result, never as an exception (GDR-STORE-3); the observer rule of
+        // StoreEvents isolates every Error but a VirtualMachineError
+        // operator-selected: AaIOFP27AtdQWIZKzKJg: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            String type = e.getClass().getSimpleName();
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
+            StoreEvents.rethrowIfFatal(e);
+            String type = e.getClass().getName();
             LOGGER.debug("The save step of the save onto %s threw %s", request.target(), type);
             return new Stepped(null, notSaved(GitOutcome.FAILED, request.target() + STEP_FAILED + type));
         }
@@ -476,10 +552,13 @@ final class ExplicitSave {
         }
         ObjectId draft = drafted.draft();
         String commit = Objects.requireNonNull(written.value());
-        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(ORIGIN).localRef(commit)
-                .remoteRef(request.target()).expectedRemoteHead(base.lease().name()).credentials(user.credentials())
-                .build());
-        if (pushed.outcome() == GitOutcome.LEASE_REFUSED || pushed.outcome() == GitOutcome.REJECTED) {
+        var pushed = operations.push(PushInput.builder().root(clone.gitDir()).remote(StoreReferences.ORIGIN)
+                .localRef(commit).remoteRef(request.target()).expectedRemoteHead(base.lease().name())
+                .credentials(user.credentials()).build());
+        // git-core reports a leased push that lost a race on the remote reference as LEASE_REFUSED, also when the
+        // remote could not lock it after the advertisement or found a stale old value; any other REJECTED ends the
+        // save at once
+        if (pushed.outcome() == GitOutcome.LEASE_REFUSED) {
             return Optional.empty();
         }
         if (!pushed.isOk()) {
@@ -666,7 +745,11 @@ final class ExplicitSave {
         }
     }
 
-    /** The edits of the save: the content of every added or modified path of the draft, a delete of every other. */
+    /**
+     * The edits of the save: the content of every added or modified path of the draft with the mode the draft holds it
+     * in, so an executable file or a symbolic link stays one ({@link DocumentRelease#mode}), and a delete of every
+     * other.
+     */
     private static List<TreeEdit> edits(Repository repository, List<PathChange> changed, RevTree draftTree)
             throws IOException {
         List<TreeEdit> edits = new ArrayList<>(changed.size());
@@ -675,9 +758,10 @@ final class ExplicitSave {
                 edits.add(new TreeEdit.Delete(change.path()));
             } else {
                 try (TreeWalk found = TreeWalk.forPath(repository, change.path(), draftTree)) {
-                    ObjectId blob = Objects.requireNonNull(found, "a changed path exists on the draft").getObjectId(0);
-                    byte[] content = repository.open(blob, Constants.OBJ_BLOB).getBytes(Integer.MAX_VALUE);
-                    edits.add(new TreeEdit.Put(change.path(), content));
+                    TreeWalk entry = Objects.requireNonNull(found, "a changed path exists on the draft");
+                    ObjectId blob = entry.getObjectId(0);
+                    byte[] content = readBlob(repository, blob);
+                    edits.add(new TreeEdit.Put(change.path(), content, DocumentRelease.mode(entry.getRawMode(0))));
                 }
             }
         }
@@ -850,6 +934,31 @@ final class ExplicitSave {
         }
 
         @Override
+        public Optional<TreeEdit.Mode> mode(String path) {
+            Objects.requireNonNull(path, "path");
+            TreeEdit edit = edits.get(path);
+            if (edit instanceof TreeEdit.Put put) {
+                return Optional.of(put.mode());
+            }
+            if (edit != null || replaced(path) || becameDirectory(path) || base == null || path.isEmpty()) {
+                return Optional.empty();
+            }
+            try (TreeWalk found = TreeWalk.forPath(repository, path, base.getTree())) {
+                if (found == null) {
+                    return Optional.empty();
+                }
+                int rawMode = found.getRawMode(0);
+                if (FileMode.TREE.equals(rawMode) || FileMode.GITLINK.equals(rawMode)) {
+                    // a gitlink names a commit of another repository, no file of this tree: it has no file mode
+                    return Optional.empty();
+                }
+                return Optional.of(DocumentRelease.mode(rawMode));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        @Override
         public List<String> paths(String directory) {
             Objects.requireNonNull(directory, "directory");
             String prefix = directory.isEmpty() ? "" : directory + "/";
@@ -902,8 +1011,7 @@ final class ExplicitSave {
                 if (found == null || FileMode.TREE.equals(found.getRawMode(0))) {
                     return Optional.empty();
                 }
-                return Optional.of(repository.open(found.getObjectId(0), Constants.OBJ_BLOB)
-                        .getBytes(Integer.MAX_VALUE));
+                return Optional.of(readBlob(repository, found.getObjectId(0)));
             }
         }
     }

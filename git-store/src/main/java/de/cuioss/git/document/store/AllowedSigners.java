@@ -16,7 +16,13 @@
 package de.cuioss.git.document.store;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.DateTimeException;
 import java.time.Instant;
@@ -50,7 +56,8 @@ import org.jspecify.annotations.Nullable;
  * <ul>
  * <li>{@code valid-after="<timestamp>"} and {@code valid-before="<timestamp>"}: the key is valid at or after, and at or
  * before, the timestamp, which is {@code YYYYMMDD} (the start of the day) or {@code YYYYMMDDHHMM[SS]}, in UTC when it
- * ends with {@code Z} and in the system time zone otherwise, as {@code ssh-keygen} interprets it; a timestamp that
+ * ends with {@code Z} or {@code z} and in the system time zone otherwise, as {@code ssh-keygen} interprets it (OpenSSH
+ * {@code misc.c parse_absolute_time} compares the suffix case-insensitively); a timestamp that
  * names no calendar date, such as {@code 20260230}, is refused;</li>
  * <li>{@code namespaces="<namespace>,..."}: the key is used for a namespace only when the list contains it, for commits
  * {@code git} and for anchor proofs {@code git-document-anchor}; a key without the option is used for every namespace. OpenSSH reads the list as a pattern list, in which a negated entry
@@ -62,8 +69,14 @@ import org.jspecify.annotations.Nullable;
  * and a line whose {@code valid-before} is not after its {@code valid-after}, is refused, so no later clause silently
  * widens what an earlier one restricts.
  * The store signs and verifies with Ed25519 only: a line with another key type, a line with {@code cert-authority} or
- * any other option, and a line that cannot be read are refused as {@link StoreOutcome#MALFORMED}. The detail names the
- * line number and the reason, never a principal, an option value or key text.
+ * any other option, and a line that cannot be read are refused as {@link StoreOutcome#MALFORMED}, and with it the
+ * whole file: a file that also lists an {@code ssh-rsa} key, which OpenSSH would accept, is refused at its line rather
+ * than trusted in part, so an administrator learns that the store ignores no line. The detail names the line number
+ * and the reason, never a principal, an option value or key text.
+ * <p>
+ * The file is read bounded: a regular file only, never a FIFO or a device, of at most {@value #MAX_FILE_SIZE} bytes and
+ * {@value #MAX_LINES} lines, in valid UTF-8; every other file and a configured value that is no path of the file system
+ * end the read as a result, never as an exception.
  * <p>
  * The file is read from the given path, from {@code signing.allowed-signers} or from
  * {@code anchor.signed.allowed-signers} of the configuration, never from the repository whose commits or proofs are
@@ -73,17 +86,41 @@ import org.jspecify.annotations.Nullable;
  */
 public final class AllowedSigners {
 
+    /** The largest allowed-signers file read, 64 KiB, the bound of a key file of {@link FileSigningKeySource}. */
+    static final int MAX_FILE_SIZE = 64 * 1024;
+
+    /** The most lines an allowed-signers file may have. */
+    static final int MAX_LINES = 1024;
+
+    private static final String SIGNING_KEY = "signing.allowed-signers";
+    private static final String ANCHOR_KEY = "anchor.signed.allowed-signers";
+
+    /** The detail, after the configuration key, of a file that cannot be read; it names no path. */
+    static final String NOT_READABLE = ": not readable";
+
+    /** The detail, after the configuration key, of a path that is no regular file, for example a FIFO. */
+    static final String NOT_REGULAR = ": not a regular file";
+
+    /** The detail, after the configuration key, of a file above {@link #MAX_FILE_SIZE} or {@link #MAX_LINES}. */
+    static final String TOO_LARGE = ": too large";
+
+    /** The detail, after the configuration key, of a file that is not valid UTF-8. */
+    static final String NOT_UTF_8 = ": not UTF-8";
+
+    /** The detail, after the configuration key, of a value that is no path, for example one with a NUL character. */
+    static final String NOT_A_PATH = ": not a path";
+
     /** The detail of a configuration without {@code signing.allowed-signers}. */
-    static final String MISSING = "signing.allowed-signers is missing";
+    static final String MISSING = SIGNING_KEY + " is missing";
 
     /** The detail of a file that cannot be read; it names no path. */
-    static final String UNREADABLE = "signing.allowed-signers: not readable";
+    static final String UNREADABLE = SIGNING_KEY + NOT_READABLE;
 
     /** The detail of a configuration without {@code anchor.signed.allowed-signers}. */
-    static final String ANCHOR_MISSING = "anchor.signed.allowed-signers is missing";
+    static final String ANCHOR_MISSING = ANCHOR_KEY + " is missing";
 
     /** The detail of an anchor allowed-signers file that cannot be read; it names no path. */
-    static final String ANCHOR_UNREADABLE = "anchor.signed.allowed-signers: not readable";
+    static final String ANCHOR_UNREADABLE = ANCHOR_KEY + NOT_READABLE;
 
     private static final Pattern DATE = Pattern.compile("\\d{8}");
     private static final Pattern DATE_TIME = Pattern.compile("\\d{12}(\\d{2})?");
@@ -111,23 +148,62 @@ public final class AllowedSigners {
      *
      * @param file the file
      * @return {@link StoreOutcome#OK} with the allowed signers; {@link StoreOutcome#MALFORMED} with
-     *         {@code line <n>: <reason>} for a line that is refused; {@link StoreOutcome#UNAVAILABLE} for a file that
-     *         cannot be read, without naming its path
+     *         {@code line <n>: <reason>} for a line that is refused or with {@code signing.allowed-signers: not UTF-8}
+     *         for content that is not valid UTF-8; {@link StoreOutcome#REFUSED} with
+     *         {@code signing.allowed-signers: not a regular file} for a directory, a FIFO or a device, or with
+     *         {@code signing.allowed-signers: too large} for a file above {@value #MAX_FILE_SIZE} bytes or
+     *         {@value #MAX_LINES} lines; {@link StoreOutcome#UNAVAILABLE} with {@value #UNREADABLE} for a file that
+     *         does not exist or cannot be read; no detail names the path
      * @throws NullPointerException if {@code file} is {@code null}
      */
     public static StoreResult<AllowedSigners> read(Path file) {
-        return read(file, UNREADABLE);
+        return read(file, SIGNING_KEY);
     }
 
-    private static StoreResult<AllowedSigners> read(Path file, String unreadable) {
+    private static StoreResult<AllowedSigners> read(Path file, String key) {
         Objects.requireNonNull(file, "file");
-        List<String> lines;
+        byte[] content;
         try {
-            lines = Files.readAllLines(file);
+            if (!Files.isRegularFile(file)) {
+                // a directory, a FIFO or a device is no allowed-signers file; a FIFO would block the read
+                return Files.exists(file) ? StoreResult.of(StoreOutcome.REFUSED, key + NOT_REGULAR)
+                        : StoreResult.of(StoreOutcome.UNAVAILABLE, key + NOT_READABLE);
+            }
+            try (InputStream in = Files.newInputStream(file)) {
+                content = in.readNBytes(MAX_FILE_SIZE + 1);
+            }
         } catch (IOException | SecurityException e) {
-            return StoreResult.of(StoreOutcome.UNAVAILABLE, unreadable);
+            return StoreResult.of(StoreOutcome.UNAVAILABLE, key + NOT_READABLE);
+        }
+        if (content.length > MAX_FILE_SIZE) {
+            return StoreResult.of(StoreOutcome.REFUSED, key + TOO_LARGE);
+        }
+        String text;
+        try {
+            text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(content)).toString();
+        } catch (CharacterCodingException e) {
+            return StoreResult.of(StoreOutcome.MALFORMED, key + NOT_UTF_8);
+        }
+        List<String> lines = text.lines().toList();
+        if (lines.size() > MAX_LINES) {
+            return StoreResult.of(StoreOutcome.REFUSED, key + TOO_LARGE);
         }
         return parse(lines);
+    }
+
+    /**
+     * The path a configuration key names, or the refusal of a value that is no path of the file system, for example one
+     * that holds a NUL character.
+     */
+    private static StoreResult<AllowedSigners> read(String file, String key) {
+        Path path;
+        try {
+            path = Path.of(file);
+        } catch (InvalidPathException e) {
+            return StoreResult.of(StoreOutcome.MALFORMED, key + NOT_A_PATH);
+        }
+        return read(path, key);
     }
 
     /**
@@ -135,7 +211,8 @@ public final class AllowedSigners {
      *
      * @param configuration the configuration of the store
      * @return the results of {@link #read(Path)}, or {@link StoreOutcome#MALFORMED} with the detail
-     *         {@value #MISSING} when the key is absent
+     *         {@value #MISSING} when the key is absent, or with {@code signing.allowed-signers: not a path} for a
+     *         value that is no path of the file system, for example one with a NUL character
      * @throws NullPointerException if {@code configuration} is {@code null}
      */
     public static StoreResult<AllowedSigners> from(StoreConfiguration configuration) {
@@ -144,7 +221,7 @@ public final class AllowedSigners {
         if (file == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, MISSING);
         }
-        return read(Path.of(file));
+        return read(file, SIGNING_KEY);
     }
 
     /**
@@ -152,9 +229,11 @@ public final class AllowedSigners {
      * the provider {@code signed} verifies its proofs (GDR-STORE-18).
      *
      * @param configuration the configuration of the store
-     * @return {@link StoreOutcome#OK} with the allowed signers; {@link StoreOutcome#MALFORMED} with the detail
-     *         {@value #ANCHOR_MISSING} when the key is absent, or with {@code line <n>: <reason>} for a line that is
-     *         refused; {@link StoreOutcome#UNAVAILABLE} with {@value #ANCHOR_UNREADABLE} for a file that cannot be read,
+     * @return the results of {@link #read(Path)} with the details naming {@code anchor.signed.allowed-signers}:
+     *         {@link StoreOutcome#OK} with the allowed signers; {@link StoreOutcome#MALFORMED} with the detail
+     *         {@value #ANCHOR_MISSING} when the key is absent, with {@code anchor.signed.allowed-signers: not a path}
+     *         for a value that is no path, or with {@code line <n>: <reason>} for a line that is refused;
+     *         {@link StoreOutcome#UNAVAILABLE} with {@value #ANCHOR_UNREADABLE} for a file that cannot be read,
      *         without naming its path
      * @throws NullPointerException if {@code configuration} is {@code null}
      */
@@ -164,7 +243,7 @@ public final class AllowedSigners {
         if (file == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, ANCHOR_MISSING);
         }
-        return read(Path.of(file), ANCHOR_UNREADABLE);
+        return read(file, ANCHOR_KEY);
     }
 
     /**

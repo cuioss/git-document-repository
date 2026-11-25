@@ -18,9 +18,12 @@ package de.cuioss.git.document.store;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -48,7 +51,9 @@ import org.junit.jupiter.params.provider.ValueSource;
  * The parse of Git's {@code allowed_signers} format (GDR-STORE-14, ssh-keygen(1) ALLOWED SIGNERS): principals, options
  * and quoting, both time forms of {@code valid-after} and {@code valid-before} inclusive at their bounds, the
  * {@code namespaces} option, comments and blank lines, and every refusal with its line number and without key text or
- * a principal; the file is read from a path or from {@code signing.allowed-signers}.
+ * a principal; the file is read from a path or from {@code signing.allowed-signers}, bounded: a file above 64 KiB or
+ * 1024 lines, a directory or a FIFO, content that is not UTF-8 and a configured value with a NUL character each end as a
+ * result.
  * <p>
  * Principals and keys are generated; the option names, the time forms and the details are the specified vocabulary and
  * kept as literals.
@@ -403,6 +408,120 @@ class AllowedSignersTest {
                 () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "signing.allowed-signers is missing"),
                         AllowedSigners.from(anchorConfiguration(path.toString())),
                         "the commit-signing file is a separate key"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a file above 64 KiB is REFUSED as too large without naming its path")
+    void oversizedFile() throws Exception {
+        var key = TestKeys.ed25519();
+        var line = principal() + " " + key.publicKeyLine() + "\n";
+        var content = new StringBuilder();
+        while (content.length() <= AllowedSigners.MAX_FILE_SIZE) {
+            content.append("# ").append(Generators.letterStrings(60, 80).next()).append('\n');
+        }
+        var path = file(line + content);
+
+        var result = AllowedSigners.read(path);
+
+        assertAll(
+                () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "signing.allowed-signers: too large"), result,
+                        "too large"),
+                () -> assertFalse(String.valueOf(result.detail()).contains(path.toString()), "no path"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a file with more than 1024 lines is REFUSED as too large, 1024 lines are read")
+    void tooManyLines() throws Exception {
+        var key = TestKeys.ed25519();
+        var line = principal() + " " + key.publicKeyLine() + "\n";
+
+        var atBound = read(line + "\n".repeat(AllowedSigners.MAX_LINES - 1));
+        var aboveBound = read(line + "\n".repeat(AllowedSigners.MAX_LINES));
+
+        assertAll(
+                () -> assertEquals(1, value(atBound).size(), "1024 lines are read"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, "signing.allowed-signers: too large"),
+                        aboveBound, "1025 lines are refused"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: content that is not valid UTF-8 is MALFORMED")
+    void notUtf8() throws Exception {
+        var key = TestKeys.ed25519();
+        var path = temp.resolve(Generators.letterStrings(8, 12).next());
+        var valid = (principal() + " " + key.publicKeyLine() + "\n").getBytes(StandardCharsets.UTF_8);
+        var content = new byte[valid.length + 2];
+        System.arraycopy(valid, 0, content, 0, valid.length);
+        content[valid.length] = (byte) 0xC3;
+        content[valid.length + 1] = (byte) 0x28;
+        Files.write(path, content);
+
+        assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "signing.allowed-signers: not UTF-8"),
+                AllowedSigners.read(path), "not UTF-8");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a directory is REFUSED as no regular file")
+    void directoryIsNoRegularFile() throws Exception {
+        var directory = Files.createDirectory(temp.resolve(Generators.letterStrings(8, 12).next()));
+
+        assertEquals(StoreResult.of(StoreOutcome.REFUSED, "signing.allowed-signers: not a regular file"),
+                AllowedSigners.read(directory), "a directory");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a FIFO is REFUSED as no regular file, without blocking on the read")
+    void fifoIsNoRegularFile() throws Exception {
+        var fifo = temp.resolve(Generators.letterStrings(8, 12).next());
+        var mkfifo = ExternalTools.onPath("mkfifo");
+        assumeTrue(mkfifo.isPresent(), "mkfifo is not on the PATH");
+        var made = ExternalTools.run(new ProcessBuilder(mkfifo.get().toString(), fifo.toString()),
+                temp.resolve("mkfifo.out"), null);
+        assumeTrue(made.code() == 0 && Files.exists(fifo), "mkfifo could not create a FIFO");
+
+        var result = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> AllowedSigners.read(fifo),
+                "the read never opens the FIFO");
+
+        assertEquals(StoreResult.of(StoreOutcome.REFUSED, "signing.allowed-signers: not a regular file"), result,
+                "a FIFO");
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14, GDR-STORE-18: a configured value with a NUL character is MALFORMED as no path")
+    void nulPath() {
+        var value = Generators.letterStrings(4, 8).next() + '\0' + Generators.letterStrings(4, 8).next();
+
+        assertAll(
+                () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "signing.allowed-signers: not a path"),
+                        AllowedSigners.from(configuration(value)), "signing"),
+                () -> assertEquals(StoreResult.of(StoreOutcome.MALFORMED, "anchor.signed.allowed-signers: not a path"),
+                        AllowedSigners.fromAnchor(anchorConfiguration(value)), "anchor"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: a timestamp with a lower-case z is read in UTC, as OpenSSH compares the suffix")
+    void lowerCaseZSuffix() throws Exception {
+        var key = TestKeys.ed25519();
+
+        var signers = value(read(principal() + " valid-after=\"20260301z\" " + key.publicKeyLine()));
+
+        assertAll(
+                () -> assertEquals(AllowedSigners.Match.VALID,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2026-03-01T00:00:00Z")), "at the start"),
+                () -> assertEquals(AllowedSigners.Match.OUTSIDE_VALIDITY,
+                        signers.check(key.publicKeyBlob(), Instant.parse("2026-02-28T23:59:59Z")), "a second before"));
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-14: an ssh-rsa line beside an Ed25519 line refuses the whole file at its line")
+    void rsaLineRefusesTheFile() throws Exception {
+        var key = TestKeys.ed25519();
+        var principal = principal();
+        var rsa = TestKeys.writeRsa(temp.resolve("rsa"));
+
+        var result = read(principal + " " + rsa + "\n" + principal + " " + key.publicKeyLine() + "\n");
+
+        assertRefused(result, "line 1: key type not supported", principal, key);
     }
 
     @Test

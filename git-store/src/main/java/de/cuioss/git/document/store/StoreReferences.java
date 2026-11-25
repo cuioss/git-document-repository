@@ -87,8 +87,11 @@ public final class StoreReferences {
      */
     static final String ANCHORING = "refs/anchoring/";
 
-    /** The prefix of every branch. */
-    private static final String HEADS = "refs/heads/";
+    /** The prefix of every branch; the one home of the constant in {@code git-store}. */
+    static final String HEADS = "refs/heads/";
+
+    /** The remote of every bare clone of the store; the one home of the constant in {@code git-store}. */
+    static final String ORIGIN = "origin";
 
     /** The number of a checkpoint, from 1 to 999999999 without leading zeros. */
     private static final Pattern CHECKPOINT_NUMBER = Pattern.compile("[1-9]\\d{0,8}");

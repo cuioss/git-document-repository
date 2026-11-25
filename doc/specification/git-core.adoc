@@ -497,9 +497,32 @@ and `CloneInput`. A secret in the URL of a clone is not stored: the origin of a 
 query data or fragment, and a URL whose user information cannot be separated is refused (<<GDR-CORE-3>>). The
 outcomes:
 
-* `REJECTED`: the remote refuses the update (non-fast-forward, a protected branch or another refusal; JGit's
-  `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or `REJECTED_NODELETE`);
-* `LEASE_REFUSED`: the remote reference differs from the expected value (`REJECTED_REMOTE_CHANGED`);
+* `REJECTED`: the remote refuses the update permanently (non-fast-forward, a protected branch, a refusing hook or
+  another refusal; JGit's `RemoteRefUpdate.Status` `REJECTED_NONFASTFORWARD`, `REJECTED_OTHER_REASON` or
+  `REJECTED_NODELETE`), and a plain push without a lease that lost a race;
+* `LEASE_REFUSED`: a leased push lost a race on the remote reference, so a fetch and a new attempt may succeed: the
+  advertised reference differs from the expected value (`REJECTED_REMOTE_CHANGED`), or the lease held in the
+  advertisement and the remote could not lock the reference for the update because it moved or another writer held it
+  after the advertisement. JGit's `ReceivePack` updates the reference against the advertised id and answers its
+  `LOCK_FAILURE` with `ng <ref> failed to lock`
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceivePack.java[JGit
+  7.8.0 `ReceivePack.sendStatusReport`],
+  link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/ReceiveCommand.java[`ReceiveCommand.execute`]);
+  the client turns every `ng` into `REJECTED_OTHER_REASON` with that text as the message
+  (link:https://github.com/eclipse-jgit/jgit/blob/v7.8.0.202609011348-r/org.eclipse.jgit/src/org/eclipse/jgit/transport/BasePackPushConnection.java[`BasePackPushConnection.readStatusReport`]),
+  (checked in the JGit 7.8.0 sources: an `ng <ref> <message>` line becomes `REJECTED_OTHER_REASON`, and the rest of
+  the line after the reference name is `RemoteRefUpdate.getMessage()`). A native Git remote answers the same lost race,
+  a reference that no longer holds the old id the push sent, with `ng <ref> incorrect old value provided`, while the
+  reason that names both ids (`cannot lock ref '<ref>': is at <id> but expected <id>`) reaches the client only as a
+  sideband error line and never as the message. This was observed with native Git 2.56.1 as the remote (files
+  backend), the client being JGit 7.8.0; the reftable backend and the source of `builtin/receive-pack.c` were not
+  checked. A leased update whose message is exactly `failed to lock` or exactly `incorrect old value provided`, each
+  compared whole, is `LEASE_REFUSED`; either message on a plain push without a lease, and every other message of a
+  leased push, stays `REJECTED`. Another remote that words a lost race differently again is reported as `REJECTED`.
+  Accepted as a documented limit (owner decision of 2026-11-24): a remote that answers a lost race with a wording
+  not named above, for example `failed to update ref` (a wording reported in review, not checked against any Git
+  release), makes the leased push `REJECTED`, so a save of `git-store` is not retried; its draft remains and the
+  caller saves again (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]);
 * `CREDENTIALS_INVALID`: the remote refuses the authentication, HTTP 401 or 403, recognised by the wordings of JGit's
   `JGitText` and `TransportHttp` for it (`notAuthorized`, `noCredentialsProvider`, `authenticationNotSupported`,
   `serviceNotPermitted`;

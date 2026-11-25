@@ -17,8 +17,11 @@ package de.cuioss.git.document.store;
 
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.function.Function;
@@ -39,8 +42,10 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The anchor provider {@value SignedAnchorProvider#PROVIDER_ID} is built in: when {@code anchor.provider} names it, the store
  * builds a {@link SignedAnchorProvider} from the section {@code anchor.signed} (GDR-STORE-18), its anchor key taken from
- * the candidate signing key source that {@code anchor.signed.key-source} names, and a candidate anchor provider that
- * also carries that id is a second provider with the id of {@code anchor.provider}.
+ * the candidate signing key source that {@code anchor.signed.key-source} names, and a candidate anchor provider passed
+ * to {@link #select(StoreConfiguration, Iterable, Iterable, Iterable)} that also carries that id is a second provider
+ * with the id of {@code anchor.provider}. {@link #load(StoreConfiguration)} instantiates no anchor provider in that
+ * case, nor when {@code anchor.provider} is absent.
  *
  * @param signing the active signing key source
  * @param persons the active person directory
@@ -80,10 +85,13 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * Finds the providers through {@link ServiceLoader} and selects the configured ones.
      * <p>
      * The providers are those {@code ServiceLoader.load} finds for each interface, through the {@code uses}
-     * directives of the module or the {@code META-INF/services} files on the class path. A
-     * {@link ServiceConfigurationError} while loading a provider is {@link StoreOutcome#MALFORMED} naming the service
-     * interface and is logged as {@code GIT_STORE-100}; otherwise the selection is that of
-     * {@link #select(StoreConfiguration, Iterable, Iterable, Iterable)}.
+     * directives of the module or the {@code META-INF/services} files on the class path. The {@link AnchorProvider}
+     * candidates are instantiated only when {@code anchor.provider} names an id other than
+     * {@value SignedAnchorProvider#PROVIDER_ID} (GDR-STORE-15): a start that anchors nothing, or that anchors with the
+     * built-in provider, never instantiates one, so a broken anchor provider on the class path cannot stop it. A
+     * {@link ServiceConfigurationError} or a {@link LinkageError} while loading a provider is
+     * {@link StoreOutcome#MALFORMED} naming the service interface and is logged as {@code GIT_STORE-100}; otherwise
+     * the selection is that of {@link #select(StoreConfiguration, Iterable, Iterable, Iterable)}.
      *
      * @param configuration the configuration of the store
      * @return {@link StoreOutcome#MALFORMED} for a provider that cannot be loaded, otherwise the result of
@@ -96,15 +104,20 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         if (!signing.isOk()) {
             return refuse(signing.detail());
         }
-        var anchors = loadAll(AnchorProvider.class);
-        if (!anchors.isOk()) {
-            return refuse(anchors.detail());
+        List<AnchorProvider> anchors = List.of();
+        String anchorId = configuration.anchor().provider();
+        if (anchorId != null && !SignedAnchorProvider.PROVIDER_ID.equals(anchorId)) {
+            var loaded = loadAll(AnchorProvider.class);
+            if (!loaded.isOk()) {
+                return refuse(loaded.detail());
+            }
+            anchors = Objects.requireNonNull(loaded.value());
         }
         var persons = loadAll(PersonDirectory.class);
         if (!persons.isOk()) {
             return refuse(persons.detail());
         }
-        return select(configuration, Objects.requireNonNull(signing.value()), Objects.requireNonNull(anchors.value()),
+        return select(configuration, Objects.requireNonNull(signing.value()), anchors,
                 Objects.requireNonNull(persons.value()));
     }
 
@@ -120,12 +133,20 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * {@code anchor.signed.key is missing}), and the start is refused when the public key of the anchor key equals the
      * public key of the commit-signing key ({@code anchor.signed.key equals the commit-signing key}); both public keys
      * are read from their sources here, once. No detail names a key reference or key material.
+     * <p>
+     * The id of every candidate the selection consults is read once per call and guarded: one snapshot of the ids,
+     * keyed by the candidate instance, serves every selection of the call, so a signing candidate consulted for both
+     * {@code signing.key-source} and {@code anchor.signed.key-source} is asked once. A candidate whose {@code id()} throws
+     * a {@link RuntimeException} or a {@link LinkageError}, or returns {@code null}, ends the selection as
+     * {@link StoreOutcome#MALFORMED} with {@code <Interface>: a provider id cannot be read}, and only the class of the
+     * candidate and of the throwable are logged, never its message (GDR-GEN-3, GDR-NFR-3).
      *
      * @param configuration the configuration of the store
      * @param signing       the candidate signing key sources
      * @param anchors       the candidate anchor providers
      * @param persons       the candidate person directories
      * @return {@link StoreOutcome#OK} with the selected providers; {@link StoreOutcome#MALFORMED} naming the service
+     * interface for a candidate whose id cannot be read, naming the service
      * interface and the configuration key whose id no candidate or more than one candidate carries, or the refusal of
      * the provider {@value SignedAnchorProvider#PROVIDER_ID}; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED}
      * with {@code <key>: key source unavailable} or {@code <key>: key source refused} when a public key the provider
@@ -140,13 +161,14 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         Objects.requireNonNull(signing, "signing");
         Objects.requireNonNull(anchors, "anchors");
         Objects.requireNonNull(persons, "persons");
+        IdSnapshot ids = new IdSnapshot();
         var source = unique(SigningKeySource.class, StoreConfiguration.SIGNING_KEY_SOURCE,
-                configuration.signing().keySource(), signing, SigningKeySource::id);
+                configuration.signing().keySource(), signing, SigningKeySource::id, ids);
         if (!source.isOk()) {
             return refuse(source.detail());
         }
         var directory = unique(PersonDirectory.class, StoreConfiguration.PERSONS_PROVIDER,
-                configuration.directory().personsProvider(), persons, PersonDirectory::id);
+                configuration.directory().personsProvider(), persons, PersonDirectory::id, ids);
         if (!directory.isOk()) {
             return refuse(directory.detail());
         }
@@ -154,22 +176,23 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         @Nullable AnchorProvider anchor = null;
         String anchorId = configuration.anchor().provider();
         if (SignedAnchorProvider.PROVIDER_ID.equals(anchorId)) {
-            var provider = signed(configuration, signingSource, signing, anchors);
+            var provider = signed(configuration, signingSource, signing, anchors, ids);
             if (!provider.isOk()) {
                 return refuse(provider);
             }
             anchor = provider.value();
         } else if (anchorId != null) {
             var provider = unique(AnchorProvider.class, StoreConfiguration.ANCHOR_PROVIDER, anchorId, anchors,
-                    AnchorProvider::id);
+                    AnchorProvider::id, ids);
             if (!provider.isOk()) {
                 return refuse(provider.detail());
             }
             anchor = provider.value();
         }
         var providers = new StoreProviders(signingSource, Objects.requireNonNull(directory.value()), anchor);
-        LOGGER.info(GitStoreLogMessages.INFO.PROVIDERS_SELECTED, providers.signing().id(), providers.persons().id(),
-                anchor == null ? NO_ANCHOR_PROVIDER : anchor.id());
+        // the ids the selected candidates were matched by; a candidate's id() is not called a second time
+        LOGGER.info(GitStoreLogMessages.INFO.PROVIDERS_SELECTED, configuration.signing().keySource(),
+                configuration.directory().personsProvider(), anchorId == null ? NO_ANCHOR_PROVIDER : anchorId);
         return StoreResult.ok(providers);
     }
 
@@ -184,16 +207,21 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * @param id         the configured id
      * @param candidates the candidates
      * @param idOf       the id of a candidate
+     * @param ids        the ids read so far in this selection
      * @param <S>        the service type
-     * @return {@link StoreOutcome#OK} with the candidate, or {@link StoreOutcome#MALFORMED} when no candidate or more
-     * than one candidate carries the id
+     * @return {@link StoreOutcome#OK} with the candidate, or {@link StoreOutcome#MALFORMED} when the id of a candidate
+     * cannot be read, or when no candidate or more than one candidate carries the id
      */
     private static <S> StoreResult<S> unique(Class<S> service, String key, String id,
-            Iterable<? extends S> candidates, Function<S, String> idOf) {
+            Iterable<? extends S> candidates, Function<S, @Nullable String> idOf, IdSnapshot ids) {
         @Nullable S found = null;
         for (S candidate : candidates) {
             Objects.requireNonNull(candidate, "candidate");
-            if (id.equals(idOf.apply(candidate))) {
+            @Nullable String candidateId = ids.of(service, candidate, idOf);
+            if (candidateId == null) {
+                return unreadableId(service);
+            }
+            if (id.equals(candidateId)) {
                 if (found != null) {
                     return StoreResult.of(StoreOutcome.MALFORMED,
                             service.getSimpleName() + ": more than one provider with the id of " + key);
@@ -209,12 +237,79 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
     }
 
     /**
+     * The refusal of a candidate whose id cannot be read.
+     *
+     * @param service the service interface, named in the detail
+     * @param <V>     the value type of the result
+     * @return {@link StoreOutcome#MALFORMED} with {@code <Interface>: a provider id cannot be read}
+     */
+    private static <V> StoreResult<V> unreadableId(Class<?> service) {
+        return StoreResult.of(StoreOutcome.MALFORMED, service.getSimpleName() + ": a provider id cannot be read");
+    }
+
+    /**
+     * The ids of the candidates one selection consulted, keyed by the candidate instance (identity semantics) and read
+     * lazily through {@link #readId}, so every candidate's {@code id()} is called at most once per selection, also when
+     * the commit-signing and the anchor key source are both selected among the signing candidates. An id that could not
+     * be read is kept as {@code null} and is not read again.
+     */
+    private static final class IdSnapshot {
+
+        private final Map<Object, @Nullable String> ids = new IdentityHashMap<>();
+
+        /**
+         * The id of a candidate, read on its first request.
+         *
+         * @param service   the service interface, named in the log
+         * @param candidate the candidate
+         * @param idOf      the id of a candidate
+         * @param <S>       the service type
+         * @return the id, or {@code null} when it cannot be read
+         */
+        <S> @Nullable String of(Class<S> service, S candidate, Function<S, @Nullable String> idOf) {
+            if (!ids.containsKey(candidate)) {
+                ids.put(candidate, readId(service, candidate, idOf));
+            }
+            return ids.get(candidate);
+        }
+
+        /**
+         * Reads the id of a candidate, guarded against a provider that fails while answering it.
+         * <p>
+         * Only the class of the candidate and of the throwable are logged: the message of a failing provider may name a
+         * credential (GDR-NFR-3). A {@link LinkageError} is handled like a {@link RuntimeException}, since a provider
+         * whose classes cannot be linked fails first when one of its methods is called.
+         *
+         * @param service   the service interface, named in the log
+         * @param candidate the candidate
+         * @param idOf      the id of a candidate
+         * @param <S>       the service type
+         * @return the id, or {@code null} when {@code id()} throws or returns {@code null}
+         */
+        private static <S> @Nullable String readId(Class<S> service, S candidate,
+                Function<S, @Nullable String> idOf) {
+            try {
+                return idOf.apply(candidate);
+            }
+            // a provider that fails while naming itself ends the selection as a result, never as an exception
+            // (GDR-GEN-3)
+            // cui-rewrite:disable InvalidExceptionUsageRecipe
+            catch (RuntimeException | LinkageError e) {
+                LOGGER.debug("Reading the id of the provider %s of %s failed with %s", candidate.getClass().getName(),
+                        service.getName(), e.getClass().getName());
+                return null;
+            }
+        }
+    }
+
+    /**
      * Instantiates every provider {@link ServiceLoader} finds for a service interface.
      *
      * @param service the service interface
      * @param <S>     the service type
      * @return {@link StoreOutcome#OK} with the providers, possibly empty, or {@link StoreOutcome#MALFORMED} naming the
-     * service interface when a provider cannot be loaded
+     * service interface when a provider cannot be loaded, a {@link ServiceConfigurationError} or a
+     * {@link LinkageError} alike
      */
     private static <S> StoreResult<List<S>> loadAll(Class<S> service) {
         List<S> providers = new ArrayList<>();
@@ -222,7 +317,7 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
             for (S provider : ServiceLoader.load(service)) {
                 providers.add(provider);
             }
-        } catch (ServiceConfigurationError e) {
+        } catch (ServiceConfigurationError | LinkageError e) {
             // neither the error nor its message is logged: a failing provider may name a credential in either
             LOGGER.debug("Loading a provider of %s failed with %s", service.getName(), e.getClass().getName());
             return StoreResult.of(StoreOutcome.MALFORMED, service.getSimpleName() + ": a provider cannot be loaded");
@@ -239,30 +334,30 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
      * different key reference or key source cannot hide the same key. {@code anchor.signed.allowed-signers}, when set,
      * is read for the verification. No detail names a key reference or key material (GDR-NFR-3).
      *
-     * @return {@link StoreOutcome#OK} with the provider; {@link StoreOutcome#MALFORMED} for a candidate that also carries
+     * @return {@link StoreOutcome#OK} with the provider; {@link StoreOutcome#MALFORMED} for a candidate whose id cannot
+     * be read, a candidate that also carries
      * the id {@value SignedAnchorProvider#PROVIDER_ID}, a missing {@code anchor.signed.key}, an anchor key source no candidate or
      * more than one candidate carries, a key of another type than Ed25519, an anchor key equal to the commit-signing key
      * or a refused allowed-signers file; {@link StoreOutcome#UNAVAILABLE} or {@link StoreOutcome#REFUSED} for a key
      * source that handed out no public key, or the result of a file that cannot be read
      */
-    // S4449 does not see that requireNonNullElse never returns null; the argument is never null
-    @SuppressWarnings("java:S4449")
     private static StoreResult<AnchorProvider> signed(StoreConfiguration configuration, SigningKeySource signingSource,
-            Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors) {
-        for (AnchorProvider candidate : anchors) {
-            if (SignedAnchorProvider.PROVIDER_ID.equals(Objects.requireNonNull(candidate, "candidate").id())) {
-                return StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
-                        + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER);
-            }
+            Iterable<? extends SigningKeySource> signing, Iterable<? extends AnchorProvider> anchors, IdSnapshot ids) {
+        Optional<StoreResult<AnchorProvider>> refused = refusedCandidate(anchors, ids);
+        if (refused.isPresent()) {
+            return refused.get();
         }
         StoreConfiguration.Anchor.Signed section = configuration.anchor().signed();
         String keyReference = section.key();
         if (keyReference == null) {
             return StoreResult.of(StoreOutcome.MALFORMED, SIGNED_KEY + " is missing");
         }
-        var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE,
-                Objects.requireNonNullElse(section.keySource(), StoreConfiguration.Signing.DEFAULT_KEY_SOURCE),
-                signing, SigningKeySource::id);
+        @Nullable String configuredSource = section.keySource();
+        String anchorSourceId = configuredSource == null ? StoreConfiguration.Signing.DEFAULT_KEY_SOURCE
+                : configuredSource;
+        // the ids of the signing candidates come from the snapshot the commit-signing selection filled
+        var anchorSource = unique(SigningKeySource.class, SIGNED_KEY_SOURCE, anchorSourceId, signing,
+                SigningKeySource::id, ids);
         if (!anchorSource.isOk()) {
             return retype(anchorSource);
         }
@@ -293,6 +388,30 @@ public record StoreProviders(SigningKeySource signing, PersonDirectory persons, 
         return StoreResult.ok(new SignedAnchorProvider(
                 new SignedAnchorProvider.AnchorKey(keySource, keyReference, publicKey), allowedSigners,
                 section.maxClockSkew(), Clock.systemUTC()));
+    }
+
+    /**
+     * Checks the anchor provider candidates against the built-in provider {@code signed}: a candidate whose id cannot be
+     * read, and one that carries the id {@value SignedAnchorProvider#PROVIDER_ID} as well, is refused.
+     *
+     * @param anchors the candidate anchor providers
+     * @param ids     the ids read so far in this selection
+     * @return the refusal; empty when no candidate is refused
+     */
+    private static Optional<StoreResult<AnchorProvider>> refusedCandidate(
+            Iterable<? extends AnchorProvider> anchors, IdSnapshot ids) {
+        for (AnchorProvider candidate : anchors) {
+            @Nullable String candidateId = ids.of(AnchorProvider.class, Objects.requireNonNull(candidate, "candidate"),
+                    AnchorProvider::id);
+            if (candidateId == null) {
+                return Optional.of(unreadableId(AnchorProvider.class));
+            }
+            if (SignedAnchorProvider.PROVIDER_ID.equals(candidateId)) {
+                return Optional.of(StoreResult.of(StoreOutcome.MALFORMED, AnchorProvider.class.getSimpleName()
+                        + ": more than one provider with the id of " + StoreConfiguration.ANCHOR_PROVIDER));
+            }
+        }
+        return Optional.empty();
     }
 
     /**

@@ -18,6 +18,8 @@ package de.cuioss.git.document.store;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 
 import de.cuioss.git.document.core.RepositoryOperations;
@@ -36,12 +38,22 @@ import org.jspecify.annotations.Nullable;
  * while the transport lock is held. An operation that moved nothing emits no update: it only tells the registered
  * observers so ({@link Observer#unchanged}), and the listener dispatch is not called. The registered observers, the
  * indexes ({@link StoreIndex}), are called first, in the order of their registration, and the listener dispatch
- * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A {@link RuntimeException}
- * of one observer is logged by its class only and never fails the operation or keeps the next observer from its call.
+ * ({@link ListenerDispatch}, GDR-STORE-10) last, so a listener finds the index refreshed. A failure of one observer
+ * is isolated by the observer rule of {@link #rethrowIfFatal(Throwable)}: logged by its class only, it never fails the
+ * operation or keeps the next observer from its call.
+ * <p>
+ * The observer rule is the one isolation rule of the store's callbacks (GDR-STORE-10): an observer, a
+ * {@link CommitListener}, an {@link IndexContributor}, a {@link SaveStep} and an {@link AnchorProvider} call isolate a
+ * {@link RuntimeException} and every {@link Error} except a {@link VirtualMachineError}, which leaves the JVM in no
+ * state to go on and propagates. The two scheduled runners of a writer, the periodic fetch and the due check of the
+ * anchoring off the caller's thread, isolate every {@link Throwable}, so a schedule never ends.
  * <p>
  * The events of two operations may reach an observer in either order, since each is emitted by its own thread once its
  * locks are free: an observer derives its state from the Git state the event points at, never from the old id of an
  * update, which a concurrent operation may already have moved past.
+ * <p>
+ * The events also own the one reentrant lock of the writer's indexes ({@link #indexLock()}): every index of the writer
+ * serialises its refreshes and snapshots on it, so no two indexes of a writer can wait for each other's lock.
  * <p>
  * An update names a reference and object ids only, never a path, a content or a pseudonym (GDR-NFR-3).
  */
@@ -51,15 +63,51 @@ final class StoreEvents {
 
     private final List<Observer> observers = new CopyOnWriteArrayList<>();
     private final Observer listeners;
+    private final ReentrantLock indexLock = new ReentrantLock();
+    private final BooleanSupplier insideClone;
 
     /**
-     * Creates the events of a writer.
+     * Creates the events of a writer whose calling thread is never taken to hold a lock of the clone.
      *
      * @param listeners the observer called after every registered one: the listener dispatch of the writer
      * @throws NullPointerException if {@code listeners} is {@code null}
      */
     StoreEvents(Observer listeners) {
+        this(listeners, () -> false);
+    }
+
+    /**
+     * Creates the events of a writer.
+     *
+     * @param listeners   the observer called after every registered one: the listener dispatch of the writer
+     * @param insideClone the probe of whether the calling thread holds a lock of the clone, read from that thread's
+     *                    own hold counts only, so it never waits ({@link RepositoryGuard#insideCallback()})
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    StoreEvents(Observer listeners, BooleanSupplier insideClone) {
         this.listeners = Objects.requireNonNull(listeners, "listeners");
+        this.insideClone = Objects.requireNonNull(insideClone, "insideClone");
+    }
+
+    /**
+     * Whether the calling thread holds a lock of the clone: inside a callback of an operation of the writer, such
+     * as a save step or an anchor provider call. An index refuses its snapshot and its opening there instead of waiting for the
+     * {@link #indexLock()}, so no thread waits for the index lock while it holds a lock of the clone.
+     *
+     * @return whether the calling thread holds a lock of the clone
+     */
+    boolean insideClone() {
+        return insideClone.getAsBoolean();
+    }
+
+    /**
+     * The one lock of the writer's indexes, shared by every index opened on this writer: a nested call from a
+     * contributor of any of them takes it reentrantly, so no lock-order cycle can form between two indexes.
+     *
+     * @return the lock, the same on every call
+     */
+    ReentrantLock indexLock() {
+        return indexLock;
     }
 
     /**
@@ -170,14 +218,30 @@ final class StoreEvents {
         call(() -> listeners.moved(moved));
     }
 
+    /**
+     * The observer rule of the store's callbacks: a call site catches {@link RuntimeException} and {@link Error} and
+     * calls this first, which rethrows a {@link VirtualMachineError}, so the site isolates exactly a
+     * {@link RuntimeException} and every other {@link Error}.
+     *
+     * @param failure the throwable a callback threw
+     * @throws VirtualMachineError the failure itself, when it is one
+     */
+    static void rethrowIfFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) {
+            throw fatal;
+        }
+    }
+
     private static void call(Runnable call) {
         try {
             call.run();
         }
         // a failing observer never fails the operation that emitted the events (GDR-STORE-9, GDR-STORE-10)
+        // operator-selected: AaIOFP2yAtdQWIZKzKJf: isolation rule of StoreEvents.rethrowIfFatal decided by the operator
         // cui-rewrite:disable InvalidExceptionUsageRecipe
-        catch (RuntimeException e) {
-            LOGGER.debug("An observer of the store events threw %s", e.getClass().getSimpleName());
+        catch (@SuppressWarnings("java:S1181") RuntimeException | Error e) {
+            rethrowIfFatal(e);
+            LOGGER.debug("An observer of the store events threw %s", e.getClass().getName());
         }
     }
 }

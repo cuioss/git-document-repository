@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 import de.cuioss.git.document.core.GitOutcome;
@@ -36,9 +37,12 @@ import org.eclipse.jgit.transport.URIish;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Opens the bare clone of one {@link StoreWriter}: clones the remote if the clone does not exist yet, opens the clone
- * on a {@link RefusingFS}, refuses a clone whose {@code origin} is not the registered remote, and builds the parts
- * that work on the opened clone into a {@link StoreClone}: among them one {@link CommitSignatures} per clone over the
+ * Opens the bare clone of one {@link StoreWriter}: checks the arguments of {@link StoreWriter#open}, builds the
+ * {@link Providers} from the signing key source or the selected {@link StoreProviders}, clones the remote if the clone
+ * does not exist yet, opens the clone on a {@link RefusingFS}, refuses declared collections that hold one name twice
+ * and a clone whose {@code origin} is not the registered remote, and builds the parts that work on the opened clone
+ * into a {@link StoreClone} with its {@link CloneWrites} and {@link CloneSchedules}, which share the closed flag of the
+ * clone: among them one {@link CommitSignatures} per clone over the
  * active signing key source and {@code signing.key}, whose presence is checked before anything is cloned, and the
  * {@link AnchorEngine} over the active anchor provider, the section {@code anchor}, that signing seam, the technical
  * user, the guard and the clock.
@@ -69,20 +73,62 @@ final class CloneOpening {
     }
 
     /**
-     * Opens the bare clone of a repository, cloning its remote first if it does not exist yet; see
-     * {@link StoreWriter#open}.
+     * The arguments both overloads of {@link StoreWriter#open} share, as the caller passed them. The record checks
+     * nothing itself: {@link CloneOpening} checks every argument, in the order of {@link StoreWriter#open}, after the
+     * providers.
      *
      * @param storeRepository the repository of the registry
      * @param gitDir          the git directory of the bare clone
      * @param user            the technical user
      * @param configuration   the configuration of the store
-     * @param providers       the active signing key source and anchor provider
+     * @param collections     the declared collections of the repository, checked before anything is cloned
      * @param operations      the repository operations of {@code git-core}
-     * @param clock           the clock of every commit time
-     * @return the results of {@link StoreWriter#open}, with the clone as the value
+     * @param clock           the clock of every commit time and of the due checks of the anchoring
      */
-    static StoreResult<StoreClone> open(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
-            StoreConfiguration configuration, Providers providers, RepositoryOperations operations, Clock clock) {
+    record Arguments(StoreRepository storeRepository, Path gitDir, TechnicalUser user,
+    StoreConfiguration configuration, List<DocumentCollection> collections, RepositoryOperations operations,
+    Clock clock) {
+    }
+
+    /**
+     * Opens the bare clone of a repository with the signing key source only, nothing anchored; see
+     * {@link StoreWriter#open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, SigningKeySource, RepositoryOperations, Clock)}.
+     *
+     * @param arguments the shared arguments of {@code open}
+     * @param signing   the active signing key source
+     * @return the results of {@link StoreWriter#open}, with the clone as the value
+     * @throws NullPointerException if an argument or a collection is {@code null}
+     */
+    static StoreResult<StoreClone> open(Arguments arguments, SigningKeySource signing) {
+        return open(arguments, new Providers(signing, null));
+    }
+
+    /**
+     * Opens the bare clone of a repository with the providers selected at start; see
+     * {@link StoreWriter#open(StoreRepository, Path, TechnicalUser, StoreConfiguration, List, StoreProviders, RepositoryOperations, Clock)}.
+     *
+     * @param arguments the shared arguments of {@code open}
+     * @param providers the selected providers
+     * @return the results of {@link StoreWriter#open}, with the clone as the value
+     * @throws NullPointerException if an argument or a collection is {@code null}
+     */
+    static StoreResult<StoreClone> open(Arguments arguments, StoreProviders providers) {
+        Objects.requireNonNull(providers, "providers");
+        return open(arguments, new Providers(providers.signing(), providers.anchor()));
+    }
+
+    private static StoreResult<StoreClone> open(Arguments arguments, Providers providers) {
+        StoreRepository storeRepository = Objects.requireNonNull(arguments.storeRepository(), "storeRepository");
+        Path gitDir = Objects.requireNonNull(arguments.gitDir(), "gitDir");
+        TechnicalUser user = Objects.requireNonNull(arguments.user(), "user");
+        StoreConfiguration configuration = Objects.requireNonNull(arguments.configuration(), "configuration");
+        List<DocumentCollection> collections = Objects.requireNonNull(arguments.collections(), "collections");
+        RepositoryOperations operations = Objects.requireNonNull(arguments.operations(), "operations");
+        Clock clock = Objects.requireNonNull(arguments.clock(), "clock");
+        if (!StoreReferences.collections(collections).isOk()) {
+            // the detail of StoreReferences names the collection; the writer names the argument only
+            return StoreResult.of(StoreOutcome.MALFORMED, StoreWriter.COLLECTIONS_DECLARED_TWICE);
+        }
         SigningKeySource signing = providers.signing();
         @Nullable AnchorProvider anchor = providers.anchor();
         String keyReference = configuration.signing().key();
@@ -117,19 +163,24 @@ final class CloneOpening {
         var guard = RepositoryGuard.of(gitDirectory);
         var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, gitDirectory, guard);
         var listeners = new ListenerDispatch(storeRepository.alias(), repository);
-        var events = new StoreEvents(listeners);
+        var events = new StoreEvents(listeners, guard::insideCallback);
         var signatures = new CommitSignatures(storeRepository.alias(), signing, keyReference);
         var committing = new ExplicitSave.Committing(identities, signatures, clock);
-        var parts = new StoreClone.Parts(events, listeners,
-                new DraftReferences(repository, updater, identities, clock, attempts),
-                new ExplicitSave(bareClone, operations, user, committing, attempts, events),
-                new DocumentRelease(bareClone, operations, user, committing, attempts, events),
-                new DraftExpiry(storeRepository.alias(), repository, guard, updater, configuration.drafts().expiry(),
-                        attempts),
-                new AnchorEngine(bareClone, new AnchorEngine.Selection(anchor, configuration.anchor()), operations,
-                        user, committing, attempts, events));
-        return StoreResult.ok(new StoreClone(bareClone, new StoreClone.Transport(operations, user,
-                configuration.fetch().interval(), configuration.anchor().retryInterval()), parts));
+        var closed = new AtomicBoolean();
+        var schedules = new CloneSchedules(bareClone,
+                new CloneSchedules.Transport(operations, user, configuration.fetch().interval(),
+                        configuration.anchor().retryInterval()),
+                events, new AnchorEngine(bareClone, new AnchorEngine.Selection(anchor, configuration.anchor()),
+                        operations, user, committing, attempts, events),
+                closed);
+        var writes = new CloneWrites(bareClone, new CloneWrites.Parts(
+                        new DraftReferences(repository, updater, identities, clock, attempts),
+                        new ExplicitSave(bareClone, operations, user, committing, attempts, events),
+                        new DocumentRelease(bareClone, operations, user, committing, attempts, events),
+                        new DraftExpiry(storeRepository.alias(), repository, guard, updater, configuration.drafts().expiry(),
+                                attempts)),
+                schedules::triggerDueCheck);
+        return StoreResult.ok(new StoreClone(bareClone, events, listeners, writes, schedules, closed));
     }
 
     /**

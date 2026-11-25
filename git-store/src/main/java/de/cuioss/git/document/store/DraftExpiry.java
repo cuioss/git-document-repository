@@ -32,6 +32,7 @@ import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ProgressMonitor;
@@ -68,6 +69,18 @@ import org.eclipse.jgit.revwalk.RevWalk;
  * was never started, ends in {@link GitOutcome#CONFLICT}, which may be retried, so a skipped collection is never
  * reported as a successful expiry, however late the other collection took {@code gc.pid}. The drafts it deleted stay
  * deleted.
+ * <p>
+ * The expiry {@code now} is kept, with no grace period (decision recorded in GDR-STORE-7, checked against JGit 7.8.0
+ * {@code GC.prune}, {@code GC.getExpireDate} and {@code GC.PidLock}). {@code GC.prune} deletes a loose object only when
+ * it is unreferenced and its file time lies before the expiry instant, and checks the file time once more right before
+ * the delete, so an object written after the collection started is never pruned. An unreferenced older object belongs
+ * to no write in flight: the clone is the cache of one process, and every write of that process runs under the shared
+ * side of the maintenance lock, which the collection holds exclusively. {@code gc.pid} excludes only a second
+ * collection of the same clone, not a writer; a grace period would protect a writer outside the process, which the
+ * store does not have, and would let the objects of a deleted draft survive the expiry.
+ * <p>
+ * A reference below {@code refs/drafts/} whose tip is no commit was not written by the store; it is no draft, is kept
+ * and does not end the expiry.
  * <p>
  * A failure detail and the debug log name the exception class only, never its message, which may carry a path
  * (GDR-NFR-3).
@@ -125,8 +138,10 @@ final class DraftExpiry {
      */
     StoreResult<List<String>> expire(Instant now) {
         Objects.requireNonNull(now, "now");
-        Instant cutoff = now.atOffset(ZoneOffset.UTC).minus(expiry).toInstant();
-        StoreResult<List<String>> deleted = guard.exclusive(() -> deleteAndCollect(cutoff));
+        // the cutoff is computed inside the action, so a call the guard refuses, from a callback that holds the shared
+        // lock, never reaches the conversion of the time
+        StoreResult<List<String>> deleted = guard
+                .exclusive(() -> deleteAndCollect(now.atOffset(ZoneOffset.UTC).minus(expiry).toInstant()));
         if (deleted.isOk()) {
             List<String> names = Objects.requireNonNull(deleted.value());
             LOGGER.info(GitStoreLogMessages.INFO.DRAFTS_EXPIRED, alias, names.size());
@@ -193,12 +208,24 @@ final class DraftExpiry {
     /**
      * Deletes one draft if its tip lies at or before the cutoff, expecting that tip.
      *
-     * @return {@code true} for a deleted draft, {@code false} for one that is kept (younger, without a tip, or changed
-     *         meanwhile), or the outcome of a failed delete
+     * @return {@code true} for a deleted draft, {@code false} for one that is kept (younger, without a tip, with a tip
+     *         that is no commit, or changed meanwhile), or the outcome of a failed delete
      */
     private GitResult<Boolean> deleteIfStale(RevWalk walk, Ref ref, Instant cutoff) throws IOException {
         ObjectId tip = ref.getObjectId();
-        if (tip == null || walk.parseCommit(tip).getCommitterIdent().getWhenAsInstant().isAfter(cutoff)) {
+        if (tip == null) {
+            return GitResult.ok(false);
+        }
+        Instant committed;
+        try {
+            committed = walk.parseCommit(tip).getCommitterIdent().getWhenAsInstant();
+        } catch (IncorrectObjectTypeException e) {
+            // a reference below refs/drafts/ this class did not write; it is no draft and is left as it is
+            LOGGER.debug("Skipped a reference below %s whose tip is no commit: %s", StoreReferences.DRAFTS,
+                    e.getClass().getSimpleName());
+            return GitResult.ok(false);
+        }
+        if (committed.isAfter(cutoff)) {
             return GitResult.ok(false);
         }
         var result = updater.compareAndDelete(repository, ref.getName(), tip.name(), attempts);

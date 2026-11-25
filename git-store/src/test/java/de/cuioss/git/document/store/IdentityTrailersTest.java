@@ -252,6 +252,41 @@ class IdentityTrailersTest {
             assertEquals("amr: invalid", thrown.getMessage(), "names the component only");
         }
 
+        @ParameterizedTest(name = "of: {0}")
+        @ValueSource(strings = {
+                "issuer| |acr|pwd", "issuer|a\tb|acr|pwd", "issuer|a\nb|acr|pwd",
+                "acr|ISSUER|semi;colon|pwd", "acr|ISSUER|com,ma|pwd", "acr|ISSUER|white space|pwd",
+                "acr|ISSUER|nul\u0000char|pwd", "acr|ISSUER| |pwd",
+                "amr|ISSUER|acr|semi;colon", "amr|ISSUER|acr|com,ma", "amr|ISSUER|acr|white space",
+                "amr|ISSUER|acr|esc\u001Bape", "amr|ISSUER|acr| "})
+        @DisplayName("GDR-STORE-13: of returns a token-derived value that fits no trailer line as MALFORMED")
+        void ofReturnsMalformed(String scenario) {
+            var parts = scenario.split("\\|", -1);
+            var issuer = "ISSUER".equals(parts[1]) ? issuer() : parts[1];
+
+            var result = IdentityClaims.of(issuer, time(), parts[2], List.of("otp", parts[3]));
+
+            assertEquals(StoreResult.of(StoreOutcome.MALFORMED, parts[0] + ": invalid"), result,
+                    "malformed, naming the component and never the value");
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-13: of returns well-formed claims as OK, equal to the checked constructor")
+        void ofReturnsClaims() {
+            var issuer = issuer();
+            var authTime = time();
+            List<String> amr = new ArrayList<>(List.of("pwd", "otp"));
+
+            var result = IdentityClaims.of(issuer, authTime, "urn:example:acr:mfa", amr);
+            amr.add("hwk");
+
+            assertAll(
+                    () -> assertEquals(StoreResult.ok(new IdentityClaims(issuer, authTime, "urn:example:acr:mfa",
+                            List.of("pwd", "otp"))), result, "the claims"),
+                    () -> assertEquals(StoreResult.ok(new IdentityClaims(issuer, authTime, null, List.of())),
+                            IdentityClaims.of(issuer, authTime, null, List.of()), "absent acr and amr"));
+        }
+
         @Test
         @DisplayName("GDR-STORE-13: the claims carry no sub, no sid and no address; amr is copied")
         void noSubjectSessionOrAddress() {
@@ -328,7 +363,7 @@ class IdentityTrailersTest {
                     new UsernamePasswordCredentialsProvider(word(), word()));
             var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
 
-            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(),
+            try (var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(), List.of(),
                          TestKeys.ed25519().source(), new JGitRepositoryOperations(RemotePolicy.localOnly()),
                          Clock.fixed(time(), ZoneOffset.UTC)))) {
                 var draftId = value(writer.draft(author, key, List.of(new TreeEdit.Put(word() + "x",

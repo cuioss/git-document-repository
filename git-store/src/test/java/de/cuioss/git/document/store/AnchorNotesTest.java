@@ -153,7 +153,7 @@ class AnchorNotesTest {
         var operations = new ScriptedRepositoryOperations();
         var provider = new ScriptedAnchorProvider(providerId);
         var gitDir = temp.resolve(word() + ".git");
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(providerId),
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(providerId), List.of(),
                 new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider), operations,
                 Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, operations, provider, user, gitDir);
@@ -327,6 +327,27 @@ class AnchorNotesTest {
     private static List<PushInput> notePushes(Fixture fixture) {
         return fixture.operations().pushes().stream().filter(push -> push.remoteRef().equals(fixture.notesRef()))
                 .toList();
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-17: a fetched note above 16 MiB ends the due check before any proof is built on it")
+    void oversizedNoteIsBounded(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        var main = commit(repository, StoreReferences.MAIN, Instant.ofEpochSecond(100_000));
+        var providerId = "a" + word();
+        // the base64 of the proof is a third larger than the proof, so the note exceeds the bound
+        note(repository, StoreReferences.anchorNotes(providerId), main, new byte[ExplicitSave.BLOB_LIMIT]);
+
+        try (var fixture = open(remote, providerId, start())) {
+            var anchoring = fixture.writer().anchor();
+
+            assertAll(
+                    () -> assertEquals(StoreResult.of(StoreOutcome.INCOMPLETE,
+                                    "anchor: " + ExplicitSave.BlobTooLargeException.class.getSimpleName()), anchoring,
+                            "a defined outcome naming the class only"),
+                    () -> assertEquals(List.of(), fixture.provider().calls(), "no proof was requested"),
+                    () -> assertEquals(List.of(), notePushes(fixture), "no note was pushed"));
+        }
     }
 
     @Test

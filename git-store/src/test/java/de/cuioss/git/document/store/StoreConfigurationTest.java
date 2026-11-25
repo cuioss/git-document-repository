@@ -57,6 +57,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -78,6 +79,12 @@ class StoreConfigurationTest {
     private static final String ORIGIN = "https://git.example";
 
     private static final RemotePolicy HTTPS = RemotePolicy.httpsOrigin(URI.create(ORIGIN));
+
+    /**
+     * The largest {@code drafts.expiry} in whole years that can be subtracted from the epoch in UTC: 1970 minus
+     * 1000001969 years is the year -999999999, the first year of {@link java.time.OffsetDateTime}.
+     */
+    static final String LARGEST_EXPIRY = "P1000001969Y";
 
     private static final TypedGenerator<String> ALIASES =
             Generators.uniqueValues(Generators.strings("abcdefghijklmnopqrstuvwxyz", 4, 16));
@@ -126,30 +133,36 @@ class StoreConfigurationTest {
     }
 
     /** Puts a value under a dotted key, creating the maps on the way and replacing a non-map. */
-    @SuppressWarnings("unchecked")
     private static void put(Map<String, Object> tree, String key, Object value) {
         String[] segments = key.split("\\.");
         Map<String, Object> current = tree;
         for (int index = 0; index < segments.length - 1; index++) {
-            Object next = current.get(segments[index]);
-            if (!(next instanceof Map<?, ?>)) {
-                next = new LinkedHashMap<String, Object>();
-                current.put(segments[index], next);
-            }
-            current = (Map<String, Object>) next;
+            current = child(current, segments[index]);
         }
         current.put(segments[segments.length - 1], value);
     }
 
     /** Removes a dotted key. */
-    @SuppressWarnings("unchecked")
     private static void remove(Map<String, Object> tree, String key) {
         String[] segments = key.split("\\.");
         Map<String, Object> current = tree;
         for (int index = 0; index < segments.length - 1; index++) {
-            current = (Map<String, Object>) current.get(segments[index]);
+            current = child(current, segments[index]);
         }
         current.remove(segments[segments.length - 1]);
+    }
+
+    /**
+     * Replaces the value under a segment by a mutable copy of the map it holds, or by an empty map for a non-map, and
+     * returns the copy; copying the entries avoids an unchecked cast of the nested map.
+     */
+    private static Map<String, Object> child(Map<String, Object> parent, String segment) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        if (parent.get(segment) instanceof Map<?, ?> existing) {
+            existing.forEach((name, nested) -> copy.put(String.valueOf(name), nested));
+        }
+        parent.put(segment, copy);
+        return copy;
     }
 
     private static StoreConfiguration configuration(StoreResult<StoreConfiguration> result) {
@@ -510,6 +523,59 @@ class StoreConfigurationTest {
             assertMalformed(namedKey + " is malformed", StoreConfiguration.from(tree, HTTPS));
         }
 
+        @ParameterizedTest(name = "{0} = {1}")
+        @CsvSource({
+                "fetch.interval, P1000000000000D", "fetch.interval, P36526D",
+                "anchor.checkpoint-interval, P1000000000000D", "anchor.checkpoint-interval, PT876625H",
+                "anchor.retry-interval, P1000000000000D", "anchor.signed.max-clock-skew, P1000000000000D"})
+        @DisplayName("GDR-STORE-18: a duration above 100 years is MALFORMED at configuration time, naming the key")
+        void durationAboveBound(String key, String value) {
+            var tree = minimal();
+            put(tree, key, value);
+
+            assertMalformed(key + " is malformed", StoreConfiguration.from(tree, HTTPS));
+        }
+
+        @ParameterizedTest(name = "{0} = 36525 days")
+        @ValueSource(strings = {"fetch.interval", "anchor.checkpoint-interval", "anchor.retry-interval",
+                "anchor.signed.max-clock-skew"})
+        @DisplayName("GDR-STORE-18: a duration of exactly 100 years is accepted")
+        void durationAtBound(String key) {
+            var tree = minimal();
+            put(tree, key, StoreConfiguration.MAX_DURATION.toString());
+
+            assertTrue(StoreConfiguration.from(tree, HTTPS).isOk(), "the bound itself is accepted");
+        }
+
+        /**
+         * A {@code drafts.expiry} that cannot be subtracted from the epoch in UTC: {@code P2147483647Y}, the largest
+         * year count a period holds, and {@code P1000001970Y}, one year beyond {@link #LARGEST_EXPIRY}, both leave the
+         * year range of {@link java.time.OffsetDateTime}.
+         */
+        @ParameterizedTest(name = "drafts.expiry = {0}")
+        @ValueSource(strings = {"P2147483647Y", "P1000001970Y"})
+        @DisplayName("a drafts.expiry beyond the range of a time is MALFORMED at configuration time, without its value")
+        void draftsExpiryBeyondBound(String value) {
+            var tree = minimal();
+            put(tree, "drafts.expiry", value);
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            assertMalformed("drafts.expiry is malformed", result);
+            assertNoneCarried(result, value, value.substring(1, value.length() - 1));
+        }
+
+        @ParameterizedTest(name = "drafts.expiry = {0}")
+        @ValueSource(strings = {LARGEST_EXPIRY, "P5000Y", "P30D"})
+        @DisplayName("a drafts.expiry at the bound, of several thousand years or of days is accepted as given")
+        void draftsExpiryWithinBound(String value) {
+            var tree = minimal();
+            put(tree, "drafts.expiry", value);
+
+            assertEquals(new Drafts(Period.parse(value)), configuration(StoreConfiguration.from(tree, HTTPS)).drafts(),
+                    "the period is read");
+        }
+
         @ParameterizedTest(name = "{0} = [{1}]")
         @MethodSource("de.cuioss.git.document.store.StoreConfigurationTest#malformedRepositoryValues")
         @DisplayName("GDR-STORE-1: a malformed value of a repository is refused, naming its position")
@@ -639,9 +705,9 @@ class StoreConfigurationTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 
     @Nested

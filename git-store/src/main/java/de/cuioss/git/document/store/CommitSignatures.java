@@ -39,8 +39,13 @@ import org.jspecify.annotations.Nullable;
  * base. A signing failure while a commit is written surfaces from {@code InCoreWriter} as the passed-on
  * {@link GitOutcome#FAILED}; {@link #outcomeOf} maps it back to the outcome of the source.
  * <p>
- * Every non-success is logged as {@code GIT_STORE-110} with the alias, the reference and the outcome. No detail and no
- * log record names the key reference, key material or the detail of the source (GDR-NFR-3).
+ * The source is third-party code: a {@link RuntimeException} of {@link SigningKeySource#publicKey} or
+ * {@link SigningKeySource#sign} is isolated as {@link StoreProviders} isolates a provider, ending the operation with
+ * {@link StoreOutcome#REFUSED} and {@value #SOURCE_REFUSED}, logged by its class name only and without the throwable.
+ * <p>
+ * Every non-success is logged as {@code GIT_STORE-110} with the alias, the class of the reference
+ * ({@link #referenceClass}) and the outcome. No detail and no log record names the reference, the key reference, key
+ * material or the detail of the source (GDR-NFR-3).
  */
 final class CommitSignatures {
 
@@ -86,7 +91,18 @@ final class CommitSignatures {
      *         be reached
      */
     StoreResult<Prepared> prepare(String reference) {
-        StoreResult<String> line = source.publicKey(keyReference);
+        StoreResult<String> line;
+        try {
+            line = source.publicKey(keyReference);
+        }
+        // a third-party source is pluggable code; its failure ends the operation as a refusal, never as an exception,
+        // logged by its class name only and without the throwable, whose message may name the key reference
+        // (GDR-NFR-3), as StoreProviders isolates a provider
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (RuntimeException e) {
+            LOGGER.debug("The signing key source threw %s", e.getClass().getName());
+            return refused(reference, StoreResult.of(StoreOutcome.REFUSED, SOURCE_REFUSED));
+        }
         if (!line.isOk()) {
             return refused(reference, sourceFailure(line.outcome()));
         }
@@ -124,7 +140,32 @@ final class CommitSignatures {
     }
 
     private void log(String reference, StoreResult<?> result) {
-        LOGGER.warn(GitStoreLogMessages.WARN.SIGNING_FAILED, alias, reference, StoreResult.name(result.outcome()));
+        // the reference may carry a document id, so the record names its class only (GDR-NFR-3)
+        LOGGER.warn(GitStoreLogMessages.WARN.SIGNING_FAILED, alias, referenceClass(reference),
+                StoreResult.name(result.outcome()));
+    }
+
+    /**
+     * The class of a reference for the log, never its name: {@code main}, {@code branch}, {@code checkpoint tag},
+     * {@code tag}, {@code notes reference} or {@code reference}.
+     *
+     * @param reference the full name of the reference
+     * @return the class of the reference
+     */
+    static String referenceClass(String reference) {
+        if (StoreReferences.MAIN.equals(reference)) {
+            return "main";
+        }
+        if (reference.startsWith(StoreReferences.CHECKPOINTS)) {
+            return "checkpoint tag";
+        }
+        if (reference.startsWith(StoreReferences.HEADS)) {
+            return "branch";
+        }
+        if (reference.startsWith(StoreReferences.TAGS)) {
+            return "tag";
+        }
+        return reference.startsWith("refs/notes/") ? "notes reference" : "reference";
     }
 
     /** The result of a source that handed out no public key; the source's own detail is never passed on. */

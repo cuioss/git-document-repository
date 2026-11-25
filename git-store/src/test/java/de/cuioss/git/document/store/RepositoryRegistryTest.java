@@ -25,8 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.URI;
 import java.time.Period;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -39,6 +41,10 @@ import de.cuioss.git.document.testing.Remote;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import de.cuioss.test.juli.LogAsserts;
+import de.cuioss.test.juli.TestLogLevel;
+import de.cuioss.test.juli.TestLoggerFactory;
+import de.cuioss.test.juli.junit5.EnableTestLogger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -49,12 +55,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 /**
  * The repository registry (GDR-STORE-1): a valid registry under an HTTPS origin and under the local-only policy, every
  * refusal of {@link RepositoryRegistry#of(List, RemotePolicy)} with a detail naming the alias or the position and never
- * the remote (GDR-NFR-3), the lookup by alias and the retention period.
+ * the remote (GDR-NFR-3), the lookup by alias and the retention period, and the rendering of a remote as scheme, host,
+ * port and path without user, password, query and fragment (GDR-NFR-3).
  * <p>
  * Aliases, confidentiality classes and path segments are generated; the scheme {@code https}, the HTTPS origin
- * {@value #ORIGIN} and the user information of a remote are URL vocabulary and kept as literals.
+ * {@value #ORIGIN}, the user information, the query key {@code token} and the separators of a remote are URL vocabulary
+ * and kept as literals.
  */
 @EnableGeneratorController
+@EnableTestLogger
 @DisplayName("RepositoryRegistry (GDR-STORE-1)")
 class RepositoryRegistryTest {
 
@@ -113,9 +122,9 @@ class RepositoryRegistryTest {
     }
 
     /** Passes {@code null} where the signature forbids it, to exercise the null checks. */
-    @SuppressWarnings("unchecked")
     private static <T> T nullValue() {
-        return (T) null;
+        // the null literal converts to every reference type, so no unchecked cast is needed
+        return null;
     }
 
     @Nested
@@ -368,6 +377,206 @@ class RepositoryRegistryTest {
                             "the remote is rendered without user information"),
                     () -> assertFalse(rendered.contains(user), "no user"),
                     () -> assertFalse(rendered.contains(password), "no password"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a repository renders its remote without query and fragment")
+        void rendersWithoutQueryAndFragment() {
+            var token = credential();
+            var anchor = credential();
+            var path = word();
+            var expected = "remote=" + ORIGIN + "/" + path + ".git,";
+            var withQuery = repository(alias(), ORIGIN + "/" + path + ".git?token=" + token);
+            var withFragment = repository(alias(), ORIGIN + "/" + path + ".git#" + anchor);
+            var withBoth = repository(alias(), ORIGIN + "/" + path + ".git?token=" + token + "#" + anchor);
+
+            assertAll(Stream.of(withQuery, withFragment, withBoth).<Executable>map(repository -> () -> {
+                var rendered = repository.toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains(expected), () -> "scheme, host and path: " + rendered),
+                        () -> assertFalse(rendered.contains(token), "no query"),
+                        () -> assertFalse(rendered.contains(anchor), "no fragment"),
+                        () -> assertFalse(rendered.contains("?"), "no query separator"),
+                        () -> assertFalse(rendered.contains("#"), "no fragment separator"));
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a remote without a slash before its query or fragment renders without either")
+        void rendersWithoutQueryAndFragmentAfterTheHost() {
+            var token = credential();
+            var anchor = credential();
+            var expected = "remote=" + ORIGIN + ",";
+            var withQuery = repository(alias(), ORIGIN + "?token=" + token);
+            var withFragment = repository(alias(), ORIGIN + "#" + anchor);
+
+            assertAll(Stream.of(withQuery, withFragment).<Executable>map(repository -> () -> {
+                var rendered = repository.toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains(expected), () -> "scheme and host: " + rendered),
+                        () -> assertFalse(rendered.contains(token), "no query"),
+                        () -> assertFalse(rendered.contains(anchor), "no fragment"));
+            }));
+        }
+
+        /**
+         * An unencoded {@code ?} inside a password precedes an {@code @} that lies before the first {@code /}: the
+         * text is ambiguous (a password holding the delimiter, or a query holding an {@code @}), so the remote is
+         * rendered as {@code (malformed)}, the ambiguous-case result, and no part of it is rendered. Before the query
+         * and fragment hardening this case rendered scheme, host and path.
+         */
+        @Test
+        @DisplayName("GDR-NFR-3: a question mark in a password makes the remote ambiguous, rendered as (malformed)")
+        void questionMarkInPasswordRendersNoSecret() {
+            var user = credential();
+            var before = credential();
+            var after = credential();
+            var path = word();
+            var repository = repository(alias(),
+                    "https://" + user + ":" + before + "?" + after + "@git.example/" + path + ".git");
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=(malformed),"), () -> "the ambiguous case: " + rendered),
+                    () -> assertFalse(rendered.contains(user), "no user"),
+                    () -> assertFalse(rendered.contains(before), "no part of the password before the question mark"),
+                    () -> assertFalse(rendered.contains(after), "no part of the password after the question mark"),
+                    () -> assertFalse(rendered.contains(path), "no path"));
+        }
+
+        /**
+         * A query or a fragment that holds an {@code @}, with no {@code /} before it: the {@code @} is not the end of
+         * user information, and since the {@code ?} or {@code #} precedes it the remote is ambiguous and rendered as
+         * {@code (malformed)}. The host after the {@code @} is a valid host name, so a rendering that read the
+         * {@code @} as the end of user information would show it.
+         */
+        @Test
+        @DisplayName("GDR-NFR-3: an @ in a query or fragment without a path is never read as user information")
+        void atInQueryOrFragmentRendersMalformed() {
+            var secretHost = Generators.strings("abcdefghijklmnopqrstuvwxyz", 8, 16).next() + ".example";
+            var prefix = credential();
+            var fragment = credential();
+            var withQuery = ORIGIN + "?token=" + prefix + "@" + secretHost;
+            var withFragment = ORIGIN + "#" + fragment + "@" + secretHost;
+            var withBoth = ORIGIN + "?a=b#" + fragment + "@" + secretHost;
+
+            assertAll(Stream.of(withQuery, withFragment, withBoth).<Executable>map(remote -> () -> {
+                var rendered = repository(alias(), remote).toString();
+                assertAll(
+                        () -> assertTrue(rendered.contains("remote=(malformed),"),
+                                () -> "the ambiguous case: " + rendered),
+                        () -> assertFalse(rendered.contains(secretHost), "no host after the @"),
+                        () -> assertFalse(rendered.contains(prefix), "no part of the query"),
+                        () -> assertFalse(rendered.contains(fragment), "no part of the fragment"),
+                        () -> assertFalse(rendered.contains("token"), "no query key"));
+            }));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an @ in a query after the path renders scheme, host and path without the query")
+        void atInQueryAfterPathRendersPath() {
+            var path = word();
+            var mailbox = credential();
+            var domain = Generators.strings("abcdefghijklmnopqrstuvwxyz", 8, 16).next() + ".example";
+            var repository = repository(alias(), ORIGIN + "/" + path + "?mail=" + mailbox + "@" + domain);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=" + ORIGIN + "/" + path + ","),
+                            () -> "scheme, host and path: " + rendered),
+                    () -> assertFalse(rendered.contains(mailbox), "no part of the query before the @"),
+                    () -> assertFalse(rendered.contains(domain), "no part of the query after the @"),
+                    () -> assertFalse(rendered.contains("mail="), "no query key"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an encoded fragment delimiter belongs to the path and stays")
+        void encodedFragmentDelimiterStays() {
+            var path = word();
+            var repository = repository(alias(), ORIGIN + "/" + path + "%23" + path + ".git");
+
+            assertTrue(repository.toString().contains("remote=" + ORIGIN + "/" + path + "%23" + path + ".git,"),
+                    repository::toString);
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a remote without a scheme renders its path without query and fragment")
+        void remoteWithoutSchemeRendersPath() {
+            var path = word();
+            var token = credential();
+            var repository = repository(alias(), "/" + path + "/" + path + ".git?token=" + token);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=/" + path + "/" + path + ".git,"),
+                            () -> "the path: " + rendered),
+                    () -> assertFalse(rendered.contains(token), "no query"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: an encoded delimiter belongs to the path and stays")
+        void encodedDelimiterStays() {
+            var path = word();
+            var repository = repository(alias(), ORIGIN + "/" + path + "%3F" + path + ".git");
+
+            assertTrue(repository.toString().contains("remote=" + ORIGIN + "/" + path + "%3F" + path + ".git,"),
+                    repository::toString);
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: a repository renders the port of its remote and none of user, password and query")
+        void rendersPortWithoutSecrets() {
+            var user = credential();
+            var password = credential();
+            var token = credential();
+            var port = Generators.integers(1, 65_535).next();
+            var path = word();
+            var repository = repository(alias(),
+                    "https://" + user + ":" + password + "@git.example:" + port + "/" + path + ".git?token=" + token);
+
+            var rendered = repository.toString();
+
+            assertAll(
+                    () -> assertTrue(rendered.contains("remote=https://git.example:" + port + "/" + path + ".git,"),
+                            () -> "scheme, host, port and path: " + rendered),
+                    () -> assertFalse(rendered.contains(user), "no user"),
+                    () -> assertFalse(rendered.contains(password), "no password"),
+                    () -> assertFalse(rendered.contains(token), "no query"));
+        }
+
+        @Test
+        @DisplayName("GDR-NFR-3: the record of a refused start carries no user, password or query of a remote")
+        void startRefusedRecordCarriesNoSecret() {
+            var user = credential();
+            var password = credential();
+            var token = credential();
+            Map<String, Object> repository = new LinkedHashMap<>();
+            repository.put("alias", alias());
+            repository.put("remote", "https://" + user + ":" + password + "@git.example/" + word() + ".git?token="
+                    + token);
+            repository.put("confidentiality", word());
+            Map<String, Object> tree = new LinkedHashMap<>();
+            tree.put("save", Map.of("max-attempts", 1));
+            tree.put("drafts", Map.of("expiry", "P1D"));
+            tree.put("fetch", Map.of("interval", "PT1M"));
+            tree.put("repositories", List.of(repository));
+
+            var result = StoreConfiguration.from(tree, HTTPS);
+
+            var records = TestLoggerFactory.getTestHandler().getRecords();
+            assertAll(
+                    () -> assertEquals(StoreOutcome.MALFORMED, result.outcome(), "the start is refused"),
+                    () -> LogAsserts.assertSingleLogMessagePresentContaining(TestLogLevel.WARN,
+                            GitStoreLogMessages.WARN.START_REFUSED.resolveIdentifierString()),
+                    () -> assertTrue(records.stream().map(logRecord -> String.valueOf(logRecord.getMessage()))
+                                    .noneMatch(message -> message.contains(user) || message.contains(password)
+                                            || message.contains(token)),
+                            "no log record carries a user, a password or a query"),
+                    () -> assertTrue(records.stream().allMatch(logRecord -> logRecord.getThrown() == null),
+                            "no throwable is attached"));
         }
 
         @Test

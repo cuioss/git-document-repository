@@ -90,18 +90,23 @@ public final class GitStoreLogMessages {
                 .build();
 
         /**
-         * A signature verification of a reference finished: the reference, the number of commits walked and the number
-         * of commits without a valid signature, never a principal, a key or a commit message.
+         * A signature verification of a reference finished: the number of commits walked and the number of commits
+         * without a valid signature, never the reference, whose name may carry a document id, a principal, a key or a
+         * commit message.
          */
         public static final LogRecord SIGNATURES_VERIFIED = LogRecordModel.builder()
-                .template("Verified the signatures of reference %s: %s commits, %s unverified")
+                .template("Verified the signatures of a reference: %s commits, %s unverified")
                 .prefix(PREFIX)
                 .identifier(6)
                 .build();
 
         /**
          * The anchor provider {@code signed} signed a proof (GDR-STORE-18): the repository alias, the object id of the
-         * subject, the time of the statement, its sequence number and the SHA-256 of the proof, nothing else.
+         * subject, the time of the statement, its sequence number and the SHA-256 of the proof, nothing else. It records
+         * the signing, before the note is written: a proof whose push failed while its notes tip stayed the same is kept
+         * and published by a later due check without the provider signing it again, while a proof whose notes tip moved is dropped and a
+         * later due check signs a new one, so a subject may have several of these records; its publication is
+         * {@code GIT_STORE-9}.
          */
         public static final LogRecord PROOF_SIGNED = LogRecordModel.builder()
                 .template("Signed an anchor proof of repository %s for object %s at %s, sequence %s, SHA-256 %s")
@@ -243,12 +248,14 @@ public final class GitStoreLogMessages {
                 .build();
 
         /**
-         * A save or release was refused because its commit could not be signed, nothing of it on the remote: the
-         * repository alias, the reference and the outcome, never the key reference, key material or the detail of the
-         * signing key source.
+         * A save, release, checkpoint or anchor note was refused because its commit could not be signed, nothing of it
+         * on the remote, also when the signing key source threw: the repository alias, the class of the reference
+         * ({@code main}, {@code branch}, {@code tag}, {@code checkpoint tag}, {@code notes reference}) and the outcome,
+         * never the reference name, the key reference, key material, the detail of the signing key source or a
+         * throwable.
          */
         public static final LogRecord SIGNING_FAILED = LogRecordModel.builder()
-                .template("Did not sign the commit of repository %s, reference %s: %s")
+                .template("Did not sign the commit of repository %s for a %s: %s")
                 .prefix(PREFIX)
                 .identifier(110)
                 .build();
@@ -271,6 +278,29 @@ public final class GitStoreLogMessages {
                 .template("Did not push an anchoring reference of repository %s, kept for the next due check: %s")
                 .prefix(PREFIX)
                 .identifier(112)
+                .build();
+
+        /**
+         * A refresh of the index could not read one source; it keeps the previous entries of that source, the other
+         * sources are published fresh, and the next operation of the writer retries it (GDR-STORE-9): the repository
+         * alias, the class of the source ({@code main}, {@code working branch} or {@code collection branch}), never
+         * its reference name, and the class name of the exception, never its message.
+         */
+        public static final LogRecord INDEX_SOURCE_UNREAD = LogRecordModel.builder()
+                .template("Kept the previous index entries of repository %s for a %s that could not be read: %s")
+                .prefix(PREFIX)
+                .identifier(113)
+                .build();
+
+        /**
+         * A close of the writer was refused because it was issued inside a callback that holds a lock of the clone; the
+         * writer stays open and is closed by a close after the callback returned: the repository alias and the detail
+         * of the refusal.
+         */
+        public static final LogRecord CLOSE_REFUSED = LogRecordModel.builder()
+                .template("Did not close the writer of repository %s, close it after the callback returned: %s")
+                .prefix(PREFIX)
+                .identifier(114)
                 .build();
     }
 }

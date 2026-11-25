@@ -278,6 +278,47 @@ class CommitSignatureTest {
         }
     }
 
+    /** A signing key source over a test key that throws a {@link RuntimeException} on one of its calls. */
+    private static final class Throwing implements SigningKeySource {
+
+        /** The message of the thrown exception, which must reach no log record. */
+        static final String MESSAGE = "thrown-by-the-source";
+
+        /** The call that throws. */
+        enum Call {
+            PUBLIC_KEY, SIGN
+        }
+
+        private final TestKeys.Source keys;
+        private final Call call;
+
+        Throwing(TestKeys.Source keys, Call call) {
+            this.keys = keys;
+            this.call = call;
+        }
+
+        @Override
+        public String id() {
+            return "throwing";
+        }
+
+        @Override
+        public StoreResult<byte[]> sign(String keyReference, byte[] data) {
+            if (call == Call.SIGN) {
+                throw new IllegalStateException(MESSAGE);
+            }
+            return keys.sign(keyReference, data);
+        }
+
+        @Override
+        public StoreResult<String> publicKey(String keyReference) {
+            if (call == Call.PUBLIC_KEY) {
+                throw new IllegalStateException(MESSAGE);
+            }
+            return keys.publicKey(keyReference);
+        }
+    }
+
     /** The writer under test with its clone and its transport double. */
     private record Fixture(StoreWriter writer, Path gitDir, ScriptedRepositoryOperations operations)
             implements AutoCloseable {
@@ -315,8 +356,8 @@ class CommitSignatureTest {
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var operations = new ScriptedRepositoryOperations();
         var now = Instant.ofEpochSecond(Generators.integers(1_000_000_000, 2_000_000_000).next());
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(true), signing, operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration(true), List.of(), signing,
+                operations, Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, operations);
     }
 
@@ -531,6 +572,41 @@ class CommitSignatureTest {
             }
         }
 
+        @ParameterizedTest(name = "throws on {0}")
+        @EnumSource(Throwing.Call.class)
+        @DisplayName("GDR-STORE-12, GDR-NFR-3: a source that throws is isolated as REFUSED; GIT_STORE-110 names no reference")
+        void throwingSource(Throwing.Call call, @Remote LocalRemote remote) throws Exception {
+            var key = document();
+            var mainTip = fork(remote.repository(), key);
+            var target = StoreReferences.target(key);
+            var targetTip = Objects.requireNonNull(tip(remote.repository(), target));
+            var author = Author.of(pseudonym());
+            var source = new Throwing(TestKeys.ed25519().source(), call);
+            var detail = call == Throwing.Call.PUBLIC_KEY ? CommitSignatures.SOURCE_REFUSED
+                    : target + CommitSignatures.NOT_SIGNED;
+
+            try (var fixture = open(remote, source)) {
+                var draft = fixture.draft(author, key);
+
+                var saved = fixture.save(author, key);
+                var released = fixture.writer().release(author, CLAIMS, key);
+
+                var logged = SourceSignerTest.logged();
+                var signing = logged.lines()
+                        .filter(line -> line.startsWith(GitStoreLogMessages.WARN.SIGNING_FAILED
+                                .resolveIdentifierString()))
+                        .toList();
+                assertAll(
+                        () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.REFUSED, detail), saved, "the save"),
+                        () -> assertEquals(StoreResult.of(StoreOutcome.REFUSED, detail), released, "the release"),
+                        () -> assertEquals(2, signing.size(), () -> "one signing record each: " + logged),
+                        () -> assertTrue(signing.stream().noneMatch(line -> line.contains(key.id())),
+                                () -> "the signing records name the reference class only: " + signing),
+                        () -> assertFalse(logged.contains(Throwing.MESSAGE), "the throwable is not logged"));
+                assertNothingChanged(fixture, remote, key, author, draft, targetTip, mainTip);
+            }
+        }
+
         @Test
         @DisplayName("GDR-STORE-12: a source handing out an ssh-rsa key ends save and release with REFUSED")
         void rsaKeyRefused(@Remote LocalRemote remote) throws Exception {
@@ -571,7 +647,7 @@ class CommitSignatureTest {
             var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
             var operations = new ScriptedRepositoryOperations();
 
-            var opened = StoreWriter.open(storeRepository, gitDir, user, configuration(false),
+            var opened = StoreWriter.open(storeRepository, gitDir, user, configuration(false), List.of(),
                     TestKeys.ed25519().source(), operations, Clock.systemUTC());
 
             assertAll(

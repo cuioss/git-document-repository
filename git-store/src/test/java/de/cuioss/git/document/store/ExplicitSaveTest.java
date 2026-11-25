@@ -35,10 +35,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 
 
@@ -306,8 +308,8 @@ class ExplicitSaveTest {
         var gitDir = temp.resolve(word() + ".git");
         var now = time();
         var operations = new ScriptedRepositoryOperations();
-        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, source, operations,
-                Clock.fixed(now, ZoneOffset.UTC)));
+        var writer = value(StoreWriter.open(storeRepository, gitDir, user, configuration, List.of(), source,
+                operations, Clock.fixed(now, ZoneOffset.UTC)));
         return new Fixture(writer, gitDir, user, now, operations);
     }
 
@@ -337,6 +339,73 @@ class ExplicitSaveTest {
     @Nested
     @DisplayName("Explicit save (GDR-STORE-3)")
     class Save {
+
+        @Test
+        @DisplayName("GDR-STORE-3: an executable file and a symbolic link of the draft are saved with their modes")
+        void savesTheDraftModes(@Remote LocalRemote remote) throws Exception {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var regular = word() + "r";
+            commit(remote.repository(), target, files(regular));
+            var executable = word() + ".sh";
+            var link = word() + "l";
+            var script = text() + "-x";
+            var linkTarget = word() + "-t";
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, List.of(
+                        new TreeEdit.Put(executable, script.getBytes(StandardCharsets.UTF_8),
+                                TreeEdit.Mode.EXECUTABLE_FILE),
+                        new TreeEdit.Put(link, linkTarget.getBytes(StandardCharsets.UTF_8), TreeEdit.Mode.SYMLINK)));
+
+                var saved = assertInstanceOf(SaveResult.Saved.class, fixture.save(author, key, Map.of()));
+
+                var commit = ObjectId.fromString(saved.commitId());
+                Map<String, FileMode> modes = new TreeMap<>();
+                try (TreeWalk walk = new TreeWalk(remote.repository())) {
+                    walk.addTree(parse(remote.repository(), commit).getTree());
+                    walk.setRecursive(true);
+                    while (walk.next()) {
+                        modes.put(walk.getPathString(), walk.getFileMode(0));
+                    }
+                }
+                var files = tree(remote.repository(), commit);
+                assertAll(
+                        () -> assertEquals(FileMode.EXECUTABLE_FILE, modes.get(executable), "executable, 100755"),
+                        () -> assertEquals(FileMode.SYMLINK, modes.get(link), "a symbolic link, 120000"),
+                        () -> assertEquals(FileMode.REGULAR_FILE, modes.get(regular), "the tip's file unchanged"),
+                        () -> assertEquals(script, files.get(executable), "the content of the executable"),
+                        () -> assertEquals(linkTarget, files.get(link), "the target of the link"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a fetched blob above 16 MiB read by the step ends the save with a defined outcome")
+        void oversizedFetchedBlobEndsTheSave(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var large = word() + "-large";
+            var tipId = commit(remote.repository(), target, Map.of(large, "x".repeat(ExplicitSave.BLOB_LIMIT + 1)));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                fixture.draft(author, key, puts(files(word() + "d")));
+
+                var result = fixture.writer().save(author, CLAIMS, key, Map.of(), word(),
+                        attempt -> new SaveStep.Edits(attempt.tipContent(large).map(content -> List.<TreeEdit>of())
+                                .orElse(List.of())));
+
+                var notSaved = assertInstanceOf(SaveResult.NotSaved.class, result, "not saved");
+                assertAll(
+                        () -> assertEquals(new StoreResult.PassedOn(GitOutcome.FAILED), notSaved.outcome(),
+                                "the passed-on failure of an unreadable object"),
+                        () -> assertEquals(Optional.of(target + ": step: " + UncheckedIOException.class.getName()),
+                                notSaved.detail(), "the read failure ends the save like a failing step"),
+                        () -> assertEquals(tipId, tip(remote.repository(), target), "the remote target unchanged"),
+                        () -> assertEquals(List.of(), fixture.operations().pushes(), "nothing is pushed"));
+            }
+        }
 
         @Test
         @DisplayName("GDR-STORE-3: a save is one commit on the remote tip, the draft deleted and never pushed")
@@ -883,7 +952,36 @@ class ExplicitSaveTest {
         }
 
         @Test
-        @DisplayName("GDR-STORE-3: a save whose every attempt is refused or rejected is rejected")
+        @DisplayName("GDR-STORE-3: a permanent rejection of the push, such as a protected branch, ends the save at once")
+        void permanentRejectionEndsAtOnce(@Remote LocalRemote remote) {
+            var key = key(Kind.PER_DOCUMENT);
+            var target = StoreReferences.target(key);
+            var tipId = commit(remote.repository(), target, files(word()));
+            var author = Author.of(pseudonym());
+
+            try (var fixture = open(remote)) {
+                var draft = fixture.draft(author, key, puts(files(word() + "x")));
+                // a protected branch: git-core reports the refusal of the remote as REJECTED, a lost race as
+                // LEASE_REFUSED (GDR-CORE-7), so the save must not spend its attempts on REJECTED
+                fixture.operations().failPush(GitOutcome.REJECTED, GitOutcome.REJECTED, GitOutcome.REJECTED);
+
+                var result = fixture.save(author, key, Map.of());
+
+                assertAll(
+                        () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.REJECTED),
+                                ScriptedRepositoryOperations.SCRIPTED), result, "rejected with the detail of git-core"),
+                        () -> assertEquals(1, fixture.operations().pushes().size(), "exactly one attempt pushed"),
+                        () -> assertEquals(1, fixture.operations().fetches().size(), "exactly one attempt fetched"),
+                        () -> assertEquals(tipId, tip(remote.repository(), target), "the remote is unchanged"),
+                        () -> assertEquals(tipId, fixture.localTip(target), "the local target is unchanged"),
+                        () -> assertEquals(ObjectId.fromString(draft),
+                                fixture.localTip(value(StoreReferences.draft(author.pseudonym(), key))),
+                                "the draft is kept"));
+            }
+        }
+
+        @Test
+        @DisplayName("GDR-STORE-3: a save whose every attempt lost its lease is rejected after the last attempt")
         void rejectedAfterLastAttempt(@Remote LocalRemote remote) {
             var key = key(Kind.PER_DOCUMENT);
             var target = StoreReferences.target(key);
@@ -892,13 +990,15 @@ class ExplicitSaveTest {
 
             try (var fixture = open(remote)) {
                 var draft = fixture.draft(author, key, puts(files(word() + "x")));
-                fixture.operations().failPush(GitOutcome.LEASE_REFUSED, GitOutcome.REJECTED, GitOutcome.LEASE_REFUSED);
+                // one lost lease per configured attempt, so the budget the writer is opened with is the one exhausted
+                fixture.operations().failPush(
+                        Collections.nCopies(ATTEMPTS, GitOutcome.LEASE_REFUSED).toArray(GitOutcome[]::new));
 
                 var result = fixture.save(author, key, Map.of());
 
                 assertAll(
                         () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.REJECTED),
-                                        target + ": lease refused or rejected on every attempt (" + ATTEMPTS + ")"), result,
+                                        target + ": lease refused on every attempt (" + ATTEMPTS + ")"), result,
                                 "rejected"),
                         () -> assertEquals(ATTEMPTS, fixture.operations().pushes().size(), "every attempt pushed"),
                         () -> assertEquals(ATTEMPTS, fixture.operations().fetches().size(),
@@ -923,10 +1023,16 @@ class ExplicitSaveTest {
                                 "a missing draft"),
                         () -> assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED, "pseudonym: invalid"),
                                 fixture.save(Author.of(word() + "/" + word()), key, Map.of()), "an invalid pseudonym"),
-                        () -> assertEquals(new SaveResult.NotSaved(new StoreResult.PassedOn(GitOutcome.NOT_FOUND),
-                                        "expectedBlobIds: not a full object id"),
-                                fixture.save(Author.of(pseudonym()), key, Map.of(word(), word())),
-                                "an invalid expected id"),
+                        () -> {
+                            // the marker character cannot occur in the detail, so the value is absent from it
+                            var value = "#" + word();
+                            var refused = fixture.save(Author.of(pseudonym()), key, Map.of(word(), value));
+                            assertEquals(new SaveResult.NotSaved(StoreOutcome.MALFORMED,
+                                            "expectedBlobIds: not a full object id"), refused,
+                                    "an invalid expected id is a malformed argument");
+                            assertFalse(Objects.requireNonNull(refused.toResult().detail()).contains(value),
+                                    "the detail never names the value");
+                        },
                         () -> assertEquals(List.of(), fixture.operations().fetches(), "nothing was fetched"));
             }
         }

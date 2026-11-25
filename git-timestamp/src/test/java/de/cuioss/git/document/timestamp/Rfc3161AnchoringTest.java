@@ -162,7 +162,7 @@ class Rfc3161AnchoringTest {
         var storeRepository = new StoreRepository(word(), remote.uri().toString(), word(), null);
         var user = new TechnicalUser(word(), null, new UsernamePasswordCredentialsProvider(word(), word()));
         var writer = value(StoreWriter.open(storeRepository, temp.resolve(word() + ".git"), user, configuration,
-                providers, new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.systemUTC()));
+                List.of(), providers, new JGitRepositoryOperations(RemotePolicy.localOnly()), Clock.systemUTC()));
         return new Opened(writer, provider);
     }
 

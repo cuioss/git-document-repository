@@ -100,8 +100,21 @@ class LogMessagesCatalogueTest {
 
         assertAll(
                 () -> assertEquals("GIT_STORE-110", signingFailed.resolveIdentifierString(), "the identifier"),
-                () -> assertEquals("Did not sign the commit of repository %s, reference %s: %s",
+                () -> assertEquals("Did not sign the commit of repository %s for a %s: %s",
                         documented.get(signingFailed.resolveIdentifierString()), "the catalogued template"));
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-4: the unreadable index source GIT_STORE-113 of GDR-STORE-9 is declared and catalogued")
+    void unreadSourceIsCatalogued() throws Exception {
+        var unread = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD;
+
+        var documented = documented(new TreeMap<>());
+
+        assertAll(
+                () -> assertEquals("GIT_STORE-113", unread.resolveIdentifierString(), "the identifier"),
+                () -> assertEquals("Kept the previous index entries of repository %s for a %s that could not be read: %s",
+                        documented.get(unread.resolveIdentifierString()), "the catalogued template"));
     }
 
     @Test
@@ -113,7 +126,7 @@ class LogMessagesCatalogueTest {
 
         assertAll(
                 () -> assertEquals("GIT_STORE-6", verified.resolveIdentifierString(), "the identifier"),
-                () -> assertEquals("Verified the signatures of reference %s: %s commits, %s unverified",
+                () -> assertEquals("Verified the signatures of a reference: %s commits, %s unverified",
                         documented.get(verified.resolveIdentifierString()), "the catalogued template"));
     }
 }

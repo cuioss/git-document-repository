@@ -152,7 +152,7 @@ class VerifyAnchorsTest {
                 null, Duration.ofMinutes(5), clock);
         try (var writer = value(StoreWriter.open(new StoreRepository(word(), remote.uri().toString(), word(), null),
                      temp.resolve(word() + ".git"), new TechnicalUser(word(), null,
-                             new UsernamePasswordCredentialsProvider(word(), word())), configuration,
+                             new UsernamePasswordCredentialsProvider(word(), word())), configuration, List.of(),
                      new StoreProviders(TestKeys.ed25519().source(), new TestPersonDirectory(), provider),
                      new ScriptedRepositoryOperations(), clock))) {
             assertEquals(1, value(writer.anchor()).anchored().size(), "the first checkpoint is anchored");
@@ -217,6 +217,51 @@ class VerifyAnchorsTest {
                         + StoreReferences.MAIN), run.out()),
                 () -> assertEquals("", run.err(), "nothing on standard error"));
         assertNoSecret(run, gitDir(remote), signers);
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a moved checkpoint tag and a duplicate subject exit 1 naming the checkpoint tag")
+    void checkpointChainFindingsExitOne(@Remote LocalRemote remote) throws Exception {
+        var repository = remote.repository();
+        commit(repository, StoreReferences.MAIN);
+        anchor(remote);
+        var first = Objects.requireNonNull(repository.exactRef(StoreReferences.checkpoint(1)), "checkpoint 1")
+                .getObjectId();
+        RefUpdate duplicate = repository.updateRef(StoreReferences.checkpoint(2));
+        duplicate.setNewObjectId(first);
+        assertEquals(RefUpdate.Result.NEW, duplicate.update(), "the fixture tag is written");
+        var moved = commit(repository, StoreReferences.checkpoint(3));
+        String signers = anchorSignersFile().toString();
+
+        var run = run(gitDir(remote), signers);
+
+        assertAll(
+                () -> assertEquals(VerifyAnchors.FINDINGS, run.code(), "exit 1"),
+                () -> assertTrue(run.lines().contains("CHECKPOINT_DUPLICATE " + first.name() + " "
+                        + StoreReferences.checkpoint(2)), run.out()),
+                () -> assertTrue(run.lines().contains("CHECKPOINT_UNREADABLE " + moved.name() + " "
+                        + StoreReferences.checkpoint(3)), run.out()),
+                () -> assertEquals("", run.err(), "nothing on standard error"));
+        assertNoSecret(run, gitDir(remote), signers);
+    }
+
+    @Test
+    @DisplayName("GDR-STORE-16: a finding of the checkpoint chain prints its kind, its subject and the checkpoint tag")
+    void checkpointChainLines() {
+        var subject = ObjectId.zeroId().name();
+        var tag = StoreReferences.checkpoint(Generators.integers(2, 99).next());
+
+        assertAll(
+                () -> assertEquals("CHECKPOINT_CHAIN_BROKEN " + subject + " " + tag, VerifyAnchors.line(
+                        new AnchorVerification.Finding(AnchorVerification.Kind.CHECKPOINT_CHAIN_BROKEN, subject, tag,
+                                null)), "a broken chain"),
+                () -> assertEquals("CHECKPOINT_DUPLICATE " + subject + " " + tag, VerifyAnchors.line(
+                        new AnchorVerification.Finding(AnchorVerification.Kind.CHECKPOINT_DUPLICATE, subject, tag,
+                                null)), "a duplicate"),
+                () -> assertEquals("CHECKPOINT_UNREADABLE " + subject + " " + Checkpoints.REFS_FILE,
+                        VerifyAnchors.line(new AnchorVerification.Finding(
+                                AnchorVerification.Kind.CHECKPOINT_UNREADABLE, subject, Checkpoints.REFS_FILE, null)),
+                        "an unreadable line of the refs file"));
     }
 
     @Test
