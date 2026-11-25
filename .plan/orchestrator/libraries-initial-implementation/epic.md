@@ -138,7 +138,29 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   releases it**; later `git-core` and `git-testing` leftovers fold into it until it is launched. It declares `AGENTS.md`, `general.adoc` and the
   `git-core` and `git-testing` directories, so the gate puts it to the operator against any plan in flight that declares them.
 - PLAN-14 — gained deliverable 5 on 2026-11-24 (PLAN-23's `git-forms` leftovers: the pointer-string amplification of `DataNode`, the unbounded
-  `holdsRequired` chain, the hexadecimal digit drift and the residue), five deliverables, below ten; it stays blocked on PLAN-13.
+  `holdsRequired` chain, the hexadecimal digit drift and the residue), five deliverables, below ten; it stays blocked on PLAN-13. It gained
+  deliverable 6 the same day (the step-up switch `step-up.enabled` and single-factor `step-up.amr` values of GDR-FORMS-7, from the Audit Notary request
+  `audit-notary-001`); six deliverables, below ten, and two concept documents join its Expected Surface (seven declared entries). It gained
+  deliverable 7 on 2026-11-24 from the analysis of PLAN-13 (the resume of a failed release, on the operator's answer "resume", and the
+  `git-forms` minors L3-3, L3-4, L3-6, L2-1, L2-2), seven deliverables, below ten, no new surface. PLAN-13 is shipped, so PLAN-14 is now
+  admissible by dependency; it is NOT emitted (the operator's word of 2026-11-25: do not emit, drain the current plans).
+- PLAN-13 — Shipped (PR #64, `e38e079`, `landings/PLAN-13.md`): generated output, workflow and step-up per transition in `git-forms` (45 files,
+  +7569/-53); four spec deliverables, six reported. The one change to `git-store` the spec ruled out (a pinned release, GDR-STORE-6) was approved by
+  the operator during review. It merged under an operator-recorded authorization over a review gap (Sourcery refused on size). Its analysis found one
+  major defect (a failed release cannot be retried through the transition API), five minor ones and the two spec/surface gaps; routing is in
+  Decisions.
+- PLAN-25 — `git-store` container plan (staged 2026-11-24 on the operator's answer, WS-02): the pinned release on the tag-only recovery path (L3-2
+  of PLAN-13). **Held back from `next` until the operator releases it**; strictly sequential after PLAN-22 on `git-store/`; later `git-store`
+  leftovers fold into it until it is launched. It gained deliverable 2 on 2026-11-25 (the unbounded read of a stored anchor proof, L3-5 of
+  PLAN-17's analysis); two deliverables, below ten, no new surface.
+- PLAN-17 — Shipped (PR #74, `729ca28`, `landings/PLAN-17.md`): the optional module `git-timestamp` with the `rfc3161` anchor provider (32 files),
+  on an own bounded DER/CMS reader and writer, no dependency (the owner's decision of 2026-11-24); the reactor has four modules. The spec said four
+  deliverables, the lane reported five. Merged with the open Sonar INFO java:S2143 (operator's choice) and without CodeRabbit's review of the
+  last two commits (its quota ran out; operator's choice "Merge without it"). Its analysis found no blocker and no major code defect, one major
+  test gap (the core verification rules have no test that can fail) and six minor defects; routing is in Decisions.
+- PLAN-26 — `git-timestamp` container plan (staged 2026-11-25 under the routing rule, WS-05): the test gaps, the code defects and the TLS trust
+  statement of PLAN-17's analysis, three deliverables. **Held back from `next` until the operator releases it**; later `git-timestamp`
+  leftovers fold into it until it is launched.
 - PLAN-17 — Emitted on 2026-11-24 beside PLAN-13 (PLAN-11 shipped, so its dependency is met); the operator accepted the 4 to 5 shared files with
   PLAN-13 (`AGENTS.md`, `doc/README.adoc`, `general.adoc`, `pom.xml`, `module-structure.adoc` against the live plan) and the two shared with
   PLAN-22 (`AGENTS.md`, `general.adoc`). Opens with the owner decision on the RFC 3161 library.
@@ -516,6 +538,16 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - 2026-11-24 — PLAN-24 (`git-core` and `git-testing` hardening, WS-01, two deliverables) staged under the routing rule, held back from `next`;
   PLAN-14 gained deliverable 5 (the PLAN-23 findings L3-1 to L3-6 and L2-1 to L2-4), adding no file surface; its claims are stamped
   (PLAN-24 claims 0 to 3 `corroborated` at `f7eda4e`).
+- 2026-11-24 — **Inbox drain: `audit-notary-001` (finding, sender `audit-notary`, an orchestrator of the Audit Notary repository) folded into PLAN-14 as
+  deliverable 6.** The request: a boolean `step-up.enabled` (default `true`) that switches step-up off for every transition (and then requires none of `step-up.amr`, `step-up.acr`,
+  `step-up.max-age`), and GDR-FORMS-7 stating that the deployment decides which `amr`/`acr` values satisfy step-up, `mfa` staying the default and a single method such as `pwd`
+  allowed. Verified against ground truth: GDR-FORMS-7 at `7531b72` (`git-forms.adoc` 542-570) has no switch (per-transition `step-up` only; `step-up.max-age` required) and words
+  `step-up.amr` as multi-factor only; the head of PR #64 (PLAN-13) adds `StepUpPolicy(amr, acr, maxAge)` with no `enabled` component and the same wording in its Javadoc, so the change lands on
+  top of PLAN-13. Not verified: the consumer's own decision (ADR-0005 and AUN-AUTH-4/6 of cuioss/Audit-Notary were not read; the message is a lead on the consumer side, ground truth on
+  the library side). Routing rule applied without asking: PLAN-13 is running (frozen), PLAN-14 is the next staged plan editing `git-forms/`, six deliverables. The fold adds file
+  surface, so the Expected Surface gained `doc/concepts/identity-and-signing.adoc` and `doc/concepts/schema-driven-documents.adoc` (both word the setting as MFA) in the same edit; claim 2
+  (the state at `7531b72`) is stamped `corroborated`. Not a plan-marshall subject, so the second standing rule does not apply. One thing the operator may want to decide: the request
+  weakens the library's default reading of step-up (a deployment may now switch it off) — it follows the consumer's owner decision and keeps the default `true`.
 
 - 2026-11-24 — **plan-marshall lessons and tooling findings moved** to the `lessons-routing` inbox of `/home/oliver/git/plan-marshall`, on the operator's word:
   76 lessons with a `plan-marshall:*` or a domain-bundle (`pm-*`) component became `candidate-lesson` messages (`libraries-initial-implementation-001` to
@@ -548,6 +580,23 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   appends a deliverable, extends the Expected Surface and stamps claims in one act and refuses a frozen plan; a container-plan template with a held-back field on the queue row and a
   configured deliverable bound of 10; `analyze` Step 4 and `handle-open` reading an epic-level `routing_rule`; the question kept for a real fork). Until it ships the rule is applied by
   hand here. The inbox read 123 live messages, 0 invalid, after the write.
+- 2026-11-25 — **PLAN-13 landing analysed and reconciled** (`landings/PLAN-13.md`; PR #64, `e38e079`; the inbox drain of the landing message and its eight candidate
+  lessons). Row `shipped`, `pr` 64, `landing` stamped. The three-layer analysis (one read-only leaf, every `checked` point re-read except the middle of the depth-129
+  chain) found one major and five minor layer-3 defects, two layer-2 test gaps and three layer-1 gaps. Routing under the standing rule and the operator's answers of
+  2026-11-24: the forms-side findings, with the major L3-1 on "resume", into PLAN-14 deliverable 7 (seven deliverables, no new surface; the same edit added the claim
+  about the state at `e38e079`); the `git-store` finding L3-2 into the new container plan PLAN-25 (held back; the pinned release's behaviour on the tag-only recovery
+  path is decided at its outline because it changes GDR-STORE-6); L3-5 kept. The eight candidate lessons are plan-marshall subjects and went to the plan-marshall
+  `lessons-routing` inbox as `libraries-initial-implementation-080` to `-087` (second standing rule; `lessons-moved.md`). Nothing was emitted, on the operator's word.
+
+- 2026-11-25 — **PLAN-17 landing analysed and reconciled** (`landings/PLAN-17.md`; PR #74, `729ca28`; the inbox drain of the landing message and its eleven
+  candidate lessons). Row `shipped`, `pr` 74, `landing` stamped. The three-layer analysis (one read-only leaf; the points that carry a finding re-read, the
+  rest named as not re-read in the report) found no blocker and no major code defect, one major test gap (L2-1), six minor defects and one point not shown
+  by reading (L3-7). Routing under the standing rule, without a question (no fork: nothing changes a documented behaviour before the owner decides it at
+  an outline): no staged plan edits `git-timestamp`, so the new container plan **PLAN-26** (held back) takes L1-1, L2-1 to L2-3, L3-1 to L3-4, L3-6 and
+  L3-7; the `git-store` finding L3-5 (the unbounded read of a stored note and proof) went into PLAN-25 deliverable 2. Documented-behaviour changes
+  (the TLS trust statement, the `toString` host, the `tsa` check) are decided with the owner at PLAN-26's outline. The eleven candidate lessons are
+  plan-marshall or `pm-*` subjects and went to the plan-marshall `lessons-routing` inbox as `libraries-initial-implementation-088` to `-098` (second
+  standing rule; `lessons-moved.md`). Nothing was emitted, on the operator's word.
 
 ## Open Defects
 
@@ -683,6 +732,25 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   and was undecidable for PLAN-02 (the review-body parser cannot read CodeRabbit's "Minor comments: 18" section); the handled
   count and the open Sonar count were not re-verified for any of them (the Sonar gate reads OK for PLAN-02 and PLAN-18). A
   manual paste from a plan may still surface a required fact the inbox did not carry. Recurring cause: a tooling gap, filed as a lesson.
+- **PLAN-13's landing is incomplete** (`plan-13-forms-output-workflow-stepup-009`, drained 2026-11-25): `landing-check` reports `complete: false`, missing key
+  `effort` (`effort=unknown`; the other required facts are present). The landing was drained and reconciled as far as it goes; a manual paste from
+  that plan may still surface the effort. Its review-gate re-read is `undecidable` (the parser cannot read CodeRabbit's "Minor comments: 1"), a
+  recurrence of the producer gap already filed to the plan-marshall inbox (`-075`), so the three review numbers are recorded as not re-verified.
+- **PLAN-13's code defects, routed 2026-11-24 and 2026-11-25** (`landings/PLAN-13.md`): L3-1 (major: a `release` transition that fails after its save
+  cannot be retried, `TRANSITION_REFUSED`), L3-3 (the fragment cost outside the operation budget), L3-4 (the save reads files the check refuses over
+  16 MiB), L3-6 (a part at depth 129 throws instead of a result), L2-1 and L2-2 (the missing tests), and the info items (`isOutput` without a production
+  caller, an unescaped path, the undocumented duplicate-transition-name refusal) are **PLAN-14 deliverable 7**; L3-2 (the pinned release on the
+  tag-only recovery path returns an `OK` `Release` naming an earlier release) is **PLAN-25**; L3-5 (an `auth_time` in the future always passes) is kept
+  by decision and recorded in `git-forms.adoc` by PLAN-14 d7. Each stays open until its plan ships.
+- **PLAN-17's landing is incomplete** (`plan-17-timestamp-rfc3161-012`, drained 2026-11-25): `landing-check` reports `complete: false`, missing keys
+  `review_body_findings_total` and `review_body_findings_handled` (both `unknown`: no finalize step records them, the producer gap already filed as
+  `-075`). Reconciled as far as it goes; the review-gate re-read is `undecidable` (the parser cannot read CodeRabbit's "Minor comments: 16"), so the
+  three review numbers are not re-verified.
+- **PLAN-17's code defects and test gaps, routed 2026-11-25** (`landings/PLAN-17.md`): L2-1 (major, the core verification rules have no test that can
+  fail), L2-2, L2-3, L3-1 to L3-4, L3-6, L3-7 and L1-1 are **PLAN-26**; L3-5 is **PLAN-25 deliverable 2**. Each stays open until its plan ships.
+- **PLAN-17 merged without the review the barrier counts** (2026-11-25): CodeRabbit (required) did not review `15afbb5` and `67b17d7` (quota ran out;
+  operator's choice "Merge without it"); the barrier reported `review_complete_after_handling`, a plan-marshall defect filed as `-090`. The two
+  commits are covered by this epic's three-layer reading of the merged module, which found no blocker; they are not covered by a bot review.
 
 ## Watches
 
@@ -768,3 +836,5 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   plan. — re-checked at the PLAN-08 landing (2026-11-21): the shipped `StoreWriter.save` has no per-attempt step, so the hypothesis of
   PLAN-13 and PLAN-16 was contradicted. A store gap, staged by the operator's word as PLAN-09 deliverable 5 (GDR-STORE-3 amended);
   PLAN-13 and PLAN-16 name it in their Dependencies. Retired.
+- **PLAN-22 rebases over PLAN-13's pinned release** (2026-11-25): PLAN-13 changed `git-store` `DocumentRelease`, `StoreClone`, `StoreWriter` and `ReleaseTest` (`landings/PLAN-13.md` L1-4), files PLAN-22 edits too; its PR #76 replaced #75 and is open. Check at PLAN-22's landing whether the rebase conflicted and whether its tests still pin the three-argument release. PLAN-25 follows PLAN-22 on the same files.
+- **PLAN-17's Sonar issue java:S2143 needs a manual dismissal** (2026-11-25): key `AaIN1JmnF1H5L5GKrffy`, INFO, `TimeStampTokens` (`java.util.Date` is forced by `X509Certificate.checkValidity(Date)` and `PKIXParameters.setDate(Date)`; the leaf confirmed it by reading). Sonar refused the `falsepositive` transition twice with HTTP 400 and no reason (a plan-marshall defect, filed as `-089`), so it stays open on SonarCloud until the operator dismisses it on the page or the permission is fixed. PLAN-26 reads the count at its head. Retire when dismissed.
