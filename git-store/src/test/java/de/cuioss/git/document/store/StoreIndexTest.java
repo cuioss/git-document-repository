@@ -926,6 +926,58 @@ class StoreIndexTest {
         }
     }
 
+    /**
+     * A contributor of one of two indexes on the same events: once armed, its first call marks it inside, waits until
+     * the thread of the other index is inside the other contributor, parked on a lock or ended (bounded by the one
+     * deadline of the test), and then emits an operation that moved nothing, as a fetch of a current clone does.
+     */
+    private static final class NoMoveContributor implements IndexContributor<String> {
+
+        private final StoreEvents events;
+        private final AtomicBoolean armed;
+        private final long deadlineNanos;
+        private final CountDownLatch inside = new CountDownLatch(1);
+        private final AtomicInteger actions = new AtomicInteger();
+        private final AtomicBoolean done = new AtomicBoolean();
+        private volatile @Nullable NoMoveContributor partner;
+        private volatile @Nullable Thread partnerThread;
+
+        NoMoveContributor(StoreEvents events, AtomicBoolean armed, long deadlineNanos) {
+            this.events = events;
+            this.armed = armed;
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        void partner(NoMoveContributor contributor, Thread thread) {
+            partner = contributor;
+            partnerThread = thread;
+        }
+
+        @Override
+        public String contribute(Document document) {
+            if (armed.get() && done.compareAndSet(false, true)) {
+                actions.incrementAndGet();
+                inside.countDown();
+                try {
+                    awaitPartner();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                events.emit(List.of());
+            }
+            return document.key().id();
+        }
+
+        private void awaitPartner() throws InterruptedException {
+            var other = Objects.requireNonNull(partner, "partner");
+            var thread = Objects.requireNonNull(partnerThread, "partner thread");
+            while (other.inside.getCount() > 0 && thread.getState() != Thread.State.WAITING
+                    && thread.getState() != Thread.State.TERMINATED && System.nanoTime() < deadlineNanos) {
+                thread.join(1);
+            }
+        }
+    }
+
     /** Whether a captured WARN record names an unread source of the index. */
     private static boolean sourceUnreadLogged() {
         String identifier = GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString();
@@ -1135,6 +1187,125 @@ class StoreIndexTest {
                                 () -> "the next operation retries in one pass: " + recoveringRetryCalls),
                         () -> assertEquals(broken, recovered, "the retry indexes the restored source"),
                         () -> assertEquals(0, currentCalls, "the outer refresh cleared the stale mark"));
+            }
+        }
+
+        /**
+         * Finding c5f522: two indexes on the events of one writer, whose contributors each emit an operation that moved
+         * nothing from inside a snapshot, on two threads. With one lock per index, the first thread held the lock of
+         * index A and its nested {@code unchanged()} on index B waited for B's lock, which the second thread held while
+         * its nested {@code unchanged()} waited for A's: neither ended, and the assertion "both threads end within the
+         * deadline, so the two indexes did not wait for each other" failed. With the one lock of the writer's indexes
+         * the second thread waits until the first released it, and both end.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: two indexes of one writer whose contributors move nothing never wait for each other")
+        void twoIndexesWithNoMoveContributorsDoNotDeadlock(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+            var armed = new AtomicBoolean();
+            var first = new NoMoveContributor(events, armed, deadline);
+            var second = new NoMoveContributor(events, armed, deadline);
+            List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
+
+            try (var a = direct(repository, layout, first, events);
+                 var b = direct(repository, layout, second, events)) {
+                AtomicReference<@Nullable StoreResult<StoreIndex.Snapshot<String>>> fromA = new AtomicReference<>();
+                AtomicReference<@Nullable StoreResult<StoreIndex.Snapshot<String>>> fromB = new AtomicReference<>();
+                var threadA = new Thread(() -> fromA.set(a.snapshot(layout.mainTip().name())), "snapshot-a");
+                var threadB = new Thread(() -> fromB.set(b.snapshot(layout.mainTip().name())), "snapshot-b");
+                for (Thread thread : List.of(threadA, threadB)) {
+                    thread.setDaemon(true);
+                    thread.setUncaughtExceptionHandler((failed, e) -> failures.add(e));
+                }
+                first.partner(second, threadB);
+                second.partner(first, threadA);
+                armed.set(true);
+
+                threadA.start();
+                threadB.start();
+                TimeUnit.NANOSECONDS.timedJoin(threadA, Math.max(0, deadline - System.nanoTime()));
+                TimeUnit.NANOSECONDS.timedJoin(threadB, Math.max(0, deadline - System.nanoTime()));
+                boolean ended = !threadA.isAlive() && !threadB.isAlive();
+                armed.set(false);
+
+                assertAll(
+                        () -> assertTrue(ended,
+                                "both threads end within the deadline, so the two indexes did not wait for each other"),
+                        () -> assertTrue(Objects.requireNonNull(fromA.get(), "snapshot A returned").isOk(),
+                                "the snapshot of index A is built"),
+                        () -> assertTrue(Objects.requireNonNull(fromB.get(), "snapshot B returned").isOk(),
+                                "the snapshot of index B is built"),
+                        () -> assertEquals(1, first.actions.get(), "the contributor of A emitted once"),
+                        () -> assertEquals(1, second.actions.get(), "the contributor of B emitted once"),
+                        () -> assertEquals(List.of(), failures, "no thread failed"),
+                        () -> assertEquals(layout.mainTip(), tip(a, StoreReferences.MAIN), "index A is unchanged"),
+                        () -> assertEquals(layout.mainTip(), tip(b, StoreReferences.MAIN), "index B is unchanged"));
+            }
+        }
+
+        /**
+         * Finding c5f522, the deferral through the other index: both indexes of one writer are stale, and the
+         * contributor of index A emits an operation that moved nothing from inside a snapshot of A. The nested
+         * {@code unchanged()} of index B runs under the one lock A's snapshot holds, so it defers its retry like a
+         * nested call on the same index: B's contributor is not called and B stays stale until the next operation.
+         * With one lock per index, B took its own free lock as the outermost holder and refreshed inside A's snapshot,
+         * so the assertion "the retry of B is deferred" failed.
+         */
+        @Test
+        @DisplayName("GDR-STORE-9: a nested no-move call through another index of the writer defers its retry")
+        void nestedCallThroughOtherIndexDefersRetry(@Remote LocalRemote remote) throws Exception {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var events = new StoreEvents(updates -> {
+                // no listeners
+            });
+            var gateA = new Gate();
+            var gateB = new Gate();
+
+            try (var a = direct(repository, layout, gateA, events); var b = direct(repository, layout, gateB, events)) {
+                var before = tip(b, layout.workingBranch());
+                var text = content();
+                ObjectId blob;
+                try (var formatter = new ObjectInserter.Formatter()) {
+                    blob = formatter.idFor(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                }
+                var path = path(layout.working(), ".json");
+                Map<String, String> others = new TreeMap<>(layout.workingTree());
+                others.remove(path);
+                var broken = commitWithMissingBlob(repository, layout.workingBranch(), others, path, blob, before);
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before.name(), broken.name())));
+                try (ObjectInserter inserter = repository.newObjectInserter()) {
+                    inserter.insert(Constants.OBJ_BLOB, text.getBytes(StandardCharsets.UTF_8));
+                    inserter.flush();
+                }
+                gateA.reset();
+                gateB.reset();
+                AtomicReference<@Nullable List<DocumentKey>> callsOfBDuring = new AtomicReference<>();
+                AtomicReference<@Nullable ObjectId> tipOfBDuring = new AtomicReference<>();
+                gateA.runOnce(() -> {
+                    events.emit(List.of());
+                    callsOfBDuring.set(gateB.calls());
+                    tipOfBDuring.set(tip(b, layout.workingBranch()));
+                });
+
+                var snapshot = a.snapshot(layout.mainTip().name());
+                var staleAfterSnapshot = tip(b, layout.workingBranch());
+                events.emit(List.of());
+
+                assertAll(
+                        () -> assertTrue(snapshot.isOk(), "the snapshot of index A is built"),
+                        () -> assertEquals(List.of(), callsOfBDuring.get(),
+                                "the retry of B is deferred: its contributor is not called inside A's snapshot"),
+                        () -> assertEquals(before, tipOfBDuring.get(), "B stays stale inside A's snapshot"),
+                        () -> assertEquals(before, staleAfterSnapshot, "and after it, until the next operation"),
+                        () -> assertEquals(broken, tip(b, layout.workingBranch()),
+                                "the next operation retries B as the outermost holder"),
+                        () -> assertEquals(broken, tip(a, layout.workingBranch()), "and retries A"));
             }
         }
 

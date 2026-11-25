@@ -306,11 +306,14 @@ class AnchorInterleavingTest {
             });
         }
 
-        /** Starts the save and waits until it parks on a lock or ends; whether it was still running then. */
-        boolean startAndAwaitParked() {
+        /**
+         * Starts the save and waits, with what is left of the test's one deadline, until it parks on a lock or ends;
+         * whether it was still running then.
+         */
+        boolean startAndAwaitParked(Deadline deadline) {
             thread.start();
             try {
-                ThreadStates.awaitParkedOrEnded(thread, TIMEOUT_SECONDS);
+                ThreadStates.awaitParkedOrEnded(thread, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -356,7 +359,7 @@ class AnchorInterleavingTest {
                 // the step holds the shared side and the transport lock of its save
                 stepEntered.countDown();
                 try {
-                    if (dueCheckParked.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    if (dueCheckParked.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
                         writer.close();
                         closeReturned.set(true);
                     }
@@ -371,9 +374,9 @@ class AnchorInterleavingTest {
             dueCheck.setDaemon(true);
 
             save.start();
-            assertTrue(stepEntered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the step runs");
+            assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
             dueCheck.start();
-            ThreadStates.awaitParkedOrEnded(dueCheck, TIMEOUT_SECONDS);
+            ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
             dueCheckParked.countDown();
             TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
             TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
@@ -421,7 +424,7 @@ class AnchorInterleavingTest {
                 // the step holds the shared side and the transport lock of its save
                 stepEntered.countDown();
                 try {
-                    if (dueCheckParked.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    if (dueCheckParked.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS)) {
                         nested.set(writer.anchor());
                     }
                 } catch (InterruptedException e) {
@@ -435,9 +438,9 @@ class AnchorInterleavingTest {
             dueCheck.setDaemon(true);
 
             save.start();
-            assertTrue(stepEntered.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "the step runs");
+            assertTrue(stepEntered.await(deadline.remainingNanos(), TimeUnit.NANOSECONDS), "the step runs");
             dueCheck.start();
-            ThreadStates.awaitParkedOrEnded(dueCheck, TIMEOUT_SECONDS);
+            ThreadStates.awaitParkedOrEnded(dueCheck, deadline.remainingNanos(), TimeUnit.NANOSECONDS);
             dueCheckParked.countDown();
             TimeUnit.NANOSECONDS.timedJoin(save, deadline.remainingNanos());
             TimeUnit.NANOSECONDS.timedJoin(dueCheck, deadline.remainingNanos());
@@ -472,14 +475,14 @@ class AnchorInterleavingTest {
             var firstWaited = new AtomicBoolean();
             var secondWaited = new AtomicBoolean();
             var firstResult = new AtomicReference<@Nullable SaveResult>();
-            fixture.operations().beforeNextPush(() -> firstWaited.set(firstSave.startAndAwaitParked()));
+            fixture.operations().beforeNextPush(() -> firstWaited.set(firstSave.startAndAwaitParked(deadline)));
             fixture.provider().beforeNextObtain(() -> {
                 try {
                     firstResult.set(firstSave.join(deadline));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                fixture.operations().beforeNextPush(() -> secondWaited.set(secondSave.startAndAwaitParked()));
+                fixture.operations().beforeNextPush(() -> secondWaited.set(secondSave.startAndAwaitParked(deadline)));
             });
 
             StoreWriter.Anchoring anchoring;

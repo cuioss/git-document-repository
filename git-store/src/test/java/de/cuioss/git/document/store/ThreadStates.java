@@ -37,7 +37,20 @@ final class ThreadStates {
      * @throws InterruptedException if the waiting thread is interrupted
      */
     static void awaitParkedOrEnded(Thread thread, long timeoutSeconds) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        awaitParkedOrEnded(thread, timeoutSeconds, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Waits until the thread parks or ends, within a deadline given in any unit, for example what is left of the one
+     * deadline of a test.
+     *
+     * @param thread  the started thread
+     * @param timeout the deadline of the wait
+     * @param unit    the unit of {@code timeout}
+     * @throws InterruptedException if the waiting thread is interrupted
+     */
+    static void awaitParkedOrEnded(Thread thread, long timeout, TimeUnit unit) throws InterruptedException {
+        long deadline = System.nanoTime() + unit.toNanos(timeout);
         while (thread.getState() != Thread.State.WAITING && thread.getState() != Thread.State.TERMINATED) {
             assertTrue(System.nanoTime() < deadline, "the thread parks on the lock or ends");
             thread.join(1);
