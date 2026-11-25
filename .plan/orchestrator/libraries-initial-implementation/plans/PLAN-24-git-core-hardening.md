@@ -72,6 +72,19 @@ ten deliverables), because no staged plan edits `git-core` or `git-testing`. Lat
    from the same mapping in `InCoreWriterTest` (the `InCoreMergerTest` diff was not read): check that it exists and add it if not.
    - Skills: pm-dev-java:junit-core, pm-dev-java-cui:cui-testing
    - Persona: module-tester
+3. The classification of a lost lease (`landings/PLAN-22.md` L3-3 and the `git-core` half of L3-4; folded in on 2026-11-25 under the routing rule,
+   because PLAN-24 is the container plan for `git-core`), first re-read at the plan's head (lines are those of `c22700a`): `JGitRepositoryOperations`
+   (200-210, 960-962, 1010-1013) tells a lost lease from other failures by the exact text of the remote, `failed to lock` (JGit `ReceivePack`) or
+   `incorrect old value provided` (native Git, observed with Git 2.56.1 only), and treats every other wording as a permanent `REJECTED`, so a hosted
+   remote that words a lost race otherwise, or an older native Git, loses the retry; and `failed to lock` is also what JGit answers for a stale or
+   permanent `.lock` file on the remote, so that case is `LEASE_REFUSED` and is retried in `git-store` up to `save.max-attempts`. The limit is an
+   accepted owner decision of 2026-11-24 (`git-core.adoc` 520-527), so this deliverable first puts it to the owner again with the evidence and decides:
+   keep it and extend the recorded wordings with the ones a test can script (`failed to update ref`, the reftable backend, a second native Git version),
+   or tell a stale lock from a lost race where the remote's text allows it; tested against the scripted receive side (`RefusingReceiveProtocol`) for
+   every recognised wording and one unrecognised, and record the result in `git-core.adoc`, `general.adoc` and `doc/clients/pm-mcp-core.adoc` in the
+   same commit. The pause between retries is PLAN-25 deliverable 2(a).
+   - Skills: pm-dev-java:java-core, pm-dev-java:java-security, pm-dev-java:junit-core
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -136,6 +149,10 @@ ten deliverables), because no staged plan edits `git-core` or `git-testing`. Lat
 - OBSERVED: no test passes `HEAD` to `ReferenceUpdater` (`grep HEAD` over `ReferenceUpdaterTest` at `f7eda4e` is empty) and
   `AGENTS.md` does not name `READ_FILE_LIMIT_BYTES` (`grep -c` is 0; the constant is at `JGitRepositoryOperations.java` 212).
   - verdict: corroborated | checked_at: f7eda4e460d6c086238900309baa3513ea80b084 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at f7eda4e: grep HEAD over ReferenceUpdaterTest is empty; grep -c READ_FILE_LIMIT_BYTES AGENTS.md is 0 and the constant is at JGitRepositoryOperations.java 212
+
+- OBSERVED: a lost lease is told from other failures by the exact remote text `failed to lock` or `incorrect old value provided` and every other wording
+  is a permanent `REJECTED` — read at `git-core/src/main/java/de/cuioss/git/document/core/JGitRepositoryOperations.java` 196-212 and 1008-1014 at `c22700a`.
+  - verdict: corroborated | checked_at: c22700ad81fd222b00887fc39cd98428b0392a40 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at c22700a: JGitRepositoryOperations 196-212 declares REMOTE_LOCK_FAILURE failed to lock and REMOTE_STALE_OLD_VALUE incorrect old value provided; 1008-1014 maps REJECTED_OTHER_REASON to LEASE_REFUSED only when expectedRemoteHead is set and lostRace(message) holds, else REJECTED
 
 ## Expected Surface
 

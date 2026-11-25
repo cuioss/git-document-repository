@@ -127,7 +127,16 @@ from the collection's counter file for numbered kinds, never duplicated under co
    control character splits the line for a CI consumer: escape or refuse it; `Workflow` (168-170) refuses a duplicate transition
    name, which the spec text does not say (the spec's own example needs no such construct): state it in `git-forms.adoc`; and the
    owner decision recorded in the specification that an `auth_time` after `now` counts as not older (`StepUpPolicy` 95, tested at
-   `StepUpPolicyTest` 148) is kept, with the reason named: the caller's duty to pass validated claims, unbounded otherwise.
+   `StepUpPolicyTest` 148) is kept, with the reason named: the caller's duty to pass validated claims, unbounded otherwise; (h) **added on 2026-11-25 from the analysis of PLAN-22
+   (`landings/PLAN-22.md` L3-2, L2-1), each re-read at the plan's head (lines are those of `c22700a`): `TransitionSave.release` (124-136) returns
+   `Performed(release.commitId(), release)` for any `OK` and never reads `Release.branchMovedOn`** (a grep of `git-forms/src` is empty), although its
+   Javadoc and `DocumentTransitions` (64) say the release "publishes exactly that commit": after the store's tag-only recovery (an earlier release
+   of the same version left `main` merged without its tag; `DocumentRelease` 281-288, PLAN-25 deliverable 1) a pinned release completes the earlier
+   release's tag and returns `OK` with `branchMovedOn=true`, so a transition reports `Performed` although its saved state was not released: map
+   `branchMovedOn` to a result of the transition that says the state is saved and not released (the outcome, a new constant or an existing one, is put
+   to the owner; PLAN-25 decides what the store returns), tested with a scripted store; and `CloneReader.mode` (190-212), the
+   `SaveStep.Attempt.mode` implementation kept compiling by PLAN-22, has no test (a grep of `git-forms/src/test` for `TreeEdit.Mode` is empty): test
+   it with a gitlink and a regular file.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
    - Persona: implementer
 
