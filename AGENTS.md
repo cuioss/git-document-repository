@@ -85,7 +85,8 @@ periodic fetch, anchoring, the coalescing due-check trigger) and `CloneOpening` 
 the providers and those parts), `DraftReferences`,
 `ExplicitSave`, `DocumentRelease`, `DocumentPaths`, `DraftExpiry`, `StoreEvents` (the notification seam and the one
 isolation rule of the store's callbacks: a listener, contributor, step or anchor provider isolates a
-`RuntimeException` and every `Error` but a `VirtualMachineError`, the two scheduled runners every `Throwable`),
+`RuntimeException` and every `Error` but a `VirtualMachineError`, the two scheduled runners every `Throwable`; it owns
+the one lock of the writer's indexes),
 `ListenerDispatch`, `CommitIdentities` and `RepositoryGuard`. Every save and release
 commit is signed in the SSH signature format (GDR-STORE-12) through the package-private `SshSignatures` (an own
 SSHSIG encoder, no dependency), `SourceSigner` and `CommitSignatures`, and carries the identity trailers of

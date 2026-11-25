@@ -739,16 +739,21 @@ every working branch and collection branch. After a save only the changed docume
   calls the writer meets no lock of the clone, since the refresh runs after the operation released them; one that
   would wait for a lock its thread holds is refused instead (<<GDR-STORE-3>>).
 * *Index lock.* A refresh reads the references and then publishes a new index, so two refreshes, one after a save and
-  one after a fetch, could publish out of order. Refreshes are therefore serialised by one lock of the index and always
-  rebuild from the tips read under that lock; the published index is an immutable value swapped atomically, so a
+  one after a fetch, could publish out of order. Refreshes are therefore serialised by the lock of the index and always
+  rebuild from the tips read under that lock. That lock is the one reentrant lock of the writer's `StoreEvents`, shared
+  by every index opened on the writer, so the refreshes, retries and snapshots of all indexes of one writer are
+  serialised by it and no two indexes of a writer can wait for each other's lock; the published index is an immutable value swapped atomically, so a
   reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
   operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
   A refresh that fails to read the clone, or one of its sources, keeps the previous index, or that source's previous
   entries, and marks it stale: an operation that moved no
   reference, such as a fetch that found the clone current, tells the index so (`StoreEvents.Observer.unchanged`), and a
-  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. A
-  snapshot calls the contributors under the same lock, so the contributors of one index are never called by two
-  threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
+  stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. Only
+  the outermost holder of the lock retries: a retry requested from a contributor of a running refresh or snapshot of
+  any index of the writer, which holds the lock already, is deferred to the next operation and the index stays stale,
+  so a contributor that calls the writer cannot recurse; a thread that calls from outside waits for a running refresh
+  and then reads the stale mark. A snapshot calls the contributors under the same lock, so no contributor of any index
+  of the writer is called by two threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
   documents changed.
 
 A failed periodic fetch is logged as `GIT_STORE-107` with the alias and the outcome, or the class name of any

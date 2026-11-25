@@ -75,7 +75,8 @@ import org.jspecify.annotations.Nullable;
  * a contributor is read bounded by {@link ExplicitSave#BLOB_LIMIT}, so a document with a larger blob makes its source
  * unreadable in that sense, and makes a snapshot the passed-on {@link GitOutcome#FAILED}.
  * <p>
- * Refreshes are serialised by one lock of the index and always rebuild from the tips read under that lock, so a refresh
+ * Refreshes are serialised by the lock of the index, the one lock of the writer's {@link StoreEvents} shared by every
+ * index of that writer, and always rebuild from the tips read under that lock, so a refresh
  * started after a save and one started after a fetch can never publish out of order. The published index is an
  * immutable value swapped atomically: a reader sees either the index before or the index after a refresh, never a
  * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, so
@@ -84,8 +85,10 @@ import org.jspecify.annotations.Nullable;
  * the index stale, and the next operation of the writer retries the refresh, also a fetch or save that moved no
  * reference, until one reads every source; the stale mark is read and set under the lock of the index, so an operation
  * that follows a failing refresh never misses its retry. A retry requested from a contributor of a running refresh or
- * snapshot is deferred to the next operation. A snapshot calls the contributors under the same lock, so no contributor
- * is called by two threads at once.
+ * snapshot of any index of the writer is deferred to the next operation, like one from the same index, and no two
+ * indexes of a writer wait for each other's lock. A snapshot calls the contributors under the same lock, so no
+ * contributor of any index of the writer is called by two threads at once; the refreshes, retries and snapshots of the
+ * indexes of one writer are serialised by that one lock.
  * <p>
  * {@link #snapshot(String)} builds a separate index of one tag or commit, for reporting, without changing the current
  * one.
@@ -105,7 +108,8 @@ public final class StoreIndex<E> implements AutoCloseable {
     private final StoreEvents events;
     private final Map<String, DocumentCollection> collections;
     private final Map<DocumentCollection, IndexContributor<? extends E>> contributors;
-    private final ReentrantLock lock = new ReentrantLock();
+    /** The one lock of the writer's indexes, owned by its events and shared by every index of the writer. */
+    private final ReentrantLock lock;
     private final RepositoryReader reader = new RepositoryReader();
     private final StoreEvents.Observer observer = new StoreEvents.Observer() {
 
@@ -115,11 +119,13 @@ public final class StoreIndex<E> implements AutoCloseable {
         }
 
         /**
-         * Retries a failed refresh. The stale flag is read under the lock of the index, which a running refresh
-         * holds, so a refresh that is about to mark the index stale is waited for rather than read as current; the
-         * lock is reentrant, so the refresh taken under it cannot deadlock. A retry requested from a contributor of a
-         * running refresh or snapshot, which holds the lock already, is deferred to the next operation: it neither
-         * refreshes nor clears the flag, so a contributor that fetches cannot recurse.
+         * Retries a failed refresh. The stale flag is read under the lock of the index, the one lock of the writer's
+         * indexes, which a running refresh holds, so a refresh that is about to mark the index stale is waited for
+         * rather than read as current; the lock is reentrant, so the refresh taken under it cannot deadlock. A retry
+         * requested from a contributor of a running refresh or snapshot of this or any other index of the writer,
+         * which holds the shared lock already (a hold count above one), is deferred to the next operation: it neither
+         * refreshes nor clears the flag, so a contributor that fetches cannot recurse, and two indexes of a writer
+         * never wait for each other's lock.
          */
         @Override
         public void unchanged() {
@@ -161,6 +167,7 @@ public final class StoreIndex<E> implements AutoCloseable {
         this.alias = alias;
         this.repository = repository;
         this.events = events;
+        this.lock = events.indexLock();
         this.contributors = contributors;
         Map<String, DocumentCollection> byName = new LinkedHashMap<>();
         contributors.keySet().forEach(collection -> byName.put(collection.name(), collection));

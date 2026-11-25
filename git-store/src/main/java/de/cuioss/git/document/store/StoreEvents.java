@@ -18,6 +18,7 @@ package de.cuioss.git.document.store;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
 
 import de.cuioss.git.document.core.RepositoryOperations;
@@ -50,6 +51,9 @@ import org.jspecify.annotations.Nullable;
  * locks are free: an observer derives its state from the Git state the event points at, never from the old id of an
  * update, which a concurrent operation may already have moved past.
  * <p>
+ * The events also own the one reentrant lock of the writer's indexes ({@link #indexLock()}): every index of the writer
+ * serialises its refreshes and snapshots on it, so no two indexes of a writer can wait for each other's lock.
+ * <p>
  * An update names a reference and object ids only, never a path, a content or a pseudonym (GDR-NFR-3).
  */
 final class StoreEvents {
@@ -58,6 +62,7 @@ final class StoreEvents {
 
     private final List<Observer> observers = new CopyOnWriteArrayList<>();
     private final Observer listeners;
+    private final ReentrantLock indexLock = new ReentrantLock();
 
     /**
      * Creates the events of a writer.
@@ -67,6 +72,16 @@ final class StoreEvents {
      */
     StoreEvents(Observer listeners) {
         this.listeners = Objects.requireNonNull(listeners, "listeners");
+    }
+
+    /**
+     * The one lock of the writer's indexes, shared by every index opened on this writer: a nested call from a
+     * contributor of any of them takes it reentrantly, so no lock-order cycle can form between two indexes.
+     *
+     * @return the lock, the same on every call
+     */
+    ReentrantLock indexLock() {
+        return indexLock;
     }
 
     /**
