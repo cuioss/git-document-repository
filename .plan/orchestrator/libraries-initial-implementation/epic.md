@@ -161,6 +161,10 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
 - PLAN-26 — `git-timestamp` container plan (staged 2026-11-25 under the routing rule, WS-05): the test gaps, the code defects and the TLS trust
   statement of PLAN-17's analysis, three deliverables. **Held back from `next` until the operator releases it**; later `git-timestamp`
   leftovers fold into it until it is launched.
+- PLAN-27 — `git-forms` stages within a document (staged 2026-11-25 on the operator's answer, WS-03), from the Audit Notary request
+  `audit-notary-002`: five deliverables (the decision, the condition language, stages in the workflow, `complete` and `reopen`, the gate).
+  **Held back from `next` until the operator releases it**; strictly sequential after PLAN-14 on `git-forms/`. At its outline the owner decides
+  whether the library takes the full concept or the minimal excluded-parts alternative.
 - PLAN-17 — Emitted on 2026-11-24 beside PLAN-13 (PLAN-11 shipped, so its dependency is met); the operator accepted the 4 to 5 shared files with
   PLAN-13 (`AGENTS.md`, `doc/README.adoc`, `general.adoc`, `pom.xml`, `module-structure.adoc` against the live plan) and the two shared with
   PLAN-22 (`AGENTS.md`, `general.adoc`). Opens with the owner decision on the RFC 3161 library.
@@ -597,6 +601,18 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   (the TLS trust statement, the `toString` host, the `tsa` check) are decided with the owner at PLAN-26's outline. The eleven candidate lessons are
   plan-marshall or `pm-*` subjects and went to the plan-marshall `lessons-routing` inbox as `libraries-initial-implementation-088` to `-098` (second
   standing rule; `lessons-moved.md`). Nothing was emitted, on the operator's word.
+- 2026-11-25 — **Ledger landed through PR #78** (`3e3cfc4`, 36 paths: the PLAN-13 and PLAN-17 reconciliations, PLAN-25 and PLAN-26, the PLAN-14 deliverables 6 and 7,
+  the drained inbox archive), on the operator's word ("analyze and land"); the worktree was resynced onto `3e3cfc4` with nothing to replay. The same PR
+  brought `audit-notary-002` (filed by the consumer through an earlier land, PR #77) into the worktree.
+- 2026-11-25 — **Inbox drain: `audit-notary-002` (finding, sender `audit-notary`) staged as PLAN-27** (`git-forms` stages within a document, five
+  deliverables, held back), on the operator's answer to the fork (full concept, minimal alternative into PLAN-14 d8, or Watch only). The request: stages
+  declared in `workflow.yaml` (a split part with `after`, `when`, `narrative`, `complete.step-up`; the status `not-applicable` and `open` derived,
+  `completed` stored as `completion: {at, by}`), `complete` and `reopen` operations, and a `required` check at the first-state exit and at every release that
+  covers only the document part and the applicable stages. Verified against `main` at `3e3cfc4`: GDR-FORMS-2 checks `required` on the whole document (175-181),
+  `required` under `if`/`then`/`else` stays refused (391), and the workflow and the concept have no stage concept. Not verified: the consumer's own concept
+  and its owner decision (cuioss/Audit-Notary was not read); the message cites the open question as 3 where the concept's list has it as the second item.
+  The fold into PLAN-14 was declined because PLAN-14 has seven deliverables and the change alters GDR-FORMS-2 and -5; the operator decides at the PLAN-27
+  outline between the full concept and the minimal alternative.
 
 ## Open Defects
 
