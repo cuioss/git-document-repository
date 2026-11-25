@@ -1,0 +1,11 @@
+{
+  "id": "PLAN-25",
+  "slug": "git-store-pinned-release",
+  "workstream": "WS-02",
+  "status": "staged",
+  "lane": "plan-marshall",
+  "plan_marshall_plan_id": "",
+  "pr": "",
+  "landing": "",
+  "seq": 25
+}

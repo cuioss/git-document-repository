@@ -2,10 +2,10 @@
   "id": "PLAN-13",
   "slug": "forms-output-workflow-stepup",
   "workstream": "WS-03",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
   "plan_marshall_plan_id": "plan-13-forms-output-workflow-stepup",
-  "pr": "",
-  "landing": "",
+  "pr": "64",
+  "landing": "landings/PLAN-13.md",
   "seq": 13
 }

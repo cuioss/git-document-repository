@@ -86,3 +86,35 @@ Lesson ids cited elsewhere in this ledger (`landings/PLAN-NN.md`, `epic.md`) for
 | `2026-11-24-07-012` | `plan-marshall:manage-execution-manifest` | `libraries-initial-implementation-074.md` |
 | `2026-11-19-19-001` | `pm-dev-java:junit-core` | `libraries-initial-implementation-076.md` |
 | `2026-11-22-13-003` | `pm-dev-java:ext-triage-java` | `libraries-initial-implementation-077.md` |
+
+Moved at the drain of 2026-11-24 (PLAN-13's landing): eight `candidate-lesson` inbox messages of the plan `plan-13-forms-output-workflow-stepup` were never promoted
+into this repository's lessons store; they went straight from the inbox into the `lessons-routing` inbox of `/home/oliver/git/plan-marshall`, and the local messages
+were archived. The first column names the local inbox message instead of a lesson id.
+
+| Local inbox message (archived) | Component | Inbox message |
+|---|---|---|
+| `plan-13-forms-output-workflow-stepup-001.md` | `plan-marshall:workflow-integration-sonar` | `libraries-initial-implementation-080.md` |
+| `plan-13-forms-output-workflow-stepup-002.md` | `plan-marshall:manage-change-ledger` | `libraries-initial-implementation-081.md` |
+| `plan-13-forms-output-workflow-stepup-003.md` | `plan-marshall:phase-5-execute` | `libraries-initial-implementation-082.md` |
+| `plan-13-forms-output-workflow-stepup-004.md` | `plan-marshall:recipe-code-review` | `libraries-initial-implementation-083.md` |
+| `plan-13-forms-output-workflow-stepup-005.md` | `plan-marshall:manage-status` | `libraries-initial-implementation-084.md` |
+| `plan-13-forms-output-workflow-stepup-006.md` | `plan-marshall:phase-6-finalize` | `libraries-initial-implementation-085.md` |
+| `plan-13-forms-output-workflow-stepup-007.md` | `plan-marshall:phase-5-execute` | `libraries-initial-implementation-086.md` |
+| `plan-13-forms-output-workflow-stepup-008.md` | `plan-marshall:phase-2-refine` | `libraries-initial-implementation-087.md` |
+
+Moved at the drain of 2026-11-25 (PLAN-17's landing), the same way: eleven `candidate-lesson` inbox messages of the plan `plan-17-timestamp-rfc3161`.
+Message 005 is a recurrence of `-081` (and of `2026-11-18-13-004`, `-012`) and says so in its payload.
+
+| Local inbox message (archived) | Component | Inbox message |
+|---|---|---|
+| `plan-17-timestamp-rfc3161-001.md` | `pm-dev-java:java-core` | `libraries-initial-implementation-088.md` |
+| `plan-17-timestamp-rfc3161-002.md` | `plan-marshall:workflow-integration-sonar` | `libraries-initial-implementation-089.md` |
+| `plan-17-timestamp-rfc3161-003.md` | `plan-marshall:automatic-review` | `libraries-initial-implementation-090.md` |
+| `plan-17-timestamp-rfc3161-004.md` | `plan-marshall:tools-file-ops` | `libraries-initial-implementation-091.md` |
+| `plan-17-timestamp-rfc3161-005.md` | `plan-marshall:manage-change-ledger` | `libraries-initial-implementation-092.md` |
+| `plan-17-timestamp-rfc3161-006.md` | `plan-marshall:phase-6-finalize` | `libraries-initial-implementation-093.md` |
+| `plan-17-timestamp-rfc3161-007.md` | `plan-marshall:workflow-integration-git` | `libraries-initial-implementation-094.md` |
+| `plan-17-timestamp-rfc3161-008.md` | `plan-marshall:workflow-integration-sonar` | `libraries-initial-implementation-095.md` |
+| `plan-17-timestamp-rfc3161-009.md` | `plan-marshall:phase-2-refine` | `libraries-initial-implementation-096.md` |
+| `plan-17-timestamp-rfc3161-010.md` | `plan-marshall:build-maven` | `libraries-initial-implementation-097.md` |
+| `plan-17-timestamp-rfc3161-011.md` | `plan-marshall:execution-context` | `libraries-initial-implementation-098.md` |

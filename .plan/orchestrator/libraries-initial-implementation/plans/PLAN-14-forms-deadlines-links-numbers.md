@@ -65,6 +65,71 @@ from the collection's counter file for numbered kinds, never duplicated under co
    preparation counter of `SchemaValidatorPreparationTest` (67) is a static `AtomicInteger`.
    - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
    - Persona: implementer
+6. Step-up switch and single-factor values in GDR-FORMS-7 (a consumer request of Audit Notary, inbox message
+   `audit-notary-001`, folded in on 2026-11-24 under the epic's routing rule: PLAN-13 implements step-up and is running, so
+   the change lands on top of it, and PLAN-14 is the next staged plan that edits `git-forms/`). The consumer decided on
+   2026-11-24 (ADR-0005 of cuioss/Audit-Notary, not read here) to make step-up configurable with one key for both of its login
+   providers. Re-read at the plan's head, after PLAN-13 has merged, that `StepUpPolicy` still has no switch and the spec
+   still words `step-up.amr` as multi-factor only (at `e38e079`, the merge of PLAN-13, it does: `StepUpPolicy.java` 33-74,
+   `git-forms.adoc` 714-734): (a) a setting
+   `step-up.enabled` (boolean, default `true`) in GDR-FORMS-7 and in `StepUpPolicy`: when it is `false`, no transition
+   requires step-up, whatever the workflow declares, and `step-up.amr`, `step-up.acr` and `step-up.max-age` are not required
+   (today `StepUpPolicy.of(Duration)` requires a positive `maxAge`); the workflow validation that an `intermediate-save`
+   transition must not declare step-up stays as it is, also when the switch is off; (b) GDR-FORMS-7 states that the
+   deployment decides which `amr` or `acr` values satisfy step-up: `mfa` stays the default, and a single method such as `pwd`
+   is allowed when the deployment wants a renewed password check; the `step-up.amr` row, the `StepUpPolicy` Javadoc
+   (`{@value #MFA}` paragraph, the `amr` and `acr` `@param` lines) and the two concept passages that call the setting MFA
+   (`doc/concepts/identity-and-signing.adoc` § Step-Up for Approvals, `doc/concepts/schema-driven-documents.adoc` line 104 at `e38e079`) are
+   reworded; the check itself (a value of `step-up.amr` in `Auth-Context` and a fresh `Auth-Time`) is unchanged. Tests, each
+   naming GDR-FORMS-7: switch off (a `release` transition without step-up passes, and a policy without `max-age` is
+   accepted), switch on with `step-up.amr: [pwd]` (a fresh `pwd` passes, a stale `Auth-Time` is refused), the default
+   (`step-up.enabled` absent behaves as `true`), and `intermediate-save` with a declared step-up refused with the switch on
+   and off.
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core
+   - Persona: implementer
+7. `git-forms` defects of PLAN-13's landing (`landings/PLAN-13.md` L3-1 to L3-6, L2-1, L2-2; folded in on 2026-11-24 under the epic's
+   routing rule, with the operator's answer "resume" for item (a)), each first re-read at the plan's head, behaviour fixes
+   reproduced by a test that fails at the base (lines are those of `e38e079`): (a) **a `release` transition whose release fails
+   after its save cannot be retried through `DocumentTransitions`**: `TransitionSave.release` (129-135) leaves the saved
+   `state=<to>` in place, the retry reads that state from the branch (`TransitionContext.currentState` 128-131), looks the
+   transition up by name and from-state (`Workflow.transition` 372-381) and `TransitionRunner` (93-96) returns
+   `TRANSITION_REFUSED`; the failures are `UNREACHABLE`, a lost lease on every attempt, `REJECTED`, an `INCOMPLETE` tag push,
+   signing `REFUSED` and the pin `CONFLICT`, and the branch then says `approved` while `main` and the tag do not. Decided by the
+   operator on 2026-11-24 (resume): a `release` transition whose document already stands in its target state, and whose release
+   is not on `main` (read from the clone, not assumed), performs the pinned release of the commit that holds the state, with the
+   step-up check unchanged and no second state write; record the rule in `git-forms.adoc` § GDR-FORMS-5 beside "no compensating
+   write", and decide at the outline what a retry of a transition that is not a release does (it stays refused); tested for each
+   failure above through `DocumentTransitionsTest` (today `failedReleaseKeepsTheSavedState` 702-724 asserts only that the state
+   stays), and for a retry whose branch moved in between (the pin refuses it; nothing written). It relies on the behaviour of
+   PLAN-25 for the tag-only recovery path of the store: where PLAN-25 has not shipped, the test of that sub-case is marked and
+   the dependency recorded in the PR; (b) **`DocumentTemplate` charges one operation for a fragment node that copies and scans
+   the whole fragment** (`render` 264-273: `lineFeeds` twice and `withoutTrailingLineFeeds`), so a template that places
+   `{{>name}}` inside a section over a long data list with a large whitespace-only narrative file (up to 16 MiB, adding nothing to
+   the output, so the output limit never trips) costs up to 1,000,000 scans of 16 MiB in one save attempt under the store's locks
+   or in the CI check: charge the fragment's length to the operation budget (or normalise each fragment once per render), tested
+   with a scaled-down case that fails at the base on the counted work, and record the bound in `git-forms.adoc`; (c) **the input
+   bound of the save differs from that of the check**: the step reads fragments, parts and data whole through the store's attempt
+   view (`ExplicitSave` 905-906, `getBytes(Integer.MAX_VALUE)`, all `narrative/*.adoc` of the unit, also those no template
+   references) while `OutputCheck` (384-386) refuses any file over `MAX_FILE_BYTES` (16 MiB) unread, so a save that commits a
+   17 MiB fragment passes and `OutputCheck` / `VerifyOutput` then return `MALFORMED` for the whole commit: bound the size of what
+   the step reads to the check's bound and refuse the save with a result before it commits (in `git-forms`; if only a `git-store`
+   change can do it, report it in the PR and let PLAN-25 or the operator decide), tested with a file one byte over the bound;
+   (d) **a split part at the 128-level nesting limit throws instead of returning a result**: `DocumentLayout.join` (279-302)
+   puts the part under a top-level key, so the joined data reach depth 129, and `DataNode.requireDataModel` (126-142) throws an
+   `IllegalArgumentException` that `OutputCheck.check` does not declare (against "expected outcomes are results", AGENTS.md),
+   that `VerifyOutput` (184-188) reports as `NOT_A_REPOSITORY git-dir: not a repository` (a wrong diagnostic) and that ends a
+   save as `FAILED` (`ExplicitSave` 404-409): return `MALFORMED` from the check and the step, correct the diagnostic, tested
+   with a part nested at the limit (the chain through `OutputCheck` and `DocumentTemplate` was read by the analysis leaf only:
+   re-read it first); (e) tests and wording: no test puts stale or foreign content at the output path and shows that the save
+   replaces it ("never merged", only the unchanged self-loop at `DocumentTransitionsTest` 830 is covered); `DocumentLayout.isOutput`
+   (185) has no production caller (tests only), so either the step uses it or the Javadoc "the one file never merged" is moved to
+   the step; `VerifyOutput` (184) prints a mismatching path from a tree entry without escaping, so a path with a newline or a
+   control character splits the line for a CI consumer: escape or refuse it; `Workflow` (168-170) refuses a duplicate transition
+   name, which the spec text does not say (the spec's own example needs no such construct): state it in `git-forms.adoc`; and the
+   owner decision recorded in the specification that an `auth_time` after `now` counts as not older (`StepUpPolicy` 95, tested at
+   `StepUpPolicyTest` 148) is kept, with the reason named: the caller's duty to pass validated claims, unbounded otherwise.
+   - Skills: pm-dev-java:java-core, pm-dev-java:junit-core, pm-dev-java:java-security
+   - Persona: implementer
 
 ## Standing Constraints
 
@@ -105,6 +170,13 @@ from the collection's counter file for numbered kinds, never duplicated under co
   passes at the plan's head; an item whose premise the re-read at outline refutes is dropped from the deliverable.
 - The Sonar open-finding read at the head (open new-code issues plus security hotspots to review, and the rules left
   open) is `0` or every key is operator-selected; a failed read is `unknown`, never `0`.
+- Every behaviour fix of deliverable 7 has a test that fails at `e38e079` (`main` after PLAN-13, where the defects are present) and
+  passes at the plan's head; a failed `release` of each kind listed in (a) is retried through `DocumentTransitions` and ends
+  with the release on `main` and the tag, or with the passed-on failure and nothing written; an item whose premise the re-read at
+  outline refutes is dropped.
+- Deliverable 6: `step-up.enabled: false` makes a `release` transition without step-up pass, and `step-up.amr: [pwd]` accepts a
+  fresh `pwd` and refuses a stale `Auth-Time`, each by a test naming GDR-FORMS-7; the `step-up.amr` row and the two concept
+  passages no longer say the values must denote multi-factor authentication.
 
 ## Claim Labels
 
@@ -112,6 +184,10 @@ from the collection's counter file for numbered kinds, never duplicated under co
   Open Questions; this plan implements the three forms GDR-FORMS-6 names and no more.
 - OBSERVED: numbered entries use a ULID draft reference until the first save — read at
   `doc/specification/git-store.adoc` § GDR-STORE-2 and `doc/specification/git-forms.adoc` § GDR-FORMS-9.
+- OBSERVED: GDR-FORMS-7 has no switch for all transitions and words `step-up.amr` as multi-factor only — read at
+  `doc/specification/git-forms.adoc` lines 542-570 at `7531b72`; PR #64 (PLAN-13) adds `StepUpPolicy` (`amr`, `acr`, `maxAge`)
+  without an `enabled` component and with the same wording.
+  - verdict: corroborated | checked_at: e38e079c0f9c7d5f8fae882a743c5978117ced90 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read at e38e079 (PLAN-13 merged): StepUpPolicy.java 42 is record StepUpPolicy(amr, acr, maxAge) with no enabled component, Javadoc 33 words the amr values as multi-factor; git-forms.adoc 714-734 has per-transition step-up only, max-age required, amr row multi-factor only; identity-and-signing.adoc 93-106 and schema-driven-documents.adoc 104 word the setting as MFA
 
 ## Expected Surface
 
@@ -121,11 +197,14 @@ from the collection's counter file for numbered kinds, never duplicated under co
 - OBSERVED: `doc/concepts/module-structure.adoc`
 - OBSERVED: `AGENTS.md`
 - HYPOTHESIS: `doc/README.adoc` (Specification section: which requirements are implemented)
+- OBSERVED: `doc/concepts/identity-and-signing.adoc` (§ Step-Up for Approvals, lines 90-103, calls the setting MFA; deliverable 6)
+- OBSERVED: `doc/concepts/schema-driven-documents.adoc` (line 104 at `e38e079`, step-up as an MFA authentication; deliverable 6)
 
 ## Dependencies and Sequencing
 
 - Depends on: PLAN-13; PLAN-09 (index). Deliverable 5 (PLAN-23's leftovers, folded in on 2026-11-24 at the operator's routing rule) adds
-  no file surface: every file it names lies under `git-forms/` and `doc/specification/git-forms.adoc`, both declared.
+  no file surface: every file it names lies under `git-forms/` and `doc/specification/git-forms.adoc`, both declared. Deliverable 6
+  (step-up switch, folded in on 2026-11-24 from `audit-notary-001`) adds the two concept documents above to the surface.
 - Overlaps with: WS-03 plans — strictly sequential.
 - Adjacent to: catalog resolution — the interface is defined here, its implementation is `git-directory` (PLAN-15).
 

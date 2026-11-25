@@ -2,10 +2,10 @@
   "id": "PLAN-17",
   "slug": "timestamp-rfc3161",
   "workstream": "WS-05",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
   "plan_marshall_plan_id": "plan-17-timestamp-rfc3161",
-  "pr": "",
-  "landing": "",
+  "pr": "74",
+  "landing": "landings/PLAN-17.md",
   "seq": 17
 }
