@@ -298,10 +298,11 @@ class IndexInCallbackTest {
             var index = value(StoreIndex.open(writer, contributors(layout, other)));
             opened.add(callingIndex);
             opened.add(index);
-            try (var _ = writer.subscribe(layout.target(), (branch, commitId) -> {
-                fromListener.add(index.snapshot(layout.start().name()));
-                fromListener.add(keep(opened, StoreIndex.open(writer, contributors(layout, new Counter()))));
-            })) {
+            try (var subscription = writer.subscribe(layout.target(), (branch, commitId) -> {
+                     fromListener.add(index.snapshot(layout.start().name()));
+                     fromListener.add(keep(opened, StoreIndex.open(writer, contributors(layout, new Counter()))));
+                 })) {
+                Objects.requireNonNull(subscription);
                 otherIndex.set(index);
                 var author = draft(writer, layout);
                 armed.set(true);
