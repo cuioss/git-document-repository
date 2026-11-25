@@ -118,3 +118,39 @@ Message 005 is a recurrence of `-081` (and of `2026-11-18-13-004`, `-012`) and s
 | `plan-17-timestamp-rfc3161-009.md` | `plan-marshall:phase-2-refine` | `libraries-initial-implementation-096.md` |
 | `plan-17-timestamp-rfc3161-010.md` | `plan-marshall:build-maven` | `libraries-initial-implementation-097.md` |
 | `plan-17-timestamp-rfc3161-011.md` | `plan-marshall:execution-context` | `libraries-initial-implementation-098.md` |
+
+Moved at the drain of 2026-11-25 (PLAN-22's landing), the same way: sixteen of the 23 `candidate-lesson` inbox messages of the plan `plan-22-store-hardening`. Messages
+016, 021 and 023 are recurrences of `-090`, `-081`/`-092` and `-098` and say so in their payloads; 017, 019 and 020 name the related earlier message. The other seven were
+not moved: six are rules of this repository's own modules and were promoted into the local lessons store (below), and 004 repeats the open item "empty
+`skills_by_profile`" and was discarded onto it.
+
+| Local inbox message (archived) | Component | Inbox message |
+|---|---|---|
+| `plan-22-store-hardening-001.md` | `plan-marshall:phase-3-outline` | `libraries-initial-implementation-099.md` |
+| `plan-22-store-hardening-002.md` | `plan-marshall:phase-3-outline` | `libraries-initial-implementation-100.md` |
+| `plan-22-store-hardening-010.md` | `plan-marshall` (the review of a hardening plan) | `libraries-initial-implementation-101.md` |
+| `plan-22-store-hardening-011.md` | `plan-marshall:manage-findings` | `libraries-initial-implementation-102.md` |
+| `plan-22-store-hardening-012.md` | `plan-marshall:manage-architecture` | `libraries-initial-implementation-103.md` |
+| `plan-22-store-hardening-013.md` | `plan-marshall:manage-solution-outline` | `libraries-initial-implementation-104.md` |
+| `plan-22-store-hardening-014.md` | `plan-marshall:workflow-integration-git` | `libraries-initial-implementation-105.md` |
+| `plan-22-store-hardening-015.md` | `plan-marshall:plan-orchestrator` | `libraries-initial-implementation-106.md` |
+| `plan-22-store-hardening-016.md` | `plan-marshall:automatic-review` | `libraries-initial-implementation-107.md` |
+| `plan-22-store-hardening-017.md` | `plan-marshall:phase-5-execute` | `libraries-initial-implementation-108.md` |
+| `plan-22-store-hardening-018.md` | `plan-marshall:phase-3-outline` | `libraries-initial-implementation-109.md` |
+| `plan-22-store-hardening-019.md` | `plan-marshall:manage-metrics` | `libraries-initial-implementation-110.md` |
+| `plan-22-store-hardening-020.md` | `plan-marshall:automatic-review` | `libraries-initial-implementation-111.md` |
+| `plan-22-store-hardening-021.md` | `plan-marshall:manage-change-ledger` | `libraries-initial-implementation-112.md` |
+| `plan-22-store-hardening-022.md` | `plan-marshall:phase-6-finalize` | `libraries-initial-implementation-113.md` |
+| `plan-22-store-hardening-023.md` | `plan-marshall:persona-plan-marshall-agent` | `libraries-initial-implementation-114.md` |
+
+Kept in this repository (promoted into the local lessons store on 2026-11-25; not moved):
+
+| Local inbox message (archived) | Local lesson | Component |
+|---|---|---|
+| `plan-22-store-hardening-003.md` | `2026-11-25-08-001` | `git-store` |
+| `plan-22-store-hardening-005.md` | `2026-11-25-08-002` | `git-store` |
+| `plan-22-store-hardening-006.md` | `2026-11-25-08-003` | `git-store` |
+| `plan-22-store-hardening-007.md` | `2026-11-25-08-004` | `git-store` |
+| `plan-22-store-hardening-008.md` | `2026-11-25-08-005` | `git-store` |
+| `plan-22-store-hardening-009.md` | `2026-11-25-08-006` | `git-core` |
+| `plan-22-store-hardening-004.md` | discarded onto the open item "empty `skills_by_profile`" | `git-store` |

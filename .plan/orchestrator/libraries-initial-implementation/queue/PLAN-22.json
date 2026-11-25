@@ -2,10 +2,10 @@
   "id": "PLAN-22",
   "slug": "store-hardening",
   "workstream": "WS-02",
-  "status": "running",
+  "status": "shipped",
   "lane": "plan-marshall",
   "plan_marshall_plan_id": "plan-22-store-hardening",
-  "pr": "",
-  "landing": "",
+  "pr": "76",
+  "landing": "landings/PLAN-22.md",
   "seq": 22
 }

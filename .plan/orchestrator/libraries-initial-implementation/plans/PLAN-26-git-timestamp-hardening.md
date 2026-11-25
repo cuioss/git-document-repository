@@ -47,9 +47,11 @@ operator releases it.** Later `git-timestamp` leftovers of landing analyses fold
    `host=<url host>` (`TimestampTransport` 381, `TimestampConfiguration` 362, `Rfc3161AnchorProvider` 266): either drop the host or
    correct the sentence in `git-timestamp.adoc` § GDR-TSA-1 (the host is no secret under GDR-NFR-3; decide with the owner because it
    changes a documented statement) and test it; (e) `Rfc3161AnchorProvider.verify` (234-252) has no size bound on a stored proof, so a
-   very large note makes the CI verification allocate and parse it whole: refuse a proof larger than the reply bound (`MAX_REPLY_BYTES`,
-   1 MiB, `TimestampTransport` 79) before parsing, tested (the unbounded read of the note itself, `AnchorNotes` 264 and 324, is in
-   `git-store` and went into PLAN-25); (f) every `Rfc3161AnchorProvider.from` builds a new `HttpClient` that neither the provider nor
+   very large note makes the CI verification parse it whole: refuse a proof larger than the reply bound (`MAX_REPLY_BYTES`, 1 MiB,
+   `TimestampTransport` 79) before parsing, tested. Re-grounded on 2026-11-25 at `c22700a`: the read of the note itself (`AnchorNotes` 264 and 324 at
+   `729ca28`) is now bounded by PLAN-22 at 16 MiB (`ExplicitSave.readBlob`), so the allocation is capped and what remains is parsing up to 16 MiB
+   with the provider's own DER reader; keep the 1 MiB bound for consistency with the reply bound or drop the item if the re-read at the outline
+   shows the reader bounded enough; (f) every `Rfc3161AnchorProvider.from` builds a new `HttpClient` that neither the provider nor
    the transport can close (`TimestampTransport` 181): decide whether the provider is closable or the client is shared, and record it;
    (g) the credentialed-request guard covers only `jdk.httpclient.HttpClient.log` (`TimestampTransport` 202-205, 317-329, 347-358):
    read which other JVM debug switches print plaintext application data (for example `javax.net.debug` with `ssl:record:plaintext`)
@@ -129,7 +131,7 @@ operator releases it.** Later `git-timestamp` leftovers of landing analyses fold
 
 - Depends on: PLAN-17 (shipped, PR #74, `729ca28`).
 - Overlaps with: no staged plan on `git-timestamp/`; `AGENTS.md` and `general.adoc` only when they change.
-- Adjacent to: PLAN-25 deliverable 2 (the unbounded read of a stored note in `git-store`, which this plan's proof bound complements).
+- Adjacent to: PLAN-25 (`git-store`; the unbounded read of a stored note was bounded by PLAN-22, which narrows deliverable 2(e) here).
 
 ## Hand-Off Command
 
