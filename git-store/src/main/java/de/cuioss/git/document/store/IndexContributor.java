@@ -41,7 +41,10 @@ import org.jspecify.annotations.Nullable;
  * caller only afterwards, so a contributor is expected to return within milliseconds per document: it decodes the
  * files it is given and calls no remote service. It must not block on the store; a call into the writer that would
  * wait for a lock the calling thread holds, such as {@link StoreWriter#expireDrafts} from a thread under the shared
- * side of the clone's maintenance lock, is refused with {@link StoreOutcome#REFUSED} instead of a deadlock.
+ * side of the clone's maintenance lock, is refused with {@link StoreOutcome#REFUSED} instead of a deadlock. A contributor
+ * that calls the writer waits for another thread's save, release or fetch to release the transport lock; a save step or
+ * an anchor provider that calls {@link StoreIndex#snapshot(String)} or opens an index is refused, so that wait cannot
+ * close a cycle.
  *
  * @param <E> the type of the entry value
  * @since 0.1

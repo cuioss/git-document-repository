@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 
 import de.cuioss.git.document.core.RepositoryOperations;
@@ -63,15 +64,40 @@ final class StoreEvents {
     private final List<Observer> observers = new CopyOnWriteArrayList<>();
     private final Observer listeners;
     private final ReentrantLock indexLock = new ReentrantLock();
+    private final BooleanSupplier insideClone;
 
     /**
-     * Creates the events of a writer.
+     * Creates the events of a writer whose calling thread is never taken to hold a lock of the clone.
      *
      * @param listeners the observer called after every registered one: the listener dispatch of the writer
      * @throws NullPointerException if {@code listeners} is {@code null}
      */
     StoreEvents(Observer listeners) {
+        this(listeners, () -> false);
+    }
+
+    /**
+     * Creates the events of a writer.
+     *
+     * @param listeners   the observer called after every registered one: the listener dispatch of the writer
+     * @param insideClone the probe of whether the calling thread holds a lock of the clone, read from that thread's
+     *                    own hold counts only, so it never waits ({@link RepositoryGuard#insideCallback()})
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    StoreEvents(Observer listeners, BooleanSupplier insideClone) {
         this.listeners = Objects.requireNonNull(listeners, "listeners");
+        this.insideClone = Objects.requireNonNull(insideClone, "insideClone");
+    }
+
+    /**
+     * Whether the calling thread holds a lock of the clone: inside a callback of an operation of the writer, such
+     * as a save step or an anchor provider call. An index refuses its snapshot and its opening there instead of waiting for the
+     * {@link #indexLock()}, so no thread waits for the index lock while it holds a lock of the clone.
+     *
+     * @return whether the calling thread holds a lock of the clone
+     */
+    boolean insideClone() {
+        return insideClone.getAsBoolean();
     }
 
     /**

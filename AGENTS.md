@@ -76,7 +76,8 @@ local tag), draft expiry with garbage collection (`REFUSED` when re-entered from
 registered before its start is read) with
 `StoreReferences`, `DocumentCollection`, `DocumentKey`, `Ulid`, `Draft`, `SaveResult`, `TechnicalUser` and `Author`,
 and the in-memory index `StoreIndex` (built from `main` and every working and collection branch, refreshed after
-every fetch, save and release, each source read in isolation, with `snapshot` of a tag or commit) over the consumer's
+every fetch, save and release, each source read in isolation, with `snapshot` of a tag or commit; `snapshot` and
+`open` are `REFUSED` without waiting inside a callback that holds a lock of the clone) over the consumer's
 `IndexContributor` per collection, over the package-private `StoreClone` (the opened clone, to which `StoreWriter`
 delegates, with its events, the listener subscription and the closed flag that `close()` sets under the anchoring lock,
 so no due check runs after the close; a close issued inside a callback that holds a lock of the clone, a save step or

@@ -163,7 +163,7 @@ final class CloneOpening {
         var guard = RepositoryGuard.of(gitDirectory);
         var bareClone = new ExplicitSave.Clone(storeRepository.alias(), repository, gitDirectory, guard);
         var listeners = new ListenerDispatch(storeRepository.alias(), repository);
-        var events = new StoreEvents(listeners);
+        var events = new StoreEvents(listeners, guard::insideCallback);
         var signatures = new CommitSignatures(storeRepository.alias(), signing, keyReference);
         var committing = new ExplicitSave.Committing(identities, signatures, clock);
         var closed = new AtomicBoolean();

@@ -415,7 +415,8 @@ again; the draft expiry, which needs the exclusive side of the maintenance lock,
 holds the shared side, and is refused instead of waiting for itself: `expireDrafts` returns `REFUSED` with the detail
 `maintenance: re-entered from a callback that holds the shared lock` (<<GDR-STORE-7>>). The refusal reads the calling
 thread's own hold count of the shared side before the exclusive side is requested, a fact of that thread alone, so no
-other thread can change it in between. A step that closes the writer is refused the same way (<<GDR-STORE-16>>).
+other thread can change it in between. A step that closes the writer is refused the same way (<<GDR-STORE-16>>), and
+so is a step that takes a snapshot of an index or opens one, which would wait for the index lock (<<GDR-STORE-9>>).
 
 Within one process, `StoreWriter` coordinates the users of one bare clone through one in-process guard per clone,
 shared by every writer that opens the same git directory (keyed by its real path): draft writes
@@ -736,23 +737,30 @@ every working branch and collection branch. After a save only the changed docume
 * *Contributor time.* A contributor runs on the thread of the refresh, under the lock of the index, and the save,
   release or fetch that triggered the refresh returns to its caller only after it: a contributor is expected to return
   within milliseconds per document, decoding the files it is given and calling no remote service. A contributor that
-  calls the writer meets no lock of the clone, since the refresh runs after the operation released them; one that
-  would wait for a lock its thread holds is refused instead (<<GDR-STORE-3>>).
+  calls the writer holds no lock of the clone on its own thread, since the refresh runs after the operation released
+  them; one that would wait for a lock its thread holds is refused instead (<<GDR-STORE-3>>). Another thread's save,
+  release or fetch may still hold the transport lock, so a contributor that fetches waits for it.
 * *Index lock.* A refresh reads the references and then publishes a new index, so two refreshes, one after a save and
   one after a fetch, could publish out of order. Refreshes are therefore serialised by the lock of the index and always
   rebuild from the tips read under that lock. That lock is the one reentrant lock of the writer's `StoreEvents`, shared
   by every index opened on the writer, so the refreshes, retries and snapshots of all indexes of one writer are
   serialised by it and no two indexes of a writer can wait for each other's lock; the published index is an immutable value swapped atomically, so a
   reader sees the index before or after a refresh, never a mix. The lock of the index is taken only after the
-  operation released the transport lock, never while it is held, so the lock order of <<GDR-STORE-3>> gains no cycle.
+  operation released the transport lock, never while it is held, and a thread that still holds a lock of the clone,
+  inside a save step or an anchor provider call, is refused instead of waiting for it: `snapshot` and `open` of an
+  index return `REFUSED` there without waiting. No thread therefore waits for the index lock while it holds a lock of
+  the clone, and the lock order of <<GDR-STORE-3>> gains no cycle, also not between a contributor of one index that
+  fetches and a save step of another thread that snapshots another index of the writer.
   A refresh that fails to read the clone, or one of its sources, keeps the previous index, or that source's previous
   entries, and marks it stale: an operation that moved no
   reference, such as a fetch that found the clone current, tells the index so (`StoreEvents.Observer.unchanged`), and a
   stale index retries its refresh then, until one succeeds; the listeners are called for moved references only. Only
   the outermost holder of the lock retries: a retry requested from a contributor of a running refresh or snapshot of
   any index of the writer, which holds the lock already, is deferred to the next operation and the index stays stale,
-  so a contributor that calls the writer cannot recurse; a thread that calls from outside waits for a running refresh
-  and then reads the stale mark. A snapshot calls the contributors under the same lock, so no contributor of any index
+  so a contributor that calls the writer cannot recurse; a move reported from there, a fetch of a contributor that
+  moved a branch, is deferred the same way: the running refresh publishes its own result but stays stale, and the next
+  operation of the writer, also one that moves nothing, refreshes from the latest references. A thread that calls from
+  outside waits for a running refresh and then reads the stale mark. A snapshot calls the contributors under the same lock, so no contributor of any index
   of the writer is called by two threads at once. A changed-document refresh enumerates the files of each collection once, however many of its
   documents changed.
 

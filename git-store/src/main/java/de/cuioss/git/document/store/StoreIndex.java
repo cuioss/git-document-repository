@@ -79,14 +79,19 @@ import org.jspecify.annotations.Nullable;
  * index of that writer, and always rebuild from the tips read under that lock, so a refresh
  * started after a save and one started after a fetch can never publish out of order. The published index is an
  * immutable value swapped atomically: a reader sees either the index before or the index after a refresh, never a
- * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, so
- * the lock order of {@link RepositoryGuard} gains no cycle. A refresh that fails to read the references of the clone
+ * mix. The lock of the index is taken only after the operation released the transport lock, never while it is held, and
+ * {@link #snapshot(String)} and {@link #open(StoreWriter, Map)} return {@link StoreOutcome#REFUSED} without waiting
+ * when the calling thread holds a lock of the clone (inside a save step or an anchor provider call), so no thread
+ * waits for the lock of the index while it holds a lock of the clone, and the lock order of {@link RepositoryGuard}
+ * gains no cycle, also not across two indexes of the writer. A refresh that fails to read the references of the clone
  * keeps the previous index, and one that could not read a source keeps that source's previous entries; either marks
  * the index stale, and the next operation of the writer retries the refresh, also a fetch or save that moved no
  * reference, until one reads every source; the stale mark is read and set under the lock of the index, so an operation
  * that follows a failing refresh never misses its retry. A retry requested from a contributor of a running refresh or
  * snapshot of any index of the writer is deferred to the next operation, like one from the same index, and no two
- * indexes of a writer wait for each other's lock. A snapshot calls the contributors under the same lock, so no
+ * indexes of a writer wait for each other's lock. A move reported from there, a contributor that fetches, is deferred
+ * the same way: the running refresh publishes its own result but stays stale, and the next operation of the writer, also
+ * one that moves nothing, refreshes from the latest references. A snapshot calls the contributors under the same lock, so no
  * contributor of any index of the writer is called by two threads at once; the refreshes, retries and snapshots of the
  * indexes of one writer are serialised by that one lock.
  * <p>
@@ -103,6 +108,12 @@ public final class StoreIndex<E> implements AutoCloseable {
     /** The name of a collection argument in the null checks. */
     private static final String COLLECTION = "collection";
 
+    /**
+     * The detail of a snapshot or an opening from a thread that holds a lock of the clone: a save step or an anchor
+     * provider call that would otherwise wait for the lock of the index.
+     */
+    static final String IN_CALLBACK = "index: refused inside a callback that holds a lock of the clone";
+
     private final String alias;
     private final Repository repository;
     private final StoreEvents events;
@@ -113,13 +124,30 @@ public final class StoreIndex<E> implements AutoCloseable {
     private final RepositoryReader reader = new RepositoryReader();
     private final StoreEvents.Observer observer = new StoreEvents.Observer() {
 
+        /**
+         * Refreshes after an operation that moved a reference. A move reported from a contributor of a running refresh
+         * or snapshot of this or any other index of the writer, which holds the shared lock already (a hold count above
+         * one), is deferred like a nested retry: it does not refresh but marks the index stale and the running refresh
+         * as overtaken, so that refresh publishes its own result and stays stale, and the next operation of the writer
+         * refreshes from the latest references, also one that moves nothing.
+         */
         @Override
         public void moved(List<StoreEvents.Update> updates) {
-            refreshQuietly();
+            lock.lock();
+            try {
+                if (lock.getHoldCount() > 1) {
+                    movedDuringRefresh = true;
+                    stale = true;
+                    return;
+                }
+                refreshQuietly();
+            } finally {
+                lock.unlock();
+            }
         }
 
         /**
-         * Retries a failed refresh. The stale flag is read under the lock of the index, the one lock of the writer's
+         * Retries a failed refresh, or one overtaken by a nested move. The stale flag is read under the lock of the index, the one lock of the writer's
          * indexes, which a running refresh holds, so a refresh that is about to mark the index stale is waited for
          * rather than read as current; the lock is reentrant, so the refresh taken under it cannot deadlock. A retry
          * requested from a contributor of a running refresh or snapshot of this or any other index of the writer,
@@ -162,6 +190,12 @@ public final class StoreIndex<E> implements AutoCloseable {
     /** Whether the last refresh failed, so the index may lag behind the clone until a refresh succeeds. */
     private volatile boolean stale;
 
+    /**
+     * Whether a move was reported from a contributor while a refresh or snapshot held the lock of the index, so the
+     * running refresh read references that are no longer current; reset when a refresh starts.
+     */
+    private volatile boolean movedDuringRefresh;
+
     private StoreIndex(String alias, Repository repository, StoreEvents events,
             Map<DocumentCollection, IndexContributor<? extends E>> contributors) {
         this.alias = alias;
@@ -181,8 +215,10 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @param contributors the contributor of every indexed collection
      * @param <E>          the type of the entry values
      * @return {@link StoreOutcome#OK} with the built index; {@link StoreOutcome#MALFORMED} with the detail
-     *         {@code collection <name>: declared twice} for two collections of one name; or the passed-on
-     *         {@link GitOutcome#FAILED} naming the class of the exception when the clone could not be read
+     *         {@code collection <name>: declared twice} for two collections of one name; the passed-on
+     *         {@link GitOutcome#FAILED} naming the class of the exception when the clone could not be read; or
+     *         {@link StoreOutcome#REFUSED}, without waiting, when the calling thread holds a lock of the clone, inside a
+     *         save step or an anchor provider call of the writer
      * @throws NullPointerException if an argument, a collection or a contributor is {@code null}
      */
     public static <E> StoreResult<StoreIndex<E>> open(StoreWriter writer,
@@ -213,6 +249,9 @@ public final class StoreIndex<E> implements AutoCloseable {
         Map<DocumentCollection, IndexContributor<? extends E>> copy = new LinkedHashMap<>();
         contributors.forEach((collection, contributor) -> copy.put(Objects.requireNonNull(collection, COLLECTION),
                 Objects.requireNonNull(contributor, "contributor")));
+        if (events.insideClone()) {
+            return StoreResult.of(StoreOutcome.REFUSED, IN_CALLBACK);
+        }
         var declared = StoreReferences.collections(List.copyOf(copy.keySet()));
         if (!declared.isOk()) {
             return new StoreResult<>(declared.outcome(), null, declared.detail());
@@ -276,11 +315,16 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @param tagOrCommit a tag, by its full name or its name below {@code refs/tags/}, or a full commit id
      * @return {@link StoreOutcome#OK} with the snapshot; or the passed-on {@link GitOutcome#NOT_FOUND} for a tag or
      *         commit the clone does not hold, {@link GitOutcome#AMBIGUOUS}, or {@link GitOutcome#FAILED} naming the
-     *         class of the exception; the detail names the field {@code revision}, never the revision itself
+     *         class of the exception; the detail names the field {@code revision}, never the revision itself; or
+     *         {@link StoreOutcome#REFUSED}, without waiting, when the calling thread holds a lock of the clone, inside a
+     *         save step or an anchor provider call of the writer
      * @throws NullPointerException if {@code tagOrCommit} is {@code null}
      */
     public StoreResult<Snapshot<E>> snapshot(String tagOrCommit) {
         Objects.requireNonNull(tagOrCommit, "tagOrCommit");
+        if (events.insideClone()) {
+            return StoreResult.of(StoreOutcome.REFUSED, IN_CALLBACK);
+        }
         String revision = GitIdentity.isFullCommitId(tagOrCommit) || tagOrCommit.startsWith(StoreReferences.TAGS)
                 ? tagOrCommit : StoreReferences.TAGS + tagOrCommit;
         var snapshot = reader.snapshot(repository, revision);
@@ -333,6 +377,8 @@ public final class StoreIndex<E> implements AutoCloseable {
     private void refresh() throws IOException {
         lock.lock();
         try {
+            // reset before the references are read: a move nested from here on overtakes this refresh
+            movedDuringRefresh = false;
             Map<String, Source<E>> before = current.get();
             Map<String, Source<E>> next = new HashMap<>();
             boolean unread = false;
@@ -344,7 +390,7 @@ public final class StoreIndex<E> implements AutoCloseable {
                 }
             }
             current.set(Map.copyOf(next));
-            stale = unread;
+            stale = unread || movedDuringRefresh;
         } finally {
             lock.unlock();
         }
