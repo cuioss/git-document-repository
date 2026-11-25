@@ -41,9 +41,10 @@ repository fixtures (`@LocalRepository`, `@InMemory`, `@Remote`) and the host-co
 `@HermeticGitConfiguration` with `HermeticGitConfigurationExtension` (not for tests that run concurrently in one JVM). `git-core` exports `de.cuioss.git.document.core` with the repository part taken over from
 `pm-provider-git` as a plain copy: `RefusingFS` with `CapabilityRefusedException`, `RemotePolicy`, `GitIdentity`,
 `GitResult` and `GitOutcome`, `RepositoryOperations` with `JGitRepositoryOperations` (open, init, `cloneIfMissing`,
-log, fetch, push, whose leased push that lost a race on the remote reference and was refused with one of the two
-recognised remote messages is `LEASE_REFUSED` and whose every other refusal, a lost race reported in any other wording
-included, is `REJECTED`, cache repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
+log, fetch, push, whose leased push that the advertisement already refuses (the remote reference differs from the lease)
+or that lost a race on the remote reference and was refused with one of the two recognised remote messages is
+`LEASE_REFUSED` and whose every other refusal, a lost race reported in any other wording included, is `REJECTED`, cache
+repository) and the `LogRecord` holder `GitCoreLogMessages`, and with in-core writing and
 compare-and-swap: `InCoreWriter` with `TreeEdit`, `CommitMetadata` and `CommitSigning`, and `ReferenceUpdater` with
 `TreeOperation` (compare-and-swap and compare-and-delete of a reference), and with in-core merge, reading and notes:
 `InCoreMerger` with the sealed `MergeResult` (the merged tree, or the conflicting paths as data), `RepositoryReader`
