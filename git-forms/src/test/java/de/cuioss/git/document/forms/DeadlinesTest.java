@@ -372,6 +372,42 @@ class DeadlinesTest {
                 }
             }
         }
+
+        @Test
+        @DisplayName("GDR-FORMS-6: an earlier version whose state is no string ends the call as MALFORMED, not a later instant")
+        void unreadableEarlierState(@Remote LocalRemote remote) {
+            var main = DocumentTransitionsTest.seedMain(remote);
+            var key = new DocumentKey(value(DocumentCollection.of(COLLECTION, DocumentCollection.Kind.PER_DOCUMENT)),
+                    Ulid.next());
+            var path = directory(key) + DocumentLayout.DOCUMENT_FILE;
+            Map<String, @Nullable Object> numberState = new LinkedHashMap<>();
+            numberState.put("title", "First");
+            numberState.put("owner", "owner");
+            numberState.put("state", 3L);
+            var earlier = DocumentTransitionsTest.commit(remote.repository(), StoreReferences.target(key),
+                    Map.of(path, new YamlDocumentCodec(DocumentTransitionsTest.schema())
+                            .encode(new LinkedHashMap<>(numberState))), main);
+            DocumentTransitionsTest.commit(remote.repository(), StoreReferences.target(key),
+                    Map.of(path, DocumentTransitionsTest.data("First", "owner", "review")), earlier);
+            var definition = definition();
+            var deadlines = new Deadlines(definition);
+            try (var fixture = DocumentTransitionsTest.open(temp, remote, definition,
+                         new DocumentTransitionsTest.TestSigning(Integer.MAX_VALUE))) {
+                value(fixture.writer().fetch());
+                try (StoreIndex<Deadlines.Entry> index = value(StoreIndex.open(fixture.writer(),
+                             Map.of(key.collection(), deadlines.contributor())))) {
+
+                    // far after 14 days from either commit: an entering instant read from the newer commit is due
+                    var result = deadlines.due(index, fixture.bareClone(), Instant.now().plus(Duration.ofDays(365)));
+
+                    assertAll(
+                            () -> assertEquals(new FormsResult.PassedOn(StoreOutcome.MALFORMED), result.outcome(),
+                                    "the unreadable earlier state passed on, no due instant"),
+                            () -> assertNull(result.value(), "no deadline computed from the newer commits"),
+                            () -> assertTrue(result.detail() != null, "the non-success carries a detail"));
+                }
+            }
+        }
     }
 
     @Test

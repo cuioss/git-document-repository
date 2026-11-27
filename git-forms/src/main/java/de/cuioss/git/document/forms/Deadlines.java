@@ -234,6 +234,9 @@ public final class Deadlines {
     /**
      * The instant a document entered its current state: the commit time of the oldest commit of the trailing run of
      * commits that changed its file and whose file holds the state. Empty when no commit of the source holds the file.
+     * The run ends at a commit without the file or whose file holds another state; a version of the file that cannot
+     * be read, or whose {@code state} is no string, ends the call with the result of
+     * {@link TransitionStep#readState}, the passed-on {@link StoreOutcome#MALFORMED}.
      */
     private FormsResult<Optional<Instant>> entered(Repository clone, CloneReader files, DocumentKey key,
             String commitId, String state) {
@@ -254,8 +257,16 @@ public final class Deadlines {
                     return FormsResult.passOn(StoreResult.passOn(GitResult.of(GitOutcome.FAILED,
                             "deadlines: " + key.id() + ": " + e.getCause().getClass().getSimpleName())));
                 }
-                if (content.isEmpty() || !state.equals(TransitionStep.readState(codec, content, path,
-                        definition.workflow().initialState()).value())) {
+                if (content.isEmpty()) {
+                    return FormsResult.ok(Optional.ofNullable(entered));
+                }
+                FormsResult<String> earlier = TransitionStep.readState(codec, content, path,
+                        definition.workflow().initialState());
+                if (!earlier.isOk()) {
+                    // an earlier version that cannot be read ends the call, never the run as if it held another state
+                    return new FormsResult<>(earlier.outcome(), null, earlier.detail());
+                }
+                if (!state.equals(earlier.value())) {
                     return FormsResult.ok(Optional.ofNullable(entered));
                 }
                 entered = changed.committedAt();
