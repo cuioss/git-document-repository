@@ -62,9 +62,10 @@ exercised by the tests; javac still compiles and checks `module-info.java`.
 The code of `git-forms` holds no `@SuppressWarnings`, its tests included: `YamlReader.readMapping` returns the root of
 a document whose root must be a mapping typed as the reader builds it, so `FormSchema.parse` and
 `YamlDocumentCodec.decode` cast nothing, `KindConfiguration` copies each mapping of `kinds.yaml` with every key checked
-as a string, and the helper by which a test passes `null` returns a `@Nullable` type variable instead of casting. One
-marker
-remains, `cui-rewrite:disable InvalidExceptionUsageRecipe` on the `catch (RuntimeException e)` of
+as a string, and the helper by which a test passes `null` returns a `@Nullable` type variable instead of casting. Two
+markers remain, each `cui-rewrite:disable InvalidExceptionUsageRecipe`. One is on the `catch (Throwable failure)` of
+`NestingDepthTest.onDefaultStack`, a test helper that hands whatever the thread it starts throws, an assertion failure
+or a `StackOverflowError`, to the test. The other is on the `catch (RuntimeException e)` of
 `SchemaValidator.prepare`, which keeps the OpenRewrite recipe of the build from narrowing that catch: the validator
 signals a schema it refuses not only by its own `JsonSchemaException` types but also by exceptions of the JDK, for
 example the `IllegalArgumentException` the constructor of its `PatternEvaluator` throws for a `pattern` that is not a
@@ -123,7 +124,10 @@ of kinds with the keys of the example:
 * `id`, `repository`, `collection`, `schema` and `workflow` are required, each a string that is not blank; `id` and
   `collection` must match `[a-z0-9-]+`, `id` must be unique, and `repository` must be an alias of the repository
   registry of `git-store`.
-* No two kinds may have the same pair of `repository` and `collection`, whatever the numbering of either. The
+* No two kinds may have the same pair of `repository` and `collection`, whatever the numbering of either; the
+  repository is compared by its physical repository, the remote the registry holds for the alias
+  (`StoreRepository.remote()`, compared as registered), so two aliases of one remote with one collection are refused
+  as well, the registry itself accepting two aliases of one remote. The
   collection names the branches of its kind (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]): two kinds with one pair
   would share one branch namespace, and a numbered collection's branch `refs/heads/x` would conflict with the document
   branches `refs/heads/x/<ulid>` of a per-document collection of the same name, since a reference cannot have a value
@@ -257,10 +261,14 @@ included, so a cycle that is declared but never referenced is refused as well, a
 the sub-schemas and before the validator sees the schema. The same search bounds a chain of schemas applied to the same
 value at 128 schemas, the first one counting 1 (`InPlaceCycles.MAX_IN_PLACE_CHAIN`): a flat chain of references, `a0`
 referencing `a1`, `a1` referencing `a2` and so on, side by side under `$defs`, is nested only three levels deep, so the
-nesting limit below does not bound it, yet `SchemaChecks.holdsRequired`, `MandatoryFields.collect` and the
-`RefEvaluator` of `dev.harrel:json-schema` 1.9.1 recurse once per link. The search computes the longest chain over the
-edges above without recursion, and `FormSchema.parse` refuses a longer one as `MALFORMED` with the reason
-`a chain of schemas applied to the same value longer than 128`. `required` must be an array of unique strings, in the schema and every sub-schema,
+nesting limit below does not bound it, yet the `RefEvaluator` of `dev.harrel:json-schema` 1.9.1 recurses once per
+link. The search computes the longest chain over the edges above without recursion, and `FormSchema.parse` refuses a
+longer one as `MALFORMED` with the reason `a chain of schemas applied to the same value longer than 128`. The own walks
+of `git-forms` over such chains need no bound of their own: `SchemaChecks.holdsRequired` follows sub-schemas and
+references over an explicit stack, each schema once, so a schema of 55,000 flat `$defs` chained through
+`properties` and `$ref`, a chain the bound above does not count because `properties` descends, is answered instead of
+overflowing the thread stack; and `MandatoryFields`, the check of `required`, walks over an explicit stack as well, so
+the product of a value nested at the limit of 128 levels and a chain of 128 schemas at each level ends in a result. `required` must be an array of unique strings, in the schema and every sub-schema,
 because the validator evaluates the schema without it and so never checks its form. `required` must not occur in a
 sub-schema of `oneOf`, `anyOf`, `not`, `if`, `then`, `else` or `contains`, nor in a schema such a sub-schema references
 within the file: these keywords decide between alternatives or conditions, and removing `required` for `validate` would
@@ -308,9 +316,13 @@ own node types, and `minimum`, `maximum` and their exclusive forms by `BigDecima
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]). Only `multipleOf` is left to the library: it computes `BigDecimal.remainder`, whose working
 precision grows with the difference of the exponents, and parsing a long digit string costs time that grows with its
-digits. `YamlReader` therefore bounds every number of the text before it parses it: more than 1,000 significant
-digits (leading zeros not counted), in a decimal, octal or hexadecimal integer as in a float, is refused as
-`MALFORMED` with the detail `a number with more than 1000 digits`, and a float whose adjusted exponent, that of its
+digits. `YamlReader` therefore bounds every number of the text: more than 1,000 significant digits (leading zeros
+not counted), in a decimal, octal or hexadecimal integer as in a float, is refused as `MALFORMED` with the detail
+`a number with more than 1000 digits`. The digits are counted in one radix, the decimal form `YamlWriter` writes, so
+every integer `decode` accepts is one `encode` accepts: a decimal text and a float are counted without parsing them,
+an octal or hexadecimal integer of more than 2,000 digits is refused unparsed (its decimal form always has more than
+1,000 digits), and a shorter one is parsed and its decimal digits counted; a hexadecimal integer of 1,000 digits, about
+1,205 decimal digits, is therefore refused. A float whose adjusted exponent, that of its
 first significant digit, exceeds 1,000 in magnitude is refused as `MALFORMED` with the detail
 `a number whose exponent exceeds 1000 in magnitude`; neither detail names the number. `1e1000` is read, `1e1001` and
 `1e2147483647` are refused. The bounds apply to text the reader reads, documents, schema files and `kinds.yaml`
@@ -325,15 +337,22 @@ a number, `1e-400` under `"multipleOf": 1` for example, which the exponent bound
 this underflow of the library and adds no check of its own; `NumberBoundsTest` pins it.
 
 Data and schemas are bounded by one compiled nesting limit, 128 nested containers (mappings and sequences, the
-outermost counting 1 and a scalar root 0), held as `DataNode.MAX_DEPTH`. The validator `dev.harrel:json-schema` 1.9.1,
-`MandatoryFields` (the check of `required`) and the ordering of `YamlDocumentCodec` and `YamlWriter` recurse once per
-level; 128 keeps them far from the default thread stack, while no form needs more. The reader enforces the limit for
+outermost counting 1 and a scalar root 0), held as `DataNode.MAX_DEPTH`. The validator `dev.harrel:json-schema` 1.9.1
+and the ordering of `YamlDocumentCodec` and `YamlWriter` recurse once per level; 128 keeps them far from the default
+thread stack, while no form needs more. The reader enforces the limit for
 text: `YamlReader` refuses a mapping or sequence that would open a 129th level, so a document, a schema file or
 `kinds.yaml` nested deeper is `MALFORMED`, its detail naming the line and column and the limit
 (`a nesting deeper than 128 levels`), never content. `DataNode` enforces it for a value in memory, with an explicit
 stack, so a value that contains itself is refused as well: `validate`, `required` and `encode` check the whole value
 before anything else and refuse a value nested deeper with an `IllegalArgumentException` that names the limit
-(`not of the JSON data model: nested deeper than 128 levels`), never a value or a key. `DocumentLayout` needs no check
+(`not of the JSON data model: nested deeper than 128 levels`), never a value or a key. A container shared by several
+parents, `x` in `List.of(x, x)`, is walked again only when it is reached deeper than every time before, so the bound
+holds for its deepest occurrence and a value built by sharing, `x = List.of(x, x)` repeated 128 times, is checked in
+time linear in its containers instead of once per path; the check of the numbers of `encode` walks each shared
+container once. A `DataNode` child shares its parent instead of a copy of its JSON Pointer, which is joined on the
+first request, so the children of a wide mapping under a long path copy no prefix. A value a caller builds in memory
+outside the data model, or deeper than the limit, is a programming error and refused with that exception; data read
+from a repository, a document, its parts joined or a fragment, always ends in a result. `DocumentLayout` needs no check
 of its own, because `split` and `join` copy only the top level of the data; a test pins that.
 `SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema, every
 sub-schema (`contentSchema` included) and every schema a reference selects, also under an unknown keyword and through

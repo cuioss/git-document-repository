@@ -49,8 +49,10 @@ import org.jspecify.annotations.Nullable;
  * The same search bounds the longest chain of schemas applied to the same value at {@value #MAX_IN_PLACE_CHAIN}
  * schemas, the first schema of the chain counting 1. A flat chain of references ({@code a0} referencing {@code a1},
  * {@code a1} referencing {@code a2}, and so on, all side by side under {@code $defs}) is nested only a few levels deep,
- * so no nesting limit bounds it; yet {@code SchemaChecks.holdsRequired}, {@code MandatoryFields.collect} and the
- * {@code RefEvaluator} of the validator recurse once per link. The length of the longest chain from each schema object
+ * so no nesting limit bounds it; yet the {@code RefEvaluator} of the validator recurses once per link.
+ * {@code SchemaChecks.holdsRequired} and {@code MandatoryFields} walk over explicit stacks and need no bound of their
+ * own: the chain is bounded here for the validator only, and {@code MandatoryFields} meets at most the product of this
+ * bound and the nesting limit {@value DataNode#MAX_DEPTH} of the data without recursing. The length of the longest chain from each schema object
  * is its height in the graph of in-place edges, computed after its edges, as each object leaves the path; as the graph
  * is acyclic once no cycle is found, every object is computed once, without recursion.
  */

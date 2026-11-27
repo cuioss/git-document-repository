@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 
 
 import dev.harrel.jsonschema.Error;
@@ -77,9 +76,6 @@ public final class SchemaValidator {
 
     private static final String AT_LEAST = "must have at least ";
     private static final String AT_MOST = "must have at most ";
-
-    /** The number of preparations since the class was loaded; read by the tests only. */
-    private static final AtomicInteger PREPARATIONS = new AtomicInteger();
 
     /**
      * Validates data against a schema, the keyword {@code required} not evaluated.
@@ -152,7 +148,6 @@ public final class SchemaValidator {
      */
     static Optional<Prepared> prepare(Map<String, @Nullable Object> withoutRequired, SchemaResources resources,
             List<Map<?, ?>> schemaObjects) {
-        PREPARATIONS.incrementAndGet();
         try {
             Validator validator = new ValidatorFactory()
                     .withJsonNodeFactory(DataNode.FACTORY)
@@ -179,11 +174,6 @@ public final class SchemaValidator {
             // the library signals a schema it refuses by an exception whose message may quote the schema
             return Optional.empty();
         }
-    }
-
-    /** The number of preparations since the class was loaded, for the tests. */
-    static int preparations() {
-        return PREPARATIONS.get();
     }
 
     /** The violation of an error of the library: its instance location and a message of this class. */

@@ -65,9 +65,10 @@ import org.snakeyaml.engine.v2.scanner.StreamReader;
  * resolves a plain scalar with its {@code CoreScalarResolver}, the YAML 1.2 core schema; a quoted or block scalar is a
  * string. It refuses, as {@link StoreOutcome#MALFORMED} passed on in a {@link FormsResult}, everything outside the
  * JSON data model: an anchor, an alias, an explicit tag, a key that is not a string, a duplicate key, an infinite
- * number or not-a-number, a number with more than {@value #MAX_NUMBER_DIGITS} digits (leading zeros not counted) or
- * whose exponent exceeds {@value #MAX_EXPONENT} in magnitude, both refused before the number is parsed and the bound
- * named in the detail, a quoted string that is not valid
+ * number or not-a-number, a number with more than {@value #MAX_NUMBER_DIGITS} significant decimal digits (leading
+ * zeros not counted; an octal or hexadecimal integer counted in its decimal form) or whose exponent exceeds
+ * {@value #MAX_EXPONENT} in magnitude, the bound named in the detail and the number never parsed beyond twice the
+ * digit bound, a quoted string that is not valid
  * Unicode (a lone surrogate from an escape), more than {@value DataNode#MAX_DEPTH} nested mappings and sequences (the
  * nesting limit {@link DataNode#MAX_DEPTH}, which the detail names), more than one document, and a document without a
  * value. Text that is not
@@ -392,8 +393,8 @@ final class YamlReader {
     }
 
     /**
-     * Converts an integer of the core schema: decimal, octal with {@code 0o} or hexadecimal with {@code 0x}; more than
-     * {@value #MAX_NUMBER_DIGITS} digits in the text, leading zeros not counted, are refused before it is parsed.
+     * Converts an integer of the core schema: decimal, octal with {@code 0o} or hexadecimal with {@code 0x}; an integer
+     * of more than {@value #MAX_NUMBER_DIGITS} significant decimal digits is refused ({@link #integerBound(String)}).
      */
     private static Object integer(String text, ScalarEvent event) {
         integerBound(text).ifPresent(problem -> {
@@ -403,10 +404,27 @@ final class YamlReader {
         return value.bitLength() < Long.SIZE ? (Object) value.longValueExact() : value;
     }
 
-    /** The bound an integer of the core schema exceeds: more than {@value #MAX_NUMBER_DIGITS} significant digits. */
+    /**
+     * The bound an integer of the core schema exceeds: more than {@value #MAX_NUMBER_DIGITS} significant digits, counted
+     * in one radix, the decimal form {@link YamlWriter} writes, so that every integer the reader accepts is one
+     * {@link YamlDocumentCodec#encode(Map)} accepts. A decimal text is counted without parsing it. An octal or
+     * hexadecimal text of more than twice the bound in digits is refused without parsing, since its decimal form
+     * always has more than the bound (an octal digit is worth more than 0.9 decimal digits); a shorter one is parsed,
+     * at most twice the bound in digits, and its decimal digits are counted.
+     */
     private static Optional<String> integerBound(String text) {
-        return significantDigits(integerDigits(text)) > MAX_NUMBER_DIGITS ? Optional.of(TOO_MANY_DIGITS)
-                : Optional.empty();
+        String digits = integerDigits(text);
+        int radix = radix(text);
+        int significant = significantDigits(digits);
+        if (radix == 10) {
+            return significant > MAX_NUMBER_DIGITS ? Optional.of(TOO_MANY_DIGITS) : Optional.empty();
+        }
+        if (significant > 2 * MAX_NUMBER_DIGITS) {
+            return Optional.of(TOO_MANY_DIGITS);
+        }
+        BigInteger value = new BigInteger(digits, radix);
+        int decimal = value.signum() == 0 ? 0 : value.abs().toString().length();
+        return decimal > MAX_NUMBER_DIGITS ? Optional.of(TOO_MANY_DIGITS) : Optional.empty();
     }
 
     /** The radix of an integer of the core schema, given by its prefix. */

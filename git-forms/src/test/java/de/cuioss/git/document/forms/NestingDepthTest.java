@@ -49,8 +49,11 @@ import org.junit.jupiter.api.function.Executable;
  * {@value InPlaceCycles#MAX_IN_PLACE_CHAIN} schemas: a value at the limit is read, validated, checked by
  * {@code required} and encoded on a thread with the default stack size; one level more is refused as
  * {@link StoreOutcome#MALFORMED} from text and with an {@link IllegalArgumentException} in memory, naming the limit and
- * no content (GDR-GEN-3, GDR-NFR-3); a value 100,000 levels deep, and a chain of 100,000 schemas, is refused without an
- * {@link Error}. {@link DocumentLayout} copies only the top level and needs no check, which the layout pin holds.
+ * no content (GDR-GEN-3, GDR-NFR-3); a value 100,000 levels deep, a value that contains itself, and a chain of 100,000
+ * schemas, is refused without an {@link Error}, a value built in memory with the documented
+ * {@link IllegalArgumentException}. The limit holds in block style as in flow style and for a schema of real
+ * sub-schemas, and {@code required} ends in a result for data at the limit under a chain at the bound at every level.
+ * {@link DocumentLayout} copies only the top level and needs no check, which the layout pin holds.
  * <p>
  * The key of the data is generated; the limit, the reasons and the shape of the schemas are the contract and kept as
  * literals.
@@ -108,6 +111,47 @@ class NestingDepthTest {
         return key + ": " + "[".repeat(levels - 1) + "]".repeat(levels - 1) + "\n";
     }
 
+    /** The YAML of {@link #mappingChain(String, int)} in block style, the innermost empty mapping in flow style. */
+    private static String mappingChainBlockYaml(String key, int levels) {
+        var text = new StringBuilder();
+        for (int level = 0; level < levels - 2; level++) {
+            text.append("  ".repeat(level)).append(key).append(":\n");
+        }
+        text.append("  ".repeat(levels - 2)).append(key).append(": {}\n");
+        return text.toString();
+    }
+
+    /**
+     * A schema file of real sub-schemas, each the schema of the key under {@code properties} of the one around it,
+     * holding {@code containers} nested mappings and sequences: two per level, the root one, and for an even count an
+     * empty {@code required} array in the innermost schema.
+     */
+    private static byte[] nestedPropertiesSchemaFile(String key, int containers) {
+        int levels = (containers - 1) / 2;
+        String innermost = containers % 2 == 0 ? "{\"required\":[]}" : "{}";
+        var built = new StringBuilder("{");
+        for (int level = 0; level < levels; level++) {
+            built.append("\"properties\":{\"").append(key).append("\":{");
+        }
+        built.append(innermost, 1, innermost.length() - 1);
+        built.append("}}".repeat(levels)).append('}');
+        return built.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A schema file whose root starts a chain of {@code length} schemas applied to the same value, the last of which
+     * requires the key and applies the root to its value: every level of the data meets the whole chain.
+     */
+    private static byte[] chainPerLevelSchemaFile(String key, int length) {
+        var text = new StringBuilder("{\"$ref\":\"#/$defs/c0\",\"$defs\":{");
+        for (int index = 0; index < length - 2; index++) {
+            text.append("\"c").append(index).append("\":{\"$ref\":\"#/$defs/c").append(index + 1).append("\"},");
+        }
+        text.append("\"c").append(length - 2).append("\":{\"required\":[\"").append(key)
+                .append("\"],\"properties\":{\"").append(key).append("\":{\"$ref\":\"#\"}}}}}");
+        return text.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
     /** A schema that applies itself to the value of the key and to every item. */
     private static FormSchema recursiveSchema(String key) {
         return SchemaValidatorTest.schema("{ \"required\": [\"" + key + "\"], \"properties\": { \"" + key
@@ -134,7 +178,7 @@ class NestingDepthTest {
     }
 
     /** Runs an executable on a new thread with the default stack size, failing on whatever it throws. */
-    private static void onDefaultStack(Executable executable) throws Throwable {
+    static void onDefaultStack(Executable executable) throws Throwable {
         AtomicReference<@Nullable Throwable> thrown = new AtomicReference<>();
         Thread thread = new Thread(() -> {
             try {
@@ -214,6 +258,59 @@ class NestingDepthTest {
                 var result = FormSchema.parse(PATH, nestedSchemaFile(LIMIT));
                 assertTrue(result.isOk(), () -> "accepted: " + result.detail());
             });
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: data nested 128 levels in block style decodes and encodes back to the same value")
+        void blockStyleDecodes() throws Throwable {
+            var key = KEYS.next();
+            var yaml = mappingChainBlockYaml(key, LIMIT);
+
+            onDefaultStack(() -> {
+                var decoded = codec.decode(yaml.getBytes(StandardCharsets.UTF_8));
+                assertTrue(decoded.isOk(), () -> "decoded: " + decoded.detail());
+                var data = Objects.requireNonNull(decoded.value());
+                assertAll(
+                        () -> assertEquals(mappingChain(key, LIMIT), data, "the value read"),
+                        () -> assertEquals(data, codec.decode(codec.encode(data)).value(), "the encoding reads back"));
+            });
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a schema of real sub-schemas nested 128 levels parses, validates, orders and checks")
+        void realSubSchemasAccepted() throws Throwable {
+            var key = KEYS.next();
+            int schemaLevels = (LIMIT - 2) / 2;
+
+            onDefaultStack(() -> {
+                var parsed = FormSchema.parse(PATH, nestedPropertiesSchemaFile(key, LIMIT));
+                assertTrue(parsed.isOk(), () -> "accepted: " + parsed.detail());
+                var schema = Objects.requireNonNull(parsed.value());
+                var data = mappingChain(key, schemaLevels + 1);
+                var ordered = new YamlDocumentCodec(schema);
+                assertAll(
+                        () -> assertEquals(new ValidationResult.Valid(), validator.validate(schema, data),
+                                "validate, through withoutRequired"),
+                        () -> assertEquals(new ValidationResult.Valid(), validator.required(schema, data),
+                                "required"),
+                        () -> assertEquals(data, ordered.decode(ordered.encode(data)).value(),
+                                "encode in the order of the Shape"));
+            });
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: data nested 128 levels under a chain of 128 schemas at each level ends in a result")
+        void depthTimesChain() throws Throwable {
+            var key = KEYS.next();
+            // the reference to the root under properties starts the longest chain, so the root starts one of 127
+            var parsed = FormSchema.parse(PATH, chainPerLevelSchemaFile(key, LIMIT - 1));
+            assertTrue(parsed.isOk(), () -> "accepted: " + parsed.detail());
+            var schema = Objects.requireNonNull(parsed.value());
+            var data = mappingChain(key, LIMIT);
+
+            onDefaultStack(() -> assertEquals(
+                    new ValidationResult.MandatoryFieldsMissing(List.of(("/" + key).repeat(LIMIT))),
+                    validator.required(schema, data), "required walks the product of depth and chain"));
         }
 
         @Test
@@ -306,6 +403,33 @@ class NestingDepthTest {
         }
 
         @Test
+        @DisplayName("GDR-FORMS-2: a schema of real sub-schemas nested 129 levels is MALFORMED, naming the limit")
+        void realSubSchemasRefused() {
+            var key = KEYS.next();
+
+            var result = FormSchema.parse(PATH, nestedPropertiesSchemaFile(key, LIMIT + 1));
+
+            var detail = String.valueOf(result.detail());
+            assertAll(
+                    () -> assertEquals(MALFORMED, result.outcome(), "the schema is refused"),
+                    () -> assertTrue(detail.matches(PATH + ": line \\d+, column \\d+: " + TEXT_REFUSAL),
+                            () -> "the file and the limit: " + detail),
+                    () -> assertFalse(detail.contains(key), "nothing of the schema"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: text nested 129 levels in block style is MALFORMED, naming the limit")
+        void blockStyleRefused() {
+            var key = KEYS.next();
+
+            var result = codec.decode(mappingChainBlockYaml(key, LIMIT + 1).getBytes(StandardCharsets.UTF_8));
+
+            assertAll(
+                    () -> assertEquals(StoreOutcome.MALFORMED, result.outcome(), "the content is refused"),
+                    () -> assertRefusedText(key, String.valueOf(result.detail())));
+        }
+
+        @Test
         @DisplayName("GDR-FORMS-2: a chain of 129 schemas applied to the same value is MALFORMED, naming the bound")
         void chainRefused() {
             var result = FormSchema.parse(PATH, chainSchemaFile(LIMIT + 1));
@@ -334,31 +458,62 @@ class NestingDepthTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-2: validate refuses data nested 100,000 levels, not with an Error")
+        @DisplayName("GDR-FORMS-2: validate refuses data built in memory 100,000 levels deep as documented")
         void validateRefused() {
             var key = KEYS.next();
             var schema = recursiveSchema(key);
             var data = sequenceChain(key, FAR_BEYOND);
 
-            assertThrows(IllegalArgumentException.class, () -> validator.validate(schema, data));
+            var thrown = assertThrows(IllegalArgumentException.class, () -> validator.validate(schema, data));
+
+            assertEquals(IN_MEMORY_REFUSAL, thrown.getMessage(), "the documented refusal, naming the limit");
         }
 
         @Test
-        @DisplayName("GDR-FORMS-2: required refuses data nested 100,000 levels, not with an Error")
+        @DisplayName("GDR-FORMS-2: required refuses data built in memory 100,000 levels deep as documented")
         void requiredRefused() {
             var key = KEYS.next();
             var schema = recursiveSchema(key);
             var data = mappingChain(key, FAR_BEYOND);
 
-            assertThrows(IllegalArgumentException.class, () -> validator.required(schema, data));
+            var thrown = assertThrows(IllegalArgumentException.class, () -> validator.required(schema, data));
+
+            assertEquals(IN_MEMORY_REFUSAL, thrown.getMessage(), "the documented refusal, naming the limit");
         }
 
         @Test
-        @DisplayName("GDR-FORMS-3: encode refuses data nested 100,000 levels, not with an Error")
+        @DisplayName("GDR-FORMS-3: encode refuses data built in memory 100,000 levels deep as documented")
         void encodeRefused() {
             var data = mappingChain(KEYS.next(), FAR_BEYOND);
 
-            assertThrows(IllegalArgumentException.class, () -> codec.encode(data));
+            var thrown = assertThrows(IllegalArgumentException.class, () -> codec.encode(data));
+
+            assertEquals(IN_MEMORY_REFUSAL, thrown.getMessage(), "the documented refusal, naming the limit");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a Map and a List that contain themselves are refused as documented, naming the limit")
+        void selfContainingRefused() {
+            var key = KEYS.next();
+            Map<String, @Nullable Object> map = new LinkedHashMap<>();
+            map.put(key, map);
+            List<Object> list = new ArrayList<>();
+            list.add(list);
+            Map<String, @Nullable Object> holdingList = new LinkedHashMap<>();
+            holdingList.put(key, list);
+            var schema = recursiveSchema(key);
+
+            assertAll(
+                    () -> assertEquals(IN_MEMORY_REFUSAL, assertThrows(IllegalArgumentException.class,
+                            () -> DataNode.root(map)).getMessage(), "a Map in itself"),
+                    () -> assertEquals(IN_MEMORY_REFUSAL, assertThrows(IllegalArgumentException.class,
+                            () -> DataNode.root(list)).getMessage(), "a List in itself"),
+                    () -> assertEquals(IN_MEMORY_REFUSAL, assertThrows(IllegalArgumentException.class,
+                            () -> validator.validate(schema, holdingList)).getMessage(), "validate"),
+                    () -> assertEquals(IN_MEMORY_REFUSAL, assertThrows(IllegalArgumentException.class,
+                            () -> validator.required(schema, map)).getMessage(), "required"),
+                    () -> assertEquals(IN_MEMORY_REFUSAL, assertThrows(IllegalArgumentException.class,
+                            () -> codec.encode(holdingList)).getMessage(), "encode"));
         }
 
         @Test

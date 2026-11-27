@@ -180,24 +180,33 @@ final class SchemaChecks {
     /**
      * Tells whether a schema holds the keyword {@code required}: itself, in a sub-schema or in a schema it references
      * within the file. The definitions of a schema count only where they are referenced.
+     * <p>
+     * The walk runs over an explicit stack, not the thread stack: a chain of sub-schemas and references is as long as
+     * the file makes it, for example 55,000 flat {@code $defs} each reaching the next through
+     * {@code properties} and {@code $ref}, and each schema is looked at once, so the walk is linear in the schemas of
+     * the file and ends in an answer, never in a {@link StackOverflowError}.
      *
      * @param visited the schemas already looked at, compared by identity, so that a reference cycle ends
      */
     static boolean holdsRequired(SchemaResources resources, Map<?, ?> schema, Set<Object> visited) {
-        if (!visited.add(schema)) {
-            return false;
-        }
-        if (schema.containsKey(REQUIRED)) {
-            return true;
-        }
-        for (Map.Entry<?, ?> entry : schema.entrySet()) {
-            if (!DEFINITIONS.contains(entry.getKey()) && FormSchema.subSchemas(entry.getKey(), entry.getValue())
-                    .stream().anyMatch(subSchema -> holdsRequired(resources, subSchema, visited))) {
+        Deque<Map<?, ?>> pending = new ArrayDeque<>();
+        pending.push(schema);
+        while (!pending.isEmpty()) {
+            Map<?, ?> current = pending.pop();
+            if (!visited.add(current)) {
+                continue;
+            }
+            if (current.containsKey(REQUIRED)) {
                 return true;
             }
+            for (Map.Entry<?, ?> entry : current.entrySet()) {
+                if (!DEFINITIONS.contains(entry.getKey())) {
+                    FormSchema.subSchemas(entry.getKey(), entry.getValue()).forEach(pending::push);
+                }
+            }
+            FormSchema.targets(resources, current).forEach(pending::push);
         }
-        return FormSchema.targets(resources, schema).stream()
-                .anyMatch(target -> holdsRequired(resources, target, visited));
+        return false;
     }
 
     /**

@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.IntStream;
 
@@ -148,16 +149,24 @@ public final class YamlDocumentCodec implements Codec<Map<String, @Nullable Obje
     /**
      * Refuses a {@link BigInteger} or {@link BigDecimal} anywhere in a value whose written form the reader refuses,
      * through the bounds of {@link YamlReader#exceededNumberBound(String)}. The value has passed
-     * {@link DataNode#requireDataModel(Object)}, so it holds no cycle and the walk over an explicit stack ends; the
-     * refusal names the bound, never the number (GDR-NFR-3).
+     * {@link DataNode#requireDataModel(Object)}, so it holds no cycle and the walk over an explicit stack ends; a
+     * container shared by several parents is walked once, compared by identity, as its numbers are the same wherever it
+     * is reached. The refusal names the bound, never the number (GDR-NFR-3).
      */
     private static void requireReadableNumbers(Object value) {
+        Set<Object> walked = FormSchema.identitySet();
         Deque<Object> pending = new ArrayDeque<>();
         pending.push(value);
         while (!pending.isEmpty()) {
             switch (pending.pop()) {
-                case Map<?, ?> map -> pushInside(pending, map.values());
-                case List<?> list -> pushInside(pending, list);
+                case Map<?, ?> map when walked.add(map) -> pushInside(pending, map.values());
+                case List<?> list when walked.add(list) -> pushInside(pending, list);
+                case Map<?, ?> ignored -> {
+                    // walked before
+                }
+                case List<?> ignored -> {
+                    // walked before
+                }
                 case BigInteger number -> requireReadable(number.toString());
                 case BigDecimal number -> requireReadable(number.toString());
                 default -> {

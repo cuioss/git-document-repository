@@ -698,6 +698,52 @@ class KindConfigurationTest {
         }
     }
 
+    @Nested
+    @DisplayName("Physical repository")
+    class PhysicalRepository {
+
+        /** A registry holding two aliases of one remote. */
+        private RepositoryRegistry twoAliasesOfOneRemote(String first, String second) {
+            String remote = ORIGIN + "/" + name() + ".git";
+            StoreResult<RepositoryRegistry> result = RepositoryRegistry.of(List.of(
+                            new StoreRepository(first, remote, name(), null), new StoreRepository(second, remote, name(), null)),
+                    RemotePolicy.httpsOrigin(URI.create(ORIGIN)));
+            return Objects.requireNonNull(result.value(), () -> "the registry accepts both: " + result.detail());
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: two aliases of one repository with one collection are refused as MALFORMED")
+        void twoAliasesOneCollectionRefused(@TempDir Path directory) throws Exception {
+            var first = Values.generate(name());
+            var second = Values.generate(name());
+            var keys = with(second.numbered("3"), "collection", first.collection());
+
+            var result = KindConfiguration.fromDirectory(write(directory, yaml(first.perDocument(), keys)),
+                    twoAliasesOfOneRemote(first.alias(), second.alias()));
+
+            var values = new ArrayList<>(first.all());
+            values.addAll(second.all());
+            assertAll(
+                    () -> assertEquals(MALFORMED, result.outcome(), "the configuration is refused"),
+                    () -> assertEquals("kinds.yaml: kinds[1].collection: a collection another kind of the same "
+                            + "repository uses", result.detail(), "the key path and the rule"),
+                    () -> assertNoValue(result.detail(), values));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-1: two aliases of one repository with two collections load")
+        void twoAliasesTwoCollectionsLoad(@TempDir Path directory) throws Exception {
+            var first = Values.generate(name());
+            var second = Values.generate(name());
+
+            var configuration = loaded(KindConfiguration.fromDirectory(
+                    write(directory, yaml(first.perDocument(), second.numbered("3"))),
+                    twoAliasesOfOneRemote(first.alias(), second.alias())));
+
+            assertEquals(2, configuration.kinds().size(), "both kinds");
+        }
+    }
+
     /** Prefixes within the form {@code [A-Za-z0-9_-]{0,16}}: the one of the example, the empty one, 16 characters. */
     static Stream<String> acceptedPrefixes() {
         return Stream.of("R-", "", "aZ_-09aZ_-09aZ_-");

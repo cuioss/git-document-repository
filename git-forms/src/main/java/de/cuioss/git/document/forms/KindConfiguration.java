@@ -70,7 +70,9 @@ import org.jspecify.annotations.Nullable;
  * <li>a repository alias the registry does not know;</li>
  * <li>a second kind with the repository and the collection of an earlier kind, whatever the numbering of either: the
  * two would share the branch namespace of the collection, and the branch of a numbered collection would conflict with
- * the document branches below the same name of a per-document collection;</li>
+ * the document branches below the same name of a per-document collection; the repository is compared by its physical
+ * repository, the remote the registry holds for the alias, so two aliases of one remote with one collection are
+ * refused as well;</li>
  * <li>a {@code schema}, {@code template} or {@code workflow} that is not a relative path: a leading {@code /}, an
  * empty, {@code .} or {@code ..} segment, a backslash, or a control character;</li>
  * <li>a per-document kind without {@code template};</li>
@@ -245,11 +247,21 @@ public final class KindConfiguration {
             if (byId.putIfAbsent(kind.id(), kind) != null) {
                 throw new Malformed(path + "." + ID + ": duplicate id");
             }
-            if (!namespaces.add(List.of(kind.repository(), kind.collection()))) {
+            if (!namespaces.add(List.of(physical(repositories, kind.repository()), kind.collection()))) {
                 throw new Malformed(path + "." + COLLECTION + ": a collection another kind of the same repository uses");
             }
         }
         return byId;
+    }
+
+    /**
+     * The physical repository of an alias, as the registry exposes it: its remote ({@code StoreRepository.remote()}).
+     * Two aliases the registry holds for one remote name one repository, so they share its branch namespace; the
+     * remote is compared as registered, the registry having checked it as a Git URL without user information.
+     */
+    private static String physical(RepositoryRegistry repositories, String alias) {
+        // kind(...) has refused an unknown alias already
+        return repositories.find(alias).orElseThrow(() -> new Malformed(REPOSITORY + ": unknown alias")).remote();
     }
 
     /** Checks one kind. */
