@@ -109,7 +109,8 @@ operator at the outline: it changes GDR-FORMS-2 and GDR-FORMS-5 and the concept.
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-13 (shipped, PR #64, `e38e079`: the workflow, the transitions and the step-up) and PLAN-14 (deadlines, GDR-FORMS-6: the condition
+- Depends on: PLAN-28 (staged 2026-11-27, the next plan to emit: the step-up of this spec becomes identity verification, the workflow key `step-up` becomes `verify-identity`, the
+  outcome `STEP_UP_REQUIRED` becomes `IDENTITY_NOT_VERIFIED`; this spec's "optional step-up" and `complete.step-up` are re-worded to it when PLAN-28 ships), PLAN-13 (shipped, PR #64, `e38e079`: the workflow, the transitions and the step-up) and PLAN-14 (deadlines, GDR-FORMS-6: the condition
   language of deliverable 2 extends its rules, and PLAN-14 deliverables 6 and 7 edit the same `StepUpPolicy`, `TransitionSave` and
   `git-forms.adoc` passages).
 - Overlaps with: PLAN-14 on `git-forms/`, `git-forms.adoc` and `schema-driven-documents.adoc` (strictly sequential, PLAN-14 first) and PLAN-15 and

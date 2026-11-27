@@ -168,6 +168,14 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   `audit-notary-002`: five deliverables (the decision, the condition language, stages in the workflow, `complete` and `reopen`, the gate).
   **Held back from `next` until the operator releases it**; strictly sequential after PLAN-14 on `git-forms/`. At its outline the owner decides
   whether the library takes the full concept or the minimal excluded-parts alternative.
+- PLAN-28 — identity seams (staged 2026-11-27 on the operator's word "stage and land", WS-02): an opaque `Attestation` recorded as signed trailers in `git-store`, the
+  `IdentityVerifier` / `verifyIdentity` callback and the removal of `StepUpPolicy` in `git-forms`, the person key `authority` and `subject`, a new ADR amending ADR-0005 and ADR-0006,
+  the documents, and the rename of `TrailHand` to `Audit-Notary`; four deliverables, below six. **The next plan to emit, NOT before the restart of 2026-11-27** (the operator).
+  PLAN-15, PLAN-16, PLAN-25 and PLAN-27 now name PLAN-28 in their Depends-on line and run after it (the shared documents and the `git-store/` and `git-forms/` trees are strictly
+  sequential). It declares 17 surface entries (the two module trees, `doc/adr/`, three specifications, six concepts, `doc/README.adoc`, `AGENTS.md`); the gate puts it to the
+  operator against any plan in flight that shares more than one of them. The three open points of the analysis were taken as recommended unless the operator says otherwise at the
+  outline: the verifier receives the whole transition context (the request carries attestation, pseudonym, key and transition), the evidence trailer `Identity-Verification: performed`
+  is in, and the optional `commit.required-trailers` is decided at the outline.
 - PLAN-17 — Emitted on 2026-11-24 beside PLAN-13 (PLAN-11 shipped, so its dependency is met); the operator accepted the 4 to 5 shared files with
   PLAN-13 (`AGENTS.md`, `doc/README.adoc`, `general.adoc`, `pom.xml`, `module-structure.adoc` against the live plan) and the two shared with
   PLAN-22 (`AGENTS.md`, `general.adoc`). Opens with the owner decision on the RFC 3161 library.
@@ -633,6 +641,15 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   plan-marshall subjects to the plan-marshall `lessons-routing` inbox (`-099` to `-114`), 6 rules of this repository's modules promoted into the local lessons
   store (`2026-11-25-08-001` to `-006`), 1 discarded onto the open item "empty `skills_by_profile`" (second standing rule; `lessons-moved.md`). Nothing was
   emitted, on the operator's word.
+- 2026-11-27 — **Operator decisions on the identity vocabulary** (after the PLAN-14 analysis; nothing staged yet). (1) The "mfa" naming: the whole identity model of
+  `git-store` and `git-forms` is OpenID Connect vocabulary (`IdentityClaims(issuer, authTime, acr, amr)`, the trailers `Actor-Issuer`, `Auth-Time`, `Auth-Context`, the
+  keys `step-up.acr` / `step-up.amr`, the default value `mfa` of RFC 8176), which contradicts the concept's own "Not in Scope: the OAuth flows and the identity
+  provider". Of the three defaults offered, the operator chose **(b): no protocol default; a deployment must name what holds when verification is enabled.**
+  (2) **TrailHand is to be renamed Audit-Notary everywhere** (`cuioss/TrailHand` redirects to `cuioss/Audit-Notary` on GitHub; the mentions in this repository are
+  `AGENTS.md` 17-18 and `doc/README.adoc` 17-18). (3) The operator asked whether the library can be made fully abstract: "step-up" and "mfa" are too specific, a
+  callback (`verifyIdentity`, or a `Function` passed in) so that the library has no knowledge of the mechanism at all. The analysis is in the session; the route (a new
+  plan, and an ADR superseding the identity part of ADR-0005 and the issuer/`sub` part of ADR-0006) awaits the operator's word. PLAN-14 deliverable 6 (shipped, not
+  released) and the layer-3 minor L3-6 (an enabled `StepUpPolicy` with no value) are affected; PLAN-15, PLAN-16 and PLAN-27 name the vocabulary.
 
 ## Open Defects
 

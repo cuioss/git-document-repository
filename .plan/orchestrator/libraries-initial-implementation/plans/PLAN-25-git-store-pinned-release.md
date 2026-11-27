@@ -119,7 +119,8 @@ landing analyses fold into this spec until it is launched.
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-13 (shipped, PR #64, `e38e079`), which added the pinned release, and PLAN-22 (shipped, PR #76, `c22700a`).
+- Depends on: PLAN-13 (shipped, PR #64, `e38e079`), which added the pinned release, and PLAN-22 (shipped, PR #76, `c22700a`); runs AFTER PLAN-28 (staged 2026-11-27, the next plan to
+  emit), which replaces `IdentityClaims` by `Attestation` in the signatures of `StoreWriter.save` and `release` that this plan's release path calls: re-read the lines cited here at the plan's head.
 - Overlaps with: PLAN-14 deliverable 7 (shipped; `git-forms` reads `branchMovedOn` and resumes a failed release through the pinned release; it relies on the
   behaviour this plan decides for the recovery path), PLAN-24 deliverable 3 (the classification of a lost lease in `git-core`, which deliverable 2(a)
   complements), and PLAN-26 deliverable 2(e) (the provider's own proof bound). `AGENTS.md`, `git-store.adoc` and `general.adoc` are shared with the
