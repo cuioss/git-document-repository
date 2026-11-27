@@ -368,7 +368,7 @@ public final class Workflow {
      * @throws NullPointerException if {@code state} is {@code null}
      */
     public List<Deadline> deadlines(String state) {
-        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(state, STATE);
         return declaredDeadlines.stream().filter(deadline -> deadline.state().equals(state)).toList();
     }
 

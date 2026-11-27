@@ -66,6 +66,9 @@ public final class LinkTargets {
      * @param catalogs the resolver of the catalog links
      * @throws NullPointerException if an argument, an alias or an index is {@code null}
      */
+    // the wildcard is needed: StoreIndex is final but generic, so a Map<String, StoreIndex<Risk>> is no
+    // Map<String, StoreIndex<?>>; java:S4968 does not see that the type argument differs
+    @SuppressWarnings("java:S4968")
     public LinkTargets(KindConfiguration kinds, Map<String, ? extends StoreIndex<?>> indexes,
             CatalogResolver catalogs) {
         this.kinds = Objects.requireNonNull(kinds, "kinds");

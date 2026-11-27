@@ -199,8 +199,10 @@ final class MandatoryFields {
         List<?> prefixItems = keywords.get("prefixItems") instanceof List<?> leading ? leading : List.of();
         @Nullable Object rest = keywords.get("items");
         for (int index = 0; index < items.size(); index++) {
-            next.add(new Call(FormSchema.byPosition(prefixItems, rest, index), items.get(index), pointer + "/" + index,
-                    FormSchema.identitySet()));
+            @Nullable Object subSchema = FormSchema.byPosition(prefixItems, rest, index);
+            if (subSchema instanceof Map<?, ?>) {
+                next.add(new Call(subSchema, items.get(index), pointer + "/" + index, FormSchema.identitySet()));
+            }
         }
     }
 

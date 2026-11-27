@@ -156,7 +156,9 @@ class TypedLinkTest {
     @Test
     @DisplayName("GDR-FORMS-8: parse refuses a null text")
     void nullRefused() {
-        assertThrows(NullPointerException.class, () -> TypedLink.parse(nothing()));
+        String text = nothing();
+
+        assertThrows(NullPointerException.class, () -> TypedLink.parse(text));
     }
 
     /** A {@code null} typed as a non-null text, without a cast. */

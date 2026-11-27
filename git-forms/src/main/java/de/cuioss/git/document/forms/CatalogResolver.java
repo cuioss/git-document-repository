@@ -29,8 +29,9 @@ import de.cuioss.git.document.store.StoreResult;
  * {@link #resolve(String, String)} is called inside the per-attempt step of a save, under the save locks of the store,
  * once per catalog link of the data and on every attempt. It must therefore return within milliseconds, read only
  * state it holds in memory, and call no remote service and no operation of the store; a slow or blocking resolver
- * holds up every save of the repository. A {@link RuntimeException} it throws ends the save as a refused step of the
- * store.
+ * holds up every save of the repository. A {@link RuntimeException} it throws is caught by the store, which ends the
+ * save with the passed-on {@code GitOutcome.FAILED}; the save is not retried, and the
+ * detail names only the class of the exception.
  *
  * @since 0.1
  */

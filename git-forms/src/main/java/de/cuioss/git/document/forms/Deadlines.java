@@ -107,8 +107,8 @@ public final class Deadlines {
         this.codec = new YamlDocumentCodec(definition.schema());
         Set<String> dateFields = new LinkedHashSet<>();
         for (Deadline deadline : definition.workflow().deadlines()) {
-            if (deadline.rule() instanceof Deadline.DateField field) {
-                dateFields.add(field.field());
+            if (deadline.rule() instanceof Deadline.DateField(String name)) {
+                dateFields.add(name);
             }
         }
         this.fields = Set.copyOf(dateFields);
@@ -276,11 +276,11 @@ public final class Deadlines {
             Instant at) {
         try {
             return switch (rule) {
-                case Deadline.Within within -> entered == null ? Optional.empty()
-                        : Optional.of(plus(entered, within.amount(), 1));
-                case Deadline.ReviewInterval interval -> entered == null ? Optional.empty()
-                        : Optional.of(latestOccurrence(entered, interval.amount(), at));
-                case Deadline.DateField field -> date(fields.get(field.field()));
+                case Deadline.Within(var amount) -> entered == null ? Optional.empty()
+                        : Optional.of(plus(entered, amount, 1));
+                case Deadline.ReviewInterval(var amount) -> entered == null ? Optional.empty()
+                        : Optional.of(latestOccurrence(entered, amount, at));
+                case Deadline.DateField(var name) -> date(fields.get(name));
             };
         } catch (DateTimeException | ArithmeticException e) {
             // an amount that leaves the range of Instant is due never

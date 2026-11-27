@@ -281,6 +281,9 @@ final class DataNode implements JsonNode {
      * under a long path copies no prefix; the pointer is joined on the first request, from the nearest ancestor whose
      * pointer is known, and kept.
      */
+    // every pointer of the chain is kept on its node, so each step needs its own String and a StringBuilder would only
+    // be copied out again; java:S1643 does not see that the intermediate values are used
+    @SuppressWarnings("java:S1643")
     @Override
     public String getJsonPointer() {
         String known = pointer;

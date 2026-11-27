@@ -48,6 +48,7 @@ import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.Ulid;
 import de.cuioss.git.document.testing.LocalRemote;
 import de.cuioss.git.document.testing.Remote;
+import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.jupiter.api.DisplayName;
@@ -104,20 +105,23 @@ class RunningNumbersTest {
     @Test
     @DisplayName("GDR-FORMS-9: a counter that needs more digits than the numbering has is MALFORMED naming the limit")
     void numberOverflowRefused() {
-        FormsResult<String> refused = RunningNumbers.number(new Numbering("R-", 3), 1000);
+        var limited = new Numbering("R-", 3);
+        FormsResult<String> refused = RunningNumbers.number(limited, 1000);
 
         assertAll("refused",
                 () -> assertEquals(new FormsResult.PassedOn(StoreOutcome.MALFORMED), refused.outcome(), "malformed"),
                 () -> assertEquals(".counter: a counter of more than 3 digits, the limit of the numbering",
                         refused.detail(), "the limit"),
-                () -> assertThrows(IllegalArgumentException.class,
-                        () -> RunningNumbers.number(new Numbering("R-", 3), 0), "a number starts at 1"));
+                () -> assertThrows(IllegalArgumentException.class, () -> RunningNumbers.number(limited, 0),
+                        "a number starts at 1"));
     }
 
     @Test
     @DisplayName("GDR-FORMS-9: isAssigned tells a running number of the kind from a ULID and from other ids")
     void isAssigned() {
         var collection = new DocumentCollection(COLLECTION, DocumentCollection.Kind.NUMBERED);
+        var perDocumentKind = perDocument();
+        var perDocumentKey = RunningNumbers.newKey(perDocumentKind);
 
         assertAll("assigned",
                 () -> assertTrue(RunningNumbers.isAssigned(numbered(), new DocumentKey(collection, "R-042")),
@@ -130,13 +134,14 @@ class RunningNumbersTest {
                         "another prefix"),
                 () -> assertFalse(RunningNumbers.isAssigned(numbered(), new DocumentKey(collection, "R-04A")),
                         "not digits"),
-                () -> assertThrows(IllegalArgumentException.class, () -> RunningNumbers.isAssigned(perDocument(),
-                        RunningNumbers.newKey(perDocument())), "a per-document kind has no numbers"));
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> RunningNumbers.isAssigned(perDocumentKind, perDocumentKey),
+                        "a per-document kind has no numbers"));
     }
 
     @Test
     @DisplayName("GDR-FORMS-9: the first save of an entry commits its number, the counter and no ULID file at once")
-    void firstSaveAllocates(@Remote LocalRemote remote) throws Exception {
+    void firstSaveAllocates(@Remote LocalRemote remote) {
         ObjectId main = seedMain(remote);
         var definition = new DocumentTransitions.Definition(numbered(), schema(), Workflow.defaultWorkflow(), null);
         var first = RunningNumbers.newKey(numbered());
@@ -173,7 +178,7 @@ class RunningNumbersTest {
 
     private static List<ObjectId> parents(LocalRemote remote, ObjectId commit) throws IOException {
         try (RevWalk walk = new RevWalk(remote.repository())) {
-            return Arrays.stream(walk.parseCommit(commit).getParents()).map(parent -> parent.toObjectId()).toList();
+            return Arrays.stream(walk.parseCommit(commit).getParents()).map(AnyObjectId::toObjectId).toList();
         }
     }
 }

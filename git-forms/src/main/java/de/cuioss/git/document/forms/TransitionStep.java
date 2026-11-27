@@ -110,7 +110,10 @@ final class TransitionStep implements SaveStep {
      * @param allocation   the layout and numbering of a numbered kind when {@code unit} is the ULID of a new entry,
      *                     which receives its running number on every attempt; {@code null} otherwise
      */
-    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output,
+    // package-private, built at one site: the nine values are the independent inputs of one save, and a holder for
+    // them would only move the parameter list
+    @SuppressWarnings("java:S107")
+    TransitionStep(Transition transition,String initialState, FormSchema schema, OutputCheck output,
             LinkTargets links, String unit, String documentPath, Map<String, @Nullable Object> base,
             @Nullable Allocation allocation) {
         this.transition = transition;
