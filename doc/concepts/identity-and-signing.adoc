@@ -90,22 +90,24 @@ xref:data-protection.adoc#_the_person_directory[Data Protection, The Person Dire
 == Step-Up for Approvals
 
 Every commit is signed the same way. What differs between a save and an approval is the authentication behind it: a
-transition can require *step-up*, a renewed authentication with MFA shortly before. Which transitions require it is
-declared by the workflow, per transition (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]).
-By default every release, and so every approval, requires step-up and no other transition does. A workflow can
-deviate in both directions: it can exempt a release, for a kind of document whose approval needs no second factor, or
-require step-up for a save, for example the submission into review. An intermediate save never requires it: it is
-written automatically while the user edits, and a draft is never pushed.
+transition can require *step-up*, a renewed authentication shortly before, with methods the deployment chooses: MFA by
+default, or a single method such as a renewed password check (`pwd`). Which transitions require it is declared by the
+workflow, per transition (see xref:schema-driven-documents.adoc#_workflow[Schema-Driven Documents]). By default every
+release, and so every approval, requires step-up and no other transition does. A workflow can deviate in both
+directions: it can exempt a release, for a kind of document whose approval needs no renewed authentication, or require
+step-up for a save, for example the submission into review. An intermediate save never requires it: it is written
+automatically while the user edits, and a draft is never pushed. A deployment can also switch step-up off altogether
+(`step-up.enabled: false`); then no transition requires it, whatever the workflow declares.
 
-What counts as MFA and how old it may be is one setting for every transition that requires step-up (`step-up.acr`,
-`step-up.amr`, `step-up.max-age`); the workflow only decides where it applies. The application writes the `acr` /
-`amr` and the time of the authentication into the signed trailers of every commit. After a transition with step-up the
-statement becomes "… and the user had authenticated with MFA no longer than `step-up.max-age` before this
-transition"; after one without, the trailers record the authentication the session had, which may or may not have
-used MFA; the transition neither required nor guarantees a recent one. Several transitions within that period can
-rest on the same authentication; the trailers do not bind the MFA to one transition. The effort for the user is at
-most one MFA confirmation per transition that requires it;
-under the default, saves need none. Who may approve is a matter of access, like every other right (see
+Which authentication counts as step-up and how old it may be is one setting for every transition that requires
+step-up (`step-up.enabled`, `step-up.acr`, `step-up.amr`, `step-up.max-age`); the workflow only decides where it
+applies. The application writes the `acr` / `amr` and the time of the authentication into the signed trailers of every
+commit. After a transition with step-up the statement becomes "… and the user had authenticated with one of the
+configured methods no longer than `step-up.max-age` before this transition"; after one without, the trailers record
+the authentication the session had, which may or may not have been recent; the transition neither required nor
+guarantees a recent one. Several transitions within that period can rest on the same authentication; the trailers do
+not bind the renewed authentication to one transition. The effort for the user is at most one renewed authentication
+per transition that requires it; under the default, saves need none. Who may approve is a matter of access, like every other right (see
 <<_one_technical_user>>).
 
 == What Has to Be Done Right

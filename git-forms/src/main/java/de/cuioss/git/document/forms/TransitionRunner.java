@@ -96,7 +96,7 @@ final class TransitionRunner {
         }
         Transition allowed = Objects.requireNonNull(found.value());
         String mechanism = allowed.mechanism().fileName();
-        if (allowed.stepUp() && !policy.holds(claims, clock.instant())) {
+        if (policy.requires(allowed) && !policy.holds(claims, clock.instant())) {
             return report(mechanism, TransitionOutcomes.stepUpRequired());
         }
         return report(mechanism, save.perform(new TransitionCall(author, claims, key, allowed, change, documentPath)));

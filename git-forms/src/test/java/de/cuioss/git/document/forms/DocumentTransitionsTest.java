@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
@@ -280,8 +281,16 @@ class DocumentTransitionsTest {
         }
     }
 
+    /** The step-up setting of the fixtures: enabled, the default {@code mfa}, five minutes. */
+    static final StepUpPolicy STEP_UP = StepUpPolicy.of(Duration.parse("PT5M"));
+
     static Fixture open(Path temp, LocalRemote remote, DocumentTransitions.Definition definition,
             SigningKeySource signing) {
+        return open(temp, remote, definition, signing, STEP_UP);
+    }
+
+    static Fixture open(Path temp, LocalRemote remote, DocumentTransitions.Definition definition,
+            SigningKeySource signing, StepUpPolicy policy) {
         Map<String, Object> tree = new LinkedHashMap<>();
         tree.put("save", Map.of("max-attempts", 3));
         tree.put("drafts", Map.of("expiry", "P30D"));
@@ -295,8 +304,8 @@ class DocumentTransitionsTest {
                 Clock.fixed(NOW, ZoneOffset.UTC)));
         try {
             Repository clone = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();
-            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition,
-                    StepUpPolicy.of(Duration.parse("PT5M")), Clock.fixed(NOW, ZoneOffset.UTC)));
+            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition, policy,
+                    Clock.fixed(NOW, ZoneOffset.UTC)));
         } catch (IOException e) {
             writer.close();
             throw new UncheckedIOException(e);
@@ -639,6 +648,43 @@ class DocumentTransitionsTest {
                             "no draft written"),
                     () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
         }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-7: a release without step-up claims is Performed with step-up.enabled false")
+    void releaseWithStepUpSwitchedOff(@Remote LocalRemote remote) throws Exception {
+        Files.createDirectories(temp.resolve("off"));
+        Files.createDirectories(temp.resolve("on"));
+        var main = seedMain(remote);
+        var switchedOff = document();
+        var switchedOn = document();
+        for (DocumentKey key : List.of(switchedOff, switchedOn)) {
+            commit(remote.repository(), StoreReferences.target(key),
+                    Map.of(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", "review")), main);
+        }
+        var author = Author.of("p-author");
+        var definition = perDocumentDefinition(Workflow.defaultWorkflow());
+        DocumentTransitions.Result off;
+        try (var fixture = open(temp.resolve("off"), remote, definition, new TestSigning(Integer.MAX_VALUE),
+                     StepUpPolicy.disabled())) {
+            value(fixture.writer().fetch());
+            off = fixture.perform(author, PASSWORD, switchedOff, "approve", List.of());
+        }
+        DocumentTransitions.Result on;
+        try (var fixture = open(temp.resolve("on"), remote, definition, new TestSigning(Integer.MAX_VALUE))) {
+            value(fixture.writer().fetch());
+            on = fixture.perform(author, PASSWORD, switchedOn, "approve", List.of());
+        }
+
+        var released = performed(off);
+        assertAll(
+                () -> assertEquals(1, Objects.requireNonNull(released.release()).version(), "released as v1"),
+                () -> assertEquals("approved", state(remote.repository(), StoreReferences.MAIN,
+                        directory(switchedOff) + DocumentLayout.DOCUMENT_FILE), "on main"),
+                () -> assertEquals(new DocumentTransitions.Result.NotPerformed(FormsOutcome.STEP_UP_REQUIRED,
+                        "step-up: the claims do not hold step-up"), on, "the same call with the switch on"),
+                () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(switchedOn, 1)),
+                        "nothing released with the switch on"));
     }
 
     @Test

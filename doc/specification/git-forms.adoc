@@ -713,6 +713,7 @@ xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Docu
 * A transition that requires step-up must be refused with the outcome step-up required unless the caller's
   `Auth-Context` holds a value of `step-up.amr` or `step-up.acr` and its `Auth-Time` is not older than
   `step-up.max-age`.
+* A deployment must be able to switch step-up off with `step-up.enabled: false`; then no transition requires it.
 
 [source,yaml]
 ----
@@ -729,24 +730,32 @@ it applies.
 |===
 |Key |Semantics
 
-|`step-up.amr` |`amr` values that denote multi-factor authentication, default `mfa`; a single method such as `otp`
-or `hwk` is no multi-factor authentication (https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176])
-|`step-up.acr` |`acr` values that denote multi-factor authentication
-|`step-up.max-age` |required; ISO 8601 duration, for example `PT5M`
+|`step-up.enabled` |boolean, default `true`; when `false`, no transition requires step-up, whatever the workflow
+declares, and the other keys are not required
+|`step-up.amr` |`amr` values the deployment accepts as step-up, default `mfa` (multi-factor authentication,
+https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176]); a single method such as `pwd`, for a renewed password check,
+is allowed
+|`step-up.acr` |`acr` values the deployment accepts as step-up
+|`step-up.max-age` |required when step-up is enabled; ISO 8601 duration, for example `PT5M`
 |===
 
 Every commit is signed the same way; step-up changes only the authentication the trailers record.
 
 `Workflow.parse` resolves the `stepUp` of every `Transition` when it loads the file, from the declaration or the default
 (`Transition.defaultStepUp`: required for `release`, not for the others), and refuses `step-up: true` on an
-`intermediate-save` transition (<<GDR-FORMS-5>>). The keys of the table are the record `StepUpPolicy(amr, acr, maxAge)`,
-which the application passes into `git-forms`; it is not read from a file. `StepUpPolicy.of(maxAge)` takes the default
-`amr` value `mfa` of RFC 8176, section 2 (https://www.rfc-editor.org/rfc/rfc8176.html#section-2[RFC 8176]) and no
-`acr` value. `maxAge` is required and must be positive, a `java.time.Duration` the application reads from the ISO 8601
-form, for example `Duration.parse("PT5M")`; a missing or non-positive value is a programming error of the application
-and refused with an exception. `holds(claims, now)` tells whether the claims hold step-up: their `amr` contains a value
-of `step-up.amr` or their `acr` is a value of `step-up.acr`, and their `auth_time` is at most `maxAge` before `now`; an
-`auth_time` after `now` counts as not older. A single method such as `otp` or `hwk` holds step-up only when the
+`intermediate-save` transition (<<GDR-FORMS-5>>), whatever the switch, since the workflow knows no policy. The keys of
+the table are the record `StepUpPolicy(enabled, amr, acr, maxAge)`, which the application passes into `git-forms`; it
+is not read from a file. `StepUpPolicy.of(maxAge)` is the enabled policy, the setting when `step-up.enabled` is absent,
+with the default `amr` value `mfa` of RFC 8176, section 2 (https://www.rfc-editor.org/rfc/rfc8176.html#section-2[RFC
+8176]) and no `acr` value. `StepUpPolicy.disabled()` is the policy of `step-up.enabled: false`, without `amr`, `acr`
+or `maxAge`. `maxAge` is required for an enabled policy, may be `null` only for a disabled one and, when given, must be
+positive, a `java.time.Duration` the application reads from the ISO 8601 form, for example `Duration.parse("PT5M")`; a
+missing or non-positive value is a programming error of the application and refused with an exception.
+`requires(transition)` tells whether a transition requires step-up: the policy is enabled and the transition's
+`stepUp` is set. `holds(claims, now)` tells whether the claims hold step-up: always for a disabled policy; otherwise
+their `amr` contains a value of `step-up.amr` or their `acr` is a value of `step-up.acr`, and their `auth_time` is at
+most `maxAge` before `now`; an `auth_time` after `now` counts as not older. Which values satisfy step-up is the
+deployment's decision: `mfa` is the default, and a single method such as `pwd`, `otp` or `hwk` holds step-up when the
 application names it in `step-up.amr`. The claims are the `IdentityClaims` of `git-store` that the caller took from the
 ID Token it validated (`acr`, `amr` and `auth_time`,
 https://openid.net/specs/openid-connect-core-1_0.html#IDToken[OpenID Connect Core 1.0, section 2]), the same that the
@@ -754,8 +763,8 @@ save and the release record as the trailers `Auth-Time` and `Auth-Context`
 (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]). The check reads the claims only; it logs nothing and returns no claim
 value.
 
-`DocumentTransitions.perform` checks a transition that requires step-up with `holds(claims, clock.instant())` right
-after the lookup of the transition and before anything is written. A refusal is `STEP_UP_REQUIRED` with the detail
+`DocumentTransitions.perform` checks a transition for which `requires(transition)` holds with
+`holds(claims, clock.instant())` right after the lookup of the transition and before anything is written. A refusal is `STEP_UP_REQUIRED` with the detail
 `step-up: the claims do not hold step-up`, naming no claim value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); the draft,
 the working or collection branch and `main` stay unchanged.
 
