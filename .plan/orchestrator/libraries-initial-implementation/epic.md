@@ -142,8 +142,10 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   deliverable 6 the same day (the step-up switch `step-up.enabled` and single-factor `step-up.amr` values of GDR-FORMS-7, from the Audit Notary request
   `audit-notary-001`); six deliverables, below ten, and two concept documents join its Expected Surface (seven declared entries). It gained
   deliverable 7 on 2026-11-24 from the analysis of PLAN-13 (the resume of a failed release, on the operator's answer "resume", and the
-  `git-forms` minors L3-3, L3-4, L3-6, L2-1, L2-2), seven deliverables, below ten, no new surface. PLAN-13 is shipped, so PLAN-14 is now
-  admissible by dependency; it is NOT emitted (the operator's word of 2026-11-25: do not emit, drain the current plans).
+  `git-forms` minors L3-3, L3-4, L3-6, L2-1, L2-2), seven deliverables, below ten, no new surface. **Shipped 2026-11-27 (PR #81, `0187cf3`,
+  `landings/PLAN-14.md`)**: emitted and launched on the operator's word of 2026-11-27, 65 files (+5703/-422), all seven deliverables trace to code and tests; the
+  one `git-store` change the spec ruled out (the accessor `StoreIndex.sourceEntries`) was lifted by the operator during review. Its analysis found two major
+  layer-3 defects in the resume of a failed release, seven minors and eight test and file gaps; routing is in Decisions and Open Defects (awaiting the operator's word).
 - PLAN-13 — Shipped (PR #64, `e38e079`, `landings/PLAN-13.md`): generated output, workflow and step-up per transition in `git-forms` (45 files,
   +7569/-53); four spec deliverables, six reported. The one change to `git-store` the spec ruled out (a pinned release, GDR-STORE-6) was approved by
   the operator during review. It merged under an operator-recorded authorization over a review gap (Sourcery refused on size). Its analysis found one
@@ -796,6 +798,21 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   **PLAN-25**; L3-2 and L2-1 are **PLAN-14 deliverable 7(h)**; L3-3 and the `git-core` half of L3-4 are **PLAN-24 deliverable 3**; L3-8 (the Javadoc memory
   claim) is **PLAN-25 deliverable 2(e)**; L3-11 to L3-13 are recorded and not routed (a documented scheduled-runner rule, a cost that predates the plan, a CI
   main class). Each stays open until its plan ships.
+- **PLAN-14 shipped; the defects recorded as "PLAN-14 deliverable N" are closed by PR #81** (2026-11-27, `landings/PLAN-14.md`): the PLAN-23 leftovers (d5), the
+  PLAN-13 and PLAN-22 findings including the resume of a failed release and the `branchMovedOn` mapping (d7), the Audit Notary step-up switch (d6). The landing's layer-2
+  reading traces each to code and a test that can fail, with the gaps below as residue; an item whose test is weaker than its wording (L2-3 to L2-7) is not closed in
+  substance.
+- **PLAN-14's landing is incomplete** (`plan-14-forms-deadlines-links-numbers-023`, drained 2026-11-27): `landing-check` reports `complete: false`, missing keys
+  `effort`, `unresolved_review_threads`, `review_body_findings_total` and `review_body_findings_handled` (all `unknown`, the producer gap `-075`). Reconciled as far as
+  it goes; the provider re-read gives 0 unresolved threads and 6 body findings, the handled number is not re-verified (see the landing report).
+- **PLAN-14's layer-3 defects, AWAITING THE OPERATOR'S WORD** (2026-11-27, `landings/PLAN-14.md`; none staged, none fixed): **L3-1 (major)** a failed release after a
+  narrative-only revision is never released, because `TransitionContext.unreleasedTip` compares only the document file with the release tags; **L3-2 (major)** a numbered
+  entry whose first transition is a release loses its allocated key when the release fails (`TransitionSave` 124-127, 152-161), so a retry is refused or takes a second
+  number; minors L3-4 (Period at an extreme instant dropped), L3-5 (one undecodable document blocks `due()`), L3-6 (enabled `StepUpPolicy` with empty `amr` and `acr`),
+  L3-7 (the `from` guard weakened on resume), L3-8 (alias identity by remote string), L3-9 (fetch before the step-up check on resume); not shown by reading: L3-3, L3-10 to
+  L3-12. The layer-2 test gaps are L2-1 to L2-7 and the unexplained files L2-8. Candidate route under the standing rule: the staged `git-forms` plan PLAN-27 (held back,
+  sequential after PLAN-14, edits the same transition code) — not applied, because a layer-3 defect becomes a fix-plan spec only on the operator's word and PLAN-27's
+  fold was declined once.
 
 ## Watches
 
