@@ -39,8 +39,13 @@ import org.jspecify.annotations.Nullable;
  * is created with, and {@value #STATE} set to the {@code to} of the transition; so a transition that changes only the
  * state writes the tip's content with the new state and never restores an untouched field from the draft's copy. The
  * merge is computed per attempt, so a re-applied attempt on a new tip merges again. The step then joins the data with
- * its parts, validates them without {@code required}, and checks {@code required} when the transition leaves the initial
- * state or has the mechanism {@code release}. On success it returns the edit of the file and, for a kind with a
+ * its parts, validates them without {@code required}, checks every link field of the data through {@link LinkTargets}
+ * (GDR-FORMS-8), and checks {@code required} when the transition leaves the initial state or has the mechanism
+ * {@code release}. A link field whose text is of neither link form, or whose target does not exist, refuses the
+ * attempt as {@link ValidationResult.Invalid} with a {@link Violation} at the JSON Pointer of the field, the message
+ * {@value #NO_SUCH_TARGET} for a missing target; the link text is data and appears in no detail or log. A resolution
+ * that fails refuses the attempt with its outcome passed on. The links are checked on every attempt, so a re-applied
+ * attempt sees the index as it is then. On success it returns the edit of the file and, for a kind with a
  * template, the output regenerated from exactly these data and the fragments of the attempt, so the output is never
  * merged. On a refusal it captures the outcome and the findings for {@link DocumentTransitions}, because a
  * {@link SaveStep.Refusal} carries no text; each attempt starts with a fresh capture, so a re-applied attempt never
@@ -55,12 +60,16 @@ final class TransitionStep implements SaveStep {
     /** The field of the current state, in {@value DocumentLayout#DOCUMENT_FILE} or the entry file. */
     static final String STATE = "state";
 
+    /** The message of the violation of a link field whose target does not exist (GDR-FORMS-8). */
+    static final String NO_SUCH_TARGET = "link: no such target";
+
     private final Transition transition;
     private final String initialState;
     private final FormSchema schema;
     private final SchemaValidator validator;
     private final YamlDocumentCodec codec;
     private final OutputCheck output;
+    private final LinkTargets links;
     private final String unit;
     private final String documentPath;
     private final Map<String, @Nullable Object> base;
@@ -75,18 +84,20 @@ final class TransitionStep implements SaveStep {
      * @param initialState the initial state of the workflow
      * @param schema       the schema of the kind
      * @param output       the output of the kind, which reads the data and regenerates the output
+     * @param links        the resolution of the targets of the link fields
      * @param unit         the ULID of the document or the running number of the entry
      * @param documentPath the path of {@value DocumentLayout#DOCUMENT_FILE} or of the entry file
      * @param base         the decoded file the draft started from, empty when there was none (see {@link StateMerge})
      */
-    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output, String unit,
-            String documentPath, Map<String, @Nullable Object> base) {
+    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output,
+            LinkTargets links, String unit, String documentPath, Map<String, @Nullable Object> base) {
         this.transition = transition;
         this.initialState = initialState;
         this.schema = schema;
         this.validator = new SchemaValidator();
         this.codec = new YamlDocumentCodec(schema);
         this.output = output;
+        this.links = links;
         this.unit = unit;
         this.documentPath = documentPath;
         this.base = base;
@@ -170,9 +181,14 @@ final class TransitionStep implements SaveStep {
             return refuse(data.outcome(), Objects.requireNonNull(data.detail()), null);
         }
         Map<String, @Nullable Object> values = Objects.requireNonNull(data.value());
-        ValidationResult validation = validator.validate(schema, values);
+        SchemaValidator.Evaluation evaluation = validator.evaluate(schema, values);
+        ValidationResult validation = evaluation.validation();
         if (!(validation instanceof ValidationResult.Valid)) {
             return refuse(validation.outcome(), validation.detail().orElseThrow(), validation);
+        }
+        Optional<Refusal> brokenLink = checkLinks(values, evaluation.formats());
+        if (brokenLink.isPresent()) {
+            return brokenLink.get();
         }
         if (checksRequired()) {
             ValidationResult required = validator.required(schema, values);
@@ -191,6 +207,37 @@ final class TransitionStep implements SaveStep {
             edits.add(new TreeEdit.Put(outputPath, Objects.requireNonNull(generated.value())));
         }
         return new Edits(edits);
+    }
+
+    /**
+     * Checks every link field of valid data (GDR-FORMS-8): a text of neither link form, or a link whose target does not
+     * exist, is a {@link Violation} at the pointer of its field; a resolution that fails ends the check with its
+     * outcome passed on.
+     *
+     * @return the refusal, or empty when every link resolves
+     */
+    private Optional<Refusal> checkLinks(Map<String, @Nullable Object> values,
+            List<SchemaValidator.FormatAnnotation> formats) {
+        List<Violation> violations = new ArrayList<>();
+        for (LinkFields.Field field : LinkFields.collect(values, formats)) {
+            FormsResult<TypedLink> parsed = TypedLink.parse(field.text());
+            if (!parsed.isOk()) {
+                violations.add(new Violation(field.pointer(), Objects.requireNonNull(parsed.detail())));
+                continue;
+            }
+            FormsResult<Boolean> exists = links.exists(Objects.requireNonNull(parsed.value()));
+            if (!exists.isOk()) {
+                return Optional.of(refuse(exists.outcome(), Objects.requireNonNull(exists.detail()), null));
+            }
+            if (!Boolean.TRUE.equals(exists.value())) {
+                violations.add(new Violation(field.pointer(), NO_SUCH_TARGET));
+            }
+        }
+        if (violations.isEmpty()) {
+            return Optional.empty();
+        }
+        ValidationResult.Invalid invalid = new ValidationResult.Invalid(violations);
+        return Optional.of(refuse(invalid.outcome(), invalid.detail().orElseThrow(), invalid));
     }
 
     /** Whether the transition checks {@code required}: it leaves the initial state, or it releases (GDR-FORMS-2). */

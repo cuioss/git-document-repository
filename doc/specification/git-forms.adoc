@@ -431,8 +431,9 @@ The keyword `format` is an annotation only and is not asserted: the Draft 2020-1
 to `ValidatorFactory.withEvaluatorFactory`
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/FormatEvaluatorFactory.java[json-schema
 1.9.1, `FormatEvaluatorFactory`]), which `git-forms` does not do. So `"format": "date"` accepts any string, and no
-message names a format. The link format `gdr-link` is not checked by the validator either; its check belongs to
-<<GDR-FORMS-8>>, which is planned.
+message names a format. The link format `gdr-link` is not checked by the validator either: `git-forms` reads the
+annotations of `format` that the same evaluation reports and checks every link field after a successful validation
+and before `required` (<<GDR-FORMS-8>>).
 
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
@@ -836,6 +837,58 @@ the working or collection branch and `main` stay unchanged.
 * A retired target (a catalog entry with `retired: true`) must still resolve.
 
 The schema marks link fields with `"format": "gdr-link"`; targets are resolved through the index or the directory.
+
+`TypedLink.parse(text)` reads the text of a link field into the sealed `TypedLink`: a `DocumentLink(alias, kind, id,
+fragment)` for `<alias>:<kind>/<id>[#<fragment>]` and a `CatalogLink(catalog, id)` for `<catalog>:<id>`, told apart by
+the `/` after the first `:`. Each segment follows the name rules of the kind configuration (<<GDR-FORMS-1>>) and the
+store (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]): an alias, a kind and a catalog match `[a-z0-9-]+`, as a repository
+alias, a kind id and a collection do; an id matches `[A-Za-z0-9_-]+`, which holds every ULID, every id of a numbered
+collection and every prefix a numbering allows, so an id has no `/`, no empty segment and no control character. The
+fragment is everything after the first `#` of a document link; it must not be empty or hold a control character, and
+it is kept as written and never interpreted. A catalog link has no fragment. A text of neither form is `INVALID` with a
+detail that names the rule it breaks (`link: kind: not of the form [a-z0-9-]+`), never the text
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+`LinkTargets` resolves the targets; the application builds it from the `KindConfiguration`, the `StoreIndex` of every
+repository a document link may name, by its alias, and a `CatalogResolver`, and passes it into the constructor of
+`DocumentTransitions`. A document link exists when the configuration has a kind of its `kind`, the alias of the link
+is the repository of that kind, and the index of that alias holds the key in the collection of the kind, on the
+working branch of a document, the collection branch of an entry or `main`; the fragment is stripped first, so a link
+with a fragment exists exactly when the document without it exists. The index holds a document only when a contributor
+is registered for its collection and returns a value for it (xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9]), so the
+application registers one for every collection a link may name; an index reflects its clone at its last refresh, so a
+document another writer created becomes a target once a fetch refreshed the index. A document link to a kind whose
+repository has no index is the passed-on `MALFORMED` with the detail `link: no index for the repository of the kind`.
+`LinkTargets` reads only the published values of the indexes (`StoreIndex.entries`), no `snapshot` and no `open`, so it
+runs inside the step of a save without the `REFUSED` of a callback that holds a lock of the clone and waits for no lock.
+
+`CatalogResolver` is the functional interface a catalog provider implements, the directory of `git-directory` among
+them: `resolve(catalog, id)` returns `OK` with `true` when the catalog holds the entry and `false` when it does not, or
+any other outcome when the catalog cannot be read. A retired entry (`retired: true`) must resolve as `true`, so a
+document that links it can still be saved. The call runs inside the step of a save, under the save locks of the store,
+once per catalog link and on every attempt, so it must return within milliseconds, read only what it holds in memory and
+call no remote service.
+
+The check runs in the per-attempt step of a `save` or `release` (<<GDR-FORMS-5>>), on the data of the attempt joined
+with its parts, after the validation and before `required`, so it applies on every save and on the verification of a
+save that ran no step. The link fields are found by the annotations of the one evaluation of the schema without
+`required` (`SchemaValidator`, checked against the source of `dev.harrel:json-schema` 1.9.1): `format` has no evaluator
+in the Draft 2020-12 dialect of the library, so a string value of it becomes an annotation of the keyword `format` at
+the JSON Pointer of the instance (`AbstractEvaluatorFactory.AnnotationEvaluator`,
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/AbstractEvaluatorFactory.java[json-schema
+1.9.1, `AbstractEvaluatorFactory`]), and the evaluation discards every annotation of a schema that fails
+(`EvaluationContext.validateAgainstSchema`,
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/EvaluationContext.java[json-schema
+1.9.1, `EvaluationContext`]). So a link field is found exactly where the validator applies the schema that declares it:
+under `properties`, `items` and the other keywords that descend, through `$ref` and `$dynamicRef`, in every member of
+`allOf`, and in a branch of `anyOf` or `oneOf` only when the value satisfies it. `format` applies to strings: a value at
+such a location that is no string is no link and is left out, its type being the business of the schema; a location
+two applied schemas annotate is one field. Every link field whose text is of neither form, or whose target does not
+exist, is a `Violation` at the JSON Pointer of the field, with the rule of the text or the message
+`link: no such target`; together they refuse the attempt as `Refused` with `ValidationResult.Invalid`, the outcome
+`INVALID`, and nothing is committed. A resolution that fails, a `CatalogResolver` that returns a non-success or a
+missing index, refuses the attempt with that outcome passed on. The link text is data of the document: it appears in no
+detail, message or log, and the pointer of a violation is data as every pointer is (<<GDR-FORMS-2>>).
 
 [#GDR-FORMS-9]
 == GDR-FORMS-9: Running Numbers

@@ -55,13 +55,14 @@ final class TransitionRunner {
      * @param writer     the write path of the repository of the kind
      * @param repository the bare clone of the writer, read for the current state and the draft
      * @param definition the kind, its schema, its workflow and its template
+     * @param links      the resolution of the targets of the link fields
      * @param policy     the step-up setting of the application
      * @param clock      the clock of the step-up check
      * @throws IllegalArgumentException if the layout of the kind cannot be created ({@link DocumentLayout})
      */
-    TransitionRunner(StoreWriter writer, Repository repository, Definition definition, StepUpPolicy policy,
-            Clock clock) {
-        this.context = new TransitionContext(repository, definition);
+    TransitionRunner(StoreWriter writer, Repository repository, Definition definition, LinkTargets links,
+            StepUpPolicy policy, Clock clock) {
+        this.context = new TransitionContext(repository, definition, links);
         this.save = new TransitionSave(writer, context);
         this.policy = policy;
         this.clock = clock;

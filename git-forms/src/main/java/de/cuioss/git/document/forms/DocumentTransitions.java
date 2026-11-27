@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The transitions of the workflow of one kind of document over the mechanisms of the store (GDR-FORMS-4, GDR-FORMS-5,
- * GDR-FORMS-7).
+ * GDR-FORMS-7, GDR-FORMS-8).
  * <p>
  * {@link #perform} looks the transition up in the current state of the document, the field {@value TransitionStep#STATE}
  * of {@value DocumentLayout#DOCUMENT_FILE} or the entry file on the local target branch (else {@code main}); a missing
@@ -53,7 +53,8 @@ import org.jspecify.annotations.Nullable;
  * {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, de.cuioss.git.document.store.SaveStep)}
  * with a {@link TransitionStep}. On every attempt the step checks the state on the remote tip, writes the file of the
  * document or entry as the merge of {@link StateMerge} (the tip's file with the keys the draft changed against the file
- * it started from, and the state), validates the data, checks {@code required} when the transition leaves the initial
+ * it started from, and the state), validates the data, checks that the target of every link field exists through the
+ * {@link LinkTargets} of the application (GDR-FORMS-8), checks {@code required} when the transition leaves the initial
  * state or releases (GDR-FORMS-2), and regenerates the output from the data of that attempt (GDR-FORMS-4). The file
  * the draft started from is read before the save: the file at the merge base of the draft and the branch of the key,
  * else the file on that branch. When the caller edits that file in the call, its content is explicit whole-file intent
@@ -98,19 +99,21 @@ public final class DocumentTransitions {
      * @param writer     the write path of the repository of the kind
      * @param repository the bare clone of the writer, read for the current state and the draft
      * @param definition the kind, its schema, its workflow and its template
+     * @param links      the resolution of the targets of the link fields (GDR-FORMS-8)
      * @param policy     the step-up setting of the application
      * @param clock      the clock of the step-up check
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if the layout of the kind cannot be created ({@link DocumentLayout})
      */
-    public DocumentTransitions(StoreWriter writer, Repository repository, Definition definition, StepUpPolicy policy,
-            Clock clock) {
+    public DocumentTransitions(StoreWriter writer, Repository repository, Definition definition, LinkTargets links,
+            StepUpPolicy policy, Clock clock) {
         Objects.requireNonNull(writer, "writer");
         Objects.requireNonNull(repository, "repository");
         Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(links, "links");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(clock, "clock");
-        this.runner = new TransitionRunner(writer, repository, definition, policy, clock);
+        this.runner = new TransitionRunner(writer, repository, definition, links, policy, clock);
     }
 
     /**
@@ -123,11 +126,14 @@ public final class DocumentTransitions {
      * @param transition the name of the transition
      * @param change     the edits, the expected blob ids and the message of the call
      * @return {@link Result.Performed} with the commit the transition wrote; {@link Result.Refused} with the findings
-     *         for {@link FormsOutcome#INVALID} or {@link FormsOutcome#MANDATORY_FIELDS_MISSING};
+     *         for {@link FormsOutcome#INVALID} or {@link FormsOutcome#MANDATORY_FIELDS_MISSING}, a link field of the
+     *         data whose text is of neither link form or whose target does not exist being a {@link Violation} at its
+     *         JSON Pointer with the message {@code link: no such target} for a missing target (GDR-FORMS-8);
      *         {@link Result.Conflicting} with the conflicting paths; or {@link Result.NotPerformed} with
      *         {@link FormsOutcome#TRANSITION_REFUSED}, {@link FormsOutcome#STEP_UP_REQUIRED}, or the passed-on outcome of
      *         the store or of Git, for example {@link de.cuioss.git.document.store.StoreOutcome#MALFORMED} for a file of
-     *         the document that cannot be read or {@link GitOutcome#REJECTED} after the last attempt of the save
+     *         the document that cannot be read, the outcome of a failed resolution of a link target, or
+     *         {@link GitOutcome#REJECTED} after the last attempt of the save
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if the key is not of the collection of the kind
      */

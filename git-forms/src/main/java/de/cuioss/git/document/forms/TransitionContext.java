@@ -28,7 +28,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * What one kind brings to the transitions of {@link DocumentTransitions}: the reader of the writer's bare clone, the
- * layout, the codec and the output check of the kind, and the lookups per key that the transitions share (the
+ * layout, the codec and the output check of the kind, the resolution of link targets of the application, and the
+ * lookups per key that the transitions share (the
  * collection check, the path of the file, the branch the current state is read from, the current state, the
  * transition and the step of a save).
  */
@@ -39,21 +40,24 @@ final class TransitionContext {
     private final DocumentLayout layout;
     private final YamlDocumentCodec codec;
     private final OutputCheck output;
+    private final LinkTargets links;
 
     /**
      * Creates the context of a kind.
      *
      * @param repository the bare clone of the writer
      * @param definition the kind, its schema, its workflow and its template
+     * @param links      the resolution of the targets of the link fields, handed to every step
      * @throws NullPointerException     if {@code repository} is {@code null}
      * @throws IllegalArgumentException if the layout of the kind cannot be created ({@link DocumentLayout})
      */
-    TransitionContext(Repository repository, Definition definition) {
+    TransitionContext(Repository repository, Definition definition, LinkTargets links) {
         this.clone = new CloneReader(repository);
         this.definition = definition;
         this.layout = new DocumentLayout(definition.kind(), definition.schema());
         this.codec = new YamlDocumentCodec(definition.schema());
         this.output = new OutputCheck(definition.kind(), definition.schema(), definition.template());
+        this.links = links;
     }
 
     /**
@@ -154,7 +158,7 @@ final class TransitionContext {
      * @return a fresh step
      */
     TransitionStep step(TransitionCall call, Map<String, @Nullable Object> base) {
-        return new TransitionStep(call.transition(), initialState(), definition.schema(), output, call.key().id(),
-                call.documentPath(), base);
+        return new TransitionStep(call.transition(), initialState(), definition.schema(), output, links,
+                call.key().id(), call.documentPath(), base);
     }
 }

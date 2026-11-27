@@ -60,8 +60,10 @@ import de.cuioss.git.document.store.Author;
 import de.cuioss.git.document.store.DocumentCollection;
 import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.IdentityClaims;
+import de.cuioss.git.document.store.RepositoryRegistry;
 import de.cuioss.git.document.store.SigningKeySource;
 import de.cuioss.git.document.store.StoreConfiguration;
+import de.cuioss.git.document.store.StoreIndex;
 import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreRepository;
@@ -264,8 +266,11 @@ class DocumentTransitionsTest {
         return value(new YamlDocumentCodec(schema()).decode(bytes(content))).get("state");
     }
 
-    /** A writer over a local remote, the transitions of one kind over it, and its clone. */
-    record Fixture(StoreWriter writer, Repository bareClone, DocumentTransitions transitions)
+    /**
+     * A writer over a local remote, the transitions of one kind over it, its clone, and the index of the kind's
+     * collection through which the link targets resolve.
+     */
+    record Fixture(StoreWriter writer, Repository bareClone, DocumentTransitions transitions, StoreIndex<Boolean> index)
             implements AutoCloseable {
 
         DocumentTransitions.Result perform(Author author, IdentityClaims claims, DocumentKey key, String transition,
@@ -276,9 +281,48 @@ class DocumentTransitionsTest {
 
         @Override
         public void close() {
+            index.close();
             bareClone.close();
             writer.close();
         }
+    }
+
+    /** The one catalog entry the fixtures resolve: {@code team:payments}. */
+    static final CatalogResolver CATALOG = (catalog, id) -> StoreResult.ok("team".equals(catalog)
+            && "payments".equals(id));
+
+    /**
+     * The link targets of the fixtures (GDR-FORMS-8): the kind of the definition as the one kind of the configuration,
+     * the index of its repository {@code register}, and {@link #CATALOG}.
+     */
+    static LinkTargets links(Path temp, LocalRemote remote, Kind kind, StoreIndex<Boolean> index) {
+        try {
+            Path directory = Files.createDirectories(temp.resolve("configuration"));
+            @Nullable Numbering numbered = kind.numbering();
+            String numbering = numbered == null ? ""
+                    : "    numbering: { prefix: \"" + numbered.prefix() + "\", digits: " + numbered.digits() + " }\n";
+            String template = kind.template() == null ? "" : "    template: " + kind.template() + "\n";
+            Files.writeString(directory.resolve(KindConfiguration.FILE), "kinds:\n"
+                    + "  - id: " + kind.id() + "\n"
+                    + "    repository: " + kind.repository() + "\n"
+                    + "    collection: " + kind.collection() + "\n"
+                    + "    schema: " + kind.schema() + "\n"
+                    + template
+                    + "    workflow: " + kind.workflow() + "\n"
+                    + numbering);
+            var registry = value(RepositoryRegistry.of(List.of(new StoreRepository(kind.repository(),
+                    remote.uri().toString(), "internal", null)), RemotePolicy.localOnly()));
+            var kinds = Objects.requireNonNull(KindConfiguration.fromDirectory(directory, registry).value());
+            return new LinkTargets(kinds, Map.of(kind.repository(), index), CATALOG);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The collection of a kind, as the store names it. */
+    static DocumentCollection collection(Kind kind) {
+        return value(DocumentCollection.of(kind.collection(),
+                kind.isNumbered() ? DocumentCollection.Kind.NUMBERED : DocumentCollection.Kind.PER_DOCUMENT));
     }
 
     /** The step-up setting of the fixtures: enabled, the default {@code mfa}, five minutes. */
@@ -304,8 +348,11 @@ class DocumentTransitionsTest {
                 Clock.fixed(NOW, ZoneOffset.UTC)));
         try {
             Repository clone = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();
-            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition, policy,
-                    Clock.fixed(NOW, ZoneOffset.UTC)));
+            StoreIndex<Boolean> index = value(StoreIndex.open(writer,
+                    Map.of(collection(definition.kind()), document -> Boolean.TRUE)));
+            LinkTargets links = links(temp, remote, definition.kind(), index);
+            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition, links, policy,
+                    Clock.fixed(NOW, ZoneOffset.UTC)), index);
         } catch (IOException e) {
             writer.close();
             throw new UncheckedIOException(e);
@@ -1064,6 +1111,77 @@ class DocumentTransitionsTest {
                         () -> assertEquals(List.of(saved[0]), parents(remote.repository(),
                                 tip(remote.repository(), target)), "the saved commit stays under the other save"));
             }
+        }
+    }
+
+    /** The schema of the item with the link field {@code related} (GDR-FORMS-8). */
+    static final String LINK_SCHEMA = """
+            {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+             "properties": {"title": {"type": "string"}, "owner": {"type": "string"}, "state": {"type": "string"},
+                            "related": {"type": "string", "format": "gdr-link"}},
+             "required": ["title", "owner"]}
+            """;
+
+    static FormSchema linkSchema() {
+        return Objects.requireNonNull(FormSchema.parse("schemas/item.schema.json", bytes(LINK_SCHEMA)).value());
+    }
+
+    /** The edits of a complete item whose field {@code related} holds a link. */
+    private static List<TreeEdit> linking(DocumentKey key, String related) {
+        Map<String, @Nullable Object> data = new LinkedHashMap<>();
+        data.put("title", "Linking");
+        data.put("owner", "owner");
+        data.put("related", related);
+        return List.of(new TreeEdit.Put(directory(key) + DocumentLayout.DOCUMENT_FILE,
+                        new YamlDocumentCodec(linkSchema()).encode(data)),
+                new TreeEdit.Put(directory(key) + "narrative/summary.adoc", bytes("A summary.\n")));
+    }
+
+    private Fixture openLinking(LocalRemote remote) {
+        return open(temp, remote, new DocumentTransitions.Definition(perDocument(), linkSchema(),
+                Workflow.defaultWorkflow(), template()), new TestSigning(Integer.MAX_VALUE));
+    }
+
+    /** Edits an item with a link and submits it, the save that checks the link. */
+    private static DocumentTransitions.Result submitLinking(Fixture fixture, DocumentKey key, String related) {
+        performed(fixture.perform(Author.of("p-author"), PASSWORD, key, "edit", linking(key, related)));
+        return fixture.perform(Author.of("p-author"), STEP_UP_TRANSITIONS.contains("submit") ? MFA : PASSWORD, key,
+                "submit", List.of());
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-8: a save whose link names a missing document is refused INVALID at the field, nothing saved")
+    void missingLinkTargetRefusesTheSave(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var missing = Ulid.next();
+        try (var fixture = openLinking(remote)) {
+            var result = submitLinking(fixture, key, "register:item/" + missing);
+
+            var refused = assertInstanceOf(DocumentTransitions.Result.Refused.class, result,
+                    () -> "refused: " + result.outcome() + " " + result.detail());
+            assertAll("the missing target",
+                    () -> assertEquals(FormsOutcome.INVALID, refused.outcome(), "invalid"),
+                    () -> assertEquals(new ValidationResult.Invalid(List.of(new Violation("/related",
+                            "link: no such target"))), refused.findings(), "the pointer of the field"),
+                    () -> assertFalse(refused.detail().orElseThrow().contains(missing), "no link in the detail"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.target(key)), "nothing saved"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-8: a save whose links name an existing document, with a fragment, or catalog entry passes")
+    void existingLinkTargetsPass(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var target = document();
+        var key = document();
+        try (var fixture = openLinking(remote)) {
+            performed(submitLinking(fixture, target, "team:payments"));
+
+            performed(submitLinking(fixture, key, "register:item/" + target.id() + "#narrative/summary"));
+
+            assertEquals("review", state(remote.repository(), StoreReferences.target(key),
+                    directory(key) + DocumentLayout.DOCUMENT_FILE), "the linking document is saved");
         }
     }
 

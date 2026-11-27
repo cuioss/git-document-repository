@@ -28,6 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 
+import dev.harrel.jsonschema.Annotation;
 import dev.harrel.jsonschema.Error;
 import dev.harrel.jsonschema.MessageProvider;
 import dev.harrel.jsonschema.Validator;
@@ -74,6 +75,9 @@ public final class SchemaValidator {
      */
     private static final URI APPLIED = URI.create("https://gdr.invalid/applied");
 
+    /** The keyword whose annotations {@link #evaluate(FormSchema, Map)} returns. */
+    private static final String FORMAT = "format";
+
     private static final String AT_LEAST = "must have at least ";
     private static final String AT_MOST = "must have at most ";
 
@@ -88,18 +92,52 @@ public final class SchemaValidator {
      *                                  128 levels
      */
     public ValidationResult validate(FormSchema schema, Map<String, ?> data) {
+        return evaluate(schema, data).validation();
+    }
+
+    /**
+     * Validates data against a schema as {@link #validate(FormSchema, Map)} does, in the same one evaluation of the
+     * prepared validator, and returns the {@code format} annotations of that evaluation with it, for
+     * {@link LinkFields}.
+     * <p>
+     * Checked against the source of {@code dev.harrel:json-schema} 1.9.1: the Draft 2020-12 evaluators hold none for
+     * {@code format} ({@code Draft2020EvaluatorFactory}, {@code AbstractEvaluatorFactory.createDefaultEvaluatorsMap}),
+     * so a string value of {@code format} gets the {@code AnnotationEvaluator} of {@code AbstractEvaluatorFactory.create},
+     * which succeeds with the string as annotation; {@code EvaluationContext.validateAgainstSchema} records it as an
+     * {@code Annotation} with the keyword {@code format} and the JSON Pointer of the instance
+     * ({@code JsonNode.getJsonPointer}, here {@link DataNode#getJsonPointer()}), and discards every annotation of a
+     * schema that fails, so an annotation of a branch of {@code anyOf} or {@code oneOf} the value does not satisfy is
+     * gone, while one reached through {@code $ref} or {@code allOf} stays; {@code Validator.Result.getAnnotations}
+     * returns them. Only for a valid result are the annotations complete, because a failing root discards them all.
+     *
+     * @param schema the schema of the kind
+     * @param data   the data of the document
+     * @return the validation result and, for a {@link ValidationResult.Valid} result, the {@code format} annotations
+     *         with a string value, in the order the validator reported them; none for any other result
+     * @throws NullPointerException     if an argument is {@code null}
+     * @throws IllegalArgumentException if the data holds a value outside the JSON data model or is nested deeper than
+     *                                  128 levels
+     */
+    Evaluation evaluate(FormSchema schema, Map<String, ?> data) {
         Objects.requireNonNull(schema, "schema");
         Objects.requireNonNull(data, "data");
         Prepared prepared = schema.prepared();
         Validator.Result result = prepared.validator().validate(prepared.uri(), DataNode.root(data));
         if (result.isValid()) {
-            return new ValidationResult.Valid();
+            List<FormatAnnotation> formats = new ArrayList<>();
+            for (Annotation annotation : result.getAnnotations()) {
+                if (FORMAT.equals(annotation.getKeyword()) && annotation.getAnnotation() instanceof String format) {
+                    formats.add(new FormatAnnotation(annotation.getInstanceLocation(), format));
+                }
+            }
+            return new Evaluation(new ValidationResult.Valid(), List.copyOf(formats));
         }
         List<Violation> violations = result.getErrors().stream()
                 .map(error -> violation(schema, error))
                 .toList();
-        return new ValidationResult.Invalid(
-                violations.isEmpty() ? List.of(new Violation("", "does not match the schema")) : violations);
+        return new Evaluation(new ValidationResult.Invalid(
+                        violations.isEmpty() ? List.of(new Violation("", "does not match the schema")) : violations),
+                List.of());
     }
 
     /**
@@ -270,6 +308,26 @@ public final class SchemaValidator {
             list.stream().filter(String.class::isInstance).map(String.class::cast).forEach(names::add);
         }
         return names.isEmpty() ? "the schema" : String.join(" or ", names);
+    }
+
+    /**
+     * The result of one evaluation of the schema without {@code required}, with its {@code format} annotations.
+     *
+     * @param validation the result of {@link #validate(FormSchema, Map)}
+     * @param formats    the {@code format} annotations of a valid result, in the order the validator reported them;
+     *                   empty for any other result
+     */
+    record Evaluation(ValidationResult validation, List<FormatAnnotation> formats) {
+    }
+
+    /**
+     * One {@code format} annotation: a schema that the validator applied to the value at the location declares the
+     * format.
+     *
+     * @param instanceLocation the JSON Pointer (RFC 6901) of the value, encoded; data of the document, never logged
+     * @param format           the value of the keyword {@code format}
+     */
+    record FormatAnnotation(String instanceLocation, String format) {
     }
 
     /**
