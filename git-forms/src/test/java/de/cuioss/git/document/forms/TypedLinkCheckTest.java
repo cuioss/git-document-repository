@@ -37,11 +37,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.LogRecord;
 import java.util.stream.Collectors;
 
 
+import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.Author;
 import de.cuioss.git.document.store.DocumentKey;
@@ -269,6 +272,61 @@ class TypedLinkCheckTest {
                     () -> assertTrue(invalid.violations().stream().allMatch(violation -> TransitionStep.NO_SUCH_TARGET
                             .equals(violation.message())), "each a missing target"),
                     () -> assertNull(tip(remote.repository(), StoreReferences.target(dangling)), "nothing saved"));
+        }
+    }
+
+    /** The default states with a self-loop {@code keep} on {@code review}, whose save of the unchanged state runs no step. */
+    private static final String SELF_LOOP_WORKFLOW = """
+            states: [draft, review, approved]
+            transitions:
+              - { name: edit,    from: draft,  to: draft,    mechanism: intermediate-save }
+              - { name: submit,  from: draft,  to: review,   mechanism: save }
+              - { name: keep,    from: review, to: review,   mechanism: save }
+              - { name: approve, from: review, to: approved, mechanism: release }
+            """;
+
+    @Test
+    @DisplayName("GDR-FORMS-8: a catalog resolver throwing on an unchanged save ends it FAILED, naming the class only")
+    void throwingResolverOnUnchangedSave(@Remote LocalRemote remote) {
+        DocumentTransitionsTest.seedMain(remote);
+        var key = document();
+        var secret = "resolver-" + Ulid.next();
+        AtomicBoolean throwing = new AtomicBoolean();
+        CatalogResolver resolver = (catalog, id) -> {
+            if (throwing.get()) {
+                throw new IllegalStateException(secret);
+            }
+            return CATALOGS.resolve(catalog, id);
+        };
+        var workflow = Objects.requireNonNull(Workflow.parse("workflows/self-loop.yaml", bytes(SELF_LOOP_WORKFLOW))
+                .value());
+        var definition = new DocumentTransitions.Definition(DocumentTransitionsTest.perDocument(), schema(), workflow,
+                DocumentTransitionsTest.template());
+        try (var fixture = DocumentTransitionsTest.open(temp, remote, definition,
+                     new DocumentTransitionsTest.TestSigning(Integer.MAX_VALUE))) {
+            var links = DocumentTransitionsTest.links(temp, remote, definition.kind(), fixture.index(), resolver);
+            var transitions = new DocumentTransitions(fixture.writer(), fixture.bareClone(), definition, links,
+                    DocumentTransitionsTest.STEP_UP, Clock.fixed(NOW, ZoneOffset.UTC));
+            var linking = new Linking(fixture, transitions);
+            performed(linking.submit(key, Map.of("related", "team:payments")));
+            var savedTip = tip(remote.repository(), StoreReferences.target(key));
+            throwing.set(true);
+
+            var result = transitions.perform(Author.of("p-author"), MFA, key, "keep",
+                    DocumentTransitions.Change.of(List.of(), "Keep"));
+
+            var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result,
+                    () -> "not performed: " + result.outcome() + " " + result.detail());
+            assertAll(
+                    () -> assertEquals(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.FAILED)),
+                            notPerformed.outcome(), "the passed-on FAILED, as for a changed save"),
+                    () -> assertEquals(Optional.of(StoreReferences.target(key) + ": step: "
+                                    + IllegalStateException.class.getName()), result.detail(),
+                            "the detail names the class of the exception only"),
+                    () -> assertTrue(logTexts().stream().noneMatch(text -> text.contains(secret)),
+                            "no log record carries the message of the exception"),
+                    () -> assertEquals(savedTip, tip(remote.repository(), StoreReferences.target(key)),
+                            "the target branch stays at the submitted save"));
         }
     }
 

@@ -21,8 +21,10 @@ import java.util.Objects;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.git.document.forms.DocumentTransitions.Result;
+import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.SaveResult;
 import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreResult;
 
 /**
@@ -45,6 +47,21 @@ final class TransitionOutcomes {
     static Result readFailed(ReadFailure failure) {
         return new Result.NotPerformed(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.FAILED)),
                 "read: " + failure.getCause().getClass().getSimpleName());
+    }
+
+    /**
+     * The result of a {@link RuntimeException} thrown by the checks of a step that ran outside the store's step
+     * isolation, the verification of an unchanged save: the passed-on {@link GitOutcome#FAILED}, its detail naming the
+     * target branch and the class of the exception by {@link Class#getName()} only, as the store names a step that
+     * throws; never its message.
+     *
+     * @param key       the document
+     * @param exception the exception
+     * @return the result
+     */
+    static Result stepFailed(DocumentKey key, RuntimeException exception) {
+        return new Result.NotPerformed(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.FAILED)),
+                StoreReferences.target(key) + ": step: " + exception.getClass().getName());
     }
 
     /**

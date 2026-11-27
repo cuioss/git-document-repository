@@ -59,7 +59,9 @@ final class UnchangedSave {
      * a step would, before anything is released or written. When the step's edits equal the files of the saved commit,
      * the commit stands; otherwise its output is stale, and the edits are written through a second draft and save with a
      * fresh step, whose commit the transition continues with. That second draft changes the stale paths against the
-     * saved commit, so its save always runs the step.
+     * saved commit, so its save always runs the step. A {@link RuntimeException} the checks throw, for example from a
+     * {@link CatalogResolver}, ends the transition as the store ends a save whose step throws: with the passed-on
+     * {@link de.cuioss.git.document.core.GitOutcome#FAILED}, the detail naming the class of the exception only.
      *
      * @param call     the transition
      * @param commitId the full id of the saved commit
@@ -78,6 +80,11 @@ final class UnchangedSave {
             }
         } catch (ReadFailure e) {
             return TransitionOutcomes.readFailed(e);
+        }
+        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        catch (RuntimeException e) {
+            // outside the store's step isolation, a callback of the checks such as a catalog resolver is isolated here
+            return TransitionOutcomes.stepFailed(call.key(), e);
         }
         if (!(outcome instanceof SaveStep.Edits)) {
             return TransitionOutcomes.fromCapture(check);
