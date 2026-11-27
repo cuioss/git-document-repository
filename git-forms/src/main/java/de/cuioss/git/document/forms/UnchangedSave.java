@@ -81,9 +81,9 @@ final class UnchangedSave {
         } catch (ReadFailure e) {
             return TransitionOutcomes.readFailed(e);
         }
-        /*TODO: Catch specific not RuntimeException. Suppress: // cui-rewrite:disable InvalidExceptionUsageRecipe*/
+        // outside the store's step isolation, a callback of the checks such as a catalog resolver is isolated here
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
         catch (RuntimeException e) {
-            // outside the store's step isolation, a callback of the checks such as a catalog resolver is isolated here
             return TransitionOutcomes.stepFailed(call.key(), e);
         }
         if (!(outcome instanceof SaveStep.Edits)) {
