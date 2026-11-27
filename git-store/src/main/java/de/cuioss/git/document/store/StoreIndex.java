@@ -308,6 +308,52 @@ public final class StoreIndex<E> implements AutoCloseable {
     }
 
     /**
+     * Returns the commit a source reference is indexed at together with the current entries of one collection on it,
+     * both read from one published index. A refresh that publishes between {@link #commitId(String)} and
+     * {@link #entries(String, DocumentCollection)} can pair the commit of one index with the entries of the next; this
+     * accessor never does, so the entries are those read at the returned commit.
+     *
+     * @param source     the full name of a source reference, such as {@code refs/heads/main}
+     * @param collection the collection
+     * @return the indexed commit and the entries of the collection on the source, the entries empty when the source
+     *         holds no document of the collection; empty when the index does not hold the source
+     * @throws NullPointerException if an argument is {@code null}
+     * @since 0.1
+     */
+    public Optional<SourceEntries<E>> sourceEntries(String source, DocumentCollection collection) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(collection, COLLECTION);
+        Source<E> found = current.get().get(source);
+        return found == null ? Optional.empty()
+                : Optional.of(new SourceEntries<>(found.commit().name(),
+                found.entries().getOrDefault(collection, Map.of())));
+    }
+
+    /**
+     * The commit a source reference is indexed at and the entries of one collection on it, read from one published
+     * index ({@link #sourceEntries(String, DocumentCollection)}).
+     *
+     * @param commitId the full id of the indexed commit
+     * @param entries  the entry value of every indexed document of the collection on the source, by key, unmodifiable
+     * @param <E>      the type of the entry values
+     * @since 0.1
+     */
+    public record SourceEntries<E>(String commitId, Map<DocumentKey, E> entries) {
+
+        /**
+         * Checks the components and copies the entries.
+         *
+         * @param commitId the commit id
+         * @param entries  the entries
+         * @throws NullPointerException if a component, a key or a value is {@code null}
+         */
+        public SourceEntries {
+            Objects.requireNonNull(commitId, "commitId");
+            entries = Map.copyOf(Objects.requireNonNull(entries, "entries"));
+        }
+    }
+
+    /**
      * Builds a separate index of one tag or commit, as {@code main} would be indexed at it, without changing the
      * current index (GDR-STORE-9). The contributors are called for every document of the tag or commit, under the
      * lock of the index, so never at the same time as by a refresh or another snapshot.

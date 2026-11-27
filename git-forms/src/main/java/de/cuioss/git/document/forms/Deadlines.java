@@ -183,19 +183,21 @@ public final class Deadlines {
 
     /**
      * The current entry of every document: the one of the indexed target branch of its key, else the one of
-     * {@code main}, with the source it was read from.
+     * {@code main}, with the commit of the source it was read from. The commit and the entries of a source are read
+     * from one published index ({@link StoreIndex#sourceEntries}), so a refresh in between cannot pair them wrongly.
      */
     private Map<DocumentKey, Indexed> current(StoreIndex<Entry> index) {
         Map<DocumentKey, Indexed> current = new LinkedHashMap<>();
         for (String source : index.sources()) {
             boolean main = StoreReferences.MAIN.equals(source);
-            Optional<String> commit = index.commitId(source);
-            if (commit.isEmpty()) {
+            Optional<StoreIndex.SourceEntries<Entry>> read = index.sourceEntries(source, collection);
+            if (read.isEmpty()) {
                 continue;
             }
-            index.entries(source, collection).forEach((key, entry) -> {
+            String commit = read.get().commitId();
+            read.get().entries().forEach((key, entry) -> {
                 if (main ? !current.containsKey(key) : source.equals(StoreReferences.target(key))) {
-                    current.put(key, new Indexed(commit.get(), entry));
+                    current.put(key, new Indexed(commit, entry));
                 }
             });
         }
