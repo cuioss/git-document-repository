@@ -300,6 +300,15 @@ class DocumentTransitionsTest {
      * the index of its repository {@code register}, and {@link #CATALOG}.
      */
     static LinkTargets links(Path temp, LocalRemote remote, Kind kind, StoreIndex<Boolean> index) {
+        return links(temp, remote, kind, index, CATALOG);
+    }
+
+    /**
+     * The link targets of the fixtures over a given catalog resolver: the kind as the one kind of the configuration and
+     * the index of its repository {@code register}.
+     */
+    static LinkTargets links(Path temp, LocalRemote remote, Kind kind, StoreIndex<Boolean> index,
+            CatalogResolver catalogs) {
         try {
             Path directory = Files.createDirectories(temp.resolve("configuration"));
             @Nullable Numbering numbered = kind.numbering();
@@ -317,7 +326,7 @@ class DocumentTransitionsTest {
             var registry = value(RepositoryRegistry.of(List.of(new StoreRepository(kind.repository(),
                     remote.uri().toString(), "internal", null)), RemotePolicy.localOnly()));
             var kinds = Objects.requireNonNull(KindConfiguration.fromDirectory(directory, registry).value());
-            return new LinkTargets(kinds, Map.of(kind.repository(), index), CATALOG);
+            return new LinkTargets(kinds, Map.of(kind.repository(), index), catalogs);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

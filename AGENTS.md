@@ -28,7 +28,7 @@ released together and consumed separately.
 | `git-core` | Hardened repositories, remote policy, commit and reference identity, results, transport, reading, cache repository, in-core writing, compare-and-swap, in-core merge, notes; linked working trees, commit from a working tree, working-tree status (package `worktrees`) | - |
 | `git-testing` | Generators and fixtures: local and in-memory repositories, a local remote | - |
 | `git-store` | Repository registry, typed configuration, codec interface, outcome list and result, service interfaces with provider selection; write path: reference layout, drafts, explicit save with lease and per-attempt step, conflicts and change detection, release with tag, draft expiry; read side: in-memory index with contributors, fetch and snapshots, post-commit listeners; signing and its verification; anchoring: checkpoints, proofs as notes, the provider `signed`, anchor verification | `git-core` |
-| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec, template and generated output with its check, workflow with its transitions over the store mechanisms, step-up per transition | `git-store` |
+| `git-forms` | Schema-driven documents: outcome list and result, log messages, kinds of documents as configuration, schema validation, data layout, YAML codec, template and generated output with its check, workflow with its transitions over the store mechanisms, deadlines per state, step-up per transition, typed links, running numbers | `git-store` |
 | `git-timestamp` | The RFC 3161 anchor provider `rfc3161`: obtaining timestamp tokens from an external authority and verifying them against `timestamp.trust`, on an own DER/CMS reader and writer (optional) | `git-store` |
 
 Planned but not yet created: `git-directory` (see
@@ -128,9 +128,21 @@ a schema at parse time) with `InPlaceCycles` (a reference cycle that returns to 
 `YamlWriter` (the canonical emitter); and with the generated output, the workflow and step-up:
 `DocumentTemplate` (the own minimal template language, a strict subset of Mustache, decided by the owner on
 2026-11-23, so no template engine is a dependency), `OutputCheck` and the CI main class `VerifyOutput` (GDR-FORMS-4),
-`Workflow` with `Transition`, `Mechanism` and `Deadline` (GDR-FORMS-5, deadlines read but not evaluated),
-`StepUpPolicy` (the step-up setting the application passes in, GDR-FORMS-7) and `DocumentTransitions` (the transition
-operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`), over the
+`Workflow` with `Transition`, `Mechanism` and `Deadline` (GDR-FORMS-5), `Deadlines` (GDR-FORMS-6: the documents of a
+kind with a deadline due at or before an instant, computed from the `StoreIndex` through its `IndexContributor` and the
+history of the state, never stored),
+`StepUpPolicy` (the step-up setting the application passes in, GDR-FORMS-7, with the switch `step-up.enabled` and a
+single-factor `amr` value accepted as well as `mfa`), the typed links of GDR-FORMS-8: `TypedLink` (a document link
+`<alias>:<kind>/<id>[#<fragment>]` or a catalog link `<catalog>:<id>`), `LinkTargets` (the resolution of the targets
+over the indexes per alias and a `CatalogResolver`), `CatalogResolver` (the catalog provider's check of an entry, a
+retired one included) and the package-private `LinkFields` (the fields marked `"format": "gdr-link"`, from the
+validator's annotations), checked on every save; `RunningNumbers` (GDR-FORMS-9: the ULID key of a new document or
+draft, the running number of a numbered entry allocated from the counter file on its first save), and
+`DocumentTransitions` (the transition
+operation over `StoreWriter.draft`, `save` with the per-attempt step and `release`, with its sealed `Result`; a transition
+on `release` whose save succeeded but whose release only completed an earlier, incomplete release
+(`Release.branchMovedOn()`) is `SAVED_NOT_RELEASED`, and performing the transition again releases the saved state),
+over the
 package-private `TransitionStep` (the `SaveStep` that writes the state and regenerates the output on every attempt),
 `StateMerge` (the merge of the document file onto the tip) and `CloneReader` (the read side of the writer's bare
 clone: references, files, the file a draft started from, a saved commit read as an attempt), and behind the facade

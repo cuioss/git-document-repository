@@ -8,13 +8,14 @@
 documents on top of `git-store`, on which alone it depends. It holds the kinds of documents as configuration
 (<<GDR-FORMS-1>>), schema validation (<<GDR-FORMS-2>>), the data layout with the codecs of the YAML data and the
 counter file (<<GDR-FORMS-3>>), the generated output with its check (<<GDR-FORMS-4>>), the workflow with its
-transitions over the mechanisms of the store (<<GDR-FORMS-5>>) and the step-up per transition (<<GDR-FORMS-7>>), with
+transitions over the mechanisms of the store (<<GDR-FORMS-5>>), the deadlines per state computed from the index
+(<<GDR-FORMS-6>>), the step-up per transition (<<GDR-FORMS-7>>), the typed links checked on save (<<GDR-FORMS-8>>) and
+the running numbers allocated on the first save (<<GDR-FORMS-9>>), with
 its closed outcome list `FormsOutcome`, its result `FormsResult` and its log messages
 (xref:general.adoc#GDR-GEN-3[GDR-GEN-3], xref:general.adoc#GDR-GEN-4[GDR-GEN-4]). The code returns every outcome of
 `FormsOutcome`: `OK`, `INVALID`, `MANDATORY_FIELDS_MISSING`, `MISMATCH`, `TRANSITION_REFUSED`, `STEP_UP_REQUIRED` and
-`SAVED_NOT_RELEASED`, and passes on the outcomes of the store, `MALFORMED` among them. Of the requirements below, <<GDR-FORMS-1>>,
-<<GDR-FORMS-2>>, <<GDR-FORMS-3>>, <<GDR-FORMS-4>>, <<GDR-FORMS-5>> and <<GDR-FORMS-7>> are implemented;
-<<GDR-FORMS-6>>, <<GDR-FORMS-8>> and <<GDR-FORMS-9>> are planned. Rationale:
+`SAVED_NOT_RELEASED`, and passes on the outcomes of the store, `MALFORMED` among them. Every requirement below,
+<<GDR-FORMS-1>> to <<GDR-FORMS-9>>, is implemented. Rationale:
 xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:

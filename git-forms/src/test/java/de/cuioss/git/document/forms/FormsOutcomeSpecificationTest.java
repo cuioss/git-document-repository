@@ -37,9 +37,9 @@ import org.junit.jupiter.api.Test;
  * The {@code git-forms} table of GDR-GEN-3 in {@code doc/specification/general.adoc} lists exactly the constants of
  * {@link FormsOutcome}, in their order: a constant added to the enum without a row, a row without a constant, a
  * renamed or a reordered one fails this test. The introduction of {@code doc/specification/git-forms.adoc} names every
- * constant of {@link FormsOutcome} as returned by the code, none excepted, and none of its sentences that call
- * something planned names {@code MISMATCH}, {@code TRANSITION_REFUSED}, {@code STEP_UP_REQUIRED} or
- * {@code SAVED_NOT_RELEASED}, so the enum, the table and the introduction stay in step.
+ * constant of {@link FormsOutcome} as returned by the code, none excepted, calls every requirement of
+ * {@code git-forms} implemented and has no sentence that calls something planned, so the enum, the table and the
+ * introduction stay in step.
  */
 @DisplayName("FormsOutcome against the git-forms table of GDR-GEN-3")
 class FormsOutcomeSpecificationTest {
@@ -68,6 +68,10 @@ class FormsOutcomeSpecificationTest {
      */
     private static final List<String> RAISED_BY_THE_NEW_REQUIREMENTS =
             List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED", "SAVED_NOT_RELEASED");
+
+    /** The sentence of the introduction that calls every requirement of {@code git-forms} implemented. */
+    private static final String EVERY_REQUIREMENT_IMPLEMENTED =
+            "Every requirement below, <<GDR-FORMS-1>> to <<GDR-FORMS-9>>, is implemented.";
 
     /** A row whose first cell is a constant in back quotes. */
     private static final Pattern CONSTANT_ROW = Pattern.compile("^\\|`([A-Z][A-Z0-9_]*)`");
@@ -150,21 +154,44 @@ class FormsOutcomeSpecificationTest {
 
     @Test
     @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, SAVED_NOT_RELEASED "
-            + "included, and none of the newer outcomes in a sentence that calls something planned")
+            + "included, calls every requirement implemented and calls nothing planned")
     void introductionReturnsEveryOutcome() throws Exception {
         var introduction = introduction(Files.readAllLines(reactorRoot().resolve(GIT_FORMS)));
         var everyOutcome = Arrays.stream(FormsOutcome.values()).map(Enum::name).toList();
 
-        var plannedSentences = Arrays.stream(introduction.split("(?<=\\.) ")).filter(sentence -> sentence
-                .contains("planned")).toList();
+        var plannedSentences = plannedSentences(introduction);
 
         assertAll(
-                () -> assertFalse(plannedSentences.isEmpty(), "the introduction names the planned requirements"),
                 () -> assertEquals(List.of(), outcomesNotNamed(introduction, everyOutcome),
                         "the introduction names every outcome the code returns"),
-                () -> assertTrue(plannedSentences.stream().noneMatch(sentence -> RAISED_BY_THE_NEW_REQUIREMENTS
-                        .stream().anyMatch(sentence::contains)), () -> "no outcome is called planned: "
-                        + plannedSentences));
+                () -> assertTrue(introduction.contains(EVERY_REQUIREMENT_IMPLEMENTED),
+                        "the introduction calls every requirement of git-forms implemented"),
+                () -> assertEquals(List.of(), plannedSentences, "no sentence of the introduction calls something "
+                        + "planned"));
+    }
+
+    /**
+     * The sentences of an introduction that call something planned.
+     *
+     * @param introduction the introduction
+     * @return those sentences, in order
+     */
+    static List<String> plannedSentences(String introduction) {
+        return Arrays.stream(introduction.split("(?<=\\.) ")).filter(sentence -> sentence.contains("planned"))
+                .toList();
+    }
+
+    @Test
+    @DisplayName("a sentence of the introduction that calls a newer outcome planned is seen")
+    void plannedOutcomeDetected() {
+        var introduction = "The code returns `OK`. `SAVED_NOT_RELEASED` is planned. Rationale follows.";
+
+        var planned = plannedSentences(introduction);
+
+        assertAll(
+                () -> assertEquals(List.of("`SAVED_NOT_RELEASED` is planned."), planned, "the planned sentence"),
+                () -> assertTrue(planned.stream().anyMatch(sentence -> RAISED_BY_THE_NEW_REQUIREMENTS.stream()
+                        .anyMatch(sentence::contains)), "it names a newer outcome"));
     }
 
     @Test
