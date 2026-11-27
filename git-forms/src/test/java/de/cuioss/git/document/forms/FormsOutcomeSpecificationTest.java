@@ -38,7 +38,8 @@ import org.junit.jupiter.api.Test;
  * {@link FormsOutcome}, in their order: a constant added to the enum without a row, a row without a constant, a
  * renamed or a reordered one fails this test. The introduction of {@code doc/specification/git-forms.adoc} names every
  * constant of {@link FormsOutcome} as returned by the code, none excepted, and none of its sentences that call
- * something planned names {@code MISMATCH}, {@code TRANSITION_REFUSED} or {@code STEP_UP_REQUIRED}.
+ * something planned names {@code MISMATCH}, {@code TRANSITION_REFUSED}, {@code STEP_UP_REQUIRED} or
+ * {@code SAVED_NOT_RELEASED}, so the enum, the table and the introduction stay in step.
  */
 @DisplayName("FormsOutcome against the git-forms table of GDR-GEN-3")
 class FormsOutcomeSpecificationTest {
@@ -61,9 +62,12 @@ class FormsOutcomeSpecificationTest {
     /** The start of the anchor line of a requirement of {@code git-forms}, which ends the introduction. */
     private static final String REQUIREMENT_ANCHOR = "[#GDR-FORMS-";
 
-    /** The outcomes GDR-FORMS-4, GDR-FORMS-5 and GDR-FORMS-7 raise, once listed as planned in the introduction. */
+    /**
+     * The outcomes GDR-FORMS-4, GDR-FORMS-5 and GDR-FORMS-7 raise, once listed as planned in the introduction, and
+     * {@code SAVED_NOT_RELEASED} of the release of GDR-FORMS-5.
+     */
     private static final List<String> RAISED_BY_THE_NEW_REQUIREMENTS =
-            List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED");
+            List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED", "SAVED_NOT_RELEASED");
 
     /** A row whose first cell is a constant in back quotes. */
     private static final Pattern CONSTANT_ROW = Pattern.compile("^\\|`([A-Z][A-Z0-9_]*)`");
@@ -145,8 +149,8 @@ class FormsOutcomeSpecificationTest {
     }
 
     @Test
-    @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, and MISMATCH, "
-            + "TRANSITION_REFUSED and STEP_UP_REQUIRED in no sentence that calls something planned")
+    @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, SAVED_NOT_RELEASED "
+            + "included, and none of the newer outcomes in a sentence that calls something planned")
     void introductionReturnsEveryOutcome() throws Exception {
         var introduction = introduction(Files.readAllLines(reactorRoot().resolve(GIT_FORMS)));
         var everyOutcome = Arrays.stream(FormsOutcome.values()).map(Enum::name).toList();

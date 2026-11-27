@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -70,7 +71,10 @@ import org.jspecify.annotations.Nullable;
  * would perform more than {@value #MAX_RENDER_OPERATIONS} operations (a visit of a node or an item of a section) or
  * write more than {@value #MAX_OUTPUT_CHARS} characters; the detail names the limit, never content of the template, the
  * data or the fragments (GDR-NFR-3). Sections nested over the same sequence, whose work grows with the length of the
- * sequence to the power of the nesting even without output, reach the first limit.
+ * sequence to the power of the nesting even without output, reach the first limit. Each fragment is normalised once
+ * per rendering, so a fragment tag inside a section over a long sequence costs one operation per visit, never the
+ * length of the fragment again; the work of one rendering is therefore bounded by the two limits plus the total length
+ * of the fragments, even for a fragment that inserts nothing.
  * A template is immutable and may serve every thread.
  *
  * @since 0.1
@@ -251,6 +255,8 @@ public final class DocumentTemplate {
     private static final class Rendering {
 
         private final Map<String, String> fragments;
+        /** The fragments normalised so far by this rendering, each once. */
+        private final Map<String, String> normalised = new HashMap<>();
         private final List<@Nullable Object> context = new ArrayList<>();
         private final StringBuilder out = new StringBuilder();
         private long operations;
@@ -265,15 +271,28 @@ public final class DocumentTemplate {
                 switch (node) {
                     case Text(String text) -> append(text);
                     case Variable(String name) -> append(scalar(lookup(name, context)));
-                    case Fragment(String name) -> {
-                        String content = fragments.get(name);
-                        if (content != null) {
-                            append(withoutTrailingLineFeeds(lineFeeds(content)));
-                        }
-                    }
+                    case Fragment(String name) -> append(fragment(name));
                     case Section section -> section(section);
                 }
             }
+        }
+
+        /**
+         * The text a fragment tag inserts: the fragment with line feed line ends and without trailing line feeds, empty
+         * for an absent fragment. Each fragment is normalised once per rendering and kept, so a tag visited once per
+         * item of a long sequence costs one operation per visit and not the length of the fragment, whatever the
+         * fragment holds; a fragment that normalises to nothing, such as one of line ends only, writes no output and
+         * would otherwise cost its length on every visit unbounded by {@link #MAX_OUTPUT_CHARS}.
+         */
+        private String fragment(String name) {
+            String known = normalised.get(name);
+            if (known != null) {
+                return known;
+            }
+            String content = fragments.get(name);
+            String text = content == null ? "" : withoutTrailingLineFeeds(lineFeeds(content));
+            normalised.put(name, text);
+            return text;
         }
 
         private void section(Section section) {

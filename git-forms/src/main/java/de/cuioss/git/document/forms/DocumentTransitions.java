@@ -41,7 +41,8 @@ import org.jspecify.annotations.Nullable;
  * {@link #perform} looks the transition up in the current state of the document, the field {@value TransitionStep#STATE}
  * of {@value DocumentLayout#DOCUMENT_FILE} or the entry file on the local target branch (else {@code main}); a missing
  * file or field is the initial state of the workflow. A transition the workflow does not have, or whose {@code from} is
- * not the current state, is {@link FormsOutcome#TRANSITION_REFUSED}. A transition that requires step-up is checked
+ * not the current state, is {@link FormsOutcome#TRANSITION_REFUSED}, except the resumption of a release described
+ * below. A transition that requires step-up is checked
  * against the {@link StepUpPolicy} at the instant of the clock before anything is written, so a refusal
  * {@link FormsOutcome#STEP_UP_REQUIRED} leaves the draft, the working or collection branch and {@code main} unchanged.
  * Then the mechanism runs:
@@ -62,10 +63,22 @@ import org.jspecify.annotations.Nullable;
  * {@link Change#expectedBlobIds()} (GDR-STORE-4).</li>
  * <li>{@code release} is the same single save, whose commit carries the state and the regenerated output, followed by
  * {@link StoreWriter#release(Author, IdentityClaims, DocumentKey, String)}, pinned to the commit the transition saved,
- * so the release publishes exactly that commit. A release that fails after the save is passed on and leaves the saved
- * state in place; a branch that moved after the save refuses the release with the passed-on outcome of the store, the
- * saved state stays in place, and no compensating write is made.</li>
+ * so a new release commit is written only from that commit. When an earlier release of the document is merged into
+ * {@code main} but its tag is missing, the store only completes that earlier release, whose commit holds an older
+ * state, and reports {@link Release#branchMovedOn()}: the transition is then {@link FormsOutcome#SAVED_NOT_RELEASED},
+ * and {@link Result.Performed} is returned only for a release of the saved state. A release that fails after the save
+ * is passed on and leaves the saved state in place; a branch that moved after the save refuses the release with the
+ * passed-on outcome of the store, the saved state stays in place, and no compensating write is made.</li>
  * </ul>
+ * A transition on {@code release} whose save succeeded and whose release did not is resumed by performing it again:
+ * its {@code from} is no longer the current state, but when the workflow has a transition of that name on
+ * {@code release} whose {@code to} is the current state, and the clone, fetched first through
+ * {@link StoreWriter#fetch()} (a failed fetch passed on), shows the release of the saved state not complete (the tip of
+ * the target branch holds the file in that state, and no release tag of the key points at a commit whose file of the
+ * document or entry equals it), the step-up check runs unchanged and the tip is released, pinned to it, without a second
+ * state write and without the caller's edits. A branch that moved since is refused by the pin with nothing written.
+ * Any other transition whose {@code from} is not the current state stays {@link FormsOutcome#TRANSITION_REFUSED}, and
+ * so does a release transition whose release is complete.
  * A save whose draft changes nothing, such as a self-loop from {@code approved} to {@code approved} that writes identical
  * content, runs no step in the store. Its saved commit is then verified before anything is released: the checks of the
  * step are applied to the files of that commit, a refusal ends the transition as a refusal of the step would, and an
@@ -97,6 +110,10 @@ public final class DocumentTransitions {
 
     /** The detail of a transition that requires step-up the claims do not hold. */
     static final String STEP_UP_DETAIL = "step-up: the claims do not hold step-up";
+
+    /** The detail of a release that only completed an earlier release of an older state. */
+    static final String SAVED_NOT_RELEASED_DETAIL = "release: an earlier release was completed, the saved state is not"
+            + " released";
 
     private final TransitionRunner runner;
 
@@ -139,7 +156,10 @@ public final class DocumentTransitions {
      *         data whose text is of neither link form or whose target does not exist being a {@link Violation} at its
      *         JSON Pointer with the message {@code link: no such target} for a missing target (GDR-FORMS-8);
      *         {@link Result.Conflicting} with the conflicting paths; or {@link Result.NotPerformed} with
-     *         {@link FormsOutcome#TRANSITION_REFUSED}, {@link FormsOutcome#STEP_UP_REQUIRED}, or the passed-on outcome of
+     *         {@link FormsOutcome#TRANSITION_REFUSED}, {@link FormsOutcome#STEP_UP_REQUIRED},
+     *         {@link FormsOutcome#SAVED_NOT_RELEASED} for a release that only completed an earlier release of an older
+     *         state, the saved state staying on the branch until the transition is performed again, or the passed-on
+     *         outcome of
      *         the store or of Git, for example {@link de.cuioss.git.document.store.StoreOutcome#MALFORMED} for a file of
      *         the document that cannot be read, the outcome of a failed resolution of a link target, or
      *         {@link GitOutcome#REJECTED} after the last attempt of the save

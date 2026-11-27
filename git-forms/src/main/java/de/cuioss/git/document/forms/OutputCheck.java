@@ -56,7 +56,10 @@ import org.jspecify.annotations.Nullable;
  * <p>
  * The check reads the commit through {@link RepositoryReader#snapshot(Repository, String)} of {@code git-core} and
  * writes nothing; it needs neither the application nor a network. A file larger than {@value #MAX_FILE_BYTES} bytes is
- * refused unread. A detail names a path of the commit and the problem, never data (GDR-NFR-3); a mismatch names the
+ * refused unread; the bound equals {@code ExplicitSave.BLOB_LIMIT} of the store, by which the view of an attempt of a
+ * save reads every blob, so a step never sees a file this check would refuse. Data that, joined with their parts, are
+ * nested deeper than the nesting limit of the data model are refused as the passed-on {@link StoreOutcome#MALFORMED},
+ * never with an exception. A detail names a path of the commit and the problem, never data (GDR-NFR-3); a mismatch names the
  * output paths only. A check is immutable and may serve every thread.
  *
  * @since 0.1
@@ -104,7 +107,8 @@ public final class OutputCheck {
      * @return {@link FormsOutcome#OK} with the checked output paths, sorted, when every output matches (none for a
      *         kind without a template); {@link FormsOutcome#MISMATCH} whose detail names the mismatching output paths;
      *         the Git outcome of the snapshot passed on when the revision cannot be resolved; the passed-on
-     *         {@link StoreOutcome#MALFORMED} for data, a part or a fragment that cannot be read; the passed-on
+     *         {@link StoreOutcome#MALFORMED} for data, a part or a fragment that cannot be read, and for data that,
+     *         joined with its parts, are nested deeper than the nesting limit of the data model; the passed-on
      *         {@link GitOutcome#FAILED} for an I/O failure
      * @throws NullPointerException if an argument is {@code null}
      */
@@ -254,7 +258,9 @@ public final class OutputCheck {
      * @param files the files
      * @param unit  the ULID of a document of a per-document kind, or the running number of an entry
      * @return {@link FormsOutcome#OK} with the data; {@link FormsOutcome#INVALID} for a unit that is no name segment;
-     *         the passed-on {@link StoreOutcome#MALFORMED} for data or a part that is missing or cannot be read
+     *         the passed-on {@link StoreOutcome#MALFORMED} for data or a part that is missing or cannot be read, and for
+     *         data that, joined with its parts, are nested deeper than the nesting limit of the data model
+     *         ({@link DocumentLayout#join})
      */
     FormsResult<Map<String, @Nullable Object>> data(DocumentFiles files, String unit) {
         FormsResult<String> path = kind.isNumbered() ? layout.entry(unit) : layout.document(unit);

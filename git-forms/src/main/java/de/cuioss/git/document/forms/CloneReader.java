@@ -23,7 +23,9 @@ import java.util.Optional;
 
 
 import de.cuioss.git.document.core.TreeEdit;
+import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.SaveStep;
+import de.cuioss.git.document.store.StoreReferences;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
@@ -38,8 +40,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The read side of the bare clone of a writer for {@link DocumentTransitions} (GDR-FORMS-5): whether a reference
- * exists, a file of the commit a reference points at, the file the draft started from, and a saved commit read as the
- * attempt of a save. It only reads the clone; an I/O failure, and a file larger than {@link OutputCheck#MAX_FILE_BYTES},
+ * exists and the commit it points at, a file of that commit or of a commit given by its id, the release tags of a
+ * document, the file the draft started from, and a saved commit read as the attempt of a save, whose
+ * {@link SaveStep.Attempt#mode(String)} reports the mode of a regular, executable or symbolic-link file and no mode for
+ * a directory or a gitlink, as the view of the store does. It only reads the clone; an I/O failure, and a file larger than {@link OutputCheck#MAX_FILE_BYTES},
  * is a {@link ReadFailure}. A reader serves the thread of one transition.
  */
 final class CloneReader {
@@ -70,6 +74,48 @@ final class CloneReader {
         } catch (IOException e) {
             throw new ReadFailure(e);
         }
+    }
+
+    /**
+     * The commit a reference points at.
+     *
+     * @param ref the full name of the reference
+     * @return the full id of the object the reference points at, or empty when the reference is absent
+     * @throws ReadFailure for an I/O failure while reading the clone
+     */
+    Optional<String> tip(String ref) {
+        try {
+            Ref found = repository.exactRef(ref);
+            ObjectId id = found == null ? null : found.getObjectId();
+            return id == null ? Optional.empty() : Optional.of(id.name());
+        } catch (IOException e) {
+            throw new ReadFailure(e);
+        }
+    }
+
+    /**
+     * The objects the release tags of a document or entry point at in the clone, as the last fetch mirrored them: every
+     * reference below {@link StoreReferences#releaseTags(DocumentKey)} that is a release version of the key
+     * ({@link StoreReferences#releaseVersion(DocumentKey, String)}). The store writes lightweight tags, so each is the id
+     * of a release commit; {@link #readAt(String, String)} peels an annotated tag to its commit.
+     *
+     * @param key the document or entry
+     * @return the full object ids, in the order of the reference names
+     * @throws ReadFailure for an I/O failure while reading the clone
+     */
+    List<String> releaseTagTargets(DocumentKey key) {
+        List<String> targets = new ArrayList<>();
+        try {
+            for (Ref ref : repository.getRefDatabase().getRefsByPrefix(StoreReferences.releaseTags(key))) {
+                ObjectId id = ref.getObjectId();
+                if (id != null && StoreReferences.releaseVersion(key, ref.getName()).isPresent()) {
+                    targets.add(id.name());
+                }
+            }
+        } catch (IOException e) {
+            throw new ReadFailure(e);
+        }
+        return targets;
     }
 
     /**

@@ -45,9 +45,13 @@ import org.jspecify.annotations.Nullable;
  * attempt as {@link ValidationResult.Invalid} with a {@link Violation} at the JSON Pointer of the field, the message
  * {@value #NO_SUCH_TARGET} for a missing target; the link text is data and appears in no detail or log. A resolution
  * that fails refuses the attempt with its outcome passed on. The links are checked on every attempt, so a re-applied
- * attempt sees the index as it is then. On success it returns the edit of the file and, for a kind with a
- * template, the output regenerated from exactly these data and the fragments of the attempt, so the output is never
- * merged. On a refusal it captures the outcome and the findings for {@link DocumentTransitions}, because a
+ * attempt sees the index as it is then. Data that, joined with their parts, are nested deeper than the nesting limit of
+ * the data model refuse the attempt as the passed-on {@link StoreOutcome#MALFORMED} ({@link DocumentLayout#join}), so
+ * the save ends with that result and never with a failure of the step. On success it returns the edit of the file
+ * and, for a kind with a template, the output regenerated from exactly these data and the fragments of the attempt:
+ * the output ({@value DocumentLayout#OUTPUT_FILE} of a document, {@code <collection>/<number>.adoc} of an entry) is the
+ * one file of the layout that is never merged, so stale or foreign content at its path is replaced by every save. On a
+ * refusal it captures the outcome and the findings for {@link DocumentTransitions}, because a
  * {@link SaveStep.Refusal} carries no text; each attempt starts with a fresh capture, so a re-applied attempt never
  * reports the findings of an earlier one.
  * <p>

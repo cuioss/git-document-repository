@@ -153,8 +153,7 @@ final class DataNode implements JsonNode {
             if (current instanceof List<?> || current instanceof Map<?, ?>) {
                 int depth = next.depth() + 1;
                 if (depth > MAX_DEPTH) {
-                    throw new IllegalArgumentException(
-                            "not of the JSON data model: nested deeper than " + MAX_DEPTH + " levels");
+                    throw new TooDeep();
                 }
                 Integer seen = deepest.get(current);
                 if (seen == null || seen < depth) {
@@ -162,6 +161,24 @@ final class DataNode implements JsonNode {
                     pushInside(pending, current, depth);
                 }
             }
+        }
+    }
+
+    /**
+     * Whether a value is nested deeper than {@value #MAX_DEPTH} levels, by the walk of {@link #requireDataModel}: for
+     * data assembled from files that were each read within the bound, such as a document joined with its parts, whose
+     * caller returns a result instead of the exception.
+     *
+     * @param value the value
+     * @return whether the value, or a value inside it, is nested deeper than the limit or contains itself
+     * @throws IllegalArgumentException if the value or a value inside it is outside the data model for another reason
+     */
+    static boolean nestedTooDeep(@Nullable Object value) {
+        try {
+            requireDataModel(value);
+            return false;
+        } catch (TooDeep e) {
+            return true;
         }
     }
 
@@ -395,6 +412,16 @@ final class DataNode implements JsonNode {
 
     /** A value still to be checked, with the number of containers around it. */
     private record Pending(@Nullable Object value, int depth) {
+    }
+
+    /** The refusal of a value nested deeper than {@value #MAX_DEPTH} levels; its message names the limit only. */
+    private static final class TooDeep extends IllegalArgumentException {
+
+        private static final long serialVersionUID = 1L;
+
+        TooDeep() {
+            super("not of the JSON data model: nested deeper than " + MAX_DEPTH + " levels");
+        }
     }
 
     /** The factory of nodes for schemas and data. */

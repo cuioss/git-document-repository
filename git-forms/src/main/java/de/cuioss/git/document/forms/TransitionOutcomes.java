@@ -57,6 +57,17 @@ final class TransitionOutcomes {
     }
 
     /**
+     * The result of a release that completed only an earlier, incomplete release of an older state, the branch having
+     * moved on since ({@link de.cuioss.git.document.store.Release#branchMovedOn()}): the state the transition saved is
+     * not released (GDR-FORMS-5).
+     *
+     * @return {@link FormsOutcome#SAVED_NOT_RELEASED} with {@link DocumentTransitions#SAVED_NOT_RELEASED_DETAIL}
+     */
+    static Result savedNotReleased() {
+        return new Result.NotPerformed(FormsOutcome.SAVED_NOT_RELEASED, DocumentTransitions.SAVED_NOT_RELEASED_DETAIL);
+    }
+
+    /**
      * The result of a non-success of the forms.
      *
      * @param result the non-success
@@ -107,7 +118,8 @@ final class TransitionOutcomes {
     }
 
     /**
-     * The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git.
+     * The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git, so
+     * {@link FormsOutcome#SAVED_NOT_RELEASED} is logged as {@code SAVED_NOT_RELEASED}.
      *
      * @param outcome the outcome
      * @return the name of its constant

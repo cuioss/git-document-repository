@@ -16,7 +16,9 @@
 package de.cuioss.git.document.forms;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 
 import de.cuioss.git.document.forms.CloneReader.ReadFailure;
@@ -26,14 +28,19 @@ import de.cuioss.git.document.forms.DocumentTransitions.Result;
 import de.cuioss.git.document.store.Author;
 import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.IdentityClaims;
+import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.git.document.store.StoreWriter;
 import de.cuioss.tools.logging.CuiLogger;
 import org.eclipse.jgit.lib.Repository;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The run of one transition of {@link DocumentTransitions}: the collection check of the key, the current state, the
- * lookup of the transition in that state, the step-up check against the {@link StepUpPolicy} at the instant of the
- * clock before anything is written, and the mechanism through {@link TransitionSave}. Every result is logged as
+ * lookup of the transition in that state, the resumption of a release transition whose release did not complete (a
+ * transition on {@code release} of that name whose {@code to} is the current state, checked after a fetch of the
+ * writer, so the clone mirrors the remote's release tags, and only when no release tag holds the saved file), the
+ * step-up check against the {@link StepUpPolicy} at the instant of the clock before anything is written, and the
+ * mechanism through {@link TransitionSave}. Every result is logged as
  * {@code GIT_FORMS-2} or {@code GIT_FORMS-3} with the mechanism and the commit id or the name of the outcome only,
  * under the logger of {@link DocumentTransitions}.
  */
@@ -44,6 +51,7 @@ final class TransitionRunner {
     /** The mechanism named in the log when no transition was found. */
     private static final String NO_MECHANISM = "none";
 
+    private final StoreWriter writer;
     private final TransitionContext context;
     private final TransitionSave save;
     private final StepUpPolicy policy;
@@ -62,6 +70,7 @@ final class TransitionRunner {
      */
     TransitionRunner(StoreWriter writer, Repository repository, Definition definition, LinkTargets links,
             StepUpPolicy policy, Clock clock) {
+        this.writer = writer;
         this.context = new TransitionContext(repository, definition, links);
         this.save = new TransitionSave(writer, context);
         this.policy = policy;
@@ -91,17 +100,41 @@ final class TransitionRunner {
         if (!current.isOk()) {
             return report(NO_MECHANISM, TransitionOutcomes.notPerformed(current));
         }
-        FormsResult<Transition> found = context.transition(transition, Objects.requireNonNull(current.value()));
-        if (!found.isOk()) {
-            return report(NO_MECHANISM, TransitionOutcomes.notPerformed(found));
+        String state = Objects.requireNonNull(current.value());
+        FormsResult<Transition> found = context.transition(transition, state);
+        Transition allowed;
+        @Nullable String unreleased = null;
+        if (found.isOk()) {
+            allowed = Objects.requireNonNull(found.value());
+        } else {
+            Optional<Transition> release = context.resumable(transition, state);
+            if (release.isEmpty()) {
+                return report(NO_MECHANISM, TransitionOutcomes.notPerformed(found));
+            }
+            StoreResult<List<String>> fetched = writer.fetch();
+            if (!fetched.isOk()) {
+                return report(NO_MECHANISM, TransitionOutcomes.passOn(fetched));
+            }
+            Optional<String> tip;
+            try {
+                tip = context.unreleasedTip(key, documentPath, release.get());
+            } catch (ReadFailure e) {
+                return report(NO_MECHANISM, TransitionOutcomes.readFailed(e));
+            }
+            if (tip.isEmpty()) {
+                return report(NO_MECHANISM, TransitionOutcomes.notPerformed(found));
+            }
+            allowed = release.get();
+            unreleased = tip.get();
         }
-        Transition allowed = Objects.requireNonNull(found.value());
         String mechanism = allowed.mechanism().fileName();
         if (policy.requires(allowed) && !policy.holds(claims, clock.instant())) {
             return report(mechanism, TransitionOutcomes.stepUpRequired());
         }
-        return report(mechanism, save.perform(new TransitionCall(author, claims, key, allowed, change, documentPath)));
+        var call = new TransitionCall(author, claims, key, allowed, change, documentPath);
+        return report(mechanism, unreleased == null ? save.perform(call) : save.resumeRelease(call, unreleased));
     }
+
 
     /** Logs the result of a transition, naming the mechanism and the commit id or the outcome only, and returns it. */
     private static Result report(String mechanism, Result result) {

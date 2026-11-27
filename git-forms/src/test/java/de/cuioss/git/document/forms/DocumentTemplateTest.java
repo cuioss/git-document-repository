@@ -27,6 +27,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -345,6 +346,45 @@ class DocumentTemplateTest {
 
         static Stream<String> bodies() {
             return Stream.of("", "{{.}}");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-4: a whitespace-only fragment inside a section over a long list is normalised once")
+        void fragmentNormalisedOncePerRendering() {
+            int items = 2_000;
+            var fragment = "\r\n".repeat(50_000);
+            var fragments = new CountingFragments(Map.of("blank", fragment));
+            var template = template("{{#items}}{{>blank}}{{/items}}");
+
+            var result = template.render(Map.of("items", Collections.nCopies(items, 1L)), fragments);
+
+            assertAll(
+                    () -> assertEquals(FormsResult.ok("\n"), result, "the fragment inserts nothing, the output ends"
+                            + " in one line feed"),
+                    () -> assertEquals(1, fragments.reads(), "the fragment is read and normalised once, so the"
+                            + " counted work over it is its length once, not " + items + " times"));
+        }
+
+        /** Fragments that count how often a fragment is read by its name, each read being one normalisation. */
+        private static final class CountingFragments extends HashMap<String, String> {
+
+            private static final long serialVersionUID = 1L;
+
+            private int reads;
+
+            CountingFragments(Map<String, String> fragments) {
+                super(fragments);
+            }
+
+            @Override
+            public @Nullable String get(Object key) {
+                reads++;
+                return super.get(key);
+            }
+
+            int reads() {
+                return reads;
+            }
         }
 
         @Test

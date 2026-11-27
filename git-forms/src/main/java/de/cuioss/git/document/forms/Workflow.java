@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 
@@ -392,6 +393,19 @@ public final class Workflow {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, DocumentTransitions.NOT_IN_CURRENT_STATE);
         }
         return FormsResult.ok(transition);
+    }
+
+    /**
+     * Finds a transition of the workflow by its name alone, whatever the current state; transition names are unique
+     * within a workflow.
+     *
+     * @param name the name of the transition
+     * @return the transition, or empty for a name the workflow does not have
+     * @throws NullPointerException if {@code name} is {@code null}
+     */
+    public Optional<Transition> transition(String name) {
+        Objects.requireNonNull(name, NAME);
+        return Optional.ofNullable(transitionsByName.get(name));
     }
 
     /** A workflow the loader does not accept, carrying the detail: the key path and the rule. */

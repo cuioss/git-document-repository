@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 
 import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreResult;
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.TypedGenerator;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
@@ -525,7 +526,7 @@ class NestingDepthTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-3: split and join copy only the top level, so a value 100,000 levels deep passes")
+        @DisplayName("GDR-FORMS-3: split copies only the top level; join refuses data 100,000 levels deep as MALFORMED")
         void layoutCopiesTopLevelOnly() {
             var kind = new Kind(KEYS.next(), KEYS.next(), KEYS.next(), KEYS.next(), KEYS.next(), KEYS.next(), null);
             var layout = new DocumentLayout(kind, SchemaValidatorTest.schema(SchemaValidatorTest.SCHEMA));
@@ -541,9 +542,9 @@ class NestingDepthTest {
                     () -> assertSame(deep, split.document().get("title"), "the document keeps the value"),
                     () -> assertSame(deep, Objects.requireNonNull(split.parts().get("details")).get("note"),
                             "the part keeps the value"),
-                    () -> assertTrue(joined.isOk(), "the join succeeds"),
-                    () -> assertSame(deep, Objects.requireNonNull(joined.value()).get("title"),
-                            "the joined data keeps the value"));
+                    () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                                    "document.yaml: nested deeper than 128 levels, joined with its parts")), joined,
+                            "the join returns the depth refusal as a result, never an exception"));
         }
     }
 }

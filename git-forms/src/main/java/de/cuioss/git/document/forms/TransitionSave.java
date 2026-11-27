@@ -34,7 +34,8 @@ import org.jspecify.annotations.Nullable;
  * The mechanism of a transition of {@link DocumentTransitions} whose step-up check passed: {@code intermediate-save}
  * writes the caller's edits as a draft; {@code save} and {@code release} write the draft with the state through
  * {@link DraftStaging}, save it with a {@link TransitionStep}, verify a save that ran no step through
- * {@link UnchangedSave}, and for {@code release} release the saved commit.
+ * {@link UnchangedSave}, and for {@code release} release the saved commit; a resumed {@code release} only releases the
+ * saved state of the tip ({@link #resumeRelease}).
  */
 final class TransitionSave {
 
@@ -127,9 +128,26 @@ final class TransitionSave {
     }
 
     /**
-     * The release after the save of a transition on {@code release}, pinned to the commit the transition saved, so it
-     * publishes exactly that commit. A failure leaves the saved state in place, and so does a branch that moved after
-     * the save, which the store refuses with the passed-on outcome it returns; no compensating write is made.
+     * The release-only path of a resumed transition on {@code release} (GDR-FORMS-5): the saved state on the tip of
+     * the target branch is released, pinned to that tip, without a second state write and without a save. A branch
+     * that moved since the clone was read is refused by the pin of the store with nothing written.
+     *
+     * @param call        the resumed transition, whose step-up check passed
+     * @param tipCommitId the full id of the tip of the target branch, which holds the saved state
+     * @return the result of the release, see {@link #release(TransitionCall, DocumentKey, String)}
+     */
+    Result resumeRelease(TransitionCall call, String tipCommitId) {
+        return release(call, call.key(), tipCommitId);
+    }
+
+    /**
+     * The release of a transition on {@code release}, pinned to the commit the transition saved, or that a resumed
+     * transition found on the tip: a new release commit is written only from that commit, so it releases exactly the
+     * saved state. When an earlier release of the document is merged but its tag is missing, the store only completes
+     * that release and reports {@link Release#branchMovedOn()}: its commit holds an older state, so the transition is
+     * {@link FormsOutcome#SAVED_NOT_RELEASED} and performing it again releases the saved state. A failure leaves the
+     * saved state in place, and so does a branch that moved after the save, which the store refuses with the passed-on
+     * outcome it returns; no compensating write is made.
      */
     private Result release(TransitionCall call, DocumentKey key, String savedCommitId) {
         StoreResult<Release> released = writer.release(call.author(), call.claims(), key, savedCommitId);
@@ -137,6 +155,9 @@ final class TransitionSave {
             return TransitionOutcomes.passOn(released);
         }
         Release release = Objects.requireNonNull(released.value());
+        if (release.branchMovedOn()) {
+            return TransitionOutcomes.savedNotReleased();
+        }
         return new Result.Performed(release.commitId(), key, release);
     }
 }

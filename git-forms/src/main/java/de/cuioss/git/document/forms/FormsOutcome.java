@@ -42,5 +42,12 @@ public enum FormsOutcome implements FormsResult.Outcome {
     TRANSITION_REFUSED,
 
     /** Step-up required: raised by the workflow for a transition that requires step-up the caller does not hold. */
-    STEP_UP_REQUIRED
+    STEP_UP_REQUIRED,
+
+    /**
+     * Saved, not released: raised by a transition on {@code release} whose save succeeded but whose release only
+     * completed an earlier, incomplete release of an older state ({@code Release.branchMovedOn()}); the saved state
+     * stays on the working or collection branch, and performing the transition again releases it (GDR-FORMS-5).
+     */
+    SAVED_NOT_RELEASED
 }

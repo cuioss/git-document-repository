@@ -275,6 +275,26 @@ class OutputCheckTest {
     }
 
     @Test
+    @DisplayName("GDR-FORMS-4: a part nested at the limit, one level deeper once joined, is MALFORMED, not thrown")
+    void partNestedAtTheLimit(@InMemory Repository repository) throws Exception {
+        var document = Document.generate();
+        Map<String, byte[]> files = new TreeMap<>(document.files(document.output()));
+        files.put(document.directory() + "details.yaml", nestedYaml(DataNode.MAX_DEPTH));
+        commit(repository, files);
+
+        var result = check(perDocument()).check(repository, BRANCH);
+
+        assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                        "document.yaml: nested deeper than 128 levels, joined with its parts")), result,
+                "the join refuses the data as a result");
+    }
+
+    /** A YAML mapping of {@code depth} nested flow mappings, the outermost counting 1, within the reader's bound. */
+    static byte[] nestedYaml(int depth) {
+        return ("{reason: ".repeat(depth) + "x" + "}".repeat(depth) + "\n").getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
     @DisplayName("GDR-FORMS-4: a fragment that is not UTF-8 is MALFORMED, naming the path")
     void fragmentNotUtf8(@InMemory Repository repository) throws Exception {
         var document = Document.generate();

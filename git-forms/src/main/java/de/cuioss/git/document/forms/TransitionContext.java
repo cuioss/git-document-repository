@@ -15,8 +15,10 @@
  */
 package de.cuioss.git.document.forms;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 
 import de.cuioss.git.document.forms.DocumentTransitions.Definition;
@@ -32,7 +34,7 @@ import org.jspecify.annotations.Nullable;
  * layout, the codec and the output check of the kind, the resolution of link targets of the application, and the
  * lookups per key that the transitions share (the
  * collection check, the path of the file, the branch the current state is read from, the current state, the
- * transition and the step of a save, which gets the layout and the numbering of a numbered kind for a new entry whose
+ * transition, the release transition a retry resumes with the commit it releases, and the step of a save, which gets the layout and the numbering of a numbered kind for a new entry whose
  * key is the ULID of its draft, GDR-FORMS-9).
  */
 final class TransitionContext {
@@ -150,6 +152,55 @@ final class TransitionContext {
      */
     FormsResult<Transition> transition(String name, String state) {
         return definition.workflow().transition(name, state);
+    }
+
+    /**
+     * Finds the transition on {@code release} that a retry resumes (GDR-FORMS-5): a transition of that name whose
+     * {@code from} is not the current state, but whose mechanism is {@code release} and whose {@code to} is the current
+     * state, as after a release transition whose save succeeded and whose release did not.
+     *
+     * @param name  the name of the transition
+     * @param state the current state of the document or entry
+     * @return the transition, or empty when the workflow has no such transition
+     */
+    Optional<Transition> resumable(String name, String state) {
+        return definition.workflow().transition(name)
+                .filter(found -> found.mechanism() == Mechanism.RELEASE && found.to().equals(state));
+    }
+
+    /**
+     * The commit a resumed release releases, when the clone shows the release of the saved state not complete: the tip
+     * of the local target branch of the key, whose file of the document or entry carries the {@code to} of the
+     * transition as its state, unless a release tag of the key points at a commit whose file is byte for byte the file
+     * of that tip. The caller fetches first, so the clone mirrors the remote's branches and tags, an unpushed local tag
+     * of a failed release attempt pruned; the release of the store fetches again and refuses, by its pin, a branch that
+     * moved since.
+     *
+     * @param key          the document or entry
+     * @param documentPath the path of its file
+     * @param release      the transition on {@code release} that is resumed
+     * @return the full id of the tip to release, or empty when there is no target branch, its tip holds no file of the
+     *         document or entry or one in another state, or a release tag already holds that file
+     * @throws CloneReader.ReadFailure for an I/O failure while reading the clone, a tagged commit the clone does not
+     *                                 hold included
+     */
+    Optional<String> unreleasedTip(DocumentKey key, String documentPath, Transition release) {
+        Optional<String> tip = clone.tip(StoreReferences.target(key));
+        if (tip.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<byte[]> saved = clone.readAt(tip.get(), documentPath);
+        FormsResult<String> state = TransitionStep.readState(codec, saved, documentPath, initialState());
+        if (saved.isEmpty() || !state.isOk() || !release.to().equals(state.value())) {
+            return Optional.empty();
+        }
+        for (String tagged : clone.releaseTagTargets(key)) {
+            Optional<byte[]> released = clone.readAt(tagged, documentPath);
+            if (released.isPresent() && Arrays.equals(released.get(), saved.get())) {
+                return Optional.empty();
+            }
+        }
+        return tip;
     }
 
     /**
