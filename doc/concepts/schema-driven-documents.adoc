@@ -101,9 +101,10 @@ approval
 tags stay
 |===
 
-The workflow declares per transition whether it requires *step-up*, an MFA authentication no older than a configured
-maximum age. By default every release transition, and so every approval, requires it and no other transition does;
-an intermediate save never does (see xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing]).
+The workflow declares per transition whether it requires *step-up*, a renewed authentication with the methods the
+deployment chooses (MFA by default) no older than a configured maximum age. By default every release transition, and
+so every approval, requires it and no other transition does; an intermediate save never does, and a deployment may
+switch step-up off altogether (see xref:identity-and-signing.adoc#_step_up_for_approvals[Identity and Signing]).
 The workflow further declares
 *deadlines* per state: notification duties and review intervals, computed from the in-memory index, never stored.
 Notifications are runtime state of the application, not persistence.

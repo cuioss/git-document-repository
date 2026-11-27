@@ -36,12 +36,13 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The transitions of the workflow of one kind of document over the mechanisms of the store (GDR-FORMS-4, GDR-FORMS-5,
- * GDR-FORMS-7).
+ * GDR-FORMS-7, GDR-FORMS-8, GDR-FORMS-9).
  * <p>
  * {@link #perform} looks the transition up in the current state of the document, the field {@value TransitionStep#STATE}
  * of {@value DocumentLayout#DOCUMENT_FILE} or the entry file on the local target branch (else {@code main}); a missing
  * file or field is the initial state of the workflow. A transition the workflow does not have, or whose {@code from} is
- * not the current state, is {@link FormsOutcome#TRANSITION_REFUSED}. A transition that requires step-up is checked
+ * not the current state, is {@link FormsOutcome#TRANSITION_REFUSED}, except the resumption of a release described
+ * below. A transition that requires step-up is checked
  * against the {@link StepUpPolicy} at the instant of the clock before anything is written, so a refusal
  * {@link FormsOutcome#STEP_UP_REQUIRED} leaves the draft, the working or collection branch and {@code main} unchanged.
  * Then the mechanism runs:
@@ -53,7 +54,8 @@ import org.jspecify.annotations.Nullable;
  * {@link StoreWriter#save(Author, IdentityClaims, DocumentKey, Map, String, de.cuioss.git.document.store.SaveStep)}
  * with a {@link TransitionStep}. On every attempt the step checks the state on the remote tip, writes the file of the
  * document or entry as the merge of {@link StateMerge} (the tip's file with the keys the draft changed against the file
- * it started from, and the state), validates the data, checks {@code required} when the transition leaves the initial
+ * it started from, and the state), validates the data, checks that the target of every link field exists through the
+ * {@link LinkTargets} of the application (GDR-FORMS-8), checks {@code required} when the transition leaves the initial
  * state or releases (GDR-FORMS-2), and regenerates the output from the data of that attempt (GDR-FORMS-4). The file
  * the draft started from is read before the save: the file at the merge base of the draft and the branch of the key,
  * else the file on that branch. When the caller edits that file in the call, its content is explicit whole-file intent
@@ -61,15 +63,34 @@ import org.jspecify.annotations.Nullable;
  * {@link Change#expectedBlobIds()} (GDR-STORE-4).</li>
  * <li>{@code release} is the same single save, whose commit carries the state and the regenerated output, followed by
  * {@link StoreWriter#release(Author, IdentityClaims, DocumentKey, String)}, pinned to the commit the transition saved,
- * so the release publishes exactly that commit. A release that fails after the save is passed on and leaves the saved
- * state in place; a branch that moved after the save refuses the release with the passed-on outcome of the store, the
- * saved state stays in place, and no compensating write is made.</li>
+ * so a new release commit is written only from that commit. When an earlier release of the document is merged into
+ * {@code main} but its tag is missing, the store only completes that earlier release, whose commit holds an older
+ * state, and reports {@link Release#branchMovedOn()}: the transition is then {@link FormsOutcome#SAVED_NOT_RELEASED},
+ * and {@link Result.Performed} is returned only for a release of the saved state. A release that fails after the save
+ * is passed on and leaves the saved state in place; a branch that moved after the save refuses the release with the
+ * passed-on outcome of the store, the saved state stays in place, and no compensating write is made.</li>
  * </ul>
+ * A transition on {@code release} whose save succeeded and whose release did not is resumed by performing it again:
+ * its {@code from} is no longer the current state, but when the workflow has a transition of that name on
+ * {@code release} whose {@code to} is the current state, and the clone, fetched first through
+ * {@link StoreWriter#fetch()} (a failed fetch passed on), shows the release of the saved state not complete (the tip of
+ * the target branch holds the file in that state, and no release tag of the key points at a commit whose file of the
+ * document or entry equals it), the step-up check runs unchanged and the tip is released, pinned to it, without a second
+ * state write and without the caller's edits. A branch that moved since is refused by the pin with nothing written.
+ * Any other transition whose {@code from} is not the current state stays {@link FormsOutcome#TRANSITION_REFUSED}, and
+ * so does a release transition whose release is complete.
  * A save whose draft changes nothing, such as a self-loop from {@code approved} to {@code approved} that writes identical
  * content, runs no step in the store. Its saved commit is then verified before anything is released: the checks of the
  * step are applied to the files of that commit, a refusal ends the transition as a refusal of the step would, and an
  * output that is stale on that commit is rewritten through a second draft and save, whose commit is the one released.
  * The draft written before a save stays when the save does not succeed, as every draft of the user does.
+ * <p>
+ * A new entry of a numbered kind is drafted under the ULID key of {@link RunningNumbers#newKey(Kind)} and receives its
+ * running number on its first {@code save} or {@code release} (GDR-FORMS-9): the step of every attempt reads the counter
+ * of the attempt's tip, takes the next number and writes the entry file, the advanced counter and the output under that
+ * number in the one save commit, which the compare-and-swap of the store pushes, so two concurrent creators never
+ * receive the same number. {@link Result.Performed#key()} then holds the key of the number, the key the caller uses from
+ * then on; a release releases the entry under it.
  * <p>
  * The current state is read through the bare clone of the writer, which the caller opens on the git directory it
  * passed to {@link StoreWriter#open}; this class only reads it, through the package-private {@link CloneReader}. This
@@ -90,6 +111,10 @@ public final class DocumentTransitions {
     /** The detail of a transition that requires step-up the claims do not hold. */
     static final String STEP_UP_DETAIL = "step-up: the claims do not hold step-up";
 
+    /** The detail of a release that only completed an earlier release of an older state. */
+    static final String SAVED_NOT_RELEASED_DETAIL = "release: an earlier release was completed, the saved state is not"
+            + " released";
+
     private final TransitionRunner runner;
 
     /**
@@ -98,19 +123,21 @@ public final class DocumentTransitions {
      * @param writer     the write path of the repository of the kind
      * @param repository the bare clone of the writer, read for the current state and the draft
      * @param definition the kind, its schema, its workflow and its template
+     * @param links      the resolution of the targets of the link fields (GDR-FORMS-8)
      * @param policy     the step-up setting of the application
      * @param clock      the clock of the step-up check
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if the layout of the kind cannot be created ({@link DocumentLayout})
      */
-    public DocumentTransitions(StoreWriter writer, Repository repository, Definition definition, StepUpPolicy policy,
-            Clock clock) {
+    public DocumentTransitions(StoreWriter writer, Repository repository, Definition definition, LinkTargets links,
+            StepUpPolicy policy, Clock clock) {
         Objects.requireNonNull(writer, "writer");
         Objects.requireNonNull(repository, "repository");
         Objects.requireNonNull(definition, "definition");
+        Objects.requireNonNull(links, "links");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(clock, "clock");
-        this.runner = new TransitionRunner(writer, repository, definition, policy, clock);
+        this.runner = new TransitionRunner(writer, repository, definition, links, policy, clock);
     }
 
     /**
@@ -122,12 +149,20 @@ public final class DocumentTransitions {
      * @param key        the document or entry, of the collection of the kind
      * @param transition the name of the transition
      * @param change     the edits, the expected blob ids and the message of the call
-     * @return {@link Result.Performed} with the commit the transition wrote; {@link Result.Refused} with the findings
-     *         for {@link FormsOutcome#INVALID} or {@link FormsOutcome#MANDATORY_FIELDS_MISSING};
+     * @return {@link Result.Performed} with the commit the transition wrote and the key of the document or entry, the
+     *         key of the allocated running number after the first save of a new entry; {@link Result.Refused} with the
+     *         findings
+     *         for {@link FormsOutcome#INVALID} or {@link FormsOutcome#MANDATORY_FIELDS_MISSING}, a link field of the
+     *         data whose text is of neither link form or whose target does not exist being a {@link Violation} at its
+     *         JSON Pointer with the message {@code link: no such target} for a missing target (GDR-FORMS-8);
      *         {@link Result.Conflicting} with the conflicting paths; or {@link Result.NotPerformed} with
-     *         {@link FormsOutcome#TRANSITION_REFUSED}, {@link FormsOutcome#STEP_UP_REQUIRED}, or the passed-on outcome of
+     *         {@link FormsOutcome#TRANSITION_REFUSED}, {@link FormsOutcome#STEP_UP_REQUIRED},
+     *         {@link FormsOutcome#SAVED_NOT_RELEASED} for a release that only completed an earlier release of an older
+     *         state, the saved state staying on the branch until the transition is performed again, or the passed-on
+     *         outcome of
      *         the store or of Git, for example {@link de.cuioss.git.document.store.StoreOutcome#MALFORMED} for a file of
-     *         the document that cannot be read or {@link GitOutcome#REJECTED} after the last attempt of the save
+     *         the document that cannot be read, the outcome of a failed resolution of a link target, or
+     *         {@link GitOutcome#REJECTED} after the last attempt of the save
      * @throws NullPointerException     if an argument is {@code null}
      * @throws IllegalArgumentException if the key is not of the collection of the kind
      */
@@ -262,20 +297,25 @@ public final class DocumentTransitions {
          * @param commitId the full id of the commit the transition wrote: the draft commit of an
          *                 {@code intermediate-save}, the save commit of a {@code save} (or the unchanged tip, when
          *                 the transition changed nothing), the release commit of a {@code release}
+         * @param key      the key of the document or entry after the transition: the key of the call, or, after the
+         *                 first save of a new entry of a numbered kind whose key was the ULID of its draft, the key of
+         *                 its running number (GDR-FORMS-9), under which the entry is found from then on
          * @param release  the release of a {@code release}; {@code null} otherwise
          * @since 0.1
          */
-        record Performed(String commitId, @Nullable Release release) implements Result {
+        record Performed(String commitId, DocumentKey key, @Nullable Release release) implements Result {
 
             /**
-             * Checks the commit id.
+             * Checks the commit id and the key.
              *
              * @param commitId the commit id
+             * @param key      the key
              * @param release  the release, or {@code null}
-             * @throws NullPointerException if {@code commitId} is {@code null}
+             * @throws NullPointerException if {@code commitId} or {@code key} is {@code null}
              */
             public Performed {
                 Objects.requireNonNull(commitId, "commitId");
+                Objects.requireNonNull(key, "key");
             }
 
             /**

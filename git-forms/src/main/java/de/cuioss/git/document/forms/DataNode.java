@@ -21,6 +21,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,15 +85,21 @@ final class DataNode implements JsonNode {
     private static final double LOG10_OF_2 = 0.30103;
 
     private final @Nullable Object value;
-    private final String pointer;
+    /** The node this one is a child of, or {@code null} for a root; its JSON Pointer is the prefix of this one. */
+    private final @Nullable DataNode parent;
+    /** The encoded reference token of this node in its parent, empty for a root. */
+    private final String segment;
     private final @Nullable BigDecimal number;
     private final SimpleType type;
+    private @Nullable String pointer;
     private @Nullable List<JsonNode> array;
     private @Nullable Map<String, JsonNode> object;
 
-    private DataNode(@Nullable Object value, String pointer) {
+    private DataNode(@Nullable Object value, @Nullable DataNode parent, String segment) {
         this.value = value;
-        this.pointer = pointer;
+        this.parent = parent;
+        this.segment = segment;
+        this.pointer = parent == null ? "" : null;
         this.number = canonicalNumber(value);
         this.type = typeOf(value, number);
     }
@@ -107,7 +114,7 @@ final class DataNode implements JsonNode {
      */
     static DataNode root(@Nullable Object value) {
         requireDataModel(value);
-        return new DataNode(value, "");
+        return new DataNode(value, null, "");
     }
 
     /**
@@ -116,14 +123,22 @@ final class DataNode implements JsonNode {
      * <p>
      * The value may hold at most {@value #MAX_DEPTH} nested mappings and sequences, the outermost container counting 1
      * and a scalar counting 0. The walk runs over an explicit stack, so a value nested deeper than that, or one that
-     * contains itself, is refused instead of overflowing the thread stack. A refusal names the limit or the type that
-     * is outside the data model, never a value or a key (GDR-NFR-3).
+     * contains itself, is refused instead of overflowing the thread stack. A container shared by several parents, such
+     * as {@code x} in {@code List.of(x, x)}, is walked again only when it is reached deeper than every time before:
+     * the depth bound applies to its deepest occurrence, and a shared subtree costs at most {@value #MAX_DEPTH} walks
+     * of each container instead of one walk per path to it. A refusal names the limit or the type that is outside the
+     * data model, never a value or a key (GDR-NFR-3).
+     * <p>
+     * A value built in memory outside the data model is a programming error of the caller and refused with an
+     * exception; data read from a repository is read through {@link YamlReader}, which bounds it the same way and
+     * returns a result.
      *
      * @param value the value
      * @throws IllegalArgumentException if the value or a value inside it is outside the data model, or if it is nested
      *                                  deeper than {@value #MAX_DEPTH} levels
      */
     static void requireDataModel(@Nullable Object value) {
+        Map<Object, Integer> deepest = new IdentityHashMap<>();
         Deque<Pending> pending = new ArrayDeque<>();
         pending.push(new Pending(value, 0));
         while (!pending.isEmpty()) {
@@ -138,11 +153,32 @@ final class DataNode implements JsonNode {
             if (current instanceof List<?> || current instanceof Map<?, ?>) {
                 int depth = next.depth() + 1;
                 if (depth > MAX_DEPTH) {
-                    throw new IllegalArgumentException(
-                            "not of the JSON data model: nested deeper than " + MAX_DEPTH + " levels");
+                    throw new TooDeep();
                 }
-                pushInside(pending, current, depth);
+                Integer seen = deepest.get(current);
+                if (seen == null || seen < depth) {
+                    deepest.put(current, depth);
+                    pushInside(pending, current, depth);
+                }
             }
+        }
+    }
+
+    /**
+     * Whether a value is nested deeper than {@value #MAX_DEPTH} levels, by the walk of {@link #requireDataModel}: for
+     * data assembled from files that were each read within the bound, such as a document joined with its parts, whose
+     * caller returns a result instead of the exception.
+     *
+     * @param value the value
+     * @return whether the value, or a value inside it, is nested deeper than the limit or contains itself
+     * @throws IllegalArgumentException if the value or a value inside it is outside the data model for another reason
+     */
+    static boolean nestedTooDeep(@Nullable Object value) {
+        try {
+            requireDataModel(value);
+            return false;
+        } catch (TooDeep e) {
+            return true;
         }
     }
 
@@ -238,9 +274,35 @@ final class DataNode implements JsonNode {
         return stripped == 0 ? number : new BigDecimal(unscaled, (int) (number.scale() - stripped));
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * A child shares its parent instead of a copy of the parent's pointer, so building the children of a wide mapping
+     * under a long path copies no prefix; the pointer is joined on the first request, from the nearest ancestor whose
+     * pointer is known, and kept.
+     */
+    // every pointer of the chain is kept on its node, so each step needs its own String and a StringBuilder would only
+    // be copied out again; java:S1643 does not see that the intermediate values are used
+    @SuppressWarnings("java:S1643")
     @Override
     public String getJsonPointer() {
-        return pointer;
+        String known = pointer;
+        if (known != null) {
+            return known;
+        }
+        Deque<DataNode> unresolved = new ArrayDeque<>();
+        DataNode node = this;
+        while (node.pointer == null) {
+            unresolved.push(node);
+            node = Objects.requireNonNull(node.parent, "a root knows its pointer");
+        }
+        String prefix = Objects.requireNonNull(node.pointer);
+        while (!unresolved.isEmpty()) {
+            DataNode child = unresolved.pop();
+            prefix = prefix + "/" + child.segment;
+            child.pointer = prefix;
+        }
+        return prefix;
     }
 
     @Override
@@ -304,7 +366,7 @@ final class DataNode implements JsonNode {
             List<JsonNode> built = new ArrayList<>();
             if (value instanceof List<?> list) {
                 for (int index = 0; index < list.size(); index++) {
-                    built.add(new DataNode(list.get(index), pointer + "/" + index));
+                    built.add(new DataNode(list.get(index), this, Integer.toString(index)));
                 }
             }
             items = Collections.unmodifiableList(built);
@@ -322,7 +384,7 @@ final class DataNode implements JsonNode {
                 for (Map.Entry<?, ?> entry : map.entrySet()) {
                     // every key is a string: the root checked the whole value
                     String key = (String) entry.getKey();
-                    built.put(key, new DataNode(entry.getValue(), pointer + "/" + JsonNode.encodeJsonPointer(key)));
+                    built.put(key, new DataNode(entry.getValue(), this, JsonNode.encodeJsonPointer(key)));
                 }
             }
             entries = Collections.unmodifiableMap(built);
@@ -355,6 +417,16 @@ final class DataNode implements JsonNode {
     private record Pending(@Nullable Object value, int depth) {
     }
 
+    /** The refusal of a value nested deeper than {@value #MAX_DEPTH} levels; its message names the limit only. */
+    private static final class TooDeep extends IllegalArgumentException {
+
+        private static final long serialVersionUID = 1L;
+
+        TooDeep() {
+            super("not of the JSON data model: nested deeper than " + MAX_DEPTH + " levels");
+        }
+    }
+
     /** The factory of nodes for schemas and data. */
     private static final class Factory implements JsonNodeFactory {
 
@@ -363,7 +435,7 @@ final class DataNode implements JsonNode {
         @Override
         public JsonNode wrap(Object node) {
             return switch (node) {
-                case DataNode data -> new DataNode(data.value, "");
+                case DataNode data -> new DataNode(data.value, null, "");
                 case JsonNode foreign -> throw new IllegalArgumentException(
                         "not a node of git-forms: " + foreign.getClass().getName());
                 default -> root(node);

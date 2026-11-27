@@ -21,8 +21,10 @@ import java.util.Objects;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.git.document.forms.DocumentTransitions.Result;
+import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.SaveResult;
 import de.cuioss.git.document.store.StoreOutcome;
+import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreResult;
 
 /**
@@ -48,12 +50,38 @@ final class TransitionOutcomes {
     }
 
     /**
+     * The result of a {@link RuntimeException} thrown by the checks of a step that ran outside the store's step
+     * isolation, the verification of an unchanged save: the passed-on {@link GitOutcome#FAILED}, its detail naming the
+     * target branch and the class of the exception by {@link Class#getName()} only, as the store names a step that
+     * throws; never its message.
+     *
+     * @param key       the document
+     * @param exception the exception
+     * @return the result
+     */
+    static Result stepFailed(DocumentKey key, RuntimeException exception) {
+        return new Result.NotPerformed(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.FAILED)),
+                StoreReferences.target(key) + ": step: " + exception.getClass().getName());
+    }
+
+    /**
      * The result of a refused step-up check (GDR-FORMS-7).
      *
      * @return {@link FormsOutcome#STEP_UP_REQUIRED} with {@link DocumentTransitions#STEP_UP_DETAIL}
      */
     static Result stepUpRequired() {
         return new Result.NotPerformed(FormsOutcome.STEP_UP_REQUIRED, DocumentTransitions.STEP_UP_DETAIL);
+    }
+
+    /**
+     * The result of a release that completed only an earlier, incomplete release of an older state, the branch having
+     * moved on since ({@link de.cuioss.git.document.store.Release#branchMovedOn()}): the state the transition saved is
+     * not released (GDR-FORMS-5).
+     *
+     * @return {@link FormsOutcome#SAVED_NOT_RELEASED} with {@link DocumentTransitions#SAVED_NOT_RELEASED_DETAIL}
+     */
+    static Result savedNotReleased() {
+        return new Result.NotPerformed(FormsOutcome.SAVED_NOT_RELEASED, DocumentTransitions.SAVED_NOT_RELEASED_DETAIL);
     }
 
     /**
@@ -107,7 +135,8 @@ final class TransitionOutcomes {
     }
 
     /**
-     * The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git.
+     * The name of an outcome: the constant of {@link FormsOutcome}, of the store or of Git, so
+     * {@link FormsOutcome#SAVED_NOT_RELEASED} is logged as {@code SAVED_NOT_RELEASED}.
      *
      * @param outcome the outcome
      * @return the name of its constant

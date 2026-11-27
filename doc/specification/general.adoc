@@ -341,6 +341,7 @@ the constant, and the table lists exactly the constants of `FormsOutcome`:
 |`MISMATCH` |mismatch |check of the generated output
 |`TRANSITION_REFUSED` |transition refused |workflow
 |`STEP_UP_REQUIRED` |step-up required |workflow
+|`SAVED_NOT_RELEASED` |saved, not released |transition on `release` whose release completed only an earlier one
 |===
 
 The outcome list of `git-directory`:

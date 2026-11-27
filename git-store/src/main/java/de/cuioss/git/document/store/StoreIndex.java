@@ -108,6 +108,9 @@ public final class StoreIndex<E> implements AutoCloseable {
     /** The name of a collection argument in the null checks. */
     private static final String COLLECTION = "collection";
 
+    /** The name of a source argument in the null checks. */
+    private static final String SOURCE = "source";
+
     /**
      * The detail of a snapshot or an opening from a thread that holds a lock of the clone: a save step or an anchor
      * provider call that would otherwise wait for the lock of the index.
@@ -286,7 +289,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @throws NullPointerException if {@code source} is {@code null}
      */
     public Optional<String> commitId(String source) {
-        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(source, SOURCE);
         Source<E> found = current.get().get(source);
         return found == null ? Optional.empty() : Optional.of(found.commit().name());
     }
@@ -301,10 +304,56 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @throws NullPointerException if an argument is {@code null}
      */
     public Map<DocumentKey, E> entries(String source, DocumentCollection collection) {
-        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(source, SOURCE);
         Objects.requireNonNull(collection, COLLECTION);
         Source<E> found = current.get().get(source);
         return found == null ? Map.of() : found.entries().getOrDefault(collection, Map.of());
+    }
+
+    /**
+     * Returns the commit a source reference is indexed at together with the current entries of one collection on it,
+     * both read from one published index. A refresh that publishes between {@link #commitId(String)} and
+     * {@link #entries(String, DocumentCollection)} can pair the commit of one index with the entries of the next; this
+     * accessor never does, so the entries are those read at the returned commit.
+     *
+     * @param source     the full name of a source reference, such as {@code refs/heads/main}
+     * @param collection the collection
+     * @return the indexed commit and the entries of the collection on the source, the entries empty when the source
+     *         holds no document of the collection; empty when the index does not hold the source
+     * @throws NullPointerException if an argument is {@code null}
+     * @since 0.1
+     */
+    public Optional<SourceEntries<E>> sourceEntries(String source, DocumentCollection collection) {
+        Objects.requireNonNull(source, SOURCE);
+        Objects.requireNonNull(collection, COLLECTION);
+        Source<E> found = current.get().get(source);
+        return found == null ? Optional.empty()
+                : Optional.of(new SourceEntries<>(found.commit().name(),
+                found.entries().getOrDefault(collection, Map.of())));
+    }
+
+    /**
+     * The commit a source reference is indexed at and the entries of one collection on it, read from one published
+     * index ({@link #sourceEntries(String, DocumentCollection)}).
+     *
+     * @param commitId the full id of the indexed commit
+     * @param entries  the entry value of every indexed document of the collection on the source, by key, unmodifiable
+     * @param <E>      the type of the entry values
+     * @since 0.1
+     */
+    public record SourceEntries<E>(String commitId, Map<DocumentKey, E> entries) {
+
+        /**
+         * Checks the components and copies the entries.
+         *
+         * @param commitId the commit id
+         * @param entries  the entries
+         * @throws NullPointerException if a component, a key or a value is {@code null}
+         */
+        public SourceEntries {
+            Objects.requireNonNull(commitId, "commitId");
+            entries = Map.copyOf(Objects.requireNonNull(entries, "entries"));
+        }
     }
 
     /**

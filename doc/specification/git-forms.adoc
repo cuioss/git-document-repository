@@ -8,13 +8,14 @@
 documents on top of `git-store`, on which alone it depends. It holds the kinds of documents as configuration
 (<<GDR-FORMS-1>>), schema validation (<<GDR-FORMS-2>>), the data layout with the codecs of the YAML data and the
 counter file (<<GDR-FORMS-3>>), the generated output with its check (<<GDR-FORMS-4>>), the workflow with its
-transitions over the mechanisms of the store (<<GDR-FORMS-5>>) and the step-up per transition (<<GDR-FORMS-7>>), with
+transitions over the mechanisms of the store (<<GDR-FORMS-5>>), the deadlines per state computed from the index
+(<<GDR-FORMS-6>>), the step-up per transition (<<GDR-FORMS-7>>), the typed links checked on save (<<GDR-FORMS-8>>) and
+the running numbers allocated on the first save (<<GDR-FORMS-9>>), with
 its closed outcome list `FormsOutcome`, its result `FormsResult` and its log messages
 (xref:general.adoc#GDR-GEN-3[GDR-GEN-3], xref:general.adoc#GDR-GEN-4[GDR-GEN-4]). The code returns every outcome of
-`FormsOutcome`: `OK`, `INVALID`, `MANDATORY_FIELDS_MISSING`, `MISMATCH`, `TRANSITION_REFUSED` and `STEP_UP_REQUIRED`,
-and passes on the outcomes of the store, `MALFORMED` among them. Of the requirements below, <<GDR-FORMS-1>>,
-<<GDR-FORMS-2>>, <<GDR-FORMS-3>>, <<GDR-FORMS-4>>, <<GDR-FORMS-5>> and <<GDR-FORMS-7>> are implemented;
-<<GDR-FORMS-6>>, <<GDR-FORMS-8>> and <<GDR-FORMS-9>> are planned. Rationale:
+`FormsOutcome`: `OK`, `INVALID`, `MANDATORY_FIELDS_MISSING`, `MISMATCH`, `TRANSITION_REFUSED`, `STEP_UP_REQUIRED` and
+`SAVED_NOT_RELEASED`, and passes on the outcomes of the store, `MALFORMED` among them. Every requirement below,
+<<GDR-FORMS-1>> to <<GDR-FORMS-9>>, is implemented. Rationale:
 xref:../concepts/schema-driven-documents.adoc[Schema-Driven Documents].
 
 Its two libraries are decided; the owner approved both on 2026-11-21:
@@ -62,9 +63,10 @@ exercised by the tests; javac still compiles and checks `module-info.java`.
 The code of `git-forms` holds no `@SuppressWarnings`, its tests included: `YamlReader.readMapping` returns the root of
 a document whose root must be a mapping typed as the reader builds it, so `FormSchema.parse` and
 `YamlDocumentCodec.decode` cast nothing, `KindConfiguration` copies each mapping of `kinds.yaml` with every key checked
-as a string, and the helper by which a test passes `null` returns a `@Nullable` type variable instead of casting. One
-marker
-remains, `cui-rewrite:disable InvalidExceptionUsageRecipe` on the `catch (RuntimeException e)` of
+as a string, and the helper by which a test passes `null` returns a `@Nullable` type variable instead of casting. Two
+markers remain, each `cui-rewrite:disable InvalidExceptionUsageRecipe`. One is on the `catch (Throwable failure)` of
+`NestingDepthTest.onDefaultStack`, a test helper that hands whatever the thread it starts throws, an assertion failure
+or a `StackOverflowError`, to the test. The other is on the `catch (RuntimeException e)` of
 `SchemaValidator.prepare`, which keeps the OpenRewrite recipe of the build from narrowing that catch: the validator
 signals a schema it refuses not only by its own `JsonSchemaException` types but also by exceptions of the JDK, for
 example the `IllegalArgumentException` the constructor of its `PatternEvaluator` throws for a `pattern` that is not a
@@ -123,7 +125,10 @@ of kinds with the keys of the example:
 * `id`, `repository`, `collection`, `schema` and `workflow` are required, each a string that is not blank; `id` and
   `collection` must match `[a-z0-9-]+`, `id` must be unique, and `repository` must be an alias of the repository
   registry of `git-store`.
-* No two kinds may have the same pair of `repository` and `collection`, whatever the numbering of either. The
+* No two kinds may have the same pair of `repository` and `collection`, whatever the numbering of either; the
+  repository is compared by its physical repository, the remote the registry holds for the alias
+  (`StoreRepository.remote()`, compared as registered), so two aliases of one remote with one collection are refused
+  as well, the registry itself accepting two aliases of one remote. The
   collection names the branches of its kind (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]): two kinds with one pair
   would share one branch namespace, and a numbered collection's branch `refs/heads/x` would conflict with the document
   branches `refs/heads/x/<ulid>` of a per-document collection of the same name, since a reference cannot have a value
@@ -257,10 +262,14 @@ included, so a cycle that is declared but never referenced is refused as well, a
 the sub-schemas and before the validator sees the schema. The same search bounds a chain of schemas applied to the same
 value at 128 schemas, the first one counting 1 (`InPlaceCycles.MAX_IN_PLACE_CHAIN`): a flat chain of references, `a0`
 referencing `a1`, `a1` referencing `a2` and so on, side by side under `$defs`, is nested only three levels deep, so the
-nesting limit below does not bound it, yet `SchemaChecks.holdsRequired`, `MandatoryFields.collect` and the
-`RefEvaluator` of `dev.harrel:json-schema` 1.9.1 recurse once per link. The search computes the longest chain over the
-edges above without recursion, and `FormSchema.parse` refuses a longer one as `MALFORMED` with the reason
-`a chain of schemas applied to the same value longer than 128`. `required` must be an array of unique strings, in the schema and every sub-schema,
+nesting limit below does not bound it, yet the `RefEvaluator` of `dev.harrel:json-schema` 1.9.1 recurses once per
+link. The search computes the longest chain over the edges above without recursion, and `FormSchema.parse` refuses a
+longer one as `MALFORMED` with the reason `a chain of schemas applied to the same value longer than 128`. The own walks
+of `git-forms` over such chains need no bound of their own: `SchemaChecks.holdsRequired` follows sub-schemas and
+references over an explicit stack, each schema once, so a schema of 55,000 flat `$defs` chained through
+`properties` and `$ref`, a chain the bound above does not count because `properties` descends, is answered instead of
+overflowing the thread stack; and `MandatoryFields`, the check of `required`, walks over an explicit stack as well, so
+the product of a value nested at the limit of 128 levels and a chain of 128 schemas at each level ends in a result. `required` must be an array of unique strings, in the schema and every sub-schema,
 because the validator evaluates the schema without it and so never checks its form. `required` must not occur in a
 sub-schema of `oneOf`, `anyOf`, `not`, `if`, `then`, `else` or `contains`, nor in a schema such a sub-schema references
 within the file: these keywords decide between alternatives or conditions, and removing `required` for `validate` would
@@ -308,9 +317,13 @@ own node types, and `minimum`, `maximum` and their exclusive forms by `BigDecima
 link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/Evaluators.java[json-schema
 1.9.1, `Evaluators`]). Only `multipleOf` is left to the library: it computes `BigDecimal.remainder`, whose working
 precision grows with the difference of the exponents, and parsing a long digit string costs time that grows with its
-digits. `YamlReader` therefore bounds every number of the text before it parses it: more than 1,000 significant
-digits (leading zeros not counted), in a decimal, octal or hexadecimal integer as in a float, is refused as
-`MALFORMED` with the detail `a number with more than 1000 digits`, and a float whose adjusted exponent, that of its
+digits. `YamlReader` therefore bounds every number of the text: more than 1,000 significant digits (leading zeros
+not counted), in a decimal, octal or hexadecimal integer as in a float, is refused as `MALFORMED` with the detail
+`a number with more than 1000 digits`. The digits are counted in one radix, the decimal form `YamlWriter` writes, so
+every integer `decode` accepts is one `encode` accepts: a decimal text and a float are counted without parsing them,
+an octal or hexadecimal integer of more than 2,000 digits is refused unparsed (its decimal form always has more than
+1,000 digits), and a shorter one is parsed and its decimal digits counted; a hexadecimal integer of 1,000 digits, about
+1,205 decimal digits, is therefore refused. A float whose adjusted exponent, that of its
 first significant digit, exceeds 1,000 in magnitude is refused as `MALFORMED` with the detail
 `a number whose exponent exceeds 1000 in magnitude`; neither detail names the number. `1e1000` is read, `1e1001` and
 `1e2147483647` are refused. The bounds apply to text the reader reads, documents, schema files and `kinds.yaml`
@@ -325,15 +338,22 @@ a number, `1e-400` under `"multipleOf": 1` for example, which the exponent bound
 this underflow of the library and adds no check of its own; `NumberBoundsTest` pins it.
 
 Data and schemas are bounded by one compiled nesting limit, 128 nested containers (mappings and sequences, the
-outermost counting 1 and a scalar root 0), held as `DataNode.MAX_DEPTH`. The validator `dev.harrel:json-schema` 1.9.1,
-`MandatoryFields` (the check of `required`) and the ordering of `YamlDocumentCodec` and `YamlWriter` recurse once per
-level; 128 keeps them far from the default thread stack, while no form needs more. The reader enforces the limit for
+outermost counting 1 and a scalar root 0), held as `DataNode.MAX_DEPTH`. The validator `dev.harrel:json-schema` 1.9.1
+and the ordering of `YamlDocumentCodec` and `YamlWriter` recurse once per level; 128 keeps them far from the default
+thread stack, while no form needs more. The reader enforces the limit for
 text: `YamlReader` refuses a mapping or sequence that would open a 129th level, so a document, a schema file or
 `kinds.yaml` nested deeper is `MALFORMED`, its detail naming the line and column and the limit
 (`a nesting deeper than 128 levels`), never content. `DataNode` enforces it for a value in memory, with an explicit
 stack, so a value that contains itself is refused as well: `validate`, `required` and `encode` check the whole value
 before anything else and refuse a value nested deeper with an `IllegalArgumentException` that names the limit
-(`not of the JSON data model: nested deeper than 128 levels`), never a value or a key. `DocumentLayout` needs no check
+(`not of the JSON data model: nested deeper than 128 levels`), never a value or a key. A container shared by several
+parents, `x` in `List.of(x, x)`, is walked again only when it is reached deeper than every time before, so the bound
+holds for its deepest occurrence and a value built by sharing, `x = List.of(x, x)` repeated 128 times, is checked in
+time linear in its containers instead of once per path; the check of the numbers of `encode` walks each shared
+container once. A `DataNode` child shares its parent instead of a copy of its JSON Pointer, which is joined on the
+first request, so the children of a wide mapping under a long path copy no prefix. A value a caller builds in memory
+outside the data model, or deeper than the limit, is a programming error and refused with that exception; data read
+from a repository, a document, its parts joined or a fragment, always ends in a result. `DocumentLayout` needs no check
 of its own, because `split` and `join` copy only the top level of the data; a test pins that.
 `SchemaValidator.validate` evaluates the schema with every keyword `required` removed, in the schema, every
 sub-schema (`contentSchema` included) and every schema a reference selects, also under an unknown keyword and through
@@ -412,8 +432,9 @@ The keyword `format` is an annotation only and is not asserted: the Draft 2020-1
 to `ValidatorFactory.withEvaluatorFactory`
 (link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/FormatEvaluatorFactory.java[json-schema
 1.9.1, `FormatEvaluatorFactory`]), which `git-forms` does not do. So `"format": "date"` accepts any string, and no
-message names a format. The link format `gdr-link` is not checked by the validator either; its check belongs to
-<<GDR-FORMS-8>>, which is planned.
+message names a format. The link format `gdr-link` is not checked by the validator either: `git-forms` reads the
+annotations of `format` that the same evaluation reports and checks every link field after a successful validation
+and before `required` (<<GDR-FORMS-8>>).
 
 [#GDR-FORMS-3]
 == GDR-FORMS-3: Data Layout and Serialisation
@@ -448,8 +469,12 @@ them back; a ULID, a fragment name or a running number that is empty, holds a `/
 names no value, a split property that is no such name segment (`details/summary`) or whose part would be stored as
 `document.yaml` (a split property `document`). For a kind with a template, `output` gives the path of the generated
 output of a document, `<collection>/<ulid>/report.adoc`, and `entryOutput` that of an entry, `<collection>/<number>.adoc`,
-with the same check of the name segment; `isOutput` tells the one file of the layout that is never merged
-(<<GDR-FORMS-4>>). The allocation of running numbers is not part of the layout yet.
+with the same check of the name segment. The output is the one file of the layout that is never merged: the step of
+every save regenerates it (<<GDR-FORMS-4>>); the layout has no predicate for it, since no code of the library asks
+which path is the output. `join` refuses, as the passed-on `MALFORMED` with the detail `document.yaml: nested deeper
+than 128 levels, joined with its parts`, data whose join is nested deeper than the nesting limit of the data model: a
+part read at that limit from its own file lies one level deeper once joined under its property. Until its first save, a new entry is named by the ULID of its draft, `<collection>/<ulid>.yaml`;
+the first save allocates its running number and writes it as `<collection>/<number>.yaml` (<<GDR-FORMS-9>>).
 
 `YamlDocumentCodec` is the `Codec` of `git-store` (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]) for
 `document.yaml`, an entry file and, through `part(property)`, a split part. It writes the keys of every object in the
@@ -496,7 +521,7 @@ that limit with an `IllegalArgumentException` before it orders or writes anythin
 The counter file `<collection>/.counter` holds the last running number given, as one decimal integer without sign and
 without leading zero followed by one line feed (`42\n`; `0\n` before the first number). `CounterCodec` writes and reads
 exactly that form; any other content, a number beyond the range of `long` included, is `MALFORMED`. The codec defines the
-format; advancing the counter belongs to <<GDR-FORMS-9>>.
+format; the first save of every new entry advances the counter in the same commit as the entry (<<GDR-FORMS-9>>).
 
 [#GDR-FORMS-4]
 == GDR-FORMS-4: Generated Output
@@ -527,7 +552,11 @@ and stops at once, as the passed-on `MALFORMED`, when it would perform more than
 node or an item of a section (`DocumentTemplate.MAX_RENDER_OPERATIONS`), or write more than 16 Mi characters
 (`DocumentTemplate.MAX_OUTPUT_CHARS`, equal to the file bound of the check below and a lower bound of the size in
 bytes); the detail names the limit (`template: rendering stopped, more than 1000000 operations`), never content of the
-template, the data or the fragments.
+template, the data or the fragments. A fragment counts toward neither limit by its length: a fragment that normalises
+to nothing, such as one of line ends only, writes no character, and a fragment tag inside a section over a long
+sequence is visited once per item. `render` therefore normalises each fragment (line ends to line feeds, trailing line
+feeds removed) once per call and inserts the normalised text on every visit, so the work of one call is bounded by the
+two limits plus the total length of the fragments.
 
 The output is regenerated by every save of a transition (<<GDR-FORMS-5>>): the save passes the per-attempt step of
 `git-store` (xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]), the package-private `TransitionStep`, which runs on every
@@ -537,8 +566,15 @@ these data and fragments; its edit of the output path replaces whatever the draf
 is never merged and always belongs to the data of its commit. A rendering that reaches a limit of `render` refuses the
 attempt with its passed-on `MALFORMED`, and so does an output whose UTF-8 size exceeds 16 MiB, the bound the check
 below reads a file to, with the detail `<output path>: too large, more than 16777216 bytes`, in the form the check uses
-for a file it refuses unread; so the save never commits an output the check could not read back. A kind without a
-template has no output path and generates nothing.
+for a file it refuses unread; so the save never commits an output the check could not read back. The step reads the
+files of the attempt through the view of the store, which reads every blob bounded by `ExplicitSave.BLOB_LIMIT`
+(xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]); that bound is 16 MiB, equal to `OutputCheck.MAX_FILE_BYTES`, so a file
+the step reads is never one the check refuses, and a draft that puts a file of one byte more ends the save with the
+passed-on `FAILED` of the store and nothing committed. Data that, joined with their split parts, are nested deeper than 128 levels refuse the attempt with the
+passed-on `MALFORMED` of `DocumentLayout.join` (<<GDR-FORMS-3>>), so such a save ends with that result and not with a
+failure of the step. Since the edit of the output path replaces whatever the tip or the draft holds there, stale or
+foreign content at that path is replaced by the save. A kind without a template has no output path and generates
+nothing.
 
 `OutputCheck.check(repository, revision)` regenerates the output of every document or entry of the kind in a commit,
 read through `RepositoryReader.snapshot` of `git-core`, and compares it byte for byte with the committed file: for a
@@ -547,7 +583,8 @@ per-document kind every `<collection>/<ulid>/document.yaml`, joined with its spl
 `<collection>/<number>.yaml`, without fragments, against `<collection>/<number>.adoc`. It returns `OK` with the checked
 output paths, `MISMATCH` whose detail names the mismatching or missing output paths only, the outcome of the snapshot
 passed on for a revision that cannot be resolved, the passed-on `MALFORMED` for data, a part or a fragment that cannot
-be read, and the passed-on `FAILED` for an I/O failure. A file larger than 16 MiB is refused unread. For a kind without
+be read and for data nested deeper than 128 levels once joined with their parts, never an exception, and the passed-on
+`FAILED` for an I/O failure. A file larger than 16 MiB is refused unread. For a kind without
 a template the check returns `OK` with no path and reads nothing. The check writes nothing.
 
 The main class `VerifyOutput` runs the check from CI, without the application and without network access:
@@ -568,8 +605,12 @@ template is not checked through the main class; its check checks nothing. The re
 when an output mismatches or is missing, each such output path printed on one line of standard output, and `2` for a
 usage error, an argument that is no valid path, a schema or template file that is missing, a symbolic link or reached through one, too large
 or refused, a collection that is no name segment, a repository that cannot be opened, or any other non-success, printed
-to standard error as `<outcome> <detail>`. Nothing printed names data, a pseudonym or a secret
-(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+to standard error as `<outcome> <detail>`; data nested too deep is such a non-success, `MALFORMED` with the detail of
+the join, never reported as a repository that cannot be opened, since only the opening of the repository maps to
+`NOT_A_REPOSITORY git-dir: not a repository`. Every printed line is one line: a backslash of a path or a detail is
+printed as `\\`, and a control character, a line separator or a paragraph separator as `\uXXXX` with its four
+hexadecimal digits, so a path of the commit that holds a line feed is printed on one line and a CI consumer reads one
+path per line. Nothing printed names data, a pseudonym or a secret (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-FORMS-5]
 == GDR-FORMS-5: Workflow
@@ -610,8 +651,8 @@ names whose first is the initial state, `transitions`, a list of transitions wit
 the key `state` and exactly one of `within`, `review-interval` and `field`. `Workflow.defaultWorkflow()` is the example
 above, available without a file. A transition is the record `Transition` (`name`, `from`, `to`, `mechanism`, `stepUp`),
 its mechanism one of the enum `Mechanism` (`INTERMEDIATE_SAVE`, `SAVE`, `RELEASE`, spelled `intermediate-save`, `save`
-and `release` in the file). The deadlines are read into the record `Deadline` and kept, not evaluated (<<GDR-FORMS-6>>
-is planned); `within` and `review-interval` must be positive ISO 8601 durations, read by `java.time.Period.parse` and,
+and `release` in the file). The deadlines are read into the record `Deadline` and evaluated by `Deadlines`
+(<<GDR-FORMS-6>>); `within` and `review-interval` must be positive ISO 8601 durations, read by `java.time.Period.parse` and,
 with a time part, by `java.time.Duration.parse`
 (link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/time/Period.html#parse(java.lang.CharSequence)[Java
 SE 21, `Period.parse`];
@@ -650,11 +691,33 @@ step-up check, the mechanism runs:
   leaves the initial state or has the mechanism `release`, and regenerates the output (<<GDR-FORMS-4>>).
 * `release` is the same single save, whose commit carries the state and the regenerated output, followed by
   `StoreWriter.release(author, claims, key, expectedCommitId)` (xref:git-store.adoc#GDR-STORE-6[GDR-STORE-6]), pinned to
-  the commit the transition saved: the release publishes exactly that commit, and is refused when the working or
-  collection branch moved after it, for example by a save of the same document by another writer or clone. A release
-  that fails after the save, that refusal included, is returned as the passed-on outcome of the store (the refusal as
-  the passed-on `CONFLICT` with the detail `<branch>: no longer points to the saved commit`) and leaves the saved state
-  in place; no compensating write is made.
+  the commit the transition saved: a new release commit is written only from that commit, and the release is refused
+  when the working or collection branch moved after it, for example by a save of the same document by another writer
+  or clone. The pin guards only the writing of a new release commit: when an earlier release of the document is
+  merged into `main` but its tag is missing, the store completes that earlier release by its tag, whose commit holds
+  an older state, and reports `Release.branchMovedOn()`. The transition then returns `NotPerformed` with
+  `SAVED_NOT_RELEASED` and the detail `release: an earlier release was completed, the saved state is not released`;
+  `Performed` is returned only for a release of the saved state. A release that fails after the save, that refusal
+  included, is returned as the passed-on outcome of the store (the refusal as the passed-on `CONFLICT` with the detail
+  `<branch>: no longer points to the saved commit`) and leaves the saved state in place; no compensating write is
+  made.
+
+The saved state left in place is released by performing the transition again, the resume rule. Its `from` is no
+longer the current state, so the lookup fails; when the workflow has a transition of that name with the mechanism
+`release` whose `to` is the current state (`Workflow.transition(name)` finds it by name alone), and the clone shows its
+release not complete, the transition is resumed. To read that, the writer fetches first (`StoreWriter.fetch`, a
+failed fetch passed on), so the clone mirrors the remote's branches and release tags and holds no local tag of a
+failed release attempt the remote never accepted. The release is complete when a release tag of the key points at a
+commit whose file of the document or entry (`document.yaml` or the entry file) is byte for byte the file on the tip of
+the target branch; without a target branch, without that file on its tip, or with a file whose `state` is not the
+`to` of the transition, nothing is resumed. A resumed
+transition runs the step-up check unchanged (<<GDR-FORMS-7>>) and then only `StoreWriter.release(author, claims, key,
+tip)`, pinned to that tip: no second state write, no draft and none of the caller's edits. The release fetches first,
+so a branch that moved since the clone was read is refused by the pin with nothing written. Each failure of the first
+release (`UNREACHABLE`, a lease lost on every attempt, `REJECTED`, an `INCOMPLETE` tag push, `REFUSED` of the signing
+key source, the `CONFLICT` of the pin) is thus repaired by a retry, or ends with the passed-on failure and nothing
+written; after `SAVED_NOT_RELEASED` the retry releases the saved state. Every other transition whose `from` is not the
+current state stays `TRANSITION_REFUSED`, and so does a release transition whose release is complete.
 
 The merge rule decides what the step writes into `document.yaml` or the entry file, so that a transition never undoes
 a change another writer made on the tip. Its inputs are TIP, the decoded file on the tip of the attempt; DRAFT, the
@@ -682,10 +745,11 @@ transition continues with, and releases, that commit. A save that ran the step i
 
 The draft written before a save stays when the save does not succeed, as every draft of the user does. The result is
 the sealed `DocumentTransitions.Result`, which carries its findings as data as `SaveResult` and `ValidationResult` do:
-`Performed` with the commit the transition wrote (the draft commit, the save commit or the release commit) and the
-`Release` of a release; `Refused` with the `ValidationResult` of `INVALID` or `MANDATORY_FIELDS_MISSING`, its violations
+`Performed` with the commit the transition wrote (the draft commit, the save commit or the release commit), the key of
+the document or entry after the transition (<<GDR-FORMS-9>>) and the `Release` of a release; `Refused` with the `ValidationResult` of `INVALID` or `MANDATORY_FIELDS_MISSING`, its violations
 or JSON Pointers as data; `Conflicting` with the conflicting paths of the save; and `NotPerformed` with
-`TRANSITION_REFUSED`, `STEP_UP_REQUIRED` or the outcome of the store or of Git passed on. A step refusal of the save,
+`TRANSITION_REFUSED`, `STEP_UP_REQUIRED`, `SAVED_NOT_RELEASED` or the outcome of the store or of Git passed on. A step
+refusal of the save,
 `REFUSED` without text in `git-store`, is mapped to what the step captured on that attempt, a fresh capture per
 attempt. A detail names a path of the document, a reference or the problem, never a data value, a pseudonym or a claim;
 every result is logged as `GIT_FORMS-2` or `GIT_FORMS-3` with the mechanism and the commit id or the name of the
@@ -702,6 +766,44 @@ outcome only (`git-forms/doc/LogMessages.adoc`).
 Further forms of a deadline rule are an open question of
 xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
 
+`Deadlines` evaluates the deadlines of one kind, built from its `DocumentTransitions.Definition`. `contributor()` is the
+`IndexContributor<Deadlines.Entry>` the application registers for the collection of the kind when it opens its
+`StoreIndex` (xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9]): it decodes the file of the document or entry with the codec
+of the kind and keeps only its state (the initial state when the file has no `state`) and the string value of each
+top-level field a `field` rule of the workflow names, never other data. A file that cannot be decoded, or whose `state`
+is no string, is kept as `Entry.unreadable()`. `due(index, clone, at)` returns a `FormsResult<List<Deadlines.Due>>`,
+each `Due` holding the key, the current state, the `Deadline` and its due instant, for every document or entry whose
+deadline in its current state is due at or before `at`, sorted by due instant and then by key. The current state is
+the entry of the indexed target branch of the key (the working branch of a document, the collection branch of an
+entry), else that of `main`, as `DocumentTransitions` reads it (<<GDR-FORMS-5>>); the deadlines of that state are
+`Workflow.deadlines(state)`.
+
+The instant a document entered its current state is the commit time of the oldest commit of the trailing run of
+commits that changed its file and whose file holds that state, read with `RepositoryReader.history` of `git-core` from
+the commit the index holds for the source (`StoreIndex.commitId`). A save that keeps the state, a self-loop for example,
+continues the run; a state left and entered again starts a new one,
+so `within` restarts. The walk ends at the first commit whose file holds another state or no file, reads the history in
+pages of 16 commits that double while the run goes on, and runs only for a state with a `within` or `review-interval`
+rule. The entering instant is computed on every call and never stored (the operator's decision against a stored
+instant): the cost is one walk per due document per call.
+
+The rules, inclusive at the bound (a deadline due at `at` is due):
+
+* `within`: due at the entering instant plus the duration.
+* `review-interval`: due at the latest `entered + k * interval`, `k` at least 1, that is at or before `at`; while the
+  state lasts, it is due again at every multiple of the interval.
+* `field`: due at the value of the named top-level field, an ISO 8601 date (`2026-12-01`, the start of that day in UTC)
+  or a date-time with an offset (`2026-12-01T09:00:00+01:00`); a missing field, a value that is no string or a string of
+  neither form gives no deadline.
+
+A `java.time.Period` is added in UTC, as calendar months and days of an `OffsetDateTime` at `ZoneOffset.UTC`, so `P1M`
+from 31 January ends on the last day of February; a `java.time.Duration` is added to the instant. An amount whose sum
+leaves the range of `Instant` gives no deadline. Nothing is stored and nothing is written: `due` reads the index and the
+clone only, writes no file, reference or object, and keeps nothing between calls. A document whose file cannot be read
+ends the call with the passed-on `MALFORMED` (`deadlines: <id>: the file cannot be read`), a history that cannot be
+read with its Git outcome passed on; never an exception. A detail names the key and the problem, never a data value or a
+pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
 [#GDR-FORMS-7]
 == GDR-FORMS-7: Step-Up per Transition
 
@@ -713,6 +815,7 @@ xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Docu
 * A transition that requires step-up must be refused with the outcome step-up required unless the caller's
   `Auth-Context` holds a value of `step-up.amr` or `step-up.acr` and its `Auth-Time` is not older than
   `step-up.max-age`.
+* A deployment must be able to switch step-up off with `step-up.enabled: false`; then no transition requires it.
 
 [source,yaml]
 ----
@@ -729,24 +832,35 @@ it applies.
 |===
 |Key |Semantics
 
-|`step-up.amr` |`amr` values that denote multi-factor authentication, default `mfa`; a single method such as `otp`
-or `hwk` is no multi-factor authentication (https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176])
-|`step-up.acr` |`acr` values that denote multi-factor authentication
-|`step-up.max-age` |required; ISO 8601 duration, for example `PT5M`
+|`step-up.enabled` |boolean, default `true`; when `false`, no transition requires step-up, whatever the workflow
+declares, and the other keys are not required
+|`step-up.amr` |`amr` values the deployment accepts as step-up, default `mfa` (multi-factor authentication,
+https://www.rfc-editor.org/rfc/rfc8176.html[RFC 8176]); a single method such as `pwd`, for a renewed password check,
+is allowed
+|`step-up.acr` |`acr` values the deployment accepts as step-up
+|`step-up.max-age` |required when step-up is enabled; ISO 8601 duration, for example `PT5M`
 |===
 
 Every commit is signed the same way; step-up changes only the authentication the trailers record.
 
 `Workflow.parse` resolves the `stepUp` of every `Transition` when it loads the file, from the declaration or the default
 (`Transition.defaultStepUp`: required for `release`, not for the others), and refuses `step-up: true` on an
-`intermediate-save` transition (<<GDR-FORMS-5>>). The keys of the table are the record `StepUpPolicy(amr, acr, maxAge)`,
-which the application passes into `git-forms`; it is not read from a file. `StepUpPolicy.of(maxAge)` takes the default
-`amr` value `mfa` of RFC 8176, section 2 (https://www.rfc-editor.org/rfc/rfc8176.html#section-2[RFC 8176]) and no
-`acr` value. `maxAge` is required and must be positive, a `java.time.Duration` the application reads from the ISO 8601
-form, for example `Duration.parse("PT5M")`; a missing or non-positive value is a programming error of the application
-and refused with an exception. `holds(claims, now)` tells whether the claims hold step-up: their `amr` contains a value
-of `step-up.amr` or their `acr` is a value of `step-up.acr`, and their `auth_time` is at most `maxAge` before `now`; an
-`auth_time` after `now` counts as not older. A single method such as `otp` or `hwk` holds step-up only when the
+`intermediate-save` transition (<<GDR-FORMS-5>>), whatever the switch, since the workflow knows no policy. The keys of
+the table are the record `StepUpPolicy(enabled, amr, acr, maxAge)`, which the application passes into `git-forms`; it
+is not read from a file. `StepUpPolicy.of(maxAge)` is the enabled policy, the setting when `step-up.enabled` is absent,
+with the default `amr` value `mfa` of RFC 8176, section 2 (https://www.rfc-editor.org/rfc/rfc8176.html#section-2[RFC
+8176]) and no `acr` value. `StepUpPolicy.disabled()` is the policy of `step-up.enabled: false`, without `amr`, `acr`
+or `maxAge`. `maxAge` is required for an enabled policy, may be `null` only for a disabled one and, when given, must be
+positive, a `java.time.Duration` the application reads from the ISO 8601 form, for example `Duration.parse("PT5M")`; a
+missing or non-positive value is a programming error of the application and refused with an exception.
+`requires(transition)` tells whether a transition requires step-up: the policy is enabled and the transition's
+`stepUp` is set. `holds(claims, now)` tells whether the claims hold step-up: always for a disabled policy; otherwise
+their `amr` contains a value of `step-up.amr` or their `acr` is a value of `step-up.acr`, and their `auth_time` is at
+most `maxAge` before `now`; an `auth_time` after `now` counts as not older. That is deliberate: validating the
+ID Token, its `iat` and `auth_time` against the clock skew of the deployment included, is the caller's duty, which
+passes validated claims only, and any bound `git-forms` set on a future `auth_time` would be arbitrary, since the
+library knows neither the skew of the provider nor that of the deployment. Which values satisfy step-up is the
+deployment's decision: `mfa` is the default, and a single method such as `pwd`, `otp` or `hwk` holds step-up when the
 application names it in `step-up.amr`. The claims are the `IdentityClaims` of `git-store` that the caller took from the
 ID Token it validated (`acr`, `amr` and `auth_time`,
 https://openid.net/specs/openid-connect-core-1_0.html#IDToken[OpenID Connect Core 1.0, section 2]), the same that the
@@ -754,8 +868,9 @@ save and the release record as the trailers `Auth-Time` and `Auth-Context`
 (xref:git-store.adoc#GDR-STORE-13[GDR-STORE-13]). The check reads the claims only; it logs nothing and returns no claim
 value.
 
-`DocumentTransitions.perform` checks a transition that requires step-up with `holds(claims, clock.instant())` right
-after the lookup of the transition and before anything is written. A refusal is `STEP_UP_REQUIRED` with the detail
+`DocumentTransitions.perform` checks a transition for which `requires(transition)` holds with
+`holds(claims, clock.instant())` right after the lookup of the transition and before anything is written, a
+transition resumed by the resume rule of <<GDR-FORMS-5>> included. A refusal is `STEP_UP_REQUIRED` with the detail
 `step-up: the claims do not hold step-up`, naming no claim value (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]); the draft,
 the working or collection branch and `main` stay unchanged.
 
@@ -771,6 +886,58 @@ the working or collection branch and `main` stay unchanged.
 
 The schema marks link fields with `"format": "gdr-link"`; targets are resolved through the index or the directory.
 
+`TypedLink.parse(text)` reads the text of a link field into the sealed `TypedLink`: a `DocumentLink(alias, kind, id,
+fragment)` for `<alias>:<kind>/<id>[#<fragment>]` and a `CatalogLink(catalog, id)` for `<catalog>:<id>`, told apart by
+the `/` after the first `:`. Each segment follows the name rules of the kind configuration (<<GDR-FORMS-1>>) and the
+store (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]): an alias, a kind and a catalog match `[a-z0-9-]+`, as a repository
+alias, a kind id and a collection do; an id matches `[A-Za-z0-9_-]+`, which holds every ULID, every id of a numbered
+collection and every prefix a numbering allows, so an id has no `/`, no empty segment and no control character. The
+fragment is everything after the first `#` of a document link; it must not be empty or hold a control character, and
+it is kept as written and never interpreted. A catalog link has no fragment. A text of neither form is `INVALID` with a
+detail that names the rule it breaks (`link: kind: not of the form [a-z0-9-]+`), never the text
+(xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
+
+`LinkTargets` resolves the targets; the application builds it from the `KindConfiguration`, the `StoreIndex` of every
+repository a document link may name, by its alias, and a `CatalogResolver`, and passes it into the constructor of
+`DocumentTransitions`. A document link exists when the configuration has a kind of its `kind`, the alias of the link
+is the repository of that kind, and the index of that alias holds the key in the collection of the kind, on the
+working branch of a document, the collection branch of an entry or `main`; the fragment is stripped first, so a link
+with a fragment exists exactly when the document without it exists. The index holds a document only when a contributor
+is registered for its collection and returns a value for it (xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9]), so the
+application registers one for every collection a link may name; an index reflects its clone at its last refresh, so a
+document another writer created becomes a target once a fetch refreshed the index. A document link to a kind whose
+repository has no index is the passed-on `MALFORMED` with the detail `link: no index for the repository of the kind`.
+`LinkTargets` reads only the published values of the indexes (`StoreIndex.entries`), no `snapshot` and no `open`, so it
+runs inside the step of a save without the `REFUSED` of a callback that holds a lock of the clone and waits for no lock.
+
+`CatalogResolver` is the functional interface a catalog provider implements, the directory of `git-directory` among
+them: `resolve(catalog, id)` returns `OK` with `true` when the catalog holds the entry and `false` when it does not, or
+any other outcome when the catalog cannot be read. A retired entry (`retired: true`) must resolve as `true`, so a
+document that links it can still be saved. The call runs inside the step of a save, under the save locks of the store,
+once per catalog link and on every attempt, so it must return within milliseconds, read only what it holds in memory and
+call no remote service.
+
+The check runs in the per-attempt step of a `save` or `release` (<<GDR-FORMS-5>>), on the data of the attempt joined
+with its parts, after the validation and before `required`, so it applies on every save and on the verification of a
+save that ran no step. The link fields are found by the annotations of the one evaluation of the schema without
+`required` (`SchemaValidator`, checked against the source of `dev.harrel:json-schema` 1.9.1): `format` has no evaluator
+in the Draft 2020-12 dialect of the library, so a string value of it becomes an annotation of the keyword `format` at
+the JSON Pointer of the instance (`AbstractEvaluatorFactory.AnnotationEvaluator`,
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/AbstractEvaluatorFactory.java[json-schema
+1.9.1, `AbstractEvaluatorFactory`]), and the evaluation discards every annotation of a schema that fails
+(`EvaluationContext.validateAgainstSchema`,
+link:https://github.com/harrel56/json-schema/blob/1.9.1/lib/src/main/java/dev/harrel/jsonschema/EvaluationContext.java[json-schema
+1.9.1, `EvaluationContext`]). So a link field is found exactly where the validator applies the schema that declares it:
+under `properties`, `items` and the other keywords that descend, through `$ref` and `$dynamicRef`, in every member of
+`allOf`, and in a branch of `anyOf` or `oneOf` only when the value satisfies it. `format` applies to strings: a value at
+such a location that is no string is no link and is left out, its type being the business of the schema; a location
+two applied schemas annotate is one field. Every link field whose text is of neither form, or whose target does not
+exist, is a `Violation` at the JSON Pointer of the field, with the rule of the text or the message
+`link: no such target`; together they refuse the attempt as `Refused` with `ValidationResult.Invalid`, the outcome
+`INVALID`, and nothing is committed. A resolution that fails, a `CatalogResolver` that returns a non-success or a
+missing index, refuses the attempt with that outcome passed on. The link text is data of the document: it appears in no
+detail, message or log, and the pointer of a violation is data as every pointer is (<<GDR-FORMS-2>>).
+
 [#GDR-FORMS-9]
 == GDR-FORMS-9: Running Numbers
 
@@ -784,3 +951,33 @@ The schema marks link fields with `"format": "gdr-link"`; targets are resolved t
 Until its first save a numbered entry is identified by a ULID (draft reference
 `refs/drafts/<pseudonym>/<collection>/<ulid>`). Two concurrent creations race on the collection branch; the loser's
 push is refused, and it re-reads the counter and takes the next number.
+
+`RunningNumbers` holds the keys and numbers. `newKey(kind)` returns the `DocumentKey` of a new document of a
+per-document kind, or of the draft of a new entry of a numbered kind, in the collection of the kind with a fresh
+`Ulid.next()` of `git-store` (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]), the only source of an id.
+`number(numbering, counter)` formats the prefix followed by the counter zero-padded to `digits` (`R-042` for the prefix
+`R-`, 3 digits and the counter 42; an empty prefix gives the digits alone); a counter that needs more digits than the
+numbering has is the passed-on `MALFORMED` with the detail `.counter: a counter of more than <digits> digits, the limit
+of the numbering`, and a counter below 1 is a programming error. `isAssigned(kind, key)` tells whether the id of an
+entry key is a running number of the kind, the prefix followed by exactly `digits` decimal digits.
+
+The number is allocated by the per-attempt step of the save (<<GDR-FORMS-5>>), on every attempt, for a numbered kind
+whose key id is a ULID that is not a running number of the kind. The step reads `<collection>/.counter` from the tip
+the attempt commits on with `CounterCodec` (<<GDR-FORMS-3>>), an absent file counting 0, takes the next counter and
+formats it, writes the merged entry file at `<collection>/<number>.yaml` with the state of the transition, deletes
+`<collection>/<ulid>.yaml`, writes the advanced counter and, with a template, the output `<collection>/<number>.adoc`
+generated from the data of the number; the validation, the link check and `required` apply to those data as to every
+save. All of it is the one save commit, pushed with the compare-and-swap lease of the collection branch
+(xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]): of two creators that read the same counter `N` on the same tip, the
+loser's push is refused, the store re-applies its draft onto the winner's tip and calls the step again, which reads
+`N+1` and takes `N+2`. The draft's own edit, the file of the ULID key, never conflicts with the winner's commit, so the
+re-application is not stopped by the conflict check, and no lock of `git-forms` is needed. A counter that cannot be
+read, a counter at the largest `long`, a counter that needs more digits than the numbering has, and a next number whose
+entry file the tip already holds (a counter behind its entries) refuse the attempt as the passed-on `MALFORMED`, its
+detail naming the counter file or the limit; nothing is committed.
+
+After that save the transition continues with the key of the number: a `release` releases the entry under it, so its
+tags are `refs/tags/<collection>/<number>/v<n>`, and `DocumentTransitions.Result.Performed` carries the component `key`,
+the key of the document or entry after the transition, which after the first save of a new entry is the key of its
+running number, the key the caller uses from then on. A key that already carries a running number, an entry saved
+before, is saved under it and allocates nothing.

@@ -45,8 +45,10 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@value YamlReader#MAX_NUMBER_DIGITS} significant digits and an exponent beyond {@value YamlReader#MAX_EXPONENT} in
  * magnitude as {@link StoreOutcome#MALFORMED} before it parses the number, naming the bound and not the number, so
  * {@code multipleOf} cannot stall on a number read from text; a number at the bound is read and validated in bounded
- * time; and the documented underflow of {@code multipleOf}, {@code 1e-400} under {@code "multipleOf": 1}, stays
- * reachable.
+ * time; the digits of an integer are counted in one radix, the decimal form the writer writes, so that every number at
+ * the bound, octal, hexadecimal or signed, or a float with a long mantissa, decodes, encodes and decodes again to the
+ * same value and text; and the documented underflow of {@code multipleOf}, {@code 1e-400} under
+ * {@code "multipleOf": 1}, stays reachable.
  * <p>
  * The numbers are the contract, the bound and one beyond it, and kept as literals.
  */
@@ -93,9 +95,22 @@ class NumberBoundsTest {
                 Arguments.of("a decimal of 1,001 digits", "1." + "1".repeat(1000), TOO_MANY_DIGITS),
                 Arguments.of("an integer of 1,001 digits", "1".repeat(1001), TOO_MANY_DIGITS),
                 Arguments.of("an integer of 3 Mi digits", "1".repeat(YamlReader.CODE_POINT_LIMIT - 16), TOO_MANY_DIGITS),
+                Arguments.of("a negative integer of 1,001 digits", "-" + "1".repeat(1001), TOO_MANY_DIGITS),
                 Arguments.of("a hexadecimal integer of 1,001 digits", "0x" + "f".repeat(1001), TOO_MANY_DIGITS),
-                Arguments.of("an octal integer of 1,001 digits", "0o" + "7".repeat(1001), TOO_MANY_DIGITS));
+                // 1,000 hexadecimal digits are about 1,205 decimal digits, which encode would refuse
+                Arguments.of("a hexadecimal integer of 1,000 digits", "0x" + "f".repeat(1000), TOO_MANY_DIGITS),
+                Arguments.of("the smallest hexadecimal integer beyond the bound", "0x" + HEX_BEYOND, TOO_MANY_DIGITS),
+                Arguments.of("a hexadecimal integer of 3 Mi digits", "0x" + "f".repeat(YamlReader.CODE_POINT_LIMIT - 16),
+                        TOO_MANY_DIGITS),
+                // 1,200 octal digits are about 1,084 decimal digits
+                Arguments.of("an octal integer of 1,200 digits", "0o" + "7".repeat(1200), TOO_MANY_DIGITS));
     }
+
+    /** The largest integer of 1,000 decimal digits, 10^1000 - 1, in hexadecimal. */
+    private static final String HEX_AT_BOUND = BigInteger.TEN.pow(1000).subtract(BigInteger.ONE).toString(16);
+
+    /** The smallest integer of 1,001 decimal digits, 10^1000, in hexadecimal. */
+    private static final String HEX_BEYOND = BigInteger.TEN.pow(1000).toString(16);
 
     @ParameterizedTest(name = "GDR-FORMS-2: {0} is MALFORMED in bounded time, naming the bound and not the number")
     @MethodSource("refused")
@@ -119,10 +134,55 @@ class NumberBoundsTest {
                 Arguments.of("leading zeros beside 1,000 digits", "000" + "1".repeat(1000),
                         new BigInteger("1".repeat(1000)), valid),
                 Arguments.of("an integer of 1,000 digits", "1".repeat(1000), new BigInteger("1".repeat(1000)), valid),
-                Arguments.of("a hexadecimal integer of 1,000 digits", "0x" + "f".repeat(1000),
-                        new BigInteger("f".repeat(1000), 16), valid),
-                Arguments.of("an octal integer of 1,000 digits", "0o" + "7".repeat(1000),
-                        new BigInteger("7".repeat(1000), 8), valid));
+                Arguments.of("a negative integer of 1,000 digits", "-" + "1".repeat(1000),
+                        new BigInteger("-" + "1".repeat(1000)), valid),
+                Arguments.of("a hexadecimal integer of 1,000 decimal digits", "0x" + HEX_AT_BOUND,
+                        BigInteger.TEN.pow(1000).subtract(BigInteger.ONE), valid),
+                // 1,001 octal digits are about 905 decimal digits
+                Arguments.of("an octal integer of 1,001 digits", "0o" + "7".repeat(1001),
+                        new BigInteger("7".repeat(1001), 8), valid));
+    }
+
+    static Stream<Arguments> roundTrips() {
+        return Stream.of(
+                Arguments.of("a hexadecimal integer of 1,000 decimal digits", "0x" + HEX_AT_BOUND),
+                Arguments.of("an octal integer of 1,001 digits", "0o" + "7".repeat(1001)),
+                Arguments.of("a negative integer of 1,000 digits", "-" + "1".repeat(1000)),
+                Arguments.of("a positive sign on 1,000 digits", "+" + "1".repeat(1000)),
+                Arguments.of("a long mantissa with a tiny exponent", "1." + "1".repeat(999) + "e-1000"),
+                Arguments.of("a negative long mantissa with a large exponent", "-1." + "1".repeat(999) + "e1000"),
+                Arguments.of("a fraction of 1,000 digits after zeros", "0." + "0".repeat(500) + "1".repeat(1000)));
+    }
+
+    @ParameterizedTest(name = "GDR-FORMS-3: {0} decodes, encodes and decodes again to the same value and text")
+    @MethodSource("roundTrips")
+    void roundTripAtTheBound(String description, String number) {
+        var first = assertTimeoutPreemptively(BOUNDED, () -> decoded(number));
+        var encoded = assertTimeoutPreemptively(BOUNDED, () -> codec.encode(first));
+        var again = codec.decode(encoded);
+
+        assertAll(
+                () -> assertTrue(again.isOk(), () -> "the encoding reads back: " + again.detail()),
+                () -> assertEquals(first, again.value(), "the same value"),
+                () -> assertEquals(new String(encoded, StandardCharsets.UTF_8),
+                        new String(codec.encode(Objects.requireNonNull(again.value())), StandardCharsets.UTF_8),
+                        "the same text"));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-2: multipleOf with a large exponent is decided in bounded time")
+    void multipleOfLargeExponent() {
+        var huge = SchemaValidatorTest.schema("{ \"properties\": { \"amount\": { \"multipleOf\": 1e1000 } } }");
+        var hugeCodec = new YamlDocumentCodec(huge);
+        var multiple = Objects.requireNonNull(hugeCodec.decode("amount: 3e1000\n".getBytes(StandardCharsets.UTF_8))
+                .value());
+        var notMultiple = Objects.requireNonNull(hugeCodec.decode("amount: 1e999\n"
+                .getBytes(StandardCharsets.UTF_8)).value());
+
+        assertTimeoutPreemptively(BOUNDED, () -> assertAll(
+                () -> assertEquals(new ValidationResult.Valid(), validator.validate(huge, multiple), "3e1000"),
+                () -> assertInstanceOf(ValidationResult.Invalid.class, validator.validate(huge, notMultiple),
+                        "1e999 is no multiple of 1e1000")));
     }
 
     @ParameterizedTest(name = "GDR-FORMS-2: {0} is read and validated under multipleOf in bounded time")

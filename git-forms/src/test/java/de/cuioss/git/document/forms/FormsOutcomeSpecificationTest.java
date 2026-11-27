@@ -37,8 +37,10 @@ import org.junit.jupiter.api.Test;
  * The {@code git-forms} table of GDR-GEN-3 in {@code doc/specification/general.adoc} lists exactly the constants of
  * {@link FormsOutcome}, in their order: a constant added to the enum without a row, a row without a constant, a
  * renamed or a reordered one fails this test. The introduction of {@code doc/specification/git-forms.adoc} names every
- * constant of {@link FormsOutcome} as returned by the code, none excepted, and none of its sentences that call
- * something planned names {@code MISMATCH}, {@code TRANSITION_REFUSED} or {@code STEP_UP_REQUIRED}.
+ * constant of {@link FormsOutcome} as returned by the code, none excepted, lists no outcome the enum does not
+ * declare, calls every requirement of
+ * {@code git-forms} implemented and has no sentence that calls something planned, so the enum, the table and the
+ * introduction stay in step.
  */
 @DisplayName("FormsOutcome against the git-forms table of GDR-GEN-3")
 class FormsOutcomeSpecificationTest {
@@ -61,12 +63,28 @@ class FormsOutcomeSpecificationTest {
     /** The start of the anchor line of a requirement of {@code git-forms}, which ends the introduction. */
     private static final String REQUIREMENT_ANCHOR = "[#GDR-FORMS-";
 
-    /** The outcomes GDR-FORMS-4, GDR-FORMS-5 and GDR-FORMS-7 raise, once listed as planned in the introduction. */
+    /**
+     * The outcomes GDR-FORMS-4, GDR-FORMS-5 and GDR-FORMS-7 raise, once listed as planned in the introduction, and
+     * {@code SAVED_NOT_RELEASED} of the release of GDR-FORMS-5.
+     */
     private static final List<String> RAISED_BY_THE_NEW_REQUIREMENTS =
-            List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED");
+            List.of("MISMATCH", "TRANSITION_REFUSED", "STEP_UP_REQUIRED", "SAVED_NOT_RELEASED");
+
+    /** The sentence of the introduction that calls every requirement of {@code git-forms} implemented. */
+    private static final String EVERY_REQUIREMENT_IMPLEMENTED =
+            "Every requirement below, <<GDR-FORMS-1>> to <<GDR-FORMS-9>>, is implemented.";
 
     /** A row whose first cell is a constant in back quotes. */
     private static final Pattern CONSTANT_ROW = Pattern.compile("^\\|`([A-Z][A-Z0-9_]*)`");
+
+    /** The words of the introduction that open its list of the outcomes of {@link FormsOutcome}. */
+    private static final String OUTCOME_LIST_START = "The code returns every outcome of `FormsOutcome`:";
+
+    /** The words of the introduction that close that list, before the outcomes of the store it passes on. */
+    private static final String OUTCOME_LIST_END = "and passes on";
+
+    /** An upper-case name in back quotes, the form in which the introduction names an outcome. */
+    private static final Pattern QUOTED_CONSTANT = Pattern.compile("`([A-Z][A-Z0-9_]*)`");
 
     /** Finds the reactor root from the working directory of the test, the module directory under Maven. */
     private static Path reactorRoot() {
@@ -145,22 +163,45 @@ class FormsOutcomeSpecificationTest {
     }
 
     @Test
-    @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, and MISMATCH, "
-            + "TRANSITION_REFUSED and STEP_UP_REQUIRED in no sentence that calls something planned")
+    @DisplayName("GDR-GEN-3: the introduction of git-forms names every FormsOutcome as returned, SAVED_NOT_RELEASED "
+            + "included, calls every requirement implemented and calls nothing planned")
     void introductionReturnsEveryOutcome() throws Exception {
         var introduction = introduction(Files.readAllLines(reactorRoot().resolve(GIT_FORMS)));
         var everyOutcome = Arrays.stream(FormsOutcome.values()).map(Enum::name).toList();
 
-        var plannedSentences = Arrays.stream(introduction.split("(?<=\\.) ")).filter(sentence -> sentence
-                .contains("planned")).toList();
+        var plannedSentences = plannedSentences(introduction);
 
         assertAll(
-                () -> assertFalse(plannedSentences.isEmpty(), "the introduction names the planned requirements"),
                 () -> assertEquals(List.of(), outcomesNotNamed(introduction, everyOutcome),
                         "the introduction names every outcome the code returns"),
-                () -> assertTrue(plannedSentences.stream().noneMatch(sentence -> RAISED_BY_THE_NEW_REQUIREMENTS
-                        .stream().anyMatch(sentence::contains)), () -> "no outcome is called planned: "
-                        + plannedSentences));
+                () -> assertTrue(introduction.contains(EVERY_REQUIREMENT_IMPLEMENTED),
+                        "the introduction calls every requirement of git-forms implemented"),
+                () -> assertEquals(List.of(), plannedSentences, "no sentence of the introduction calls something "
+                        + "planned"));
+    }
+
+    /**
+     * The sentences of an introduction that call something planned.
+     *
+     * @param introduction the introduction
+     * @return those sentences, in order
+     */
+    static List<String> plannedSentences(String introduction) {
+        return Arrays.stream(introduction.split("(?<=\\.) ")).filter(sentence -> sentence.contains("planned"))
+                .toList();
+    }
+
+    @Test
+    @DisplayName("a sentence of the introduction that calls a newer outcome planned is seen")
+    void plannedOutcomeDetected() {
+        var introduction = "The code returns `OK`. `SAVED_NOT_RELEASED` is planned. Rationale follows.";
+
+        var planned = plannedSentences(introduction);
+
+        assertAll(
+                () -> assertEquals(List.of("`SAVED_NOT_RELEASED` is planned."), planned, "the planned sentence"),
+                () -> assertTrue(planned.stream().anyMatch(sentence -> RAISED_BY_THE_NEW_REQUIREMENTS.stream()
+                        .anyMatch(sentence::contains)), "it names a newer outcome"));
     }
 
     @Test
@@ -175,6 +216,73 @@ class FormsOutcomeSpecificationTest {
                 () -> assertEquals("= title `MISMATCH` belongs to the planned requirements.", introduction,
                         "the text before the anchor"),
                 () -> assertFalse(introduction.contains("STEP_UP_REQUIRED"), "nothing after the anchor"));
+    }
+
+    /**
+     * The outcome names of the introduction's list of the outcomes of {@link FormsOutcome}: every upper-case name in
+     * back quotes between {@link #OUTCOME_LIST_START} and {@link #OUTCOME_LIST_END}, so the outcomes of the store it
+     * passes on after the list are not among them.
+     *
+     * @param introduction the introduction
+     * @return the names in the order of the list, empty when the introduction has no such list
+     */
+    static List<String> listedOutcomes(String introduction) {
+        int start = introduction.indexOf(OUTCOME_LIST_START);
+        if (start < 0) {
+            return List.of();
+        }
+        start += OUTCOME_LIST_START.length();
+        int end = introduction.indexOf(OUTCOME_LIST_END, start);
+        if (end < 0) {
+            return List.of();
+        }
+        Matcher name = QUOTED_CONSTANT.matcher(introduction.substring(start, end));
+        List<String> names = new ArrayList<>();
+        while (name.find()) {
+            names.add(name.group(1));
+        }
+        return names;
+    }
+
+    /**
+     * The listed names that no outcome declares.
+     *
+     * @param listed   the names the introduction lists
+     * @param declared the names of the declared outcomes
+     * @return the listed names not declared, in the order of the list
+     */
+    static List<String> namesNotDeclared(List<String> listed, List<String> declared) {
+        return listed.stream().filter(outcome -> !declared.contains(outcome)).toList();
+    }
+
+    @Test
+    @DisplayName("GDR-GEN-3: every outcome the introduction of git-forms lists is a constant of FormsOutcome")
+    void introductionListsOnlyDeclaredOutcomes() throws Exception {
+        var introduction = introduction(Files.readAllLines(reactorRoot().resolve(GIT_FORMS)));
+        var everyOutcome = Arrays.stream(FormsOutcome.values()).map(Enum::name).toList();
+
+        var listed = listedOutcomes(introduction);
+
+        assertAll(
+                () -> assertFalse(listed.isEmpty(), "the introduction lists the outcomes of FormsOutcome"),
+                () -> assertEquals(List.of(), namesNotDeclared(listed, everyOutcome),
+                        "the introduction lists no outcome FormsOutcome does not declare"));
+    }
+
+    @Test
+    @DisplayName("an introduction that lists an outcome FormsOutcome does not declare fails the declared-outcome check")
+    void undeclaredOutcomeDetected() {
+        var introduction = "The code returns every outcome of `FormsOutcome`: `OK`, `REMOVED` and `INVALID`, "
+                + "and passes on the outcomes of the store, `MALFORMED` among them.";
+
+        var listed = listedOutcomes(introduction);
+
+        assertAll(
+                () -> assertEquals(List.of("OK", "REMOVED", "INVALID"), listed,
+                        "the list ends before the passed-on outcomes of the store"),
+                () -> assertEquals(List.of("REMOVED"), namesNotDeclared(listed, List.of("OK", "INVALID")),
+                        "the undeclared outcome is named"),
+                () -> assertTrue(listedOutcomes("The code returns `OK`.").isEmpty(), "no list, no names"));
     }
 
     @Test

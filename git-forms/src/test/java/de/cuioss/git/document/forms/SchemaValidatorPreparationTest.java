@@ -17,6 +17,8 @@ package de.cuioss.git.document.forms;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -42,7 +44,8 @@ import org.junit.jupiter.api.Test;
  * One preparation of the validator per schema (GDR-FORMS-2): {@link FormSchema#parse(String, byte[])} prepares the
  * validator of {@code dev.harrel:json-schema} once, {@link SchemaValidator#validate(FormSchema, Map)} and
  * {@link SchemaValidator#required(FormSchema, Map)} only read it, also where {@code unevaluatedProperties} holds
- * {@code required}, and the one validator serves several threads with the sequential result.
+ * {@code required}, and the one validator serves several threads with the sequential result. The preparation is
+ * observed on the schema instances of the test itself, by identity, so no count is shared with another test.
  * <p>
  * The schema is a literal, being the contract; the strings of the data are generated, the length that violates
  * {@code maxLength} follows from the constraint.
@@ -80,11 +83,11 @@ class SchemaValidatorPreparationTest {
     }
 
     @Test
-    @DisplayName("GDR-FORMS-2: parsing prepares once, validate and required prepare nothing")
+    @DisplayName("GDR-FORMS-2: parsing prepares once per schema, validate and required keep that preparation")
     void preparedOnce() {
-        int beforeParse = SchemaValidator.preparations();
         var schema = SchemaValidatorTest.schema(SCHEMA);
-        int afterParse = SchemaValidator.preparations();
+        var other = SchemaValidatorTest.schema(SCHEMA);
+        var prepared = schema.prepared();
         var data = data();
 
         for (int call = 0; call < CALLS; call++) {
@@ -93,9 +96,13 @@ class SchemaValidatorPreparationTest {
         }
 
         assertAll(
-                () -> assertEquals(1, afterParse - beforeParse, "parse prepares exactly once"),
-                () -> assertEquals(afterParse, SchemaValidator.preparations(),
-                        "ten validate and ten required calls add no preparation"));
+                () -> assertNotSame(prepared, other.prepared(), "each parse prepares a validator of its own"),
+                () -> assertNotSame(prepared.validator(), other.prepared().validator(),
+                        "with a library validator of its own"),
+                () -> assertSame(prepared, schema.prepared(),
+                        "ten validate and ten required calls keep the one preparation of the schema"),
+                () -> assertEquals(validator.validate(other, data), validator.validate(schema, data),
+                        "and evaluate as a fresh preparation does"));
     }
 
     @Test

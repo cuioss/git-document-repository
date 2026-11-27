@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
@@ -38,6 +39,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -54,13 +56,16 @@ import java.util.stream.Collectors;
 import de.cuioss.git.document.core.GitOutcome;
 import de.cuioss.git.document.core.JGitRepositoryOperations;
 import de.cuioss.git.document.core.RemotePolicy;
+import de.cuioss.git.document.core.RepositoryOperations;
 import de.cuioss.git.document.core.TreeEdit;
 import de.cuioss.git.document.store.Author;
 import de.cuioss.git.document.store.DocumentCollection;
 import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.IdentityClaims;
+import de.cuioss.git.document.store.RepositoryRegistry;
 import de.cuioss.git.document.store.SigningKeySource;
 import de.cuioss.git.document.store.StoreConfiguration;
+import de.cuioss.git.document.store.StoreIndex;
 import de.cuioss.git.document.store.StoreOutcome;
 import de.cuioss.git.document.store.StoreReferences;
 import de.cuioss.git.document.store.StoreRepository;
@@ -99,8 +104,10 @@ import org.junit.jupiter.api.io.TempDir;
  * (GDR-FORMS-2, GDR-FORMS-4, GDR-FORMS-5, GDR-FORMS-7): every transition of the default workflow on its mechanism with
  * the field {@code state} it writes, the refusal of a transition the current state does not allow, {@code required} on
  * leaving the initial state and on every release, an invalid document, the output regenerated in the save commit also
- * on a moved remote tip and absent for a numbered kind without a template, the step-up check before any write, and a
- * release that fails after its save, which leaves the saved state.
+ * on a moved remote tip and absent for a numbered kind without a template, the step-up check before any write, a
+ * release that fails after its save, which leaves the saved state and is resumed by performing the transition again,
+ * the bounds of a draft (a blob over 16 MiB, a part nested at the limit) and the output replaced by every save. The
+ * failures of the first release that need a scripted transport are in {@link DocumentTransitionsReleaseRetryTest}.
  * <p>
  * The schema, the template, the workflows and the claims are literals, being the contract; ULIDs and the values of the
  * data are generated or fixed per test.
@@ -263,8 +270,11 @@ class DocumentTransitionsTest {
         return value(new YamlDocumentCodec(schema()).decode(bytes(content))).get("state");
     }
 
-    /** A writer over a local remote, the transitions of one kind over it, and its clone. */
-    record Fixture(StoreWriter writer, Repository bareClone, DocumentTransitions transitions)
+    /**
+     * A writer over a local remote, the transitions of one kind over it, its clone, and the index of the kind's
+     * collection through which the link targets resolve.
+     */
+    record Fixture(StoreWriter writer, Repository bareClone, DocumentTransitions transitions, StoreIndex<Boolean> index)
             implements AutoCloseable {
 
         DocumentTransitions.Result perform(Author author, IdentityClaims claims, DocumentKey key, String transition,
@@ -275,13 +285,75 @@ class DocumentTransitionsTest {
 
         @Override
         public void close() {
+            index.close();
             bareClone.close();
             writer.close();
         }
     }
 
+    /** The one catalog entry the fixtures resolve: {@code team:payments}. */
+    static final CatalogResolver CATALOG = (catalog, id) -> StoreResult.ok("team".equals(catalog)
+            && "payments".equals(id));
+
+    /**
+     * The link targets of the fixtures (GDR-FORMS-8): the kind of the definition as the one kind of the configuration,
+     * the index of its repository {@code register}, and {@link #CATALOG}.
+     */
+    static LinkTargets links(Path temp, LocalRemote remote, Kind kind, StoreIndex<Boolean> index) {
+        return links(temp, remote, kind, index, CATALOG);
+    }
+
+    /**
+     * The link targets of the fixtures over a given catalog resolver: the kind as the one kind of the configuration and
+     * the index of its repository {@code register}.
+     */
+    static LinkTargets links(Path temp, LocalRemote remote, Kind kind, StoreIndex<Boolean> index,
+            CatalogResolver catalogs) {
+        try {
+            Path directory = Files.createDirectories(temp.resolve("configuration"));
+            @Nullable Numbering numbered = kind.numbering();
+            String numbering = numbered == null ? ""
+                    : "    numbering: { prefix: \"" + numbered.prefix() + "\", digits: " + numbered.digits() + " }\n";
+            String template = kind.template() == null ? "" : "    template: " + kind.template() + "\n";
+            Files.writeString(directory.resolve(KindConfiguration.FILE), "kinds:\n"
+                    + "  - id: " + kind.id() + "\n"
+                    + "    repository: " + kind.repository() + "\n"
+                    + "    collection: " + kind.collection() + "\n"
+                    + "    schema: " + kind.schema() + "\n"
+                    + template
+                    + "    workflow: " + kind.workflow() + "\n"
+                    + numbering);
+            var registry = value(RepositoryRegistry.of(List.of(new StoreRepository(kind.repository(),
+                    remote.uri().toString(), "internal", null)), RemotePolicy.localOnly()));
+            var kinds = Objects.requireNonNull(KindConfiguration.fromDirectory(directory, registry).value());
+            return new LinkTargets(kinds, Map.of(kind.repository(), index), catalogs);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The collection of a kind, as the store names it. */
+    static DocumentCollection collection(Kind kind) {
+        return value(DocumentCollection.of(kind.collection(),
+                kind.isNumbered() ? DocumentCollection.Kind.NUMBERED : DocumentCollection.Kind.PER_DOCUMENT));
+    }
+
+    /** The step-up setting of the fixtures: enabled, the default {@code mfa}, five minutes. */
+    static final StepUpPolicy STEP_UP = StepUpPolicy.of(Duration.parse("PT5M"));
+
     static Fixture open(Path temp, LocalRemote remote, DocumentTransitions.Definition definition,
             SigningKeySource signing) {
+        return open(temp, remote, definition, signing, STEP_UP);
+    }
+
+    static Fixture open(Path temp, LocalRemote remote, DocumentTransitions.Definition definition,
+            SigningKeySource signing, StepUpPolicy policy) {
+        return open(temp, remote, definition, signing, policy, new JGitRepositoryOperations(RemotePolicy.localOnly()));
+    }
+
+    /** Opens the fixture over the given repository operations, a test double of the transport included. */
+    static Fixture open(Path temp, LocalRemote remote, DocumentTransitions.Definition definition,
+            SigningKeySource signing, StepUpPolicy policy, RepositoryOperations operations) {
         Map<String, Object> tree = new LinkedHashMap<>();
         tree.put("save", Map.of("max-attempts", 3));
         tree.put("drafts", Map.of("expiry", "P30D"));
@@ -291,12 +363,14 @@ class DocumentTransitionsTest {
         var gitDir = temp.resolve("clone.git");
         var writer = value(StoreWriter.open(new StoreRepository("register", remote.uri().toString(), "internal", null),
                 gitDir, new TechnicalUser("store", null, new UsernamePasswordCredentialsProvider("store", "secret")),
-                configuration, List.of(), signing, new JGitRepositoryOperations(RemotePolicy.localOnly()),
-                Clock.fixed(NOW, ZoneOffset.UTC)));
+                configuration, List.of(), signing, operations, Clock.fixed(NOW, ZoneOffset.UTC)));
         try {
             Repository clone = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setMustExist(true).build();
-            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition,
-                    StepUpPolicy.of(Duration.parse("PT5M")), Clock.fixed(NOW, ZoneOffset.UTC)));
+            StoreIndex<Boolean> index = value(StoreIndex.open(writer,
+                    Map.of(collection(definition.kind()), document -> Boolean.TRUE)));
+            LinkTargets links = links(temp, remote, definition.kind(), index);
+            return new Fixture(writer, clone, new DocumentTransitions(writer, clone, definition, links, policy,
+                    Clock.fixed(NOW, ZoneOffset.UTC)), index);
         } catch (IOException e) {
             writer.close();
             throw new UncheckedIOException(e);
@@ -642,6 +716,43 @@ class DocumentTransitionsTest {
     }
 
     @Test
+    @DisplayName("GDR-FORMS-7: a release without step-up claims is Performed with step-up.enabled false")
+    void releaseWithStepUpSwitchedOff(@Remote LocalRemote remote) throws Exception {
+        Files.createDirectories(temp.resolve("off"));
+        Files.createDirectories(temp.resolve("on"));
+        var main = seedMain(remote);
+        var switchedOff = document();
+        var switchedOn = document();
+        for (DocumentKey key : List.of(switchedOff, switchedOn)) {
+            commit(remote.repository(), StoreReferences.target(key),
+                    Map.of(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", "review")), main);
+        }
+        var author = Author.of("p-author");
+        var definition = perDocumentDefinition(Workflow.defaultWorkflow());
+        DocumentTransitions.Result off;
+        try (var fixture = open(temp.resolve("off"), remote, definition, new TestSigning(Integer.MAX_VALUE),
+                     StepUpPolicy.disabled())) {
+            value(fixture.writer().fetch());
+            off = fixture.perform(author, PASSWORD, switchedOff, "approve", List.of());
+        }
+        DocumentTransitions.Result on;
+        try (var fixture = open(temp.resolve("on"), remote, definition, new TestSigning(Integer.MAX_VALUE))) {
+            value(fixture.writer().fetch());
+            on = fixture.perform(author, PASSWORD, switchedOn, "approve", List.of());
+        }
+
+        var released = performed(off);
+        assertAll(
+                () -> assertEquals(1, Objects.requireNonNull(released.release()).version(), "released as v1"),
+                () -> assertEquals("approved", state(remote.repository(), StoreReferences.MAIN,
+                        directory(switchedOff) + DocumentLayout.DOCUMENT_FILE), "on main"),
+                () -> assertEquals(new DocumentTransitions.Result.NotPerformed(FormsOutcome.STEP_UP_REQUIRED,
+                        "step-up: the claims do not hold step-up"), on, "the same call with the switch on"),
+                () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(switchedOn, 1)),
+                        "nothing released with the switch on"));
+    }
+
+    @Test
     @DisplayName("GDR-FORMS-7: a save declared with step-up: true is refused without step-up claims, performed with")
     void saveWithStepUp(@Remote LocalRemote remote) {
         seedMain(remote);
@@ -699,27 +810,170 @@ class DocumentTransitionsTest {
     }
 
     @Test
-    @DisplayName("GDR-FORMS-7: a release that fails after its save is passed on and the saved state stays")
-    void failedReleaseKeepsTheSavedState(@Remote LocalRemote remote) {
+    @DisplayName("GDR-FORMS-5: a release refused after its save keeps the saved state, and performing it again releases"
+            + " that state without a second save")
+    void refusedReleaseIsResumed(@Remote LocalRemote remote) {
         var main = seedMain(remote);
         var key = document();
         var target = StoreReferences.target(key);
-        commit(remote.repository(), target,
-                Map.of(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", "review")), main);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        commit(remote.repository(), target, Map.of(document, data("First", "owner", "review")), main);
         var author = Author.of("p-author");
-        try (var fixture = open(temp, remote, perDocumentDefinition(Workflow.defaultWorkflow()), new TestSigning(1))) {
+        var signing = new TestSigning(1);
+        try (var fixture = open(temp, remote, perDocumentDefinition(Workflow.defaultWorkflow()), signing)) {
             value(fixture.writer().fetch());
 
-            var result = fixture.perform(author, MFA, key, "approve", List.of());
+            var first = fixture.perform(author, MFA, key, "approve", List.of());
+            var saved = Objects.requireNonNull(tip(remote.repository(), target));
+            signing.allowEvery();
+            var withoutStepUp = fixture.perform(author, PASSWORD, key, "approve", List.of());
+            var retried = performed(fixture.perform(author, MFA, key, "approve", List.of()));
 
-            var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result);
+            var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, first);
             assertAll(
                     () -> assertEquals(new FormsResult.PassedOn(StoreOutcome.REFUSED), notPerformed.outcome(),
-                            "the outcome of the release, passed on"),
-                    () -> assertEquals("approved", state(remote.repository(), target,
-                            directory(key) + DocumentLayout.DOCUMENT_FILE), "the saved state stays"),
-                    () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
-                    () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
+                            "the outcome of the first release, passed on"),
+                    () -> assertEquals(FormsOutcome.STEP_UP_REQUIRED, withoutStepUp.outcome(),
+                            "the resumed release checks step-up unchanged"),
+                    () -> assertEquals(saved, tip(remote.repository(), target), "no second state write"),
+                    () -> assertEquals("approved", state(remote.repository(), StoreReferences.MAIN, document),
+                            "the saved state is released"),
+                    () -> assertEquals(retried.commitId(), Objects.requireNonNull(
+                            tip(remote.repository(), StoreReferences.MAIN)).name(), "the release commit"),
+                    () -> assertEquals(retried.commitId(), Objects.requireNonNull(
+                            tip(remote.repository(), StoreReferences.releaseTag(key, 1))).name(), "the tag v1"),
+                    () -> assertEquals(List.of(main, saved), parents(remote.repository(),
+                            ObjectId.fromString(retried.commitId())), "the saved commit is merged"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a release transition whose release is complete, and any other transition, stay refused")
+    void completedReleaseIsNotResumed(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        try (var fixture = open(remote)) {
+            perform(fixture, key, TO_FIRST_RELEASE);
+            var released = tip(remote.repository(), StoreReferences.MAIN);
+
+            var again = fixture.perform(Author.of("p-author"), MFA, key, "approve", List.of());
+            var submit = fixture.perform(Author.of("p-author"), PASSWORD, key, "submit", List.of());
+
+            assertAll(
+                    () -> assertEquals(new DocumentTransitions.Result.NotPerformed(FormsOutcome.TRANSITION_REFUSED,
+                            DocumentTransitions.NOT_IN_CURRENT_STATE), again, "the release is complete"),
+                    () -> assertEquals(new DocumentTransitions.Result.NotPerformed(FormsOutcome.TRANSITION_REFUSED,
+                            DocumentTransitions.NOT_IN_CURRENT_STATE), submit, "a save transition is not resumed"),
+                    () -> assertEquals(released, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 2)), "no second tag"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-5: a resumed release whose branch moves after the fetch is refused by the pin, nothing"
+            + " written")
+    void movedBranchRefusesTheResumedRelease(@Remote LocalRemote remote) {
+        var main = seedMain(remote);
+        var key = document();
+        var target = StoreReferences.target(key);
+        var document = directory(key) + DocumentLayout.DOCUMENT_FILE;
+        commit(remote.repository(), target, Map.of(document, data("First", "owner", "review")), main);
+        var author = Author.of("p-author");
+        var signing = new TestSigning(1);
+        AtomicBoolean moved = new AtomicBoolean();
+        try (var fixture = open(temp, remote, perDocumentDefinition(Workflow.defaultWorkflow()), signing)) {
+            value(fixture.writer().fetch());
+            assertInstanceOf(DocumentTransitions.Result.NotPerformed.class,
+                    fixture.perform(author, MFA, key, "approve", List.of()), "the first release is refused");
+            var other = commit(remote.repository(), target, Map.of(document, data("Other", "owner", "approved")),
+                    Objects.requireNonNull(tip(remote.repository(), target)));
+            signing.allowEvery();
+            // the fetch of the retry brings the other save; a third save lands before the release fetches
+            try (var subscription = fixture.writer().subscribe(target, (branch, commitId) -> {
+                     if (moved.compareAndSet(false, true)) {
+                         commit(remote.repository(), target, Map.of(document, data("Third", "owner", "approved")),
+                                 other);
+                     }
+                 })) {
+                var result = fixture.perform(author, MFA, key, "approve", List.of());
+
+                var notPerformed = assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result);
+                assertAll(
+                        () -> assertTrue(moved.get(), "the branch moved after the fetch of the retry"),
+                        () -> assertEquals(new FormsResult.PassedOn(new StoreResult.PassedOn(GitOutcome.CONFLICT)),
+                                notPerformed.outcome(), "the pin of the store refuses"),
+                        () -> assertEquals(main, tip(remote.repository(), StoreReferences.MAIN), "nothing released"),
+                        () -> assertNull(tip(remote.repository(), StoreReferences.releaseTag(key, 1)), "no tag"));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: a save whose draft puts a fragment one byte over 16 MiB ends with nothing committed")
+    void fragmentOverTheBlobLimit(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        byte[] fragment = new byte[OutputCheck.MAX_FILE_BYTES + 1];
+        Arrays.fill(fragment, (byte) 'a');
+        List<TreeEdit> edits = List.of(
+                new TreeEdit.Put(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", null)),
+                new TreeEdit.Put(directory(key) + "narrative/summary.adoc", fragment));
+        try (var fixture = open(remote)) {
+            var result = fixture.perform(Author.of("p-author"), PASSWORD, key, "submit", edits);
+
+            assertAll(
+                    () -> assertInstanceOf(DocumentTransitions.Result.NotPerformed.class, result,
+                            () -> "not performed: " + result.outcome()),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.target(key)), "nothing committed"));
+        }
+    }
+
+    /** The schema of the item with the split part {@code details} (GDR-FORMS-3). */
+    static final String SPLIT_SCHEMA = """
+            {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+             "properties": {"title": {"type": "string"}, "owner": {"type": "string"}, "state": {"type": "string"},
+                            "details": {"type": "object", "gdr-split": true}},
+             "required": ["title", "owner"]}
+            """;
+
+    @Test
+    @DisplayName("GDR-FORMS-4: a save whose part is nested at the limit, deeper once joined, ends MALFORMED")
+    void partNestedAtTheLimit(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var schema = Objects.requireNonNull(FormSchema.parse("schemas/item.schema.json", bytes(SPLIT_SCHEMA)).value());
+        List<TreeEdit> edits = List.of(
+                new TreeEdit.Put(directory(key) + DocumentLayout.DOCUMENT_FILE, data("First", "owner", null)),
+                new TreeEdit.Put(directory(key) + "details.yaml", OutputCheckTest.nestedYaml(DataNode.MAX_DEPTH)),
+                new TreeEdit.Put(directory(key) + "narrative/summary.adoc", bytes("A summary.\n")));
+        try (var fixture = open(temp, remote, new DocumentTransitions.Definition(perDocument(), schema,
+                     Workflow.defaultWorkflow(), template()), new TestSigning(Integer.MAX_VALUE))) {
+            var result = fixture.perform(Author.of("p-author"), PASSWORD, key, "submit", edits);
+
+            assertAll(
+                    () -> assertEquals(new DocumentTransitions.Result.NotPerformed(
+                                    new FormsResult.PassedOn(StoreOutcome.MALFORMED),
+                                    "document.yaml: nested deeper than 128 levels, joined with its parts"), result,
+                            "the refusal of the join, not a failed step"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.target(key)), "nothing committed"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: stale or foreign content at the output path is replaced by the save")
+    void foreignOutputIsReplaced(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var output = directory(key) + DocumentLayout.OUTPUT_FILE;
+        List<TreeEdit> edits = new ArrayList<>(complete(key, "First"));
+        edits.add(new TreeEdit.Put(output, bytes("foreign content\n")));
+        try (var fixture = open(remote)) {
+            performed(fixture.perform(Author.of("p-author"), PASSWORD, key, "submit", edits));
+
+            var committed = Objects.requireNonNull(files(remote.repository(), StoreReferences.target(key)).get(output));
+            assertAll(
+                    () -> assertFalse(committed.contains("foreign content"), "the foreign content is gone"),
+                    () -> assertTrue(committed.contains("State: review"), "the output of the saved data"));
         }
     }
 
@@ -1021,6 +1275,77 @@ class DocumentTransitionsTest {
         }
     }
 
+    /** The schema of the item with the link field {@code related} (GDR-FORMS-8). */
+    static final String LINK_SCHEMA = """
+            {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+             "properties": {"title": {"type": "string"}, "owner": {"type": "string"}, "state": {"type": "string"},
+                            "related": {"type": "string", "format": "gdr-link"}},
+             "required": ["title", "owner"]}
+            """;
+
+    static FormSchema linkSchema() {
+        return Objects.requireNonNull(FormSchema.parse("schemas/item.schema.json", bytes(LINK_SCHEMA)).value());
+    }
+
+    /** The edits of a complete item whose field {@code related} holds a link. */
+    private static List<TreeEdit> linking(DocumentKey key, String related) {
+        Map<String, @Nullable Object> data = new LinkedHashMap<>();
+        data.put("title", "Linking");
+        data.put("owner", "owner");
+        data.put("related", related);
+        return List.of(new TreeEdit.Put(directory(key) + DocumentLayout.DOCUMENT_FILE,
+                        new YamlDocumentCodec(linkSchema()).encode(data)),
+                new TreeEdit.Put(directory(key) + "narrative/summary.adoc", bytes("A summary.\n")));
+    }
+
+    private Fixture openLinking(LocalRemote remote) {
+        return open(temp, remote, new DocumentTransitions.Definition(perDocument(), linkSchema(),
+                Workflow.defaultWorkflow(), template()), new TestSigning(Integer.MAX_VALUE));
+    }
+
+    /** Edits an item with a link and submits it, the save that checks the link. */
+    private static DocumentTransitions.Result submitLinking(Fixture fixture, DocumentKey key, String related) {
+        performed(fixture.perform(Author.of("p-author"), PASSWORD, key, "edit", linking(key, related)));
+        return fixture.perform(Author.of("p-author"), STEP_UP_TRANSITIONS.contains("submit") ? MFA : PASSWORD, key,
+                "submit", List.of());
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-8: a save whose link names a missing document is refused INVALID at the field, nothing saved")
+    void missingLinkTargetRefusesTheSave(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var key = document();
+        var missing = Ulid.next();
+        try (var fixture = openLinking(remote)) {
+            var result = submitLinking(fixture, key, "register:item/" + missing);
+
+            var refused = assertInstanceOf(DocumentTransitions.Result.Refused.class, result,
+                    () -> "refused: " + result.outcome() + " " + result.detail());
+            assertAll("the missing target",
+                    () -> assertEquals(FormsOutcome.INVALID, refused.outcome(), "invalid"),
+                    () -> assertEquals(new ValidationResult.Invalid(List.of(new Violation("/related",
+                            "link: no such target"))), refused.findings(), "the pointer of the field"),
+                    () -> assertFalse(refused.detail().orElseThrow().contains(missing), "no link in the detail"),
+                    () -> assertNull(tip(remote.repository(), StoreReferences.target(key)), "nothing saved"));
+        }
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-8: a save whose links name an existing document, with a fragment, or catalog entry passes")
+    void existingLinkTargetsPass(@Remote LocalRemote remote) {
+        seedMain(remote);
+        var target = document();
+        var key = document();
+        try (var fixture = openLinking(remote)) {
+            performed(submitLinking(fixture, target, "team:payments"));
+
+            performed(submitLinking(fixture, key, "register:item/" + target.id() + "#narrative/summary"));
+
+            assertEquals("review", state(remote.repository(), StoreReferences.target(key),
+                    directory(key) + DocumentLayout.DOCUMENT_FILE), "the linking document is saved");
+        }
+    }
+
     /**
      * An in-memory signing key source over a generated Ed25519 key that signs a given number of times and refuses
      * every later call; its public key line is the OpenSSH form {@code ssh-ed25519 <base64>}.
@@ -1028,7 +1353,7 @@ class DocumentTransitionsTest {
     static final class TestSigning implements SigningKeySource {
 
         private final KeyPair pair;
-        private final int signatures;
+        private final AtomicInteger signatures;
         private final AtomicInteger signed = new AtomicInteger();
 
         TestSigning(int signatures) {
@@ -1037,7 +1362,12 @@ class DocumentTransitionsTest {
             } catch (GeneralSecurityException e) {
                 throw new IllegalStateException("every Java platform from Java 15 on provides Ed25519", e);
             }
-            this.signatures = signatures;
+            this.signatures = new AtomicInteger(signatures);
+        }
+
+        /** Signs every later call, as a source that refused and is reachable again. */
+        void allowEvery() {
+            signatures.set(Integer.MAX_VALUE);
         }
 
         @Override
@@ -1047,7 +1377,7 @@ class DocumentTransitionsTest {
 
         @Override
         public StoreResult<byte[]> sign(String keyReference, byte[] data) {
-            if (signed.incrementAndGet() > signatures) {
+            if (signed.incrementAndGet() > signatures.get()) {
                 return StoreResult.of(StoreOutcome.REFUSED, "signing: refused");
             }
             try {

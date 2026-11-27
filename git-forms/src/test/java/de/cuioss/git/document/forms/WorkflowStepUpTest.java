@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.List;
 
 
@@ -98,6 +99,25 @@ class WorkflowStepUpTest {
 
         assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, WorkflowTest.PATH
                 + ": transitions[0].step-up: not allowed for the mechanism intermediate-save")), result, "refused");
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-7: an intermediate-save declaring step-up is refused at load whatever step-up.enabled says")
+    void intermediateSaveRefusedWhateverTheSwitch() {
+        var refusal = FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED, WorkflowTest.PATH
+                + ": transitions[0].step-up: not allowed for the mechanism intermediate-save"));
+        var edit = only("  - { name: edit, from: draft, to: draft, mechanism: intermediate-save }\n");
+
+        for (var policy : List.of(StepUpPolicy.of(Duration.parse("PT5M")), StepUpPolicy.disabled())) {
+            var result = WorkflowTest.parse(STATES + """
+                    transitions:
+                      - { name: edit, from: draft, to: draft, mechanism: intermediate-save, step-up: true }
+                    """);
+
+            assertAll("enabled: " + policy.enabled(),
+                    () -> assertEquals(refusal, result, "refused at load, the workflow knows no policy"),
+                    () -> assertFalse(policy.requires(edit), "an intermediate save never requires step-up"));
+        }
     }
 
     @Test

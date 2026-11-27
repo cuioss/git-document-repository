@@ -49,8 +49,9 @@ merge in core and pushes the result to the repository's remote.
 |xref:storage-engine.adoc[The Storage Engine on Git]
 
 |*Identity by signature.* Only a technical user talks to Git; the application signs every commit and records the
-claims of the logged-in user as trailers. A transition the workflow marks, by default every approval, requires an MFA
-authentication no older than a configured maximum age (step-up).
+claims of the logged-in user as trailers. A transition the workflow marks, by default every approval, requires a
+renewed authentication with the deployment's chosen methods (MFA by default) no older than a configured maximum age
+(step-up), which a deployment may switch off.
 |xref:identity-and-signing.adoc[Identity and Signing]
 
 |*Data protection by pseudonyms.* Commits and documents name persons only by pseudonym; names lie in one place, the

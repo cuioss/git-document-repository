@@ -30,6 +30,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Locale;
 import java.util.Objects;
 
 
@@ -63,8 +64,11 @@ import org.jspecify.annotations.Nullable;
  * {@code <outcome> <detail>}.</li>
  * </ul>
  * It needs no network. Nothing printed names data, a pseudonym or a secret: a mismatch names the output path, a
- * refusal names the argument or a path of the commit and the problem. Standard output and standard error are written
- * in UTF-8 and flushed per line.
+ * refusal names the argument or a path of the commit and the problem; data nested deeper than the nesting limit of the
+ * data model is such a refusal, {@code MALFORMED} naming the limit. Every printed line is one line: a backslash of a path
+ * or a detail is printed as {@code \\}, a control character, a line or a paragraph separator as {@code \}{@code uXXXX},
+ * so a path that holds a line feed cannot split into two lines a CI consumer would read as two paths. Standard output
+ * and standard error are written in UTF-8 and flushed per line.
  *
  * @since 0.1
  */
@@ -174,19 +178,48 @@ public final class VerifyOutput {
             err.println(StoreOutcome.MALFORMED + " collection: not a name segment");
             return FAILED;
         }
-        try (Repository repository = new FileRepositoryBuilder().setGitDir(gitDir.toFile())
-                     .setFS(new RefusingFS()).setMustExist(true).build()) {
+        Repository opened;
+        try {
+            opened = new FileRepositoryBuilder().setGitDir(gitDir.toFile()).setFS(new RefusingFS())
+                    .setMustExist(true).build();
+        } catch (IOException | IllegalArgumentException e) {
+            err.println(GitOutcome.NOT_A_REPOSITORY + " git-dir: not a repository");
+            return FAILED;
+        }
+        try (Repository repository = opened) {
             FormsResult<OutputCheck.Comparison> compared = check.compare(repository, args[1]);
             if (!compared.isOk()) {
                 return failed(err, compared);
             }
             var mismatching = Objects.requireNonNull(compared.value()).mismatching();
-            mismatching.forEach(out::println);
+            mismatching.forEach(path -> out.println(printable(path)));
             return mismatching.isEmpty() ? MATCHING : MISMATCHING;
-        } catch (IOException | IllegalArgumentException e) {
-            err.println(GitOutcome.NOT_A_REPOSITORY + " git-dir: not a repository");
-            return FAILED;
         }
+    }
+
+    /**
+     * The form of a text printed on one line: a backslash becomes {@code \\}, and a control character, a line or a
+     * paragraph separator becomes {@code \}{@code uXXXX} with its four hexadecimal digits, so a path that holds a line
+     * feed is printed on one line and the printed form names exactly one path.
+     *
+     * @param text the text, a path of the commit or a detail naming one
+     * @return the text with every such character escaped
+     */
+    static String printable(String text) {
+        StringBuilder printed = new StringBuilder(text.length());
+        for (int index = 0; index < text.length(); index++) {
+            char c = text.charAt(index);
+            int type = Character.getType(c);
+            if (c == '\\') {
+                printed.append("\\\\");
+            } else if (Character.isISOControl(c) || type == Character.LINE_SEPARATOR
+                    || type == Character.PARAGRAPH_SEPARATOR) {
+                printed.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+            } else {
+                printed.append(c);
+            }
+        }
+        return printed.toString();
     }
 
     /**
@@ -242,7 +275,7 @@ public final class VerifyOutput {
     }
 
     private static int failed(PrintStream err, FormsResult<?> result) {
-        err.println(TransitionOutcomes.name(result.outcome()) + " " + result.detail());
+        err.println(printable(TransitionOutcomes.name(result.outcome()) + " " + result.detail()));
         return FAILED;
     }
 }

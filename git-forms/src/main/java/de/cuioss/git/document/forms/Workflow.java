@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 
@@ -42,8 +43,9 @@ import org.jspecify.annotations.Nullable;
  * and the optional boolean {@code step-up}) and the optional {@code deadlines} (a list of entries with the key
  * {@code state} and exactly one of {@code within}, {@code review-interval} and {@code field}). The mechanisms are
  * {@code intermediate-save}, {@code save} and {@code release}; without {@code step-up} a transition on
- * {@code release} requires step-up and every other does not. The deadlines are read and kept, not evaluated
- * (GDR-FORMS-6 is planned). {@link #defaultWorkflow()} is the default workflow of the specification.
+ * {@code release} requires step-up and every other does not. The deadlines are evaluated by {@link Deadlines}
+ * (GDR-FORMS-6), computed from the index and never stored. {@link #defaultWorkflow()} is the default workflow of the
+ * specification.
  * <p>
  * The file is read as YAML within the JSON data model of ADR-0008 through the reader of the other files of the
  * configuration, with its bounds, and at most {@value #MAX_FILE_BYTES} bytes. A workflow the loader does not accept is
@@ -350,12 +352,24 @@ public final class Workflow {
     }
 
     /**
-     * The deadlines of the workflow, read and not evaluated.
+     * The deadlines of the workflow, evaluated by {@link Deadlines}.
      *
      * @return the deadlines in file order, unmodifiable
      */
     public List<Deadline> deadlines() {
         return declaredDeadlines;
+    }
+
+    /**
+     * The deadlines of one state.
+     *
+     * @param state a state
+     * @return the deadlines whose state is the given one, in file order, unmodifiable; empty for a state without one
+     * @throws NullPointerException if {@code state} is {@code null}
+     */
+    public List<Deadline> deadlines(String state) {
+        Objects.requireNonNull(state, STATE);
+        return declaredDeadlines.stream().filter(deadline -> deadline.state().equals(state)).toList();
     }
 
     /**
@@ -379,6 +393,19 @@ public final class Workflow {
             return FormsResult.of(FormsOutcome.TRANSITION_REFUSED, DocumentTransitions.NOT_IN_CURRENT_STATE);
         }
         return FormsResult.ok(transition);
+    }
+
+    /**
+     * Finds a transition of the workflow by its name alone, whatever the current state; transition names are unique
+     * within a workflow.
+     *
+     * @param name the name of the transition
+     * @return the transition, or empty for a name the workflow does not have
+     * @throws NullPointerException if {@code name} is {@code null}
+     */
+    public Optional<Transition> transition(String name) {
+        Objects.requireNonNull(name, NAME);
+        return Optional.ofNullable(transitionsByName.get(name));
     }
 
     /** A workflow the loader does not accept, carrying the detail: the key path and the rule. */

@@ -59,11 +59,9 @@ with the signing key source `file` (provider file), identity trailers, signature
 anchoring: checkpoints, proofs as notes, the anchor provider `signed` (own timestamp) and the anchor verification
 
 |`git-forms`
-|Schema-driven documents: schema, template, workflow, deadlines, step-up for releases
+|Schema-driven documents: schema, template, workflow, deadlines, typed links, running numbers, step-up for releases
 (xref:schema-driven-documents.adoc[Schema-Driven Documents])
-|implemented: outcome list and result, kinds as configuration, schema validation, data layout, YAML codec,
-generated output with its check, workflow with its transitions, step-up per transition; planned: deadlines, links,
-running numbers
+|implemented
 
 |`git-timestamp` (optional)
 |RFC 3161 timestamps as anchor provider (xref:evidence-and-companion-stores.adoc#_the_anchor[Evidence and Companion

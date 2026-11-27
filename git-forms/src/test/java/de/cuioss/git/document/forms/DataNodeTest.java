@@ -16,6 +16,7 @@
 package de.cuioss.git.document.forms;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -25,12 +26,14 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 
 import de.cuioss.test.generator.Generators;
 import de.cuioss.test.generator.junit.EnableGeneratorController;
+import dev.harrel.jsonschema.JsonNode;
 import dev.harrel.jsonschema.SimpleType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -40,7 +43,9 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * The numbers of {@link DataNode} (GDR-FORMS-2): equality by value without expanding a number by its exponent, the
  * digit limit of an integer, and the keywords {@code const}, {@code enum} and {@code uniqueItems} on numbers with an
- * exponent near the end of the range of {@code int}.
+ * exponent near the end of the range of {@code int}; and the structure of a value: a child shares its parent's JSON
+ * Pointer instead of a copy of it, and a container shared by several parents is checked once, at its deepest
+ * occurrence.
  * <p>
  * The large exponents are literals, being the case under test; the ordinary numbers are generated.
  */
@@ -224,6 +229,127 @@ class DataNodeTest {
                             validate(schema, List.of(HUNDRED_HUGE, TEN_HUGER)), "two notations of one value"),
                     () -> assertEquals(new ValidationResult.Valid(), validate(schema, List.of(ONE_HUGE, HUNDRED_HUGE)),
                             "two different values")));
+        }
+    }
+
+    @Nested
+    @DisplayName("structure")
+    class Structure {
+
+        /** The levels of the long-key chain above the wide mapping. */
+        private static final int CHAIN_LEVELS = 100;
+
+        /** The characters of each key of the chain. */
+        private static final int KEY_LENGTH = 1_000;
+
+        /** The entries of the wide mapping at the end of the chain. */
+        private static final int WIDTH = 20_000;
+
+        /**
+         * A chain of {@link #CHAIN_LEVELS} mappings with one long key each, ending in a mapping of {@link #WIDTH}
+         * entries. A copied prefix costs {@code WIDTH * CHAIN_LEVELS * (KEY_LENGTH + 1)} characters, about two thousand
+         * million, when the wide mapping's children are built; a shared one costs nothing until a pointer is asked for.
+         */
+        private Map<String, Object> longKeyChain(String key) {
+            Map<String, Object> wide = new LinkedHashMap<>();
+            for (int index = 0; index < WIDTH; index++) {
+                wide.put("e" + index, index);
+            }
+            Map<String, Object> value = wide;
+            for (int level = 0; level < CHAIN_LEVELS; level++) {
+                Map<String, Object> outer = new LinkedHashMap<>();
+                outer.put(key, value);
+                value = outer;
+            }
+            return value;
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: the children of a wide mapping under a long-key chain copy no pointer prefix")
+        void pointerPrefixShared() {
+            String key = Generators.letterStrings(KEY_LENGTH, KEY_LENGTH).next();
+            var root = DataNode.root(longKeyChain(key));
+
+            var deepest = assertTimeoutPreemptively(NO_STALL, () -> {
+                JsonNode node = root;
+                for (int level = 0; level < CHAIN_LEVELS; level++) {
+                    node = node.asObject().get(key);
+                }
+                Map<String, JsonNode> children = node.asObject();
+                assertEquals(WIDTH, children.size(), "every entry built");
+                return node;
+            }, "building the children copies no prefix");
+
+            String prefix = ("/" + key).repeat(CHAIN_LEVELS);
+            assertAll(
+                    () -> assertEquals("", root.getJsonPointer(), "the root"),
+                    () -> assertEquals(prefix, deepest.getJsonPointer(), "the pointer of the wide mapping"),
+                    () -> assertEquals(prefix + "/e7", deepest.asObject().get("e7").getJsonPointer(),
+                            "a child joins its parent's pointer on request"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a child's pointer encodes ~ and / and an item its index")
+        void pointerEncoding() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("a/b~c", List.of("x", List.of("y")));
+            var root = DataNode.root(data);
+
+            JsonNode list = root.asObject().get("a/b~c");
+            assertAll(
+                    () -> assertEquals("/a~1b~0c", list.getJsonPointer(), "the key escaped"),
+                    () -> assertEquals("/a~1b~0c/1/0", list.asArray().get(1).asArray().getFirst().getJsonPointer(),
+                            "items by index"));
+        }
+
+        /** {@code x = List.of(x, x)} built {@code levels - 1} times over an empty list: {@code levels} containers deep. */
+        private Object shared(int levels) {
+            Object value = List.of();
+            for (int level = 1; level < levels; level++) {
+                value = List.of(value, value);
+            }
+            return value;
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: x = List.of(x, x) built 128 times is checked quickly, each container once")
+        void sharedSubtreeAtTheLimit() {
+            var value = shared(DataNode.MAX_DEPTH);
+
+            assertTimeoutPreemptively(NO_STALL, () -> DataNode.root(value),
+                    "2^127 paths, 128 containers, one walk each");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: x = List.of(x, x) built 129 times is refused quickly, naming the limit")
+        void sharedSubtreeBeyondTheLimit() {
+            var value = shared(DataNode.MAX_DEPTH + 1);
+
+            var thrown = assertTimeoutPreemptively(NO_STALL,
+                    () -> assertThrows(IllegalArgumentException.class, () -> DataNode.root(value)));
+
+            assertEquals("not of the JSON data model: nested deeper than 128 levels", thrown.getMessage(), "the limit");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a container shared at two depths is bounded at its deepest, in either order")
+        void sharedContainerBoundAtItsDeepest() {
+            // two containers deep, reached once at the top and once below a chain of 127 lists: 129 at its deepest
+            List<Object> container = List.of(List.of());
+            Object chain = container;
+            for (int level = 0; level < DataNode.MAX_DEPTH - 1; level++) {
+                chain = List.of(chain);
+            }
+            var shallowFirst = List.of(container, chain);
+            var deepFirst = List.of(chain, container);
+
+            assertAll(
+                    () -> assertThrows(IllegalArgumentException.class, () -> DataNode.root(shallowFirst),
+                            "the shallow occurrence walked first"),
+                    () -> assertThrows(IllegalArgumentException.class, () -> DataNode.root(deepFirst),
+                            "the deep occurrence walked first"),
+                    () -> assertDoesNotThrow(() -> DataNode.root(List.of(container, List.of(container))),
+                            "shared within the limit"));
         }
     }
 }

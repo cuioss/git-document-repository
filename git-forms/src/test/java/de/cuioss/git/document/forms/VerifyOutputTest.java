@@ -131,6 +131,38 @@ class VerifyOutputTest {
     }
 
     @Test
+    @DisplayName("GDR-FORMS-4: a mismatching path that holds a line feed or a backslash is printed on one line")
+    void pathOnOneLine(@LocalRepository Repository repository) throws Exception {
+        var plain = OutputCheckTest.Document.generate();
+        var document = new OutputCheckTest.Document(OutputCheckTest.word() + "\n" + OutputCheckTest.word() + "\\",
+                plain.title(), plain.owner(), plain.reason(), plain.summary());
+        OutputCheckTest.commit(repository, document.files(null));
+
+        var ran = runOn(repository, VerifyOutput.PER_DOCUMENT);
+
+        String printed = document.outputPath().replace("\\", "\\\\").replace("\n", "\\u000a");
+        assertAll(
+                () -> assertEquals(VerifyOutput.MISMATCHING, ran.code(), "mismatching"),
+                () -> assertEquals(printed + "\n", ran.out(), "one line naming the path, escaped"),
+                () -> assertEquals(1, ran.out().lines().count(), "one path, one line"));
+    }
+
+    @Test
+    @DisplayName("GDR-FORMS-4: data nested too deep once joined is MALFORMED, not a repository that cannot be opened")
+    void nestedTooDeep(@LocalRepository Repository repository) throws Exception {
+        var document = OutputCheckTest.Document.generate();
+        Map<String, byte[]> files = new TreeMap<>(document.files(document.output()));
+        files.put(document.directory() + "details.yaml", OutputCheckTest.nestedYaml(DataNode.MAX_DEPTH));
+        OutputCheckTest.commit(repository, files);
+
+        var ran = runOn(repository, VerifyOutput.PER_DOCUMENT);
+
+        assertEquals(new Ran(VerifyOutput.FAILED, "",
+                        "MALFORMED document.yaml: nested deeper than 128 levels, joined with its parts\n"), ran,
+                "the refusal of the join, not NOT_A_REPOSITORY");
+    }
+
+    @Test
     @DisplayName("GDR-FORMS-4: a numbered kind is checked by its entries")
     void numbered(@LocalRepository Repository repository) throws Exception {
         var document = OutputCheckTest.Document.generate();

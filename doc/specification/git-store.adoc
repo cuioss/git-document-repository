@@ -705,7 +705,11 @@ every working branch and collection branch. After a save only the changed docume
   `refs/heads/<collection>` of a numbered collection holds its entries; the counter file is no document. Every other
   branch, and every collection without a contributor, is not indexed. `entries(source, collection)` returns the current
   entry values of one collection on one source by key, `sources()` the indexed branches and `commitId(source)` the
-  commit a source is indexed at.
+  commit a source is indexed at. `sourceEntries(source, collection)` returns both, the commit id and the entries of
+  one collection, as a `StoreIndex.SourceEntries` read from one published index, empty when the index does not hold
+  the source: a refresh that publishes between a call of `commitId` and one of `entries` can pair the commit of one
+  index with the entries of the next, so a consumer that walks the history from the indexed commit reads both
+  through `sourceEntries`.
 * *Refresh.* Every fetch, save and release of the writer hands the references it moved to the `StoreEvents` of the
   writer once it released every lock of the store, and the index refreshes. A refresh reads the tips of the source
   branches; a source whose tip did not move is kept, one whose tip moved re-reads only the documents with a path

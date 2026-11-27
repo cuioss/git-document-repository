@@ -461,6 +461,47 @@ class StoreIndexTest {
                                 GitStoreLogMessages.WARN.INDEX_SOURCE_UNREAD.resolveIdentifierString()));
             }
         }
+
+        @Test
+        @DisplayName("GDR-STORE-9: sourceEntries reads the commit and the entries of a source from one published index")
+        void sourceEntriesReadTogether(@Remote LocalRemote remote) {
+            var repository = remote.repository();
+            var layout = layout(repository);
+            var recorder = new Recorder();
+            var events = new StoreEvents(updates -> {
+                // no listeners in this test
+            });
+            Map<DocumentCollection, IndexContributor<String>> contributors = new LinkedHashMap<>();
+            contributors.put(layout.documents(), recorder);
+            contributors.put(layout.numbered(), recorder);
+            var absent = StoreReferences.target(value(DocumentKey.of(layout.documents(), Ulid.next())));
+
+            try (var index = value(StoreIndex.open(word(), repository, events, contributors))) {
+                var quiescent = index.sourceEntries(layout.workingBranch(), layout.documents()).orElseThrow();
+                var before = index.commitId(layout.workingBranch()).orElseThrow();
+                var entriesBefore = index.entries(layout.workingBranch(), layout.documents());
+                Map<String, String> movedTree = merged(layout.workingTree(), Map.of(path(layout.working(), ".json"),
+                        content()));
+                var moved = commit(repository, layout.workingBranch(), movedTree, ObjectId.fromString(before));
+                events.emit(List.of(new StoreEvents.Update(layout.workingBranch(), before, moved.name())));
+
+                var refreshed = index.sourceEntries(layout.workingBranch(), layout.documents()).orElseThrow();
+
+                assertAll(
+                        () -> assertEquals(before, quiescent.commitId(),
+                                "the commit of a quiescent index, as commitId returns it"),
+                        () -> assertEquals(entry(filesOf(layout.working(), layout.workingTree())),
+                                quiescent.entries().get(layout.working()), "the entries read at that commit"),
+                        () -> assertEquals(entriesBefore, quiescent.entries(), "as entries returns them"),
+                        () -> assertEquals(Optional.empty(), index.sourceEntries(absent, layout.documents()),
+                                "empty for a source the index does not hold"),
+                        () -> assertEquals(moved.name(), refreshed.commitId(), "the refreshed commit"),
+                        () -> assertEquals(entry(filesOf(layout.working(), movedTree)),
+                                refreshed.entries().get(layout.working()), "with the entries read at it"),
+                        () -> assertEquals(index.entries(layout.workingBranch(), layout.documents()),
+                                refreshed.entries(), "the same entries as entries returns"));
+            }
+        }
     }
 
     /** Writes a draft of one file of the document and saves it. */

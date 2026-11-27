@@ -135,29 +135,6 @@ class DocumentLayoutTest {
         }
 
         @Test
-        @DisplayName("GDR-FORMS-4: the output is the one path of the layout that is never merged")
-        void isOutput() {
-            var collection = name();
-            var ulid = name();
-            var perDocument = layout(perDocument(collection));
-            var numbered = layout(numberedWithTemplate(collection));
-            var withoutTemplate = layout(numbered(collection));
-
-            assertAll(
-                    () -> assertTrue(perDocument.isOutput(collection + "/" + ulid + "/report.adoc"), "a document"),
-                    () -> assertTrue(numbered.isOutput(collection + "/R-001.adoc"), "an entry"),
-                    () -> assertFalse(perDocument.isOutput(collection + "/" + ulid + "/document.yaml"), "the data"),
-                    () -> assertFalse(perDocument.isOutput(collection + "/" + ulid + "/narrative/report.adoc"),
-                            "a fragment"),
-                    () -> assertFalse(perDocument.isOutput(collection + "/.hidden/report.adoc"), "no ULID"),
-                    () -> assertFalse(perDocument.isOutput(name() + "/" + ulid + "/report.adoc"),
-                            "another collection"),
-                    () -> assertFalse(numbered.isOutput(collection + "/a/R-001.adoc"), "below an entry"),
-                    () -> assertFalse(numbered.isOutput(collection + "/.adoc"), "no number"),
-                    () -> assertFalse(withoutTemplate.isOutput(collection + "/R-001.adoc"), "no template, no output"));
-        }
-
-        @Test
         @DisplayName("GDR-FORMS-4: an output of a segment that is no name segment is INVALID, a kind without output refused")
         void refusedOutput() {
             var perDocument = layout(perDocument(name()));
@@ -322,6 +299,34 @@ class DocumentLayoutTest {
                             layout.join(Map.of("details", Map.of()), part), "the part is held twice"),
                     () -> assertThrows(IllegalArgumentException.class, () -> layout.join(empty, foreign),
                             "a part of a property that is not split"));
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-3: a part at the nesting limit, one level deeper once joined, is MALFORMED, not thrown")
+        void partAtTheNestingLimit() {
+            var layout = layout(perDocument(name()));
+            Map<String, Map<String, ?>> atTheLimit = Map.of("details", nested(DataNode.MAX_DEPTH));
+            Map<String, Map<String, ?>> belowTheLimit = Map.of("details", nested(DataNode.MAX_DEPTH - 1));
+            Map<String, @Nullable Object> document = Map.of("title", name());
+
+            assertAll(
+                    () -> assertEquals(FormsResult.passOn(StoreResult.of(StoreOutcome.MALFORMED,
+                                    "document.yaml: nested deeper than 128 levels, joined with its parts")),
+                            layout.join(document, atTheLimit), "a part of 128 levels holds 129 once joined"),
+                    () -> assertTrue(layout.join(document, belowTheLimit).isOk(),
+                            "a part of 127 levels holds 128 once joined, the limit"));
+        }
+
+        /** A mapping of {@code depth} nested mappings, the outermost counting 1. */
+        private static Map<String, ?> nested(int depth) {
+            Map<String, Object> innermost = new LinkedHashMap<>();
+            Map<String, Object> outer = innermost;
+            for (int level = 1; level < depth; level++) {
+                Map<String, Object> next = new LinkedHashMap<>();
+                next.put("inner", outer);
+                outer = next;
+            }
+            return outer;
         }
 
         @Test

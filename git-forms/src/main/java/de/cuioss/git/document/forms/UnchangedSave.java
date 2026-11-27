@@ -59,7 +59,9 @@ final class UnchangedSave {
      * a step would, before anything is released or written. When the step's edits equal the files of the saved commit,
      * the commit stands; otherwise its output is stale, and the edits are written through a second draft and save with a
      * fresh step, whose commit the transition continues with. That second draft changes the stale paths against the
-     * saved commit, so its save always runs the step.
+     * saved commit, so its save always runs the step. A {@link RuntimeException} the checks throw, for example from a
+     * {@link CatalogResolver}, ends the transition as the store ends a save whose step throws: with the passed-on
+     * {@link de.cuioss.git.document.core.GitOutcome#FAILED}, the detail naming the class of the exception only.
      *
      * @param call     the transition
      * @param commitId the full id of the saved commit
@@ -79,11 +81,16 @@ final class UnchangedSave {
         } catch (ReadFailure e) {
             return TransitionOutcomes.readFailed(e);
         }
+        // outside the store's step isolation, a callback of the checks such as a catalog resolver is isolated here
+        // cui-rewrite:disable InvalidExceptionUsageRecipe
+        catch (RuntimeException e) {
+            return TransitionOutcomes.stepFailed(call.key(), e);
+        }
         if (!(outcome instanceof SaveStep.Edits)) {
             return TransitionOutcomes.fromCapture(check);
         }
         if (stale.isEmpty()) {
-            return new Result.Performed(commitId, null);
+            return new Result.Performed(commitId, call.key(), null);
         }
         return rewrite(call, view, stale);
     }
@@ -104,7 +111,7 @@ final class UnchangedSave {
         SaveResult result = writer.save(call.author(), call.claims(), call.key(), Map.of(), call.change().message(),
                 step);
         return switch (result) {
-            case SaveResult.Saved(String commitId) -> new Result.Performed(commitId, null);
+            case SaveResult.Saved(String commitId) -> new Result.Performed(commitId, call.key(), null);
             case SaveResult.Conflicting(List<String> paths) -> new Result.Conflicting(paths);
             case SaveResult.NotSaved notSaved -> TransitionOutcomes.refused(step, notSaved);
         };

@@ -24,6 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 
@@ -56,6 +58,59 @@ class SchemaRequiredTest {
     private static final FormsResult.Outcome MALFORMED = new FormsResult.PassedOn(StoreOutcome.MALFORMED);
 
     private final SchemaValidator validator = new SchemaValidator();
+
+    /**
+     * The flat definitions of the long chain, side by side under {@code $defs}: 55,000, as many as fit, with names in
+     * base 36, within the 3 Mi code points the reader reads.
+     */
+    private static final int FLAT_DEFINITIONS = 55_000;
+
+    /**
+     * A schema whose {@code anyOf} references the first of {@code count} flat definitions, each reaching the next
+     * through {@code properties} and {@code $ref}; the last one holds {@code last}. {@code properties} descends, so the
+     * bound of a chain applied to the same value does not count it, and the check of {@code required} under
+     * {@code anyOf} follows the whole chain.
+     */
+    private static byte[] flatChain(int count, String last) {
+        var text = new StringBuilder("{\"anyOf\":[{\"$ref\":\"#/$defs/0\"}],\"$defs\":{");
+        for (int index = 0; index < count - 1; index++) {
+            text.append('"').append(Integer.toString(index, 36)).append("\":{\"properties\":{\"p\":{\"$ref\":\"#/$defs/")
+                    .append(Integer.toString(index + 1, 36)).append("\"}}},");
+        }
+        text.append('"').append(Integer.toString(count - 1, 36)).append("\":").append(last).append("}}");
+        return text.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Nested
+    @DisplayName("long chains")
+    class LongChains {
+
+        /** Parses a schema file on a thread with the default stack size, as {@link NestingDepthTest} runs its cases. */
+        private FormsResult<FormSchema> parseOnDefaultStack(byte[] file) throws Throwable {
+            AtomicReference<@Nullable FormsResult<FormSchema>> parsed = new AtomicReference<>();
+            NestingDepthTest.onDefaultStack(() -> parsed.set(FormSchema.parse(PATH, file)));
+            return Objects.requireNonNull(parsed.get(), "the parse returned");
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: a schema of 55,000 flat $defs chained through properties to $ref parses")
+        void flatChainWithoutRequiredParses() throws Throwable {
+            var result = parseOnDefaultStack(flatChain(FLAT_DEFINITIONS, "{}"));
+
+            assertTrue(result.isOk(), () -> "a result, accepted: " + result.detail());
+        }
+
+        @Test
+        @DisplayName("GDR-FORMS-2: required at the end of 55,000 flat $defs under anyOf is refused as MALFORMED")
+        void flatChainWithRequiredRefused() throws Throwable {
+            var result = parseOnDefaultStack(flatChain(FLAT_DEFINITIONS, "{\"required\":[\"p\"]}"));
+
+            assertAll(
+                    () -> assertEquals(MALFORMED, result.outcome(), "the schema is refused"),
+                    () -> assertEquals(PATH + ": required: not allowed under anyOf, where it cannot be deferred",
+                            result.detail(), "the fixed reason"));
+        }
+    }
 
     @Nested
     @DisplayName("references")
