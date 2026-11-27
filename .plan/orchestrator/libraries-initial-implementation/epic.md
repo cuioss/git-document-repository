@@ -633,6 +633,15 @@ Out of scope: `doc/app/` (CISOs-Friend), which gets its own orchestrator epic, a
   plan-marshall subjects to the plan-marshall `lessons-routing` inbox (`-099` to `-114`), 6 rules of this repository's modules promoted into the local lessons
   store (`2026-11-25-08-001` to `-006`), 1 discarded onto the open item "empty `skills_by_profile`" (second standing rule; `lessons-moved.md`). Nothing was
   emitted, on the operator's word.
+- 2026-11-27 — **Operator decisions on the identity vocabulary** (after the PLAN-14 analysis; nothing staged yet). (1) The "mfa" naming: the whole identity model of
+  `git-store` and `git-forms` is OpenID Connect vocabulary (`IdentityClaims(issuer, authTime, acr, amr)`, the trailers `Actor-Issuer`, `Auth-Time`, `Auth-Context`, the
+  keys `step-up.acr` / `step-up.amr`, the default value `mfa` of RFC 8176), which contradicts the concept's own "Not in Scope: the OAuth flows and the identity
+  provider". Of the three defaults offered, the operator chose **(b): no protocol default; a deployment must name what holds when verification is enabled.**
+  (2) **TrailHand is to be renamed Audit-Notary everywhere** (`cuioss/TrailHand` redirects to `cuioss/Audit-Notary` on GitHub; the mentions in this repository are
+  `AGENTS.md` 17-18 and `doc/README.adoc` 17-18). (3) The operator asked whether the library can be made fully abstract: "step-up" and "mfa" are too specific, a
+  callback (`verifyIdentity`, or a `Function` passed in) so that the library has no knowledge of the mechanism at all. The analysis is in the session; the route (a new
+  plan, and an ADR superseding the identity part of ADR-0005 and the issuer/`sub` part of ADR-0006) awaits the operator's word. PLAN-14 deliverable 6 (shipped, not
+  released) and the layer-3 minor L3-6 (an enabled `StepUpPolicy` with no value) are affected; PLAN-15, PLAN-16 and PLAN-27 name the vocabulary.
 
 ## Open Defects
 
