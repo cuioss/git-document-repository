@@ -23,6 +23,7 @@ import de.cuioss.git.document.forms.DocumentTransitions.Definition;
 import de.cuioss.git.document.store.DocumentCollection;
 import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.StoreReferences;
+import de.cuioss.git.document.store.Ulid;
 import org.eclipse.jgit.lib.Repository;
 import org.jspecify.annotations.Nullable;
 
@@ -31,7 +32,8 @@ import org.jspecify.annotations.Nullable;
  * layout, the codec and the output check of the kind, the resolution of link targets of the application, and the
  * lookups per key that the transitions share (the
  * collection check, the path of the file, the branch the current state is read from, the current state, the
- * transition and the step of a save).
+ * transition and the step of a save, which gets the layout and the numbering of a numbered kind for a new entry whose
+ * key is the ULID of its draft, GDR-FORMS-9).
  */
 final class TransitionContext {
 
@@ -159,6 +161,22 @@ final class TransitionContext {
      */
     TransitionStep step(TransitionCall call, Map<String, @Nullable Object> base) {
         return new TransitionStep(call.transition(), initialState(), definition.schema(), output, links,
-                call.key().id(), call.documentPath(), base);
+                call.key().id(), call.documentPath(), base, allocation(call.key()));
+    }
+
+    /**
+     * What the step needs to allocate the running number of an entry (GDR-FORMS-9): the layout and the numbering of a
+     * numbered kind, when the id of the key is the ULID of a draft that carries no running number yet.
+     *
+     * @param key the document or entry
+     * @return the allocation, or {@code null} for a per-document kind or an entry whose key carries its number
+     */
+    private TransitionStep.@Nullable Allocation allocation(DocumentKey key) {
+        Kind kind = definition.kind();
+        @Nullable Numbering numbering = kind.numbering();
+        if (numbering == null || !Ulid.isValid(key.id()) || RunningNumbers.isAssigned(kind, key)) {
+            return null;
+        }
+        return new TransitionStep.Allocation(layout, numbering);
     }
 }

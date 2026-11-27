@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The transitions of the workflow of one kind of document over the mechanisms of the store (GDR-FORMS-4, GDR-FORMS-5,
- * GDR-FORMS-7, GDR-FORMS-8).
+ * GDR-FORMS-7, GDR-FORMS-8, GDR-FORMS-9).
  * <p>
  * {@link #perform} looks the transition up in the current state of the document, the field {@value TransitionStep#STATE}
  * of {@value DocumentLayout#DOCUMENT_FILE} or the entry file on the local target branch (else {@code main}); a missing
@@ -71,6 +71,13 @@ import org.jspecify.annotations.Nullable;
  * step are applied to the files of that commit, a refusal ends the transition as a refusal of the step would, and an
  * output that is stale on that commit is rewritten through a second draft and save, whose commit is the one released.
  * The draft written before a save stays when the save does not succeed, as every draft of the user does.
+ * <p>
+ * A new entry of a numbered kind is drafted under the ULID key of {@link RunningNumbers#newKey(Kind)} and receives its
+ * running number on its first {@code save} or {@code release} (GDR-FORMS-9): the step of every attempt reads the counter
+ * of the attempt's tip, takes the next number and writes the entry file, the advanced counter and the output under that
+ * number in the one save commit, which the compare-and-swap of the store pushes, so two concurrent creators never
+ * receive the same number. {@link Result.Performed#key()} then holds the key of the number, the key the caller uses from
+ * then on; a release releases the entry under it.
  * <p>
  * The current state is read through the bare clone of the writer, which the caller opens on the git directory it
  * passed to {@link StoreWriter#open}; this class only reads it, through the package-private {@link CloneReader}. This
@@ -125,7 +132,9 @@ public final class DocumentTransitions {
      * @param key        the document or entry, of the collection of the kind
      * @param transition the name of the transition
      * @param change     the edits, the expected blob ids and the message of the call
-     * @return {@link Result.Performed} with the commit the transition wrote; {@link Result.Refused} with the findings
+     * @return {@link Result.Performed} with the commit the transition wrote and the key of the document or entry, the
+     *         key of the allocated running number after the first save of a new entry; {@link Result.Refused} with the
+     *         findings
      *         for {@link FormsOutcome#INVALID} or {@link FormsOutcome#MANDATORY_FIELDS_MISSING}, a link field of the
      *         data whose text is of neither link form or whose target does not exist being a {@link Violation} at its
      *         JSON Pointer with the message {@code link: no such target} for a missing target (GDR-FORMS-8);
@@ -268,20 +277,25 @@ public final class DocumentTransitions {
          * @param commitId the full id of the commit the transition wrote: the draft commit of an
          *                 {@code intermediate-save}, the save commit of a {@code save} (or the unchanged tip, when
          *                 the transition changed nothing), the release commit of a {@code release}
+         * @param key      the key of the document or entry after the transition: the key of the call, or, after the
+         *                 first save of a new entry of a numbered kind whose key was the ULID of its draft, the key of
+         *                 its running number (GDR-FORMS-9), under which the entry is found from then on
          * @param release  the release of a {@code release}; {@code null} otherwise
          * @since 0.1
          */
-        record Performed(String commitId, @Nullable Release release) implements Result {
+        record Performed(String commitId, DocumentKey key, @Nullable Release release) implements Result {
 
             /**
-             * Checks the commit id.
+             * Checks the commit id and the key.
              *
              * @param commitId the commit id
+             * @param key      the key
              * @param release  the release, or {@code null}
-             * @throws NullPointerException if {@code commitId} is {@code null}
+             * @throws NullPointerException if {@code commitId} or {@code key} is {@code null}
              */
             public Performed {
                 Objects.requireNonNull(commitId, "commitId");
+                Objects.requireNonNull(key, "key");
             }
 
             /**

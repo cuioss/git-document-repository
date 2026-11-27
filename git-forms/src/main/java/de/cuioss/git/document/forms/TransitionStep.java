@@ -51,6 +51,16 @@ import org.jspecify.annotations.Nullable;
  * {@link SaveStep.Refusal} carries no text; each attempt starts with a fresh capture, so a re-applied attempt never
  * reports the findings of an earlier one.
  * <p>
+ * For a new entry of a numbered kind, whose key is the ULID of its draft, the step allocates the running number on
+ * every attempt (GDR-FORMS-9): it reads the counter file of the attempt's tip ({@link CounterCodec}, an absent file
+ * counting 0), takes the next number ({@link RunningNumbers#number(Numbering, long)}), writes the merged file as the
+ * entry file of that number, deletes the file of the ULID key, writes the advanced counter and, with a template, the
+ * output of the number, all in the one save commit, and records the number for {@link DocumentTransitions}. The commit
+ * is pushed with the compare-and-swap lease of the collection branch, so of two creators that read the same counter one
+ * loses the push, and its re-applied attempt reads the winner's counter and takes the next number. A counter that
+ * cannot be read, is exhausted, needs more digits than the numbering has, or names an entry the tip already holds
+ * refuses the attempt as the passed-on {@link StoreOutcome#MALFORMED}.
+ * <p>
  * The step records whether the store ran it: a save whose draft changes nothing calls no step, and
  * {@link DocumentTransitions} then applies the same checks through {@link #check(Attempt)} to the saved commit before
  * it releases anything. A step serves one save and is called on the saving thread only.
@@ -63,6 +73,8 @@ final class TransitionStep implements SaveStep {
     /** The message of the violation of a link field whose target does not exist (GDR-FORMS-8). */
     static final String NO_SUCH_TARGET = "link: no such target";
 
+    private static final CounterCodec COUNTER = new CounterCodec();
+
     private final Transition transition;
     private final String initialState;
     private final FormSchema schema;
@@ -73,8 +85,10 @@ final class TransitionStep implements SaveStep {
     private final String unit;
     private final String documentPath;
     private final Map<String, @Nullable Object> base;
+    private final @Nullable Allocation allocation;
 
     private @Nullable Captured captured;
+    private @Nullable String allocated;
     private boolean ran;
 
     /**
@@ -85,12 +99,16 @@ final class TransitionStep implements SaveStep {
      * @param schema       the schema of the kind
      * @param output       the output of the kind, which reads the data and regenerates the output
      * @param links        the resolution of the targets of the link fields
-     * @param unit         the ULID of the document or the running number of the entry
-     * @param documentPath the path of {@value DocumentLayout#DOCUMENT_FILE} or of the entry file
+     * @param unit         the ULID of the document, the running number of the entry, or the ULID of the draft of a new
+     *                     entry
+     * @param documentPath the path of {@value DocumentLayout#DOCUMENT_FILE} or of the entry file of {@code unit}
      * @param base         the decoded file the draft started from, empty when there was none (see {@link StateMerge})
+     * @param allocation   the layout and numbering of a numbered kind when {@code unit} is the ULID of a new entry,
+     *                     which receives its running number on every attempt; {@code null} otherwise
      */
     TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output,
-            LinkTargets links, String unit, String documentPath, Map<String, @Nullable Object> base) {
+            LinkTargets links, String unit, String documentPath, Map<String, @Nullable Object> base,
+            @Nullable Allocation allocation) {
         this.transition = transition;
         this.initialState = initialState;
         this.schema = schema;
@@ -101,6 +119,7 @@ final class TransitionStep implements SaveStep {
         this.unit = unit;
         this.documentPath = documentPath;
         this.base = base;
+        this.allocation = allocation;
     }
 
     @Override
@@ -118,6 +137,7 @@ final class TransitionStep implements SaveStep {
      */
     Outcome check(Attempt attempt) {
         captured = null;
+        allocated = null;
         Optional<byte[]> tipContent = attempt.tipContent(documentPath);
         FormsResult<String> current = readState(codec, tipContent, documentPath, initialState);
         if (!current.isOk()) {
@@ -131,7 +151,52 @@ final class TransitionStep implements SaveStep {
             return refuse(written.outcome(), Objects.requireNonNull(written.detail()), null);
         }
         byte[] content = Objects.requireNonNull(written.value());
-        return checkedEdits(new Overlay(attempt, documentPath, content), content);
+        @Nullable Allocation numbering = allocation;
+        if (numbering == null) {
+            return checkedEdits(new Overlay(attempt, documentPath, content), content, unit, documentPath, List.of());
+        }
+        return allocate(attempt, numbering, content);
+    }
+
+    /**
+     * Allocates the running number of a new entry on this attempt (GDR-FORMS-9): the counter of the attempt's tip, absent
+     * read as 0, advanced by one and formatted; the merged file is written as the entry file of that number, the file of
+     * the ULID draft key is deleted, and the advanced counter is written beside it, all in the one save commit. A
+     * re-applied attempt reads the counter of its new tip again.
+     */
+    private Outcome allocate(Attempt attempt, Allocation numbering, byte[] content) {
+        String counterPath = numbering.layout().counter();
+        long counter = 0;
+        Optional<byte[]> counterContent = attempt.tipContent(counterPath);
+        if (counterContent.isPresent()) {
+            StoreResult<Long> decoded = COUNTER.decode(counterContent.get());
+            if (!decoded.isOk()) {
+                return refuse(new FormsResult.PassedOn(StoreOutcome.MALFORMED),
+                        Objects.requireNonNull(decoded.detail()), null);
+            }
+            counter = Objects.requireNonNull(decoded.value());
+        }
+        if (counter == Long.MAX_VALUE) {
+            return refuse(new FormsResult.PassedOn(StoreOutcome.MALFORMED), counterPath + ": exhausted", null);
+        }
+        long next = counter + 1;
+        FormsResult<String> number = RunningNumbers.number(numbering.numbering(), next);
+        if (!number.isOk()) {
+            return refuse(number.outcome(), Objects.requireNonNull(number.detail()), null);
+        }
+        String assigned = Objects.requireNonNull(number.value());
+        String entryPath = Objects.requireNonNull(numbering.layout().entry(assigned).value(),
+                "a running number is a name segment");
+        if (attempt.tipContent(entryPath).isPresent()) {
+            return refuse(new FormsResult.PassedOn(StoreOutcome.MALFORMED),
+                    counterPath + ": behind the entries of the collection", null);
+        }
+        Outcome outcome = checkedEdits(new Overlay(attempt, entryPath, content), content, assigned, entryPath,
+                List.of(new TreeEdit.Delete(documentPath), new TreeEdit.Put(counterPath, COUNTER.encode(next))));
+        if (outcome instanceof Edits) {
+            allocated = assigned;
+        }
+        return outcome;
     }
 
     /**
@@ -151,6 +216,15 @@ final class TransitionStep implements SaveStep {
      */
     Optional<Captured> captured() {
         return Optional.ofNullable(captured);
+    }
+
+    /**
+     * Returns the running number the last attempt allocated, for the facade.
+     *
+     * @return the number, or empty when the step allocates none or the last attempt was refused
+     */
+    Optional<String> allocated() {
+        return Optional.ofNullable(allocated);
     }
 
     /** The file the attempt writes: the merge of the tip's file, the draft's file and the base, with the state. */
@@ -174,9 +248,18 @@ final class TransitionStep implements SaveStep {
                 transition.to())));
     }
 
-    /** Validates the data of the files and returns the edits of the file and the regenerated output. */
-    private Outcome checkedEdits(OutputCheck.DocumentFiles files, byte[] written) {
-        FormsResult<Map<String, @Nullable Object>> data = output.data(files, unit);
+    /**
+     * Validates the data of the files and returns the edits of the file, the regenerated output and the further edits.
+     *
+     * @param files   the files of the attempt, the file of the document or entry replaced by the content written
+     * @param written the content of the file of the document or entry
+     * @param name    the ULID of the document or the running number of the entry the edits are written under
+     * @param path    the path of the file of the document or entry the edits write
+     * @param further the further edits of an allocation, none otherwise
+     */
+    private Outcome checkedEdits(OutputCheck.DocumentFiles files, byte[] written, String name, String path,
+            List<TreeEdit> further) {
+        FormsResult<Map<String, @Nullable Object>> data = output.data(files, name);
         if (!data.isOk()) {
             return refuse(data.outcome(), Objects.requireNonNull(data.detail()), null);
         }
@@ -197,15 +280,16 @@ final class TransitionStep implements SaveStep {
             }
         }
         List<TreeEdit> edits = new ArrayList<>();
-        edits.add(new TreeEdit.Put(documentPath, written));
+        edits.add(new TreeEdit.Put(path, written));
         if (output.generates()) {
-            FormsResult<byte[]> generated = output.generate(files, unit);
+            FormsResult<byte[]> generated = output.generate(files, name);
             if (!generated.isOk()) {
                 return refuse(generated.outcome(), Objects.requireNonNull(generated.detail()), null);
             }
-            String outputPath = Objects.requireNonNull(output.outputPath(unit).value());
+            String outputPath = Objects.requireNonNull(output.outputPath(name).value());
             edits.add(new TreeEdit.Put(outputPath, Objects.requireNonNull(generated.value())));
         }
+        edits.addAll(further);
         return new Edits(edits);
     }
 
@@ -293,6 +377,15 @@ final class TransitionStep implements SaveStep {
      * @param findings the findings of a refused validation or {@code required} check; {@code null} otherwise
      */
     record Captured(FormsResult.Outcome outcome, String detail, @Nullable ValidationResult findings) {
+    }
+
+    /**
+     * What the allocation of a running number needs (GDR-FORMS-9).
+     *
+     * @param layout    the layout of the numbered kind: the counter file, the entry files and the outputs
+     * @param numbering the numbering of the kind
+     */
+    record Allocation(DocumentLayout layout, Numbering numbering) {
     }
 
     /** The files of an attempt, with the file of the document or entry replaced by the content the step writes. */

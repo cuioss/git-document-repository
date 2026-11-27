@@ -35,7 +35,9 @@ import org.jspecify.annotations.Nullable;
  * #COUNTER_FILE}. A kind with a template has generated output (GDR-FORMS-4): {@code <collection>/<ulid>/}{@value
  * #OUTPUT_FILE} for a per-document kind, {@code <collection>/<number>.adoc} for a numbered kind. The output is the
  * one file of the layout that is never merged: a save regenerates it from the data of its commit
- * ({@link #isOutput(String)}). The allocation of running numbers is not part of the layout.
+ * ({@link #isOutput(String)}). The running number of a new entry is allocated on its first save (GDR-FORMS-9,
+ * {@link RunningNumbers}); until then the entry file is named by the ULID of its draft, {@code <collection>/<ulid>.yaml},
+ * and the first save writes it as {@code <collection>/<number>.yaml}.
  * <p>
  * Every name segment a caller supplies (a ULID, a fragment name, a running number) is checked: it is not empty and
  * holds no {@code /} and no leading {@code .}, which excludes {@code .} and {@code ..}; a refused segment is

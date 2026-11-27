@@ -83,7 +83,7 @@ final class UnchangedSave {
             return TransitionOutcomes.fromCapture(check);
         }
         if (stale.isEmpty()) {
-            return new Result.Performed(commitId, null);
+            return new Result.Performed(commitId, call.key(), null);
         }
         return rewrite(call, view, stale);
     }
@@ -104,7 +104,7 @@ final class UnchangedSave {
         SaveResult result = writer.save(call.author(), call.claims(), call.key(), Map.of(), call.change().message(),
                 step);
         return switch (result) {
-            case SaveResult.Saved(String commitId) -> new Result.Performed(commitId, null);
+            case SaveResult.Saved(String commitId) -> new Result.Performed(commitId, call.key(), null);
             case SaveResult.Conflicting(List<String> paths) -> new Result.Conflicting(paths);
             case SaveResult.NotSaved notSaved -> TransitionOutcomes.refused(step, notSaved);
         };

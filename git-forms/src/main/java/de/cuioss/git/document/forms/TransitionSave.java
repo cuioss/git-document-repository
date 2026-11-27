@@ -22,6 +22,7 @@ import java.util.Objects;
 
 import de.cuioss.git.document.forms.CloneReader.ReadFailure;
 import de.cuioss.git.document.forms.DocumentTransitions.Result;
+import de.cuioss.git.document.store.DocumentKey;
 import de.cuioss.git.document.store.Release;
 import de.cuioss.git.document.store.SaveResult;
 import de.cuioss.git.document.store.StoreReferences;
@@ -65,7 +66,7 @@ final class TransitionSave {
         if (call.transition().mechanism() == Mechanism.INTERMEDIATE_SAVE) {
             StoreResult<String> drafted = writer.draft(call.author(), call.key(), call.change().edits(),
                     call.change().message());
-            return drafted.isOk() ? new Result.Performed(Objects.requireNonNull(drafted.value()), null)
+            return drafted.isOk() ? new Result.Performed(Objects.requireNonNull(drafted.value()), call.key(), null)
                     : TransitionOutcomes.passOn(drafted);
         }
         return save(call);
@@ -106,7 +107,9 @@ final class TransitionSave {
 
     /**
      * Continues after a save: a save that did not run the step was unchanged and is verified first, then the
-     * transition is performed with the saved commit, released for {@code release}.
+     * transition is performed with the saved commit, released for {@code release}. A save whose step allocated a
+     * running number (GDR-FORMS-9) continues with the key of that number: the release releases the entry under it, and
+     * {@link Result.Performed#key()} reports it.
      */
     private Result afterSave(TransitionCall call, TransitionStep step, String commitId) {
         String saved = commitId;
@@ -117,8 +120,10 @@ final class TransitionSave {
             }
             saved = performed.commitId();
         }
-        return call.transition().mechanism() == Mechanism.RELEASE ? release(call, saved)
-                : new Result.Performed(saved, null);
+        DocumentKey key = step.allocated().map(number -> new DocumentKey(call.key().collection(), number))
+                .orElse(call.key());
+        return call.transition().mechanism() == Mechanism.RELEASE ? release(call, key, saved)
+                : new Result.Performed(saved, key, null);
     }
 
     /**
@@ -126,12 +131,12 @@ final class TransitionSave {
      * publishes exactly that commit. A failure leaves the saved state in place, and so does a branch that moved after
      * the save, which the store refuses with the passed-on outcome it returns; no compensating write is made.
      */
-    private Result release(TransitionCall call, String savedCommitId) {
-        StoreResult<Release> released = writer.release(call.author(), call.claims(), call.key(), savedCommitId);
+    private Result release(TransitionCall call, DocumentKey key, String savedCommitId) {
+        StoreResult<Release> released = writer.release(call.author(), call.claims(), key, savedCommitId);
         if (!released.isOk()) {
             return TransitionOutcomes.passOn(released);
         }
         Release release = Objects.requireNonNull(released.value());
-        return new Result.Performed(release.commitId(), release);
+        return new Result.Performed(release.commitId(), key, release);
     }
 }

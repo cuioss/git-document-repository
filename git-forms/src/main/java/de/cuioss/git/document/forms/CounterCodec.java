@@ -30,8 +30,9 @@ import de.cuioss.git.document.store.StoreResult;
  * <p>
  * Any other content is {@link StoreOutcome#MALFORMED}, its detail never repeating the content: an empty file, a sign, a
  * leading zero, a character that is no ASCII digit, a missing or a further line feed, and a number beyond the range of
- * {@code long}. The codec defines the format only; how the counter is advanced is the business of the running numbers.
- * The codec holds no state; one instance may serve every thread.
+ * {@code long}. The codec defines the format; the counter is advanced by the first save of every new entry, which
+ * reads it from the tip of its attempt and writes the advanced counter in the same commit as the entry
+ * ({@link RunningNumbers}, GDR-FORMS-9). The codec holds no state; one instance may serve every thread.
  *
  * @since 0.1
  */

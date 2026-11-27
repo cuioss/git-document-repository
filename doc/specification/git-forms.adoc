@@ -469,7 +469,8 @@ names no value, a split property that is no such name segment (`details/summary`
 `document.yaml` (a split property `document`). For a kind with a template, `output` gives the path of the generated
 output of a document, `<collection>/<ulid>/report.adoc`, and `entryOutput` that of an entry, `<collection>/<number>.adoc`,
 with the same check of the name segment; `isOutput` tells the one file of the layout that is never merged
-(<<GDR-FORMS-4>>). The allocation of running numbers is not part of the layout yet.
+(<<GDR-FORMS-4>>). Until its first save, a new entry is named by the ULID of its draft, `<collection>/<ulid>.yaml`;
+the first save allocates its running number and writes it as `<collection>/<number>.yaml` (<<GDR-FORMS-9>>).
 
 `YamlDocumentCodec` is the `Codec` of `git-store` (xref:git-store.adoc#GDR-STORE-11[GDR-STORE-11]) for
 `document.yaml`, an entry file and, through `part(property)`, a split part. It writes the keys of every object in the
@@ -516,7 +517,7 @@ that limit with an `IllegalArgumentException` before it orders or writes anythin
 The counter file `<collection>/.counter` holds the last running number given, as one decimal integer without sign and
 without leading zero followed by one line feed (`42\n`; `0\n` before the first number). `CounterCodec` writes and reads
 exactly that form; any other content, a number beyond the range of `long` included, is `MALFORMED`. The codec defines the
-format; advancing the counter belongs to <<GDR-FORMS-9>>.
+format; the first save of every new entry advances the counter in the same commit as the entry (<<GDR-FORMS-9>>).
 
 [#GDR-FORMS-4]
 == GDR-FORMS-4: Generated Output
@@ -702,8 +703,8 @@ transition continues with, and releases, that commit. A save that ran the step i
 
 The draft written before a save stays when the save does not succeed, as every draft of the user does. The result is
 the sealed `DocumentTransitions.Result`, which carries its findings as data as `SaveResult` and `ValidationResult` do:
-`Performed` with the commit the transition wrote (the draft commit, the save commit or the release commit) and the
-`Release` of a release; `Refused` with the `ValidationResult` of `INVALID` or `MANDATORY_FIELDS_MISSING`, its violations
+`Performed` with the commit the transition wrote (the draft commit, the save commit or the release commit), the key of
+the document or entry after the transition (<<GDR-FORMS-9>>) and the `Release` of a release; `Refused` with the `ValidationResult` of `INVALID` or `MANDATORY_FIELDS_MISSING`, its violations
 or JSON Pointers as data; `Conflicting` with the conflicting paths of the save; and `NotPerformed` with
 `TRANSITION_REFUSED`, `STEP_UP_REQUIRED` or the outcome of the store or of Git passed on. A step refusal of the save,
 `REFUSED` without text in `git-store`, is mapped to what the step captured on that attempt, a fresh capture per
@@ -903,3 +904,33 @@ detail, message or log, and the pointer of a violation is data as every pointer 
 Until its first save a numbered entry is identified by a ULID (draft reference
 `refs/drafts/<pseudonym>/<collection>/<ulid>`). Two concurrent creations race on the collection branch; the loser's
 push is refused, and it re-reads the counter and takes the next number.
+
+`RunningNumbers` holds the keys and numbers. `newKey(kind)` returns the `DocumentKey` of a new document of a
+per-document kind, or of the draft of a new entry of a numbered kind, in the collection of the kind with a fresh
+`Ulid.next()` of `git-store` (xref:git-store.adoc#GDR-STORE-2[GDR-STORE-2]), the only source of an id.
+`number(numbering, counter)` formats the prefix followed by the counter zero-padded to `digits` (`R-042` for the prefix
+`R-`, 3 digits and the counter 42; an empty prefix gives the digits alone); a counter that needs more digits than the
+numbering has is the passed-on `MALFORMED` with the detail `.counter: a counter of more than <digits> digits, the limit
+of the numbering`, and a counter below 1 is a programming error. `isAssigned(kind, key)` tells whether the id of an
+entry key is a running number of the kind, the prefix followed by exactly `digits` decimal digits.
+
+The number is allocated by the per-attempt step of the save (<<GDR-FORMS-5>>), on every attempt, for a numbered kind
+whose key id is a ULID that is not a running number of the kind. The step reads `<collection>/.counter` from the tip
+the attempt commits on with `CounterCodec` (<<GDR-FORMS-3>>), an absent file counting 0, takes the next counter and
+formats it, writes the merged entry file at `<collection>/<number>.yaml` with the state of the transition, deletes
+`<collection>/<ulid>.yaml`, writes the advanced counter and, with a template, the output `<collection>/<number>.adoc`
+generated from the data of the number; the validation, the link check and `required` apply to those data as to every
+save. All of it is the one save commit, pushed with the compare-and-swap lease of the collection branch
+(xref:git-store.adoc#GDR-STORE-3[GDR-STORE-3]): of two creators that read the same counter `N` on the same tip, the
+loser's push is refused, the store re-applies its draft onto the winner's tip and calls the step again, which reads
+`N+1` and takes `N+2`. The draft's own edit, the file of the ULID key, never conflicts with the winner's commit, so the
+re-application is not stopped by the conflict check, and no lock of `git-forms` is needed. A counter that cannot be
+read, a counter at the largest `long`, a counter that needs more digits than the numbering has, and a next number whose
+entry file the tip already holds (a counter behind its entries) refuse the attempt as the passed-on `MALFORMED`, its
+detail naming the counter file or the limit; nothing is committed.
+
+After that save the transition continues with the key of the number: a `release` releases the entry under it, so its
+tags are `refs/tags/<collection>/<number>/v<n>`, and `DocumentTransitions.Result.Performed` carries the component `key`,
+the key of the document or entry after the transition, which after the first save of a new entry is the key of its
+running number, the key the caller uses from then on. A key that already carries a running number, an entry saved
+before, is saved under it and allocates nothing.
