@@ -23,8 +23,8 @@ landing analyses fold into this spec until it is launched.
    never consults the pin before `tagAndPush`; the pin is compared only in `checkedAndWritten` (307-311), which runs after the recovery.** A release A
    that left `main` merged with its tag missing (`INCOMPLETE`), a later save B and a pinned release of B end with the tag on A's release commit and an
    `OK` `Release` that names A, now with `branchMovedOn=true` (PLAN-22 made the case visible; the Javadoc 104-112 says the recovery "publishes nothing
-   new"). The consumer `git-forms` ignores the flag (PLAN-14 deliverable 7(h) fixes that side), so a transition can report `Performed` for a state
-   that was not released. Decide at the outline, with the owner because it changes the documented behaviour of GDR-STORE-6, between: the pinned
+   new"). The consumer `git-forms` ignored the flag until PLAN-14 (shipped 2026-11-27, `0187cf3`): `TransitionSave` 158-160 now maps it to `SAVED_NOT_RELEASED`, so a
+   transition no longer reports `Performed` for a state that was not released; the store behaviour below is still the open decision. Decide at the outline, with the owner because it changes the documented behaviour of GDR-STORE-6, between: the pinned
    release refuses the recovery path when the pin is not the commit the earlier release merged (a passed-on `CONFLICT`, nothing written, so the
    caller's retry re-reads and releases B); it completes A's tag and then releases B in the same call; or it keeps the `OK` with the flag and the
    result names both commits. Record the decision in `git-store.adoc` § GDR-STORE-6 and `general.adoc`'s outcome table if an outcome changes. Tests:
@@ -100,13 +100,13 @@ landing analyses fold into this spec until it is launched.
 - OBSERVED: the pinned release does not consult the pin on the tag-only recovery path — read at
   `git-store/src/main/java/de/cuioss/git/document/store/DocumentRelease.java` 281-288 (the `mergedRelease` result goes to `tagAndPush` with
   `movedOn(...)` and no pin comparison) and 307-311 (the pin check, in `checkedAndWritten`, reached only when no merged release was found) at `c22700a`.
-  - verdict: corroborated | checked_at: c22700ad81fd222b00887fc39cd98428b0392a40 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at c22700a: DocumentRelease 278-290 sends the mergedRelease result to tagAndPush with movedOn(repository, merged, key, source) and no pin comparison; 303-312 checkedAndWritten holds the only pinned.equals(state.source()) check; Javadoc 104-112 says the recovery publishes nothing new
+  - verdict: corroborated | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: n/a | evidence: re-read at 0187cf3: DocumentRelease.java is unchanged since c22700a (PLAN-14 changed only StoreIndex in git-store main), so the recovery path still reaches tagAndPush without a pin comparison
 - OBSERVED: `git-forms` does not read `Release.branchMovedOn` — a grep of `git-forms/src` for the name is empty, and `TransitionSave` 124-136 returns
   `Performed` for any `OK` at `c22700a`.
-  - verdict: corroborated | checked_at: c22700ad81fd222b00887fc39cd98428b0392a40 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at c22700a: grep branchMovedOn over git-forms/src is empty; TransitionSave 124-136 returns Performed(release.commitId(), release) for any OK and its Javadoc says it publishes exactly that commit
+  - verdict: contradicted | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: yes | evidence: re-read at 0187cf3: git-forms now reads Release.branchMovedOn, TransitionSave.java 158-160 returns savedNotReleased() (PLAN-14 d7, PR #81); the spec states the old reading as history and keeps the store decision open
 - OBSERVED: a stale remote lock is classified as a lost lease and retried without a pause — `JGitRepositoryOperations` 196-212 and 1008-1014 (the message
   `failed to lock`) and `DocumentRelease.attempts` 240-256 (the loop over `attempts` with no pause between the attempts) at `c22700a`.
-  - verdict: corroborated | checked_at: c22700ad81fd222b00887fc39cd98428b0392a40 | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at c22700a: JGitRepositoryOperations 196-212 names failed to lock as the lost-lease message and 1008-1014 maps REJECTED_OTHER_REASON with it to LEASE_REFUSED; DocumentRelease.attempts 240-256 loops over attempts without any pause; the stale-lock identity of failed to lock is the leaf's reading of JGit
+  - verdict: corroborated | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: n/a | evidence: re-read at 0187cf3: git-core is untouched by PR #81; JGitRepositoryOperations.java 200 still names the remote message failed to lock as the lost-lease classification, DocumentRelease unchanged
 
 ## Expected Surface
 
@@ -120,7 +120,7 @@ landing analyses fold into this spec until it is launched.
 ## Dependencies and Sequencing
 
 - Depends on: PLAN-13 (shipped, PR #64, `e38e079`), which added the pinned release, and PLAN-22 (shipped, PR #76, `c22700a`).
-- Overlaps with: PLAN-14 deliverable 7 (`git-forms` reads `branchMovedOn` and resumes a failed release through the pinned release; it relies on the
+- Overlaps with: PLAN-14 deliverable 7 (shipped; `git-forms` reads `branchMovedOn` and resumes a failed release through the pinned release; it relies on the
   behaviour this plan decides for the recovery path), PLAN-24 deliverable 3 (the classification of a lost lease in `git-core`, which deliverable 2(a)
   complements), and PLAN-26 deliverable 2(e) (the provider's own proof bound). `AGENTS.md`, `git-store.adoc` and `general.adoc` are shared with the
   other staged plans (strictly sequential per document).

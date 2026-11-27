@@ -89,13 +89,13 @@ operator at the outline: it changes GDR-FORMS-2 and GDR-FORMS-5 and the concept.
 - OBSERVED: GDR-FORMS-2 checks `required` on the whole document at the transition out of the first state and at every release, and the workflow
   has no declaration for stages — read at `doc/specification/git-forms.adoc` 175-181 (the whole-document check) and the grep of `stage` over
   `git-forms.adoc` and `schema-driven-documents.adoc`, which finds no such concept, at `3e3cfc4`.
-  - verdict: corroborated | checked_at: 3e3cfc4b738f3606378263cb7da5cb12118ff59e | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at 3e3cfc4: git-forms.adoc 175-181 states that a transition leaving the first state and every release must also check required (the whole document, naming the JSON Pointers of the missing fields); grep of stage over git-forms.adoc and schema-driven-documents.adoc finds no stage concept
+  - verdict: corroborated | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: n/a | evidence: re-read at 0187cf3: git-forms.adoc 184 states a transition leaving the first state and every release must also check required; a grep of stage over git-forms.adoc and schema-driven-documents.adoc finds only the unrelated word at 724 (file the draft stages)
 - OBSERVED: `required` under `oneOf`, `anyOf`, `not`, `if`, `then`, `else` and `contains` stays refused — read at `doc/specification/git-forms.adoc` 391
   at `3e3cfc4`.
-  - verdict: corroborated | checked_at: 3e3cfc4b738f3606378263cb7da5cb12118ff59e | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: re-read by the orchestrator at 3e3cfc4: git-forms.adoc 391 says required under oneOf, anyOf, not, if, then, else and contains stays refused
+  - verdict: corroborated | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: n/a | evidence: re-read at 0187cf3: git-forms.adoc 411 still says required under oneOf, anyOf, not, if, then, else and contains stays refused
 - HYPOTHESIS: the consumer's description of its own side (its concept `staged-documents.adoc`, its open question 1 naming the library as the home,
   the decision of its owner) is the consumer's own and was not read here; confirm at the outline with the operator.
-  - verdict: unverifiable | checked_at: 3e3cfc4b738f3606378263cb7da5cb12118ff59e | by: libraries-initial-implementation/analyze | rescoped: n/a | evidence: the consumer's own concept staged-documents.adoc and its owner decision live in cuioss/Audit-Notary and were not read; the message is the only source
+  - verdict: unverifiable | checked_at: 0187cf3df10512aa71b2a19ea950c11654588303 | by: libraries-initial-implementation/cleanup | rescoped: n/a | evidence: unchanged: the consumer's concept staged-documents.adoc and its owner decision live in cuioss/Audit-Notary and were not read
 
 ## Expected Surface
 

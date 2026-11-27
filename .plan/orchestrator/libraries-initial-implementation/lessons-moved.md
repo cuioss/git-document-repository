@@ -154,3 +154,37 @@ Kept in this repository (promoted into the local lessons store on 2026-11-25; no
 | `plan-22-store-hardening-008.md` | `2026-11-25-08-005` | `git-store` |
 | `plan-22-store-hardening-009.md` | `2026-11-25-08-006` | `git-core` |
 | `plan-22-store-hardening-004.md` | discarded onto the open item "empty `skills_by_profile`" | `git-store` |
+
+Moved at the drain of 2026-11-27 (PLAN-14's landing), the same way: thirteen of the 22 `candidate-lesson` inbox messages of the plan `plan-14-forms-deadlines-links-numbers`
+(sender `libraries-initial-implementation`, written from `/home/oliver/git/plan-marshall`; messages `-115` to `-127`). The other nine were not moved: seven are rules of this
+repository's own modules and were promoted into the local lessons store (below), and 004 and 005 repeat the open item "empty `skills_by_profile`" (now also `git-forms`
+`implementation` and `module_testing`) and were discarded onto it.
+
+| Local inbox message (archived) | Component | Inbox message |
+|---|---|---|
+| `plan-14-forms-deadlines-links-numbers-001.md` | `plan-marshall:phase-5-execute` | `libraries-initial-implementation-115.md` |
+| `plan-14-forms-deadlines-links-numbers-002.md` | `plan-marshall:phase-3-outline` | `libraries-initial-implementation-116.md` |
+| `plan-14-forms-deadlines-links-numbers-012.md` | `plan-marshall:manage-findings` | `libraries-initial-implementation-117.md` |
+| `plan-14-forms-deadlines-links-numbers-013.md` | `plan-marshall:manage-solution-outline` | `libraries-initial-implementation-118.md` |
+| `plan-14-forms-deadlines-links-numbers-014.md` | `plan-marshall:manage-architecture` | `libraries-initial-implementation-119.md` |
+| `plan-14-forms-deadlines-links-numbers-015.md` | `plan-marshall:workflow-integration-git` | `libraries-initial-implementation-120.md` |
+| `plan-14-forms-deadlines-links-numbers-016.md` | `plan-marshall:manage-change-ledger` | `libraries-initial-implementation-121.md` |
+| `plan-14-forms-deadlines-links-numbers-017.md` | `plan-marshall:phase-6-finalize` | `libraries-initial-implementation-122.md` |
+| `plan-14-forms-deadlines-links-numbers-018.md` | `plan-marshall:phase-5-execute` | `libraries-initial-implementation-123.md` |
+| `plan-14-forms-deadlines-links-numbers-019.md` | `plan-marshall:platform-runtime` | `libraries-initial-implementation-124.md` |
+| `plan-14-forms-deadlines-links-numbers-020.md` | `plan-marshall:execution-context` | `libraries-initial-implementation-125.md` |
+| `plan-14-forms-deadlines-links-numbers-021.md` | `plan-marshall:execution-context` | `libraries-initial-implementation-126.md` |
+| `plan-14-forms-deadlines-links-numbers-022.md` | `plan-marshall:workflow-integration-sonar` | `libraries-initial-implementation-127.md` |
+
+Kept in this repository (promoted into the local lessons store on 2026-11-27; not moved):
+
+| Local inbox message (archived) | Local lesson | Component |
+|---|---|---|
+| `plan-14-forms-deadlines-links-numbers-003.md` | `2026-11-27-22-001` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-006.md` | `2026-11-27-22-002` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-007.md` | `2026-11-27-22-003` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-008.md` | `2026-11-27-22-004` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-009.md` | `2026-11-27-22-005` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-010.md` | `2026-11-27-22-006` | `git-forms` (and `git-store`) |
+| `plan-14-forms-deadlines-links-numbers-011.md` | `2026-11-27-22-007` | `git-forms` |
+| `plan-14-forms-deadlines-links-numbers-004.md`, `-005.md` | discarded onto the open item "empty `skills_by_profile`" | `git-forms` |
