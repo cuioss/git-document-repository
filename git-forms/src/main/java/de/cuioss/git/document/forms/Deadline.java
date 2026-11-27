@@ -21,9 +21,21 @@ import java.util.Objects;
 /**
  * A deadline of a workflow per state (GDR-FORMS-6), as the workflow file declares it under {@code deadlines}.
  * <p>
- * The deadline is read and kept; it is not evaluated: listing the documents whose deadline is due is GDR-FORMS-6,
- * which is planned. A duration is an ISO 8601 duration, read as a {@link java.time.Period} ({@code P14D},
- * {@code P1Y}) or, when it has a time part, as a {@link java.time.Duration} ({@code PT12H}).
+ * A duration is an ISO 8601 duration, read as a {@link java.time.Period} ({@code P14D}, {@code P1Y}) or, when it has a
+ * time part, as a {@link java.time.Duration} ({@code PT12H}). {@link Deadlines} evaluates a deadline, computed and
+ * never stored, against the instant at which the document entered its current state:
+ * <ul>
+ * <li>{@link Within} is due at the entering instant plus the amount;</li>
+ * <li>{@link ReviewInterval} is due at the latest {@code entered + k * amount}, {@code k} at least 1, that is at or
+ * before the instant asked about, so it is due again at every multiple of the interval while the state lasts;</li>
+ * <li>{@link DateField} is due at the value of the top-level field it names: an ISO 8601 date ({@code 2026-12-01}),
+ * due at the start of that day in UTC, or a date-time with an offset ({@code 2026-12-01T09:00:00+01:00}); a missing
+ * field, a value that is no string or a string of neither form gives no deadline.</li>
+ * </ul>
+ * A {@link java.time.Period} is added in UTC, as calendar months and days of an {@link java.time.OffsetDateTime} at
+ * {@link java.time.ZoneOffset#UTC} (so {@code P1M} from 31 January ends on the last day of February); a
+ * {@link java.time.Duration} is added to the instant. A deadline is due at an instant when its due instant is at or
+ * before it: the bound is inclusive.
  *
  * @param state the state the deadline belongs to, a state of its workflow
  * @param rule  the rule of the deadline

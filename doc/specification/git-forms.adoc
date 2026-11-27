@@ -629,8 +629,8 @@ names whose first is the initial state, `transitions`, a list of transitions wit
 the key `state` and exactly one of `within`, `review-interval` and `field`. `Workflow.defaultWorkflow()` is the example
 above, available without a file. A transition is the record `Transition` (`name`, `from`, `to`, `mechanism`, `stepUp`),
 its mechanism one of the enum `Mechanism` (`INTERMEDIATE_SAVE`, `SAVE`, `RELEASE`, spelled `intermediate-save`, `save`
-and `release` in the file). The deadlines are read into the record `Deadline` and kept, not evaluated (<<GDR-FORMS-6>>
-is planned); `within` and `review-interval` must be positive ISO 8601 durations, read by `java.time.Period.parse` and,
+and `release` in the file). The deadlines are read into the record `Deadline` and evaluated by `Deadlines`
+(<<GDR-FORMS-6>>); `within` and `review-interval` must be positive ISO 8601 durations, read by `java.time.Period.parse` and,
 with a time part, by `java.time.Duration.parse`
 (link:https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/time/Period.html#parse(java.lang.CharSequence)[Java
 SE 21, `Period.parse`];
@@ -720,6 +720,44 @@ outcome only (`git-forms/doc/LogMessages.adoc`).
 
 Further forms of a deadline rule are an open question of
 xref:../concepts/schema-driven-documents.adoc#_open_questions[Schema-Driven Documents].
+
+`Deadlines` evaluates the deadlines of one kind, built from its `DocumentTransitions.Definition`. `contributor()` is the
+`IndexContributor<Deadlines.Entry>` the application registers for the collection of the kind when it opens its
+`StoreIndex` (xref:git-store.adoc#GDR-STORE-9[GDR-STORE-9]): it decodes the file of the document or entry with the codec
+of the kind and keeps only its state (the initial state when the file has no `state`) and the string value of each
+top-level field a `field` rule of the workflow names, never other data. A file that cannot be decoded, or whose `state`
+is no string, is kept as `Entry.unreadable()`. `due(index, clone, at)` returns a `FormsResult<List<Deadlines.Due>>`,
+each `Due` holding the key, the current state, the `Deadline` and its due instant, for every document or entry whose
+deadline in its current state is due at or before `at`, sorted by due instant and then by key. The current state is
+the entry of the indexed target branch of the key (the working branch of a document, the collection branch of an
+entry), else that of `main`, as `DocumentTransitions` reads it (<<GDR-FORMS-5>>); the deadlines of that state are
+`Workflow.deadlines(state)`.
+
+The instant a document entered its current state is the commit time of the oldest commit of the trailing run of
+commits that changed its file and whose file holds that state, read with `RepositoryReader.history` of `git-core` from
+the commit the index holds for the source (`StoreIndex.commitId`). A save that keeps the state, a self-loop for example,
+continues the run; a state left and entered again starts a new one,
+so `within` restarts. The walk ends at the first commit whose file holds another state or no file, reads the history in
+pages of 16 commits that double while the run goes on, and runs only for a state with a `within` or `review-interval`
+rule. The entering instant is computed on every call and never stored (the operator's decision against a stored
+instant): the cost is one walk per due document per call.
+
+The rules, inclusive at the bound (a deadline due at `at` is due):
+
+* `within`: due at the entering instant plus the duration.
+* `review-interval`: due at the latest `entered + k * interval`, `k` at least 1, that is at or before `at`; while the
+  state lasts, it is due again at every multiple of the interval.
+* `field`: due at the value of the named top-level field, an ISO 8601 date (`2026-12-01`, the start of that day in UTC)
+  or a date-time with an offset (`2026-12-01T09:00:00+01:00`); a missing field, a value that is no string or a string of
+  neither form gives no deadline.
+
+A `java.time.Period` is added in UTC, as calendar months and days of an `OffsetDateTime` at `ZoneOffset.UTC`, so `P1M`
+from 31 January ends on the last day of February; a `java.time.Duration` is added to the instant. An amount whose sum
+leaves the range of `Instant` gives no deadline. Nothing is stored and nothing is written: `due` reads the index and the
+clone only, writes no file, reference or object, and keeps nothing between calls. A document whose file cannot be read
+ends the call with the passed-on `MALFORMED` (`deadlines: <id>: the file cannot be read`), a history that cannot be
+read with its Git outcome passed on; never an exception. A detail names the key and the problem, never a data value or a
+pseudonym (xref:general.adoc#GDR-NFR-3[GDR-NFR-3]).
 
 [#GDR-FORMS-7]
 == GDR-FORMS-7: Step-Up per Transition

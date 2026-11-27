@@ -92,6 +92,19 @@ final class CloneReader {
     }
 
     /**
+     * Reads a file of a commit given by its id.
+     *
+     * @param commitId the full id of the commit
+     * @param path     the repository-relative path of the file
+     * @return the content, or empty when the file is absent
+     * @throws ReadFailure for an I/O failure, a commit the clone does not hold included, and for a file larger than
+     *                     {@link OutputCheck#MAX_FILE_BYTES}
+     */
+    Optional<byte[]> readAt(String commitId, String path) {
+        return read(ObjectId.fromString(commitId), path);
+    }
+
+    /**
      * Reads the file the draft started from: the file at the merge base of the draft and the branch
      * ({@code RevFilter.MERGE_BASE} of JGit 7.8.0) when the draft exists and they have a common commit, else the file on
      * the branch, so that a draft that does not exist yet has changed nothing.
