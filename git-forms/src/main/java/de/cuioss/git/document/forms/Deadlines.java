@@ -252,23 +252,11 @@ public final class Deadlines {
             List<CommitInfo> commits = Objects.requireNonNull(history.value());
             @Nullable Instant entered = null;
             for (CommitInfo changed : commits) {
-                Optional<byte[]> content;
-                try {
-                    content = files.readAt(changed.id(), path);
-                } catch (ReadFailure e) {
-                    return FormsResult.passOn(StoreResult.passOn(GitResult.of(GitOutcome.FAILED,
-                            "deadlines: " + key.id() + ": " + e.getCause().getClass().getSimpleName())));
+                FormsResult<Boolean> holds = holdsState(files, key, changed, path, state);
+                if (!holds.isOk()) {
+                    return new FormsResult<>(holds.outcome(), null, holds.detail());
                 }
-                if (content.isEmpty()) {
-                    return FormsResult.ok(Optional.ofNullable(entered));
-                }
-                FormsResult<String> earlier = TransitionStep.readState(codec, content, path,
-                        definition.workflow().initialState());
-                if (!earlier.isOk()) {
-                    // an earlier version that cannot be read ends the call, never the run as if it held another state
-                    return new FormsResult<>(earlier.outcome(), null, earlier.detail());
-                }
-                if (!state.equals(earlier.value())) {
+                if (!Boolean.TRUE.equals(holds.value())) {
                     return FormsResult.ok(Optional.ofNullable(entered));
                 }
                 entered = changed.committedAt();
@@ -278,6 +266,31 @@ public final class Deadlines {
             }
             limit *= 2;
         }
+    }
+
+    /**
+     * Whether the file of a commit holds the state: {@code true} when it does, {@code false} when the commit has no
+     * file or its file holds another state. A version of the file that cannot be read ends the call with the passed-on
+     * failure, never as if the file held another state.
+     */
+    private FormsResult<Boolean> holdsState(CloneReader files, DocumentKey key, CommitInfo changed, String path,
+            String state) {
+        Optional<byte[]> content;
+        try {
+            content = files.readAt(changed.id(), path);
+        } catch (ReadFailure e) {
+            return FormsResult.passOn(StoreResult.passOn(GitResult.of(GitOutcome.FAILED,
+                    "deadlines: " + key.id() + ": " + e.getCause().getClass().getSimpleName())));
+        }
+        if (content.isEmpty()) {
+            return FormsResult.ok(false);
+        }
+        FormsResult<String> earlier = TransitionStep.readState(codec, content, path,
+                definition.workflow().initialState());
+        if (!earlier.isOk()) {
+            return new FormsResult<>(earlier.outcome(), null, earlier.detail());
+        }
+        return FormsResult.ok(state.equals(earlier.value()));
     }
 
     /**

@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -404,7 +405,7 @@ class DeadlinesTest {
                             () -> assertEquals(new FormsResult.PassedOn(StoreOutcome.MALFORMED), result.outcome(),
                                     "the unreadable earlier state passed on, no due instant"),
                             () -> assertNull(result.value(), "no deadline computed from the newer commits"),
-                            () -> assertTrue(result.detail() != null, "the non-success carries a detail"));
+                            () -> assertNotNull(result.detail(), "the non-success carries a detail"));
                 }
             }
         }

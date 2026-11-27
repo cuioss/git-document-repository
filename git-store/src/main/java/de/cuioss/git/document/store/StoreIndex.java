@@ -108,6 +108,9 @@ public final class StoreIndex<E> implements AutoCloseable {
     /** The name of a collection argument in the null checks. */
     private static final String COLLECTION = "collection";
 
+    /** The name of a source argument in the null checks. */
+    private static final String SOURCE = "source";
+
     /**
      * The detail of a snapshot or an opening from a thread that holds a lock of the clone: a save step or an anchor
      * provider call that would otherwise wait for the lock of the index.
@@ -286,7 +289,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @throws NullPointerException if {@code source} is {@code null}
      */
     public Optional<String> commitId(String source) {
-        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(source, SOURCE);
         Source<E> found = current.get().get(source);
         return found == null ? Optional.empty() : Optional.of(found.commit().name());
     }
@@ -301,7 +304,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @throws NullPointerException if an argument is {@code null}
      */
     public Map<DocumentKey, E> entries(String source, DocumentCollection collection) {
-        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(source, SOURCE);
         Objects.requireNonNull(collection, COLLECTION);
         Source<E> found = current.get().get(source);
         return found == null ? Map.of() : found.entries().getOrDefault(collection, Map.of());
@@ -321,7 +324,7 @@ public final class StoreIndex<E> implements AutoCloseable {
      * @since 0.1
      */
     public Optional<SourceEntries<E>> sourceEntries(String source, DocumentCollection collection) {
-        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(source, SOURCE);
         Objects.requireNonNull(collection, COLLECTION);
         Source<E> found = current.get().get(source);
         return found == null ? Optional.empty()
