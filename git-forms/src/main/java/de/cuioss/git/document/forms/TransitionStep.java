@@ -113,7 +113,7 @@ final class TransitionStep implements SaveStep {
     // package-private, built at one site: the nine values are the independent inputs of one save, and a holder for
     // them would only move the parameter list
     @SuppressWarnings("java:S107")
-    TransitionStep(Transition transition,String initialState, FormSchema schema, OutputCheck output,
+    TransitionStep(Transition transition, String initialState, FormSchema schema, OutputCheck output,
             LinkTargets links, String unit, String documentPath, Map<String, @Nullable Object> base,
             @Nullable Allocation allocation) {
         this.transition = transition;
