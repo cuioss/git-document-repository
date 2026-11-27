@@ -96,7 +96,8 @@ and prefilled unbound entries saved by an administrator and bound only by a firs
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-15, and through PLAN-14 and PLAN-13 on PLAN-09 deliverable 5 (the per-attempt save step: the hypothesis
+- Depends on: PLAN-28 (staged 2026-11-27, the next plan to emit: the person key and the login lifecycle become `authority` and `subject` and application callbacks, no token, `iss`, `sub` or `sid`; re-scope this spec's
+  vocabulary when PLAN-28 ships), PLAN-15, and through PLAN-14 and PLAN-13 on PLAN-09 deliverable 5 (the per-attempt save step: the hypothesis
   of the Claim Labels was contradicted at `c1e02fc` — PLAN-08's `StoreWriter.save` has no such step — and the gap was folded
   into PLAN-09 on 2026-11-21). The check against the tip of GDR-DIR-3 is that step.
 - Overlaps with: PLAN-15 — strictly sequential.

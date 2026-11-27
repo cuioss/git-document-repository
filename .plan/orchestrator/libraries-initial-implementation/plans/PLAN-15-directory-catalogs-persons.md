@@ -102,7 +102,8 @@ application-declared catalogs, retired never deleted (GDR-DIR-1), the default pe
 
 ## Dependencies and Sequencing
 
-- Depends on: PLAN-14 (link / catalog-resolution interface, all of git-forms), PLAN-07 (`PersonDirectory`).
+- Depends on: PLAN-28 (staged 2026-11-27, the next plan to emit: `PersonDirectory.pseudonym(issuer, subject)` becomes `pseudonym(authority, subject)`, the subject hash is over `authority`, a line feed and `subject`;
+  re-scope this spec's vocabulary when PLAN-28 ships), PLAN-14 (link / catalog-resolution interface, all of git-forms), PLAN-07 (`PersonDirectory`).
 - The Crockford encoder is not reusable from `git-store` (the hypothesis of the Claim Labels was contradicted at `c1e02fc`):
   PLAN-08's `Ulid` keeps `encode` private and exports only `Ulid.next()` and `Ulid.isValid(...)`. `git-store` is consumed,
   not changed, so this plan carries its own small encoder in `git-directory` for the `p-` pseudonym (checked against the
