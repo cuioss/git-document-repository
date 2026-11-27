@@ -31,9 +31,11 @@ Decisions): no protocol default (a deployment names what holds, here by supplyin
    workflow key `verify-identity`.
    - Skills: pm-documents:ref-asciidoc, pm-documents:ref-documentation
    - Persona: documenter
-2. `git-store`, the recording seam and the person key (GDR-STORE-13, GDR-STORE-19): (a) `IdentityClaims` is replaced by the public `Attestation`, an ordered, immutable list of
-   `Trailer(key, value)`, built by `Attestation.of(...)` that returns a violation as `MALFORMED` naming the component and never the value (the convention of
-   `IdentityClaims.of`), with `Attestation.empty()`; `StoreWriter.save` (251, 286) and `release` (336, 362), `ExplicitSave`, `DocumentRelease`, `CloneWrites` and
+2. `git-store`, the recording seam and the person key (GDR-STORE-13, GDR-STORE-19): (a) `IdentityClaims` is replaced by the public **interface** `Attestation` with one method, `List<Trailer> trailers()`
+   (`Trailer(key, value)`), which the application MAY implement with its own type so that it carries typed values its verifier reads back (the local login of `Audit-Notary` checks a renewed
+   password and needs the time of that check, which is no trailer string to parse); the factory `Attestation.of(Trailer...)` returns a violation as `MALFORMED` naming the component and never the value
+   (the convention of `IdentityClaims.of`), and `Attestation.empty()`; the store validates `trailers()` on every call whatever the implementation, and an implementation whose `trailers()` throws is isolated as
+   `REFUSED`; `StoreWriter.save` (251, 286) and `release` (336, 362), `ExplicitSave`, `DocumentRelease`, `CloneWrites` and
    `IdentityTrailers` take it. The store checks syntax only: a key in the trailer token form of `git interpret-trailers`, a value on one line without control
    characters, a bound on the number and on the size, no duplicate key, and no key the store writes itself (`Actor`, and the evidence trailer of deliverable 3); it writes the
    attestation verbatim after `Actor`. `Actor-Issuer`, `Auth-Time` and `Auth-Context` are removed from the store. (b) `PersonDirectory.pseudonym(issuer, subject)` (58) and
@@ -54,7 +56,9 @@ Decisions): no protocol default (a deployment names what holds, here by supplyin
    `TransitionOutcomes`, `GitFormsLogMessages`, `git-forms/doc/LogMessages.adoc` and `general.adoc`'s outcome table; the detail names no value), `UNAVAILABLE` is the passed-on
    unavailable outcome, and a `RuntimeException` or an `Error` other than a `VirtualMachineError` from the callback is isolated as `FAILED` naming only the class, as every
    other callback of the store (`StoreEvents` 222-227); (d) the workflow key `step-up` becomes `verify-identity` (a boolean; `Transition.stepUp` and `defaultStepUp` become
-   `verifyIdentity` and `defaultVerifyIdentity`; a release requires it by default, an `intermediate-save` must not declare it); (e) fail closed: `DocumentTransitions` is
+   `verifyIdentity` and `defaultVerifyIdentity`; a release requires it by default, an `intermediate-save` must not declare it); the requirement stays readable from the public `Transition`
+   record before a transition is performed, because the application asks which transitions need verification (the specification of `Audit-Notary` decides it once, in the server, and its
+   web app prepares its dialog from it); the application maps `IDENTITY_NOT_VERIFIED` to whatever its own API answers (the consumer's REST and MCP contract names it `STEP_UP_REQUIRED`: its choice, not this library's); (e) fail closed: `DocumentTransitions` is
    refused at construction when a transition of a loaded workflow requires verification and no verifier was passed, so that "no verification" is only ever a verifier the
    application wrote (the switch `step-up.enabled` of PLAN-14 deliverable 6 is superseded by this, and so is the defect L3-6 of its landing); (f) the evidence in the signed
    history: a commit of a transition whose verifier returned `VERIFIED` carries the trailer `Identity-Verification: performed` after the attestation (recommended; decide at
@@ -71,6 +75,10 @@ Decisions): no protocol default (a deployment names what holds, here by supplyin
    (104-107), `git-as-document-persistence.adoc` (52-54), `directory-and-catalogs.adoc` (80, 110), `data-protection.adoc` (57, 103-105), `doc/README.adoc` and `AGENTS.md`
    ("Current state"); and **`TrailHand` is renamed `Audit-Notary`** where `AGENTS.md` (17-18) and `doc/README.adoc` (17-18) name it, with the repository links
    (`https://github.com/cuioss/Audit-Notary`; `cuioss/TrailHand` redirects there). Keep the addresses of the concepts and specifications the application links to (AGENTS.md § Project).
+   **Addresses the consumer links stay stable** (read in the checkout of `Audit-Notary` at `11169dc`): every requirement id (`GDR-STORE-12`, `-13`, `-14`, `-18`, `-19`, `GDR-FORMS-1` to `-9`,
+   `GDR-DIR-2`, `-4`, `-6`, `-7`) keeps its number and its `[#id]` anchor (titles may change), and the section anchors `identity-and-signing.adoc#_what_has_to_be_done_right`,
+   `schema-driven-documents.adoc#_open_questions`, `directory-and-catalogs.adoc#_open_questions` and `storage-engine.adoc#_two_levels_of_saving` stay; the section "Step-Up for Approvals" is linked
+   only from inside this repository (`schema-driven-documents.adoc` 107), so its renamed anchor is updated there. The consumer's own documents are not changed by this plan (report, deliverable 4).
    The sweep that proves the deliverable: a case-insensitive search of `doc/` (outside `doc/adr/`), `AGENTS.md`, `README.adoc` and every `src/main` tree of the reactor for
    `mfa`, `amr`, `acr`, `auth_time`, `Auth-Context`, `Actor-Issuer`, `ID Token`, `OpenID`, `OIDC`, `OAuth`, `step-up`, `StepUp`, `TrailHand`, and for `sub` and `sid` as words, finds nothing that
    concerns identity (the module `git-timestamp` names X.509 issuers and subjects: those are no hits of this rule, and the deliverable lists them).
@@ -129,22 +137,39 @@ Decisions): no protocol default (a deployment names what holds, here by supplyin
 - OBSERVED: the claims are read by exactly one checker and one formatter — `StepUpPolicy.holds` reads `claims.acr()`, `claims.amr()` and `claims.authTime()` at
   `git-forms/src/main/java/de/cuioss/git/document/forms/StepUpPolicy.java` 127-132, and `IdentityTrailers` reads `issuer`, `authTime`, `acr` and `amr` at
   `git-store/src/main/java/de/cuioss/git/document/store/IdentityTrailers.java` 78-104; a grep of every `src/main` tree for the accessors finds no other reader, at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: StepUpPolicy.java 127-132 reads acr, amr and authTime; IdentityTrailers.java 78-104 reads issuer, authTime, acr, amr; a grep of the src/main accessors finds no other reader
 - OBSERVED: the step-up check has one call site and the `Clock` serves only it — `git-forms/src/main/java/de/cuioss/git/document/forms/TransitionRunner.java` 131
   (`policy.requires(allowed) && !policy.holds(claims, clock.instant())`, before the call is built and before anything is written) and the `Clock` fields of `TransitionRunner` (58)
   and `DocumentTransitions` (133), at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: TransitionRunner.java 131 is the only holds call; the Clock fields are at TransitionRunner 58 and DocumentTransitions 133 and serve only that check
 - OBSERVED: the trailers are only written, never read by the libraries — the names `Actor-Issuer`, `Auth-Time` and `Auth-Context` occur in `src/main` only in `IdentityTrailers.java` (48-54)
   and a Javadoc of `StoreWriter.java` (53); the libraries read a commit message only for its subject or as text (`DocumentRelease.java` 600 compares the first paragraph, `AnchorVerification.java` 427
   compares the checkpoint message, `git-core` returns the full message in its log records) and none parses a trailer, and `SignatureVerification` reads the `gpgsig` header, not the message, at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: the trailer names occur in IdentityTrailers.java 48-54 and the StoreWriter Javadoc 53; commit messages are read only for subject comparison (DocumentRelease 600, AnchorVerification 427) and as text in git-core
 - OBSERVED: the person directory is keyed by issuer and `sub` in its public signatures — `git-store/src/main/java/de/cuioss/git/document/store/PersonDirectory.java` 58
   (`pseudonym(String issuer, String subject)`) and 115 (`bind(String pseudonym, String issuer, String subject)`), and in GDR-STORE-19 (`doc/specification/git-store.adoc` 1316-1335), at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: PersonDirectory.java 58 pseudonym(String issuer, String subject) and 115 bind(String pseudonym, String issuer, String subject); GDR-STORE-19 at git-store.adoc 1316-1335
 - OBSERVED: the identity vocabulary is in documents outside the two specifications — `doc/specification/git-directory.adoc` 43-58, `doc/concepts/identity-and-signing.adoc` 51-68, 90-110 and 169,
   `doc/concepts/schema-driven-documents.adoc` 104-107, `doc/concepts/git-as-document-persistence.adoc` 52-54, `doc/concepts/directory-and-catalogs.adoc` 80 and 110,
   `doc/concepts/data-protection.adoc` 57 and 103-105, `doc/concepts/module-structure.adoc` 94 and `AGENTS.md` 135 — and `TrailHand` is named only in `AGENTS.md` 17-18 and `doc/README.adoc` 17-18, at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 by a grep of doc/ and AGENTS.md: the vocabulary sits in the named lines; TrailHand only in AGENTS.md 17-18 and doc/README.adoc 17-18
 - OBSERVED: the concept already puts the mechanism out of scope — `doc/concepts/git-as-document-persistence.adoc` 155 ("the OAuth flows (Token Sheriff, in the application) and the identity
   provider; the libraries only consume credentials"), which the current model contradicts.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: git-as-document-persistence.adoc 155 states the OAuth flows and the identity provider are out of scope
 - OBSERVED: no tag exists and 0.1.0 is not released (`git tag` is empty; AGENTS.md § Releases: the first release is a deliberate dispatch), at `62b23b5`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: re-read at cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395: git tag prints nothing; no release exists
 - HYPOTHESIS: no consumer reads the trailers or declares the workflow key by the old names beyond what the operator knows — confirm at the workflow files of `cuioss/Audit-Notary`
-  (the key `step-up`) and at its code that formats or reads `Auth-Context` (verify-at-outline; the repository was not read for this spec).
+  (the key `step-up`) and at its code that formats or reads `Auth-Context` (verify-at-outline). Checked on 2026-11-28 in the local checkout of `Audit-Notary` at `11169dc`: its Java code imports only
+  `git-core` and the registry of `git-store` (`audit-notary/src/main/java/de/cuioss/notary/audit/service/RepositoryService.java` 13-18) and names no `IdentityClaims`, `StepUpPolicy`,
+  `DocumentTransitions` or `PersonDirectory`, so there is no code to migrate; but its specification declares the library's names as the contract (the workflow key `step-up` in the category's
+  `workflow.yaml`, `doc/specification/authentication.adoc` AUN-AUTH-4 at 205-209; the trailers `Actor-Issuer`, `Auth-Time` and `Auth-Context` as "the library's trailers", AUN-AUTH-3 at 158-183;
+  `STEP_UP_REQUIRED` as the REST and MCP answer, AUN-AUTH-4 at 202 and `web-mock/src/main/resources/scenarios/release.json` 898), and links `GDR-FORMS-7` five times and `GDR-STORE-13` once.
+  - verdict: contradicted | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: yes | evidence: read 2026-11-28 in the local Audit-Notary checkout at 11169dc: no Java code uses the identity types, but its specification declares the workflow key step-up, the library's trailers and STEP_UP_REQUIRED as the contract and links GDR-FORMS-7 five times; the spec absorbs it (deliverables 2 to 4 and the stable addresses)
+- OBSERVED: the consumer owns the whole mechanism already and the callback fits it — `Audit-Notary` reads `auth_time` and `acr` from the ID token itself
+  (`audit-notary/src/main/java/de/cuioss/notary/audit/security/LoginService.java` 233-237, `LoginIdentity.java`, `UserSession.java`), configures `step-up` (`enabled`, `acr`, `amr`, `max-age`) in its
+  own `audit-notary.yaml` (AUN-AUTH-4 at 207) and, with local users, makes step-up "a renewed password check of the same user, sent with the transition request" (AUN-AUTH-4 at 195-196), whose time
+  is the `Auth-Time` (AUN-AUTH-3 at 176); its ADR-0005 asks the library for a setting that switches the check off (line 162), which the callback makes the application's own decision. At `Audit-Notary` `11169dc`.
+  - verdict: corroborated | checked_at: cc5bfb90b4e133d26050d2ea83d3e8bbff1e6395 | by: libraries-initial-implementation/stage | rescoped: n/a | evidence: read 2026-11-28 in Audit-Notary at 11169dc: LoginService.java 233-237, AUN-AUTH-4 195-196 and 207, AUN-AUTH-3 176, ADR-0005 line 162
 - HYPOTHESIS: the trailer key rule of `git interpret-trailers` (a token followed by a colon) is what the store should enforce — confirm at the `git-interpret-trailers` documentation of
   the Git version the CI uses and at `git-store/src/main/java/de/cuioss/git/document/store/IdentityTrailers.java` § its header Javadoc (38-39) (verify-at-outline).
 - Verify-first clause: at the outline re-read the call sites in the three OBSERVED code claims at the plan's head; a caller of `IdentityClaims` or `StepUpPolicy` this spec does not
