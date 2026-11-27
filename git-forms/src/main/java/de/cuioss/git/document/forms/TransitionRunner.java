@@ -135,7 +135,6 @@ final class TransitionRunner {
         return report(mechanism, unreleased == null ? save.perform(call) : save.resumeRelease(call, unreleased));
     }
 
-
     /** Logs the result of a transition, naming the mechanism and the commit id or the outcome only, and returns it. */
     private static Result report(String mechanism, Result result) {
         if (result instanceof Result.Performed performed) {
